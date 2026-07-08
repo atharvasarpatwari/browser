@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', 'SF Pro Display', system-ui, -apple-system, sans-serif;
+  --color-glass: rgba(255, 255, 255, .04);
+  --color-glass-hover: rgba(255, 255, 255, .07);
+  --color-glass-border: rgba(255, 255, 255, .06);
+  --color-glass-border-hover: rgba(255, 255, 255, .12);
+  --color-glass-strong: rgba(255, 255, 255, .06);
+  --color-accent: #7c9cf5;
+  --color-accent-dim: rgba(124, 156, 245, .12);
+  --color-accent-glow: rgba(124, 156, 245, .15);
+  --radius-card: 28px;
+  --radius-xl: 36px;
+  --radius-pill: 9999px;
+}
+
+* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.08) transparent; }
+
+body {
+  font-family: var(--font-sans);
+  background: #000;
+  color: #fff;
+  overflow-x: hidden;
+  letter-spacing: .01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection { background: rgba(124, 156, 245, .25); color: #fff; }
+
+.glass {
+  background: rgba(255, 255, 255, .035);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, .06);
+  border-radius: 28px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+
+.glass-strong {
+  background: rgba(255, 255, 255, .055);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 28px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+
+.glass-dock {
+  background: rgba(255, 255, 255, .05);
+  backdrop-filter: blur(30px) saturate(1.6);
+  -webkit-backdrop-filter: blur(30px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 9999px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+
+.card-hover {
+  transition: all .35s cubic-bezier(.4, 0, .2, 1);
+}
+.card-hover:hover {
+  transform: translateY(-3px) scale(1.01);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, .55);
+  border-color: rgba(255, 255, 255, .1);
+}
+
+.glow-ring {
+  box-shadow: 0 0 0 0 rgba(124, 156, 245, 0);
+  transition: box-shadow .3s ease;
+}
+.glow-ring:focus-within {
+  box-shadow: 0 0 0 2px rgba(124, 156, 245, .2), 0 0 24px rgba(124, 156, 245, .08);
+}
+
+.btn-ghost {
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(255, 255, 255, .06);
+  transition: all .25s ease;
+}
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, .08);
+  border-color: rgba(255, 255, 255, .12);
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  33% { transform: translateY(-8px) rotate(.8deg); }
+  66% { transform: translateY(-4px) rotate(-.8deg); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(124, 156, 245, .06); }
+  50% { box-shadow: 0 0 40px rgba(124, 156, 245, .15); }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: .8; }
+  50% { transform: scale(1.03); opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-float { animation: float 6s ease-in-out infinite; }
+.animate-glow { animation: pulse-glow 3s ease-in-out infinite; }
+.animate-breathe { animation: breathe 4s ease-in-out infinite; }
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.03), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 3s ease-in-out infinite;
+}

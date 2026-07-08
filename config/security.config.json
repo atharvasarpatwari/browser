@@ -1,0 +1,34 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "allowScripts": true,
+    "allowForms": true,
+    "allowModals": false,
+    "allowPopups": false,
+    "allowSameOrigin": true,
+    "allowTopNavigation": false
+  },
+  "certificateValidation": {
+    "enabled": true,
+    "allowSelfSigned": false,
+    "allowExpired": false,
+    "allowRevoked": false,
+    "minKeySize": 2048
+  },
+  "permissions": {
+    "notifications": "ask",
+    "geolocation": "ask",
+    "microphone": "ask",
+    "camera": "ask",
+    "clipboard": "ask",
+    "popups": "block"
+  },
+  "contentSecurity": {
+    "enabled": true,
+    "defaultSrc": "'self'",
+    "scriptSrc": "'self' 'unsafe-inline'",
+    "styleSrc": "'self' 'unsafe-inline'",
+    "imgSrc": "*",
+    "connectSrc": "'self'"
+  }
+}

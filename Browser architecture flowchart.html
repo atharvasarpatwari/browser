@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Browser Architecture Flowchart</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f9f8f5;
+    --surface: #ffffff;
+    --border: rgba(0,0,0,0.12);
+    --border-med: rgba(0,0,0,0.2);
+    --text: #1a1a18;
+    --text-2: #5a5a56;
+    --text-3: #9a9890;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a18;
+      --surface: #252523;
+      --border: rgba(255,255,255,0.12);
+      --border-med: rgba(255,255,255,0.2);
+      --text: #e8e6de;
+      --text-2: #a0a098;
+      --text-3: #6a6a64;
+    }
+  }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.6; padding: 32px 20px 48px; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+  .subtitle { font-size: 13px; color: var(--text-2); margin-bottom: 20px; }
+  .legend { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  .li { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); }
+  .li-s { width: 26px; height: 2px; border-radius: 1px; }
+  .li-d { width: 26px; height: 0; border-top: 2px dashed; }
+  .phase-label { font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); display: flex; align-items: center; gap: 10px; padding: 10px 0 5px; }
+  .phase-label::after { content: ''; flex: 1; height: .5px; background: var(--border); }
+  .card { border-radius: var(--radius); padding: 14px 16px; border: .5px solid; margin-bottom: 4px; }
+  .ch { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .ct { font-size: 14px; font-weight: 600; }
+  .cp { font-size: 10px; font-weight: 600; padding: 2px 9px; border-radius: 20px; border: .5px solid; letter-spacing: .01em; font-family: var(--mono); }
+  .btn { font-size: 11px; margin-left: auto; cursor: pointer; user-select: none; padding: 3px 10px; border-radius: 20px; border: .5px solid var(--border); background: none; color: var(--text-2); font-family: var(--sans); }
+  .btn:hover { border-color: var(--border-med); }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tag { font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 20px; border: .5px solid; font-family: var(--mono); }
+  .tag.add { border-style: dashed; background: transparent !important; display: flex; align-items: center; gap: 3px; }
+  .tag.add::before { content: '+'; font-family: var(--sans); font-size: 12px; font-weight: 700; }
+  .arr { display: flex; flex-direction: column; align-items: center; padding: 1px 0; }
+  .arr-l { width: 1px; height: 16px; background: var(--border-med); }
+  .arr-a { font-size: 10px; color: var(--text-3); line-height: 1; }
+  .panel { display: none; border-radius: 8px; padding: 12px 14px; background: var(--bg); border: .5px solid var(--border); margin-top: 8px; }
+  .panel.open { display: block; }
+  .pt { font-size: 11px; font-weight: 600; color: var(--text-2); margin-bottom: 8px; }
+  .pi { font-size: 12px; color: var(--text-2); display: flex; gap: 10px; line-height: 1.55; margin-bottom: 6px; }
+  .pi:last-child { margin-bottom: 0; }
+  .pc { font-family: var(--mono); font-size: 10px; font-weight: 600; white-space: nowrap; flex-shrink: 0; margin-top: 2px; }
+  .bo { margin-top: 16px; padding: 14px 16px; border-radius: var(--radius); background: var(--surface); border: .5px solid var(--border); }
+  .bot { font-size: 11px; font-weight: 600; color: var(--text-2); margin-bottom: 10px; }
+  .bor { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .bs { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+  .bn { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+  .bx { color: var(--text-3); font-size: 14px; }
+
+  /* ── colour themes ── */
+  /* purple */
+  .l1 { background: #EEEDFE; border-color: #AFA9EC; }
+  .l1 .ct { color: #3C3489; }
+  .l1 .cp { background: #CECBF6; border-color: #534AB7; color: #26215C; }
+  .l1 .tag { background: #CECBF6; border-color: #7F77DD; color: #26215C; }
+  .l1 .tag.add { border-color: #7F77DD; color: #534AB7; }
+  .l1 .pc { color: #534AB7; }
+  /* blue */
+  .l2 { background: #E6F1FB; border-color: #85B7EB; }
+  .l2 .ct { color: #0C447C; }
+  .l2 .cp { background: #B5D4F4; border-color: #185FA5; color: #042C53; }
+  .l2 .tag { background: #B5D4F4; border-color: #378ADD; color: #042C53; }
+  .l2 .tag.add { border-color: #378ADD; color: #185FA5; }
+  .l2 .pc { color: #185FA5; }
+  /* teal */
+  .l3 { background: #E1F5EE; border-color: #5DCAA5; }
+  .l3 .ct { color: #085041; }
+  .l3 .cp { background: #9FE1CB; border-color: #0F6E56; color: #04342C; }
+  .l3 .tag { background: #9FE1CB; border-color: #1D9E75; color: #04342C; }
+  .l3 .tag.add { border-color: #1D9E75; color: #0F6E56; }
+  .l3 .pc { color: #0F6E56; }
+  /* amber */
+  .l4 { background: #FAEEDA; border-color: #EF9F27; }
+  .l4 .ct { color: #633806; }
+  .l4 .cp { background: #FAC775; border-color: #BA7517; color: #412402; }
+  .l4 .tag { background: #FAC775; border-color: #BA7517; color: #412402; }
+  .l4 .tag.add { border-color: #EF9F27; color: #854F0B; }
+  .l4 .pc { color: #854F0B; }
+  /* coral */
+  .l5 { background: #FAECE7; border-color: #F0997B; }
+  .l5 .ct { color: #4A1B0C; }
+  .l5 .cp { background: #F5C4B3; border-color: #993C1D; color: #4A1B0C; }
+  .l5 .tag { background: #F5C4B3; border-color: #993C1D; color: #4A1B0C; }
+  .l5 .tag.add { border-color: #D85A30; color: #993C1D; }
+  .l5 .pc { color: #993C1D; }
+  /* green */
+  .l6 { background: #EAF3DE; border-color: #97C459; }
+  .l6 .ct { color: #173404; }
+  .l6 .cp { background: #C0DD97; border-color: #3B6D11; color: #173404; }
+  .l6 .tag { background: #C0DD97; border-color: #3B6D11; color: #173404; }
+  .l6 .tag.add { border-color: #639922; color: #3B6D11; }
+  .l6 .pc { color: #3B6D11; }
+
+  @media (prefers-color-scheme: dark) {
+    .l1 { background: #26215C; border-color: #7F77DD; }
+    .l1 .ct { color: #CECBF6; } .l1 .cp { background: #3C3489; border-color: #7F77DD; color: #CECBF6; }
+    .l1 .tag { background: #3C3489; border-color: #7F77DD; color: #CECBF6; } .l1 .tag.add { border-color: #AFA9EC; color: #CECBF6; } .l1 .pc { color: #AFA9EC; }
+    .l2 { background: #042C53; border-color: #378ADD; }
+    .l2 .ct { color: #B5D4F4; } .l2 .cp { background: #0C447C; border-color: #378ADD; color: #B5D4F4; }
+    .l2 .tag { background: #0C447C; border-color: #378ADD; color: #B5D4F4; } .l2 .tag.add { border-color: #85B7EB; color: #B5D4F4; } .l2 .pc { color: #85B7EB; }
+    .l3 { background: #04342C; border-color: #1D9E75; }
+    .l3 .ct { color: #9FE1CB; } .l3 .cp { background: #085041; border-color: #1D9E75; color: #9FE1CB; }
+    .l3 .tag { background: #085041; border-color: #1D9E75; color: #9FE1CB; } .l3 .tag.add { border-color: #5DCAA5; color: #9FE1CB; } .l3 .pc { color: #5DCAA5; }
+    .l4 { background: #412402; border-color: #EF9F27; }
+    .l4 .ct { color: #FAC775; } .l4 .cp { background: #633806; border-color: #BA7517; color: #FAC775; }
+    .l4 .tag { background: #633806; border-color: #BA7517; color: #FAC775; } .l4 .tag.add { border-color: #EF9F27; color: #FAC775; } .l4 .pc { color: #EF9F27; }
+    .l5 { background: #4A1B0C; border-color: #D85A30; }
+    .l5 .ct { color: #F5C4B3; } .l5 .cp { background: #712B13; border-color: #993C1D; color: #F5C4B3; }
+    .l5 .tag { background: #712B13; border-color: #993C1D; color: #F5C4B3; } .l5 .tag.add { border-color: #F0997B; color: #F5C4B3; } .l5 .pc { color: #F0997B; }
+    .l6 { background: #173404; border-color: #639922; }
+    .l6 .ct { color: #C0DD97; } .l6 .cp { background: #27500A; border-color: #3B6D11; color: #C0DD97; }
+    .l6 .tag { background: #27500A; border-color: #3B6D11; color: #C0DD97; } .l6 .tag.add { border-color: #97C459; color: #C0DD97; } .l6 .pc { color: #97C459; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Browser architecture — file flow by layer</h1>
+  <p class="subtitle">Click "improvements" on any layer to see suggested additions.</p>
+
+  <div class="legend">
+    <div class="li"><div class="li-s" style="background:var(--text-2)"></div>Existing module</div>
+    <div class="li"><div class="li-d" style="border-color:var(--text-3)"></div>Suggested addition</div>
+  </div>
+
+  <!-- ── Phase 1 ─────────────────────────── -->
+  <div class="phase-label">Phase 1 · core window + URL navigation</div>
+
+  <div class="card l1">
+    <div class="ch">
+      <span class="ct">App bootstrap</span>
+      <span class="cp">src/app</span>
+      <button class="btn" onclick="t('p1')">▸ improvements</button>
+    </div>
+    <div class="tags">
+      <span class="tag">main.ts</span>
+      <span class="tag">dependency-container.ts</span>
+      <span class="tag">app-shell.ts</span>
+      <span class="tag add">plugin-manager.ts</span>
+      <span class="tag add">crash-reporter.ts</span>
+    </div>
+    <div class="panel" id="p1">
+      <div class="pt">Suggested additions</div>
+      <div class="pi"><span class="pc">plugin-manager.ts</span>Extension host that loads browser add-ons at startup, decoupled from app-shell so core can boot without plugins present.</div>
+      <div class="pi"><span class="pc">crash-reporter.ts</span>Captures unhandled errors and renderer crashes, writes a minidump before the process exits — essential for post-mortem debugging.</div>
+    </div>
+  </div>
+
+  <div class="arr"><div class="arr-l"></div><div class="arr-a">▼</div></div>
+
+  <div class="card l2">
+    <div class="ch">
+      <span class="ct">UI layer</span>
+      <span class="cp">src/ui</span>
+      <button class="btn" onclick="t('p2')">▸ improvements</button>
+    </div>
+    <div class="tags">
+      <span class="tag">components/</span>
+      <span class="tag">browser-window.ts</span>
+      <span class="tag">layouts/</span>
+      <span class="tag add">devtools-panel.ts</span>
+      <span class="tag add">command-palette.ts</span>
+    </div>
+    <div class="panel" id="p2">
+      <div class="pt">Suggested additions</div>
+      <div class="pi"><span class="pc">devtools-panel.ts</span>Inspector UI exposing the live DOM tree, network log, and JS console. Best modelled as a first-class UI component rather than a bolt-on afterthought.</div>
+      <div class="pi"><span class="pc">command-palette.ts</span>Keyboard-driven omnibox for settings, history, and extensions. Keeps the browser accessible without deep menu hierarchies.</div>
+    </div>
+  </div>
+
+  <div class="arr"><div class="arr-l"></div><div class="arr-a">▼</div></div>
+
+  <div class="card l3">
+    <div class="ch">
+      <span class="ct">Navigation</span>
+      <span class="cp">src/browser/navigation</span>
+      <button class="btn" onclick="t('p3')">▸ improvements</button>
+    </div>
+    <div class="tags">
+      <span class="tag">url-parser.ts</span>
+      <span class="tag">navigation-controller.ts</span>
+      <span class="tag add">prefetch-manager.ts</span>
+      <span class="tag add">history-predictor.ts</span>
+    </div>
+    <div class="panel" id="p3">
+      <div class="pt">Suggested additions</div>
+      <div class="pi"><span class="pc">prefetch-manager.ts</span>Speculatively fetches URLs from hovered links or typed prefixes, feeding request-manager before the user commits to navigating.</div>
+      <div class="pi"><span class="pc">history-predictor.ts</span>Uses visit frequency + recency to rank autocomplete candidates in the address bar — bridges navigation-controller and the storage layer.</div>
+    </div>
+  </div>
+
+  <!-- ── Phase 2 ─────────────────────────── -->
+  <div class="phase-label">Phase 2 · fetch documents</div>
+
+  <div class="card l3" style="margin-top:0">
+    <div class="ch">
+      <span class="ct">Networking</span>
+      <span class="cp">src/browser/networking</span>
+      <button class="btn" onclick="t('p4')">▸ improvements</button>
+    </div>
+    <div class="tags">
+      <span class="tag">request-manager.ts</span>
+      <span class="tag add">http-cache.ts</span>
+      <span class="tag add">websocket-manager.ts</span>
+    </div>
+    <div class="panel" id="p4">
+      <div class="pt">Suggested additions</div>
+      <div class="pi"><span class="pc">http-cache.ts</span>Intercepts responses before the renderer and writes them to disk keyed by URL + Vary headers. Dramatically reduces repeat-load latency — belongs here, not in storage.</div>
+      <div class="pi"><span class="pc">websocket-manager.ts</span>Manages persistent socket connections separate from HTTP. Needed by modern web apps and belongs in the networking tier, not buried in the JS runtime.</div>
+    </div>
+  </div>
+
+  <div class="arr"><div class="arr-l"></div><div class="arr-a">▼</div></div>
+
+  <!-- ── Phase 3 ─────────────────────────── -->
+  <div class="phase-label">Phase 3 · parse and display HTML/CSS</div>
+
+  <div class="card l4" style="margin-top:0">
+    <div class="ch">
+      <span class="ct">Rendering pipeline</span>
+      <span class="cp">src/browser/rendering</span>
+      <button class="btn" onclick="t('p5')">▸ improvements</button>
+    </div>
+    <div class="tags">
+      <span class="tag">html-parser.ts</span>
+      <span class="tag">css-parser.ts</span>
+      <span class="tag">dom-tree.ts</span>
+      <span class="tag">layout-engine.ts</span>
+      <span class="tag">paint-engine.ts</span>
+      <span class="tag add">accessibility-tree.ts</span>
+      <span class="tag add">compositor.ts</span>
+    </div>
+    <div class="panel" id="p5">
+      <div class="pt">Suggested additions</div>
+      <div class="pi"><span class="pc">accessibility-tree.ts</span>Builds a parallel AX tree from the DOM, exposing ARIA roles and labels to platform accessibility APIs. Best added right after dom-tree.ts is stable.</div>
+      <div class="pi"><span class="pc">compositor.ts</span>GPU layer compositing pass after paint-engine. Promotes promoted layers to textures for smooth scrolling and CSS transforms without a full repaint on every frame.</div>
+    </div>
+  </div>
+
+  <div class="arr"><div class="arr-l"></div><div class="arr-a">▼</div></div>
+
+  <!-- ── Phase 4 ─────────────────────────── -->
+  <div class="phase-label">Phase 4 · script execution</div>
+
+  <div class="card l5" style="margin-top:0">
+    <div class="ch">
+      <span class="ct">JavaScript execution</span>
+      <span class="cp">src/browser/javascript</span>
+      <button class="btn" onclick="t('p6')">▸ improvements</button>
+    </div>
+    <div class="tags">
+      <span class="tag">js-runtime-bridge.ts</span>
+      <span class="tag">dom-bindings.ts</span>
+      <span class="tag">event-loop.ts</span>
+      <span class="tag add">web-workers.ts</span>
+      <span class="tag add">wasm-bridge.ts</span>
+    </div>
+    <div class="panel" id="p6">
+      <div class="pt">Suggested additions</div>
+      <div class="pi"><span class="pc">web-workers.ts</span>Runs JS in isolated off-main-thread contexts. Critical for non-blocking CPU work — shares the runtime bridge but has a separate message channel from the main event-loop.</div>
+      <div class="pi"><span class="pc">wasm-bridge.ts</span>Instantiates and links WebAssembly modules into the JS context. Increasingly required by modern web apps; a runtime concern, not a fetch concern, so it lives here.</div>
+    </div>
+  </div>
+
+  <div class="arr"><div class="arr-l"></div><div class="arr-a">▼</div></div>
+
+  <!-- ── Phase 5 ─────────────────────────── -->
+  <div class="phase-label">Phase 5 · persistence and safety</div>
+
+  <div class="card l6" style="margin-top:0">
+    <div class="ch">
+      <span class="ct">State and safety</span>
+      <span class="cp">src/browser / storage · security · tabs</span>
+      <button class="btn" onclick="t('p7')">▸ improvements</button>
+    </div>
+    <div class="tags">
+      <span class="tag">storage/</span>
+      <span class="tag">security/</span>
+      <span class="tag">tabs/</span>
+      <span class="tag">downloads/</span>
+      <span class="tag">bookmarks/</span>
+      <span class="tag">history/</span>
+      <span class="tag add">csp-enforcer.ts</span>
+      <span class="tag add">extension-api.ts</span>
+    </div>
+    <div class="panel" id="p7">
+      <div class="pt">Suggested additions</div>
+      <div class="pi"><span class="pc">csp-enforcer.ts</span>Parses Content-Security-Policy headers and blocks inline scripts, mixed content, and unauthorized resource origins. Distinct from the cert/permission checks already in security/.</div>
+      <div class="pi"><span class="pc">extension-api.ts</span>Public surface for plugin-manager to give add-ons controlled access to tabs, storage, and network events without reaching into core internals directly.</div>
+    </div>
+  </div>
+
+  <!-- ── Build order ─────────────────────── -->
+  <div class="bo">
+    <div class="bot">Recommended build order</div>
+    <div class="bor">
+      <div class="bs"><div class="bn" style="background:#CECBF6;color:#26215C">1</div>App + UI + Nav</div>
+      <span class="bx">→</span>
+      <div class="bs"><div class="bn" style="background:#9FE1CB;color:#04342C">2</div>Networking</div>
+      <span class="bx">→</span>
+      <div class="bs"><div class="bn" style="background:#FAC775;color:#412402">3</div>Rendering</div>
+      <span class="bx">→</span>
+      <div class="bs"><div class="bn" style="background:#F5C4B3;color:#4A1B0C">4</div>JavaScript</div>
+      <span class="bx">→</span>
+      <div class="bs"><div class="bn" style="background:#C0DD97;color:#173404">5</div>State &amp; Safety</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function t(id) {
+  const el = document.getElementById(id);
+  el.classList.toggle('open');
+  const btn = el.parentElement.querySelector('.btn');
+  if (btn) btn.textContent = el.classList.contains('open') ? '▾ improvements' : '▸ improvements';
+}
+</script>
+</body>
+</html>

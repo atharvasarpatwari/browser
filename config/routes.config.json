@@ -1,0 +1,34 @@
+{
+  "internalPages": [
+    "nova://settings",
+    "nova://downloads",
+    "nova://history",
+    "nova://bookmarks",
+    "nova://extensions"
+  ],
+  "specialPages": [
+    "about:blank",
+    "about:newtab",
+    "about:settings",
+    "about:downloads",
+    "about:history",
+    "about:bookmarks",
+    "about:extensions"
+  ],
+  "allowedProtocols": [
+    "http:",
+    "https:",
+    "ftp:",
+    "file:",
+    "about:",
+    "nova:"
+  ],
+  "blockedProtocols": [
+    "javascript:",
+    "vbscript:",
+    "data:",
+    "blob:",
+    "ws:",
+    "wss:"
+  ]
+}

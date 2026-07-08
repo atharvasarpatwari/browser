@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "debug": false,
+  "maxTabs": 20,
+  "homePage": "about:blank",
+  "userAgent": "NovaBrowser/1.0",
+  "defaultSearchEngine": "https://www.google.com/search?q={query}",
+  "downloadPath": "./downloads",
+  "sessionRestore": true,
+  "hardwareAcceleration": true,
+  "language": "en-US",
+  "theme": "system"
+}

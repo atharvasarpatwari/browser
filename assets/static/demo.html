@@ -1,0 +1,1309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova Browser</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../styles.css">
+</head>
+<body>
+
+<h1>Nova Browser</h1>
+<p class="subtitle">Demo: Menu Bar · Address Bar · Tab Bar · Bookmark Bar · Sidebar · DevTools · Status Bar · Downloads · History · Bookmarks · Settings · Mobile · Shield</p>
+
+<div class="top-bar">
+  <button class="top-btn active" data-page="browser">Browser</button>
+  <button class="top-btn" data-page="settings">Settings</button>
+  <button class="top-btn" data-page="shield">🛡 Shield</button>
+  <button class="top-btn" data-page="downloads">Downloads</button>
+  <button class="top-btn" data-page="history">History</button>
+  <button class="top-btn" data-page="bookmarks">Bookmarks</button>
+  <span class="sep-pipe">|</span>
+  <label class="layout-toggle"><input type="checkbox" id="mobile-toggle"> Mobile View</label>
+</div>
+
+<div id="page-browser" class="page-tab flex active">
+
+<!-- ═══ DESKTOP BROWSER ═══ -->
+<div class="browser-shell" id="desktop-shell">
+
+  <!-- Menu Bar -->
+  <div class="menu-bar" id="menu-bar">
+    <div class="menu-item" data-menu="file">File</div>
+    <div class="menu-item" data-menu="edit">Edit</div>
+    <div class="menu-item" data-menu="view">View</div>
+    <div class="menu-item" data-menu="history">History</div>
+    <div class="menu-item" data-menu="bookmarks">Bookmarks</div>
+    <div class="menu-item" data-menu="tools">Tools</div>
+    <div class="menu-item" data-menu="help">Help</div>
+  </div>
+
+  <!-- Title Bar + Address -->
+  <div class="title-bar">
+    <div class="traffic-lights"><span class="tl tl-r"></span><span class="tl tl-y"></span><span class="tl tl-g"></span></div>
+    <button class="nav-btn" id="nav-back" disabled title="Back">◀</button>
+    <button class="nav-btn" id="nav-fwd" disabled title="Forward">▶</button>
+    <button class="nav-btn" id="nav-reload" title="Reload">↻</button>
+
+    <div class="address-bar" id="address-bar-container">
+      <span class="sec-icon sec" id="sec-icon">🔒</span>
+      <input class="addr-input" id="addr-input" type="text" placeholder="Search or enter URL" autocomplete="off" spellcheck="false" value="https://nova-browser.dev">
+      <button class="addr-btn" id="addr-go" title="Go">↵</button>
+      <div class="suggestions" id="suggestions"></div>
+    </div>
+
+    <button class="addr-btn" id="addr-bookmark" title="Bookmark this page">☆</button>
+    <button class="addr-btn" id="addr-history" title="History">⏱</button>
+  </div>
+
+  <!-- Bookmark Bar -->
+  <div class="bookmark-bar" id="bookmark-bar"></div>
+
+  <!-- Tab Bar -->
+  <div class="tab-bar" id="tab-bar"></div>
+
+  <!-- Main Area -->
+  <div class="main-area">
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-tabs">
+        <div class="sidebar-tab active" data-stab="bookmarks">Bookmarks</div>
+        <div class="sidebar-tab" data-stab="history">History</div>
+      </div>
+      <div class="sidebar-content" id="sidebar-content"><div style="color:#6a6a64;font-size:11px;padding:8px">Bookmarks sidebar</div></div>
+    </div>
+
+    <!-- Content -->
+    <div class="content-area" id="content-area">
+      <div class="webview-placeholder" id="webview-placeholder">
+        <div class="wv-logo">No<span>va</span></div>
+        <div class="wv-sub">Private &amp; secure browsing</div>
+        <div class="wv-stats">
+          <div class="wv-stat" onclick="document.querySelector('[data-page=shield]').click()">
+            <div class="ws-icon">🛡️</div>
+            <div class="ws-num" id="ntp-blocked">0</div>
+            <div class="ws-label">Blocked</div>
+          </div>
+          <div class="wv-stat" onclick="document.querySelector('[data-page=shield]').click()">
+            <div class="ws-icon">🚫</div>
+            <div class="ws-num" id="ntp-trackers">0</div>
+            <div class="ws-label">Trackers</div>
+          </div>
+          <div class="wv-stat" onclick="document.querySelector('[data-page=shield]').click()">
+            <div class="ws-icon">📊</div>
+            <div class="ws-num" id="ntp-ads">0</div>
+            <div class="ws-label">Ads</div>
+          </div>
+        </div>
+        <div class="wv-search">
+          <span class="wv-search-icon">🔍</span>
+          <input type="text" placeholder="Search the web..." id="ntp-search">
+        </div>
+        <div class="wv-url" id="wv-url">nova-browser.dev</div>
+      </div>
+      <div id="page-render" style="display:none;padding:24px"></div>
+    </div>
+  </div>
+
+  <!-- DevTools -->
+  <div class="devtools" id="devtools">
+    <div class="devtools-tabs">
+      <div class="devtools-tab active" data-dtab="console">Console</div>
+      <div class="devtools-tab" data-dtab="elements">Elements</div>
+      <div class="devtools-tab" data-dtab="network">Network</div>
+      <div class="devtools-tab" data-dtab="sources">Sources</div>
+    </div>
+    <div class="devtools-content" id="devtools-content">
+      <span style="color:#6a6a64">▸ Console ready</span>
+    </div>
+  </div>
+
+  <!-- Status Bar -->
+  <div class="status-bar">
+    <span id="status-text">Ready</span>
+    <span id="status-url" class="status-url"></span>
+    <span class="status-blocked" id="status-blocked" title="Requests blocked by Nova Shield">🛡 <span class="sb-count" id="blocked-count">0</span> blocked</span>
+    <div class="status-right">
+      <button class="addr-btn" id="status-shield" title="Nova Shield — click to toggle">🛡️</button>
+      <span id="status-protocol">HTTPS</span>
+      <span id="status-secure">🔒 Secure</span>
+      <span id="status-zoom">100%</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MOBILE BROWSER ═══ -->
+<div class="mobile-shell" id="mobile-shell">
+  <div class="mobile-notch"><span>9:41</span><span>🔋</span></div>
+  <div class="mobile-bar">
+    <input type="text" id="mobile-input" placeholder="Search or enter URL" value="nova-browser.dev">
+  </div>
+  <div class="mobile-content" id="mobile-content">
+    <div class="webview-placeholder">
+      <div class="wv-logo">No<span>va</span></div>
+      <div class="wv-sub">Private &amp; secure</div>
+      <div class="wv-stats">
+        <div class="wv-stat" onclick="document.querySelector('[data-page=shield]').click()">
+          <div class="ws-num" id="ntp-m-blocked">0</div>
+          <div class="ws-label">Blocked</div>
+        </div>
+        <div class="wv-stat" onclick="document.querySelector('[data-page=shield]').click()">
+          <div class="ws-num" id="ntp-m-trackers">0</div>
+          <div class="ws-label">Trackers</div>
+        </div>
+        <div class="wv-stat" onclick="document.querySelector('[data-page=shield]').click()">
+          <div class="ws-num" id="ntp-m-ads">0</div>
+          <div class="ws-label">Ads</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mobile-nav">
+    <button class="mobile-nav-btn" id="mb-back" disabled>◀</button>
+    <button class="mobile-nav-btn" id="mb-fwd" disabled>▶</button>
+    <button class="mobile-nav-btn active" id="mb-home">●</button>
+    <button class="mobile-nav-btn" id="mb-tabs">⊞</button>
+    <button class="mobile-nav-btn" id="mb-menu">⋮</button>
+  </div>
+</div>
+</div>
+
+<!-- ═══ SETTINGS PAGE ═══ -->
+<div id="page-settings" class="page-tab">
+  <div class="browser-shell browser-shell--narrow">
+    <div class="settings-page" id="settings-root"></div>
+  </div>
+</div>
+
+<!-- ═══ DOWNLOADS PAGE ═══ -->
+<div id="page-downloads" class="page-tab">
+  <div class="browser-shell browser-shell--narrow">
+    <div class="downloads-page" id="downloads-root"></div>
+  </div>
+</div>
+
+<!-- ═══ HISTORY PAGE ═══ -->
+<div id="page-history" class="page-tab">
+  <div class="browser-shell browser-shell--narrow">
+    <div class="history-page" id="history-root"></div>
+  </div>
+</div>
+
+<!-- ═══ BOOKMARKS PAGE ═══ -->
+<div id="page-bookmarks" class="page-tab">
+  <div class="browser-shell browser-shell--narrow">
+    <div class="bm-page" id="bm-root"></div>
+  </div>
+</div>
+
+<!-- ═══ SHIELD PAGE ═══ -->
+<div id="page-shield" class="page-tab">
+  <div class="browser-shell browser-shell--narrow">
+    <div class="shield-page" id="shield-root"></div>
+    <div class="motion-tracker" id="motion-tracker">
+      <canvas id="mt-canvas"></canvas>
+      <div class="mt-overlay" id="mt-overlay"></div>
+      <div class="mt-label">📡 Motion Tracker</div>
+      <div class="mt-stat">
+        <span><span class="mt-dot-mini accent"></span> <span id="mt-ppm">0</span>/min</span>
+        <span><span class="mt-dot-mini danger"></span> <span id="mt-peak">0</span> peak</span>
+      </div>
+      <div class="mt-cat" id="mt-cat-label"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ── Menu drop-downs ── */
+const menuDefs = {
+  file: [{label:'New Tab',shortcut:'Ctrl+T'},{label:'New Window',shortcut:'Ctrl+N'},{sep:true},{label:'Open File...',shortcut:'Ctrl+O'},{sep:true},{label:'Save Page As...',shortcut:'Ctrl+S'},{sep:true},{label:'Print...',shortcut:'Ctrl+P'},{sep:true},{label:'Exit'}],
+  edit: [{label:'Undo',shortcut:'Ctrl+Z'},{label:'Redo',shortcut:'Ctrl+Shift+Z'},{sep:true},{label:'Cut',shortcut:'Ctrl+X'},{label:'Copy',shortcut:'Ctrl+C'},{label:'Paste',shortcut:'Ctrl+V'},{sep:true},{label:'Select All',shortcut:'Ctrl+A'},{sep:true},{label:'Find...',shortcut:'Ctrl+F'}],
+  view: [{label:'Reload',shortcut:'Ctrl+R'},{label:'Full Screen',shortcut:'F11'},{sep:true},{label:'Developer Tools',shortcut:'Ctrl+Shift+I'},{label:'Bookmark Bar'},{label:'Sidebar'},{sep:true},{label:'Zoom In',shortcut:'Ctrl++'},{label:'Zoom Out',shortcut:'Ctrl+-'},{label:'Reset Zoom',shortcut:'Ctrl+0'}],
+  history:[{label:'Back',shortcut:'Alt+◀'},{label:'Forward',shortcut:'Alt+▶'},{sep:true},{label:'Show Full History',shortcut:'Ctrl+H'},{label:'Clear Browsing Data...'},{sep:true},{label:'Recently Closed'}],
+  bookmarks:[{label:'Bookmark This Tab',shortcut:'Ctrl+D'},{label:'Bookmark All Tabs...'},{sep:true},{label:'Bookmark Manager',shortcut:'Ctrl+Shift+O'},{sep:true},{label:'Import Bookmarks...'},{label:'Export Bookmarks...'}],
+  tools:[{label:'Extensions'},{label:'Task Manager'},{sep:true},{label:'Settings',shortcut:'Ctrl+,'},{label:'Downloads',shortcut:'Ctrl+J'},{label:'History'}],
+  help:[{label:'About Nova Browser'},{label:'Help Center',shortcut:'F1'},{sep:true},{label:'Report an Issue'}],
+};
+
+function buildMenu() {
+  document.querySelectorAll('.menu-item[data-menu]').forEach(el => {
+    const dropdown = document.createElement('div');
+    dropdown.className = 'menu-dropdown';
+    const defs = menuDefs[el.dataset.menu] || [];
+    defs.forEach(d => {
+      if (d.sep) { const s=document.createElement('div');s.className='menu-sep';dropdown.appendChild(s); return; }
+      const i = document.createElement('div'); i.className='menu-dropdown-item';
+      i.innerHTML = d.label;
+      if (d.shortcut) { i.innerHTML += `<span class="shortcut">${d.shortcut}</span>`; }
+      i.addEventListener('click', () => { toast(`Menu: ${d.label}`); closeAllMenus(); });
+      dropdown.appendChild(i);
+    });
+    el.appendChild(dropdown);
+    el.addEventListener('click', e => { e.stopPropagation(); closeAllMenus(); dropdown.classList.toggle('open'); el.classList.toggle('open'); });
+  });
+  document.addEventListener('click', closeAllMenus);
+}
+function closeAllMenus() { document.querySelectorAll('.menu-dropdown,.menu-item').forEach(e => e.classList.remove('open')); }
+
+/* ── Tab bar ── */
+let tabs = [
+  { id:'t1', title:'Nova Browser', url:'https://nova-browser.dev', favicon:'🌐', active:true },
+  { id:'t2', title:'Documentation', url:'https://docs.nova-browser.dev', favicon:'📄', active:false },
+  { id:'t3', title:'GitHub', url:'https://github.com/nova-browser', favicon:'🐙', active:false },
+];
+function renderTabs() {
+  const bar = document.getElementById('tab-bar');
+  bar.innerHTML = '';
+  tabs.forEach((t,i) => {
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (t.active?' active':'');
+    tab.innerHTML = `<span class="tab-favicon">${t.favicon}</span><span>${t.title.length>15?t.title.slice(0,15)+'…':t.title}</span>`;
+    const close = document.createElement('button');
+    close.className='tab-close'; close.textContent='✕';
+    close.addEventListener('click', e => { e.stopPropagation(); closeTab(i); });
+    tab.appendChild(close);
+    tab.addEventListener('click', () => switchTab(i));
+    bar.appendChild(tab);
+  });
+}
+function switchTab(i) { tabs.forEach(t=>t.active=false); tabs[i].active=true; renderTabs(); navigateTo(tabs[i].url); }
+function closeTab(i) { if(tabs.length>1){tabs.splice(i,1);tabs[Math.min(i,tabs.length-1)].active=true;renderTabs();navigateTo(tabs.find(t=>t.active).url);} }
+
+/* ── Bookmark Bar ── */
+const bookmarkBarItems = [
+  {label:'Getting Started',url:'https://nova-browser.dev/start',icon:'🚀'},
+  {label:'Docs',url:'https://docs.nova-browser.dev',icon:'📄'},
+  {type:'sep'},
+  {label:'Dev',url:'https://github.com/nova-browser',icon:'💻'},
+  {type:'folder',label:'Tools',children:[
+    {label:'TypeScript Docs',url:'https://www.typescriptlang.org/docs/',icon:'📘'},
+    {label:'MDN',url:'https://developer.mozilla.org',icon:'📙'},
+    {label:'Can I Use',url:'https://caniuse.com',icon:'🔍'},
+  ]},
+  {type:'sep'},
+  {label:'Gmail',url:'https://mail.google.com',icon:'✉'},
+  {label:'Calendar',url:'https://calendar.google.com',icon:'📅'},
+];
+function renderBookmarkBar() {
+  const bar = document.getElementById('bookmark-bar');
+  bar.innerHTML = '';
+  bookmarkBarItems.forEach(item => {
+    if(item.type==='sep'){ const s=document.createElement('div');s.className='bm-sep';bar.appendChild(s); return; }
+    if(item.type==='folder'){
+      const f=document.createElement('div');f.className='bm-item bm-folder';f.textContent='▸ '+item.label;
+      f.addEventListener('click',()=>toast('Bookmarks folder: '+item.label));
+      bar.appendChild(f); return;
+    }
+    const e=document.createElement('div');e.className='bm-item';
+    e.innerHTML=`<span>${item.icon||'🔖'}</span>${item.label}`;
+    e.addEventListener('click',()=>navigateTo(item.url));
+    bar.appendChild(e);
+  });
+}
+
+/* ── Address bar / Navigation ── */
+const navHistory = [{url:'https://nova-browser.dev',title:'Nova Browser'}];
+let navIdx = 0;
+const addrInput = document.getElementById('addr-input');
+const suggestions = document.getElementById('suggestions');
+const secIcon = document.getElementById('sec-icon');
+const statusText = document.getElementById('status-text');
+const statusProtocol = document.getElementById('status-protocol');
+const statusSecure = document.getElementById('status-secure');
+const statusZoom = document.getElementById('status-zoom');
+const statusUrl = document.getElementById('status-url');
+const wvUrl = document.getElementById('wv-url');
+
+const suggestionList = [
+  {url:'https://google.com',title:'Google Search'},
+  {url:'https://github.com',title:'GitHub'},
+  {url:'https://stackoverflow.com',title:'Stack Overflow'},
+  {url:'https://developer.mozilla.org',title:'MDN Web Docs'},
+  {url:'https://news.ycombinator.com',title:'Hacker News'},
+  {url:'https://www.typescriptlang.org',title:'TypeScript'},
+  {url:'https://vitest.dev',title:'Vitest'},
+  {url:'https://nodejs.org',title:'Node.js'},
+];
+
+function navigateTo(url, push=true) {
+  let u = url.trim();
+  if(!u.startsWith('http://')&&!u.startsWith('https://')&&!u.startsWith('file:')&&!u.startsWith('about:')) u='https://'+u;
+  addrInput.value = u;
+  if(push){
+    if(navIdx<navHistory.length-1) navHistory.length=navIdx+1;
+    navHistory.push({url:u,title:u});
+    navIdx = navHistory.length-1;
+  }
+  updateNavState();
+  const isSecure = u.startsWith('https://')||u.startsWith('file:')||u.startsWith('about:');
+  secIcon.textContent = isSecure ? '🔒' : '🔓';
+  secIcon.className = 'sec-icon '+(isSecure?'sec':'insec');
+  statusProtocol.textContent = isSecure?'HTTPS':'HTTP';
+  statusSecure.textContent = isSecure?'🔒 Secure':'🔓 Not secure';
+  statusText.textContent = `Loading ${u}...`;
+  statusUrl.textContent = u;
+  wvUrl.textContent = u;
+  document.getElementById('webview-placeholder').style.display='flex';
+  document.getElementById('page-render').style.display='none';
+  toast(`Navigated to ${u}`);
+  setTimeout(()=>{statusText.textContent='Done'},400);
+  // Simulate blocking on navigation
+  if (shieldEnabled) {
+    setTimeout(() => { for (let i = 0; i < 3 + Math.floor(Math.random() * 5); i++) {
+      setTimeout(simulateBlock, i * 200 + 100);
+    }}, 300);
+  }
+}
+function updateNavState(){
+  document.getElementById('nav-back').disabled=navIdx<=0;
+  document.getElementById('nav-fwd').disabled=navIdx>=navHistory.length-1;
+  const cur=navHistory[navIdx]; if(cur) addrInput.value=cur.url;
+}
+
+addrInput.addEventListener('keydown',e=>{if(e.key==='Enter'){suggestions.classList.remove('show');navigateTo(addrInput.value);addrInput.blur()}});
+addrInput.addEventListener('input',()=>{
+  const val=addrInput.value.trim();
+  if(!val||val.length<2){suggestions.classList.remove('show');return;}
+  const q=val.toLowerCase();
+  const matched=suggestionList.filter(s=>s.url.includes(q)||s.title.toLowerCase().includes(q)).slice(0,5);
+  suggestions.innerHTML=matched.map(s=>`<div class="sug-item" data-url="${s.url}"><div>${s.title}</div><div class="sug-url">${s.url}</div></div>`).join('');
+  if(matched.length)suggestions.classList.add('show'); else suggestions.classList.remove('show');
+  suggestions.querySelectorAll('.sug-item').forEach(el=>el.addEventListener('mousedown',e=>{e.preventDefault();navigateTo(el.dataset.url);suggestions.classList.remove('show')}));
+});
+document.addEventListener('click',e=>{if(!e.target.closest('.address-bar'))suggestions.classList.remove('show')});
+
+document.getElementById('nav-back').addEventListener('click',()=>{if(navIdx>0){navIdx--;navigateTo(navHistory[navIdx].url,false)}});
+document.getElementById('nav-fwd').addEventListener('click',()=>{if(navIdx<navHistory.length-1){navIdx++;navigateTo(navHistory[navIdx].url,false)}});
+document.getElementById('nav-reload').addEventListener('click',()=>{statusText.textContent='Reloading...';setTimeout(()=>statusText.textContent='Ready',300)});
+document.getElementById('addr-go').addEventListener('click',()=>navigateTo(addrInput.value));
+document.getElementById('addr-bookmark').addEventListener('click',()=>{toast('Bookmarked current page');document.getElementById('addr-bookmark').textContent='★'});
+document.getElementById('addr-history').addEventListener('click',()=>{document.querySelector('[data-page="history"]').click()});
+
+/* ── Sidebar ── */
+document.querySelectorAll('.sidebar-tab').forEach(el=>{
+  el.addEventListener('click',()=>{
+    document.querySelectorAll('.sidebar-tab').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+    const sc=document.getElementById('sidebar-content');
+    sc.innerHTML=el.dataset.stab==='bookmarks'
+      ? '<div style="color:#6a6a64;font-size:11px;padding:8px">📁 Bookmarks<br>📄 Getting Started<br>📄 Documentation<br>📁 Developer<br>📄 TypeScript Docs<br>📄 MDN Web Docs</div>'
+      : '<div style="color:#6a6a64;font-size:11px;padding:8px">🕐 Today<br>🔗 nova-browser.dev<br>🔗 github.com<br>🔗 stackoverflow.com<br>🕐 Yesterday<br>🔗 google.com<br>🔗 developer.mozilla.org</div>';
+  });
+});
+document.getElementById('addr-bookmark').addEventListener('dblclick',()=>document.getElementById('sidebar').classList.toggle('open'));
+
+/* ── Nova Shield: Ad & Tracker Blocking Simulation ── */
+let blockedTotal = 0;
+let shieldEnabled = true;
+const blockLog = [];
+const blockCategories = {ad:true,tracker:true,analytics:true,social:true,fingerprinting:true,crypto:true,annoyance:true};
+
+const CATEGORY_META = {
+  ad:     { label: 'Ad',          labelPl: 'Ads',           color: '#f87171', cls: 'bl-cat-ad' },
+  tracker:{ label: 'Tracker',     labelPl: 'Trackers',       color: '#60a5fa', cls: 'bl-cat-tracker' },
+  analytics:{ label: 'Analytics', labelPl: 'Analytics',     color: '#fbbf24', cls: 'bl-cat-analytics' },
+  social: { label: 'Social',      labelPl: 'Social Widgets', color: '#a78bfa', cls: 'bl-cat-social' },
+  fingerprinting:{ label: 'Fingerprint', labelPl: 'Fingerprinting', color: '#34d399', cls: 'bl-cat-fingerprinting' },
+  crypto: { label: 'Crypto-miner', labelPl: 'Crypto-miners', color: '#fb923c', cls: 'bl-cat-crypto' },
+  annoyance:{ label: 'Annoyance', labelPl: 'Annoyances',    color: '#9ca3af', cls: 'bl-cat-annoyance' },
+};
+
+/* ── Real tracker-blocker rules embedded ── */
+const DEFAULT_RULES = [
+  {domain:'doubleclick.net',category:'ad',description:'Google DoubleClick Ads'},
+  {domain:'googlesyndication.com',category:'ad',description:'Google Syndication Ads'},
+  {domain:'googleadservices.com',category:'ad',description:'Google Ad Services'},
+  {domain:'googletagmanager.com',category:'ad',description:'Google Tag Manager (Ads)'},
+  {domain:'googleads.g.doubleclick.net',category:'ad',description:'DoubleClick Ads'},
+  {domain:'adservice.google.com',category:'ad',description:'Google Ad Service'},
+  {domain:'pagead2.googlesyndication.com',category:'ad',description:'Google Page Ads'},
+  {domain:'adnxs.com',category:'ad',description:'AppNexus Ads'},
+  {domain:'adsrvr.org',category:'ad',description:'The Trade Desk Ads'},
+  {domain:'criteo.com',category:'ad',description:'Criteo Ads'},
+  {domain:'criteo.net',category:'ad',description:'Criteo Ads CDN'},
+  {domain:'advertising.com',category:'ad',description:'AOL Advertising'},
+  {domain:'adzerk.net',category:'ad',description:'Adzerk Ads'},
+  {domain:'moatads.com',category:'ad',description:'Moat Ads'},
+  {domain:'casalemedia.com',category:'ad',description:'Casale Media Ads'},
+  {domain:'openx.net',category:'ad',description:'OpenX Ads'},
+  {domain:'pubmatic.com',category:'ad',description:'PubMatic Ads'},
+  {domain:'rubiconproject.com',category:'ad',description:'Rubicon Project Ads'},
+  {domain:'contextweb.com',category:'ad',description:'ContextWeb Ads'},
+  {domain:'indexww.com',category:'ad',description:'Index Exchange Ads'},
+  {domain:'sovrn.com',category:'ad',description:'Sovrn Ads'},
+  {domain:'sharethrough.com',category:'ad',description:'ShareThrough Ads'},
+  {domain:'adsafeprotected.com',category:'ad',description:'Integral Ad Science'},
+  {domain:'adroll.com',category:'ad',description:'AdRoll Ads'},
+  {domain:'amazon-adsystem.com',category:'ad',description:'Amazon Ads'},
+  {domain:'bidswitch.net',category:'ad',description:'BidSwitch Ads'},
+  {domain:'improvedigital.com',category:'ad',description:'Improve Digital Ads'},
+  {domain:'smartadserver.com',category:'ad',description:'Smart AdServer'},
+  {domain:'taboola.com',category:'ad',description:'Taboola Native Ads'},
+  {domain:'outbrain.com',category:'ad',description:'Outbrain Native Ads'},
+  {domain:'popads.net',category:'ad',description:'PopAds'},
+  {domain:'exdynsrv.com',category:'ad',description:'ExoClick Ads'},
+  {domain:'propellerads.com',category:'ad',description:'PropellerAds'},
+  {domain:'revcontent.com',category:'ad',description:'RevContent Ads'},
+  {domain:'mgid.com',category:'ad',description:'MGID Native Ads'},
+  {domain:'adform.com',category:'ad',description:'AdForm Ads'},
+  {domain:'adition.com',category:'ad',description:'Adition Ads'},
+  {domain:'ad-up.com',category:'ad',description:'AdUp Ads'},
+  {domain:'adspirit.de',category:'ad',description:'AdSpirit Ads'},
+  {domain:'adserver.com',category:'ad',description:'AdServer'},
+  {domain:'adtech.de',category:'ad',description:'AdTech Ads'},
+  {domain:'adventori.com',category:'ad',description:'Adventori Ads'},
+  {domain:'adzerk.com',category:'ad',description:'Adzerk'},
+  {domain:'tremorhub.com',category:'ad',description:'Tremor Video Ads'},
+  {domain:'spotx.tv',category:'ad',description:'SpotX Video Ads'},
+  {domain:'cdn.taboola.com',category:'ad',description:'Taboola CDN'},
+  {domain:'cdn.outbrain.com',category:'ad',description:'Outbrain CDN'},
+  {domain:'cdn.criteo.com',category:'ad',description:'Criteo CDN'},
+  {domain:'cdn.adsafeprotected.com',category:'ad',description:'IAS CDN'},
+  {domain:'aax.amazon-adsystem.com',category:'ad',description:'Amazon AAX Ads'},
+  {domain:'dtmc.adsafeprotected.com',category:'ad',description:'IAS Dynamic Tracking'},
+  {domain:'pixel.adsafeprotected.com',category:'ad',description:'IAS Pixel'},
+  {domain:'s.amazon-adsystem.com',category:'ad',description:'Amazon Ads System'},
+  {domain:'z-na.amazon-adsystem.com',category:'ad',description:'Amazon Ads System'},
+  {domain:'ir-na.amazon-adsystem.com',category:'ad',description:'Amazon Ads Reporting'},
+  {domain:'s0.2mdn.net',category:'ad',description:'DoubleClick Studio'},
+  {domain:'tpc.googlesyndication.com',category:'ad',description:'Google AdSense TPC'},
+  {domain:'cm.g.doubleclick.net',category:'ad',description:'DoubleClick CM'},
+  {domain:'adclick.g.doubleclick.net',category:'ad',description:'DoubleClick AdClick'},
+  {domain:'securepubads.g.doubleclick.net',category:'ad',description:'Google Publisher Tags'},
+  {domain:'protagcdn.com',category:'ad',description:'ProTag Ads'},
+  {domain:'assets.bounceexchange.com',category:'ad',description:'BounceX'},
+  {domain:'google-analytics.com',category:'tracker',description:'Google Analytics'},
+  {domain:'googletagmanager.com',category:'tracker',description:'Google Tag Manager'},
+  {domain:'analytics.google.com',category:'tracker',description:'Google Analytics'},
+  {domain:'facebook.com/tr',category:'tracker',description:'Facebook Pixel'},
+  {domain:'facebook.net',category:'tracker',description:'Facebook SDK'},
+  {domain:'connect.facebook.net',category:'tracker',description:'Facebook Connect'},
+  {domain:'scorecardresearch.com',category:'tracker',description:'ScorecardResearch'},
+  {domain:'quantserve.com',category:'tracker',description:'Quantcast'},
+  {domain:'quantcount.com',category:'tracker',description:'QuantCount'},
+  {domain:'comscore.com',category:'tracker',description:'ComScore'},
+  {domain:'hotjar.com',category:'tracker',description:'HotJar Analytics'},
+  {domain:'hotjar.io',category:'tracker',description:'HotJar CDN'},
+  {domain:'mouseflow.com',category:'tracker',description:'Mouseflow Analytics'},
+  {domain:'crazyegg.com',category:'tracker',description:'CrazyEgg Analytics'},
+  {domain:'clicky.com',category:'tracker',description:'Clicky Analytics'},
+  {domain:'mixpanel.com',category:'tracker',description:'MixPanel Analytics'},
+  {domain:'amplitude.com',category:'tracker',description:'Amplitude Analytics'},
+  {domain:'segment.io',category:'tracker',description:'Segment Analytics'},
+  {domain:'segment.com',category:'tracker',description:'Segment'},
+  {domain:'fullstory.com',category:'tracker',description:'FullStory Session Replay'},
+  {domain:'heap.io',category:'tracker',description:'Heap Analytics'},
+  {domain:'luckyorange.com',category:'tracker',description:'LuckyOrange Session Replay'},
+  {domain:'sessioncam.com',category:'tracker',description:'SessionCam Replay'},
+  {domain:'smartlook.com',category:'tracker',description:'SmartLook Replay'},
+  {domain:'matomo.org',category:'tracker',description:'Matomo Analytics'},
+  {domain:'piwik.org',category:'tracker',description:'Piwik Analytics'},
+  {domain:'newrelic.com',category:'tracker',description:'New Relic APM'},
+  {domain:'datadoghq.com',category:'tracker',description:'Datadog APM'},
+  {domain:'dynatrace.com',category:'tracker',description:'Dynatrace APM'},
+  {domain:'appdynamics.com',category:'tracker',description:'AppDynamics APM'},
+  {domain:'kissmetrics.com',category:'tracker',description:'KissMetrics'},
+  {domain:'optimizely.com',category:'tracker',description:'Optimizely A/B Testing'},
+  {domain:'launchdarkly.com',category:'tracker',description:'LaunchDarkly Feature Flags'},
+  {domain:'adobe.com/analytics',category:'tracker',description:'Adobe Analytics'},
+  {domain:'2o7.net',category:'tracker',description:'Adobe Omniture'},
+  {domain:'omniture.com',category:'tracker',description:'Adobe Omniture'},
+  {domain:'demdex.net',category:'tracker',description:'Adobe Audience Manager'},
+  {domain:'dpm.demdex.net',category:'tracker',description:'Adobe DPM'},
+  {domain:'adsymptotic.com',category:'tracker',description:'Adobe Advertising Cloud'},
+  {domain:'everesttech.net',category:'tracker',description:'Adobe Everest'},
+  {domain:'ipredictive.com',category:'tracker',description:'iPredictive'},
+  {domain:'tapad.com',category:'tracker',description:'Tapad Cross-Device'},
+  {domain:'datalogix.com',category:'tracker',description:'Oracle Datalogix'},
+  {domain:'bluekai.com',category:'tracker',description:'Oracle BlueKai'},
+  {domain:'addthis.com',category:'tracker',description:'Oracle AddThis'},
+  {domain:'exelator.com',category:'tracker',description:'Oracle Moat/Exelate'},
+  {domain:'rlcdn.com',category:'tracker',description:'LiveRamp Identity'},
+  {domain:'identityx.com',category:'tracker',description:'IdentityX'},
+  {domain:'tidaltv.com',category:'tracker',description:'Tidal TV'},
+  {domain:'zeotap.com',category:'tracker',description:'Zeotap Data'},
+  {domain:'permutive.com',category:'tracker',description:'Permutive DMP'},
+  {domain:'lotame.com',category:'tracker',description:'Lotame DMP'},
+  {domain:'cdn.segment.com',category:'analytics',description:'Segment CDN'},
+  {domain:'cdn.mxpnl.com',category:'analytics',description:'Mixpanel CDN'},
+  {domain:'cdn.amplitude.com',category:'analytics',description:'Amplitude CDN'},
+  {domain:'js.hs-analytics.net',category:'analytics',description:'HubSpot Analytics'},
+  {domain:'js.hs-scripts.com',category:'analytics',description:'HubSpot Scripts'},
+  {domain:'js.hs-banner.com',category:'analytics',description:'HubSpot Banner'},
+  {domain:'snap.licdn.com',category:'analytics',description:'LinkedIn Analytics'},
+  {domain:'dc.ads.linkedin.com',category:'analytics',description:'LinkedIn Ads'},
+  {domain:'ads.linkedin.com',category:'analytics',description:'LinkedIn Ads'},
+  {domain:'www.google-analytics.com',category:'analytics',description:'Google Analytics'},
+  {domain:'ssl.google-analytics.com',category:'analytics',description:'Google Analytics SSL'},
+  {domain:'stats.g.doubleclick.net',category:'analytics',description:'GA via DoubleClick'},
+  {domain:'pinterest.com/analytics',category:'analytics',description:'Pinterest Analytics'},
+  {domain:'analytics.twitter.com',category:'analytics',description:'Twitter Analytics'},
+  {domain:'static.ads-twitter.com',category:'analytics',description:'Twitter Ads'},
+  {domain:'t.co',category:'analytics',description:'Twitter Link Shortener'},
+  {domain:'ct.pinterest.com',category:'analytics',description:'Pinterest Analytics'},
+  {domain:'platform.twitter.com',category:'social',description:'Twitter Widget'},
+  {domain:'syndication.twitter.com',category:'social',description:'Twitter Syndication'},
+  {domain:'platform.linkedin.com',category:'social',description:'LinkedIn Widget'},
+  {domain:'assets.pinterest.com',category:'social',description:'Pinterest Widget'},
+  {domain:'widgets.pinterest.com',category:'social',description:'Pinterest Widgets'},
+  {domain:'platform.instagram.com',category:'social',description:'Instagram Embed'},
+  {domain:'staticxx.facebook.com',category:'social',description:'Facebook CDN'},
+  {domain:'external.xx.fbcdn.net',category:'social',description:'Facebook External CDN'},
+  {domain:'reddit.com/static',category:'social',description:'Reddit Widgets'},
+  {domain:'redditmedia.com',category:'social',description:'Reddit Media'},
+  {domain:'tumblr.com/share',category:'social',description:'Tumblr Share'},
+  {domain:'stumbleupon.com',category:'social',description:'StumbleUpon'},
+  {domain:'digg.com',category:'social',description:'Digg'},
+  {domain:'buffer.com',category:'social',description:'Buffer Social'},
+  {domain:'addtoany.com',category:'social',description:'AddToAny Sharing'},
+  {domain:'sharethis.com',category:'social',description:'ShareThis Widget'},
+  {domain:'fingerprintjs.com',category:'fingerprinting',description:'FingerprintJS'},
+  {domain:'fpjs.io',category:'fingerprinting',description:'FingerprintJS CDN'},
+  {domain:'fingerprint.com',category:'fingerprinting',description:'Fingerprint.com'},
+  {domain:'js.fingerprint.com',category:'fingerprinting',description:'Fingerprint JS'},
+  {domain:'cdn.jsdelivr.net/fingerprint',category:'fingerprinting',description:'Fingerprint via CDN'},
+  {domain:'api.fpjs.io',category:'fingerprinting',description:'FingerprintJS API'},
+  {domain:'coinhive.com',category:'crypto-miner',description:'CoinHive Miner'},
+  {domain:'coin-hive.com',category:'crypto-miner',description:'CoinHive'},
+  {domain:'coinhive.min.js',category:'crypto-miner',description:'CoinHive Script'},
+  {domain:'authedmine.com',category:'crypto-miner',description:'AuthedMine'},
+  {domain:'coinimp.com',category:'crypto-miner',description:'CoinImp Miner'},
+  {domain:'crypto-loot.com',category:'crypto-miner',description:'CryptoLoot Miner'},
+  {domain:'miner.video',category:'crypto-miner',description:'Web Video Miner'},
+  {domain:'monerominer.rocks',category:'crypto-miner',description:'MoneroMiner'},
+  {domain:'cookiebot.com',category:'annoyance',description:'CookieBot Consent'},
+  {domain:'onetrust.com',category:'annoyance',description:'OneTrust Consent'},
+  {domain:'onetrust.io',category:'annoyance',description:'OneTrust CDN'},
+  {domain:'cookie-script.com',category:'annoyance',description:'CookieScript'},
+  {domain:'cookielaw.org',category:'annoyance',description:'CookieLaw Banner'},
+  {domain:'gdprwrapper.com',category:'annoyance',description:'GDPR Wrapper'},
+  {domain:'consentmanager.net',category:'annoyance',description:'Consent Manager'},
+  {domain:'cmp.usercentrics.com',category:'annoyance',description:'UserCentrics CMP'},
+  {domain:'app.usercentrics.eu',category:'annoyance',description:'UserCentrics'},
+  {domain:'privacy-mgmt.com',category:'annoyance',description:'Privacy Management'},
+  {domain:'livechatinc.com',category:'annoyance',description:'LiveChat Widget'},
+  {domain:'intercom.io',category:'annoyance',description:'Intercom Chat'},
+  {domain:'intercomcdn.com',category:'annoyance',description:'Intercom CDN'},
+  {domain:'drift.com',category:'annoyance',description:'Drift Chat'},
+  {domain:'olark.com',category:'annoyance',description:'Olark Chat'},
+  {domain:'zopim.com',category:'annoyance',description:'Zopim Chat'},
+  {domain:'tidio.co',category:'annoyance',description:'Tidio Chat'},
+  {domain:'crisp.chat',category:'annoyance',description:'Crisp Chat'},
+  {domain:'tawk.to',category:'annoyance',description:'Tawk.to Chat'},
+  {domain:'freshchat.com',category:'annoyance',description:'FreshChat'},
+  {domain:'hotjar.com',category:'annoyance',description:'HotJar Feedback'},
+  {domain:'usabilla.com',category:'annoyance',description:'Usabilla Feedback'},
+  {domain:'survicate.com',category:'annoyance',description:'Survicate Survey'},
+  {domain:'typeform.com',category:'annoyance',description:'Typeform Survey'},
+  {domain:'trustpilot.com',category:'annoyance',description:'TrustPilot Widget'},
+  {domain:'feefo.com',category:'annoyance',description:'Feefo Reviews'},
+  {domain:'yelp.com/widget',category:'annoyance',description:'Yelp Widget'},
+  {domain:'cdn.consentmanager.net',category:'annoyance',description:'Consent Manager CDN'},
+  {domain:'fundingchoicesmessages.google.com',category:'annoyance',description:'Google Funding Choices'},
+  {domain:'fundingchoices.google.com',category:'annoyance',description:'Google Funding Choices'},
+];
+
+/* ── Real-time blocker engine ── */
+function matchRule(url) {
+  const lower = url.toLowerCase();
+  for (const rule of DEFAULT_RULES) {
+    if (lower.includes(rule.domain)) return rule;
+  }
+  return null;
+}
+
+const CAT_ALIAS = { 'crypto-miner': 'crypto' };
+function blockableCat(cat) { return CAT_ALIAS[cat] || cat; }
+
+/* ── Generate realistic mock URLs from real rules ── */
+const PATH_SUFFIXES = [
+  '/pixel?id='+Math.random().toString(36).slice(2,6),
+  '/collect?v='+Math.random().toString(36).slice(2,6),
+  '/track?id='+Math.random().toString(36).slice(2,6),
+  '/event?pid='+Math.random().toString(36).slice(2,6),
+  '/beacon.js','/tag.js','/widget.js','/sdk.js','/embed.js',
+  '/v1/'+Math.random().toString(36).slice(2,6)+'.js',
+  '/v2/'+Math.random().toString(36).slice(2,6)+'.js',
+  '/api/v3/'+Math.random().toString(36).slice(2,6),
+  '/static/'+Math.random().toString(36).slice(2,6)+'.gif',
+  '/analytics/'+Math.random().toString(36).slice(2,6)+'.js',
+  '/sync?uid='+Math.random().toString(36).slice(2,6),
+  '/retarget?id='+Math.random().toString(36).slice(2,6),
+  '/heatmaps?id='+Math.random().toString(36).slice(2,6),
+  '/activity?src='+Math.random().toString(36).slice(2,6),
+  '/pixel?src='+Math.random().toString(36).slice(2,6),
+  '/img/'+Math.random().toString(36).slice(2,6)+'.png',
+  '/script/'+Math.random().toString(36).slice(2,6)+'.js',
+  '?id='+Math.random().toString(36).slice(2,8),
+  '?pid='+Math.random().toString(36).slice(2,8),
+];
+
+const mockBlockedUrls = [];
+for (const rule of DEFAULT_RULES) {
+  const nPaths = 2 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < nPaths; i++) {
+    const suffix = PATH_SUFFIXES[Math.floor(Math.random() * PATH_SUFFIXES.length)];
+    mockBlockedUrls.push({
+      url: 'https://' + rule.domain + suffix,
+      cat: blockableCat(rule.category),
+      desc: rule.description,
+    });
+  }
+}
+
+/* ── Real-time interception: monkey-patch fetch ── */
+const origFetch = window.fetch;
+window.fetch = function(input, init) {
+  const url = (typeof input === 'string' ? input : (input instanceof Request ? input.url : '')) || '';
+  const rule = matchRule(url);
+  if (rule && shieldEnabled && blockCategories[blockableCat(rule.category)]) {
+    logBlock({ url, cat: blockableCat(rule.category), desc: rule.description });
+    return Promise.resolve(new Response(null, { status: 200, statusText: 'OK' }));
+  }
+  return origFetch.call(this, input, init);
+};
+
+/* ── Real-time interception: monkey-patch XMLHttpRequest ── */
+(function() {
+  const origOpen = XMLHttpRequest.prototype.open;
+  const origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method, url) {
+    const rule = matchRule(url);
+    if (rule && shieldEnabled && blockCategories[blockableCat(rule.category)]) {
+      logBlock({ url, cat: blockableCat(rule.category), desc: rule.description });
+      const xhr = this;
+      let state = 4;
+      Object.defineProperty(xhr, 'readyState', { get: () => state });
+      Object.defineProperty(xhr, 'status', { get: () => 200 });
+      Object.defineProperty(xhr, 'responseText', { get: () => '' });
+      Object.defineProperty(xhr, 'statusText', { get: () => 'OK' });
+      xhr._blocked = true;
+      state = 2; setTimeout(() => { state = 3; if (xhr.onreadystatechange) xhr.onreadystatechange.call(xhr); }, 0);
+      setTimeout(() => { state = 4; if (xhr.onreadystatechange) xhr.onreadystatechange.call(xhr); if (xhr.onload) xhr.onload.call(xhr); }, 10);
+      return;
+    }
+    return origOpen.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function() {
+    if (this._blocked) return;
+    return origSend.apply(this, arguments);
+  };
+})();
+
+/* ── Simulated background traffic (generated from real rules) ── */
+function simulateBlock() {
+  if (!shieldEnabled) return;
+  const categories = Object.keys(blockCategories).filter(k => blockCategories[k]);
+  if (categories.length === 0) return;
+  const candidates = mockBlockedUrls.filter(m => categories.includes(m.cat));
+  if (candidates.length === 0) return;
+  const pick = candidates[Math.floor(Math.random() * candidates.length)];
+  logBlock(pick);
+}
+
+function logBlock(data) {
+  blockedTotal++;
+  const entry = { ...data, timestamp: new Date().toLocaleTimeString() };
+  blockLog.unshift(entry);
+  if (blockLog.length > 100) blockLog.length = 100;
+  updateBlockedUI();
+  motionPing(entry);
+  return entry;
+}
+
+function updateBlockedUI() {
+  const el = document.getElementById('status-blocked');
+  const countEl = document.getElementById('blocked-count');
+  countEl.textContent = blockedTotal;
+  el.classList.toggle('has-blocks', blockedTotal > 0);
+  const adCount = blockLog.filter(e => e.cat === 'ad').length;
+  const trCount = blockLog.filter(e => e.cat === 'tracker').length;
+  document.getElementById('ntp-blocked').textContent = blockedTotal;
+  document.getElementById('ntp-trackers').textContent = trCount;
+  document.getElementById('ntp-ads').textContent = adCount;
+  document.getElementById('ntp-m-blocked').textContent = blockedTotal;
+  document.getElementById('ntp-m-trackers').textContent = trCount;
+  document.getElementById('ntp-m-ads').textContent = adCount;
+}
+
+document.getElementById('status-shield').addEventListener('click', function() {
+  shieldEnabled = !shieldEnabled;
+  this.textContent = shieldEnabled ? '🛡️' : '🚫';
+  this.style.opacity = shieldEnabled ? '1' : '0.5';
+  toast(`Nova Shield ${shieldEnabled ? 'enabled' : 'disabled'} — ${blockedTotal} total blocked`);
+});
+
+document.getElementById('status-blocked').addEventListener('click', function() {
+  document.getElementById('devtools').classList.add('open');
+  document.querySelectorAll('.devtools-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-dtab="console"]').classList.add('active');
+  renderBlockLog();
+});
+
+function catMeta(cat) { return CATEGORY_META[cat] || { label: cat, color: '#888', cls: 'bl-cat-other' }; }
+
+function renderBlockLog() {
+  const dc = document.getElementById('devtools-content');
+  if (blockLog.length === 0) {
+    dc.innerHTML = '<span style="color:#6a6a64">▸ No requests blocked yet — Nova Shield is protecting this page</span>';
+    return;
+  }
+  let html = `<span style="color:#6a6a64">▸ Nova Shield — ${blockedTotal} requests blocked (click shield in status bar to toggle)</span>\n`;
+  blockLog.forEach(e => {
+    const m = catMeta(e.cat);
+    html += `<div class="block-log-entry"><span class="bl-cat ${m.cls}">${m.label}</span><div><div class="bl-url">${e.timestamp} ${e.url}</div><div class="bl-desc">${e.desc}</div></div></div>`;
+  });
+  dc.innerHTML = html;
+}
+
+/* ── Motion Tracker ── */
+const MT_HISTORY = [];
+let mtPingsPerMin = 0;
+let mtPeak = 0;
+let mtTimer = null;
+
+function motionPing(entry) {
+  const tracker = document.getElementById('motion-tracker');
+  if (!tracker) return;
+  const now = Date.now();
+  MT_HISTORY.push(now);
+  // Keep only last 60s
+  while (MT_HISTORY.length && MT_HISTORY[0] < now - 60000) MT_HISTORY.shift();
+  mtPingsPerMin = MT_HISTORY.length;
+  if (mtPingsPerMin > mtPeak) mtPeak = mtPingsPerMin;
+  document.getElementById('mt-ppm').textContent = mtPingsPerMin;
+  document.getElementById('mt-peak').textContent = mtPeak;
+
+  // Radar ping animation
+  const overlay = document.getElementById('mt-overlay');
+  const rect = tracker.getBoundingClientRect();
+  const x = 15 + Math.random() * (tracker.clientWidth - 30);
+  const y = 15 + Math.random() * (tracker.clientHeight * 0.65);
+
+  const ping = document.createElement('div');
+  ping.className = 'mt-ping';
+  ping.style.left = x + 'px';
+  ping.style.top = y + 'px';
+  const meta = catMeta(entry.cat);
+  ping.style.borderColor = meta.color;
+  overlay.appendChild(ping);
+  setTimeout(() => ping.remove(), 900);
+
+  // Category label
+  const label = document.getElementById('mt-cat-label');
+  label.textContent = meta.label + ' — ' + entry.desc;
+  label.style.left = Math.max(4, Math.min(tracker.clientWidth - 200, x - 30)) + 'px';
+  label.style.top = Math.max(4, y - 18) + 'px';
+  label.style.background = meta.color + '33';
+  label.style.color = meta.color;
+  label.classList.add('show');
+  clearTimeout(label._hide);
+  label._hide = setTimeout(() => label.classList.remove('show'), 1500);
+}
+
+/* ── Canvas radar sweep ── */
+function initMotionCanvas() {
+  const canvas = document.getElementById('mt-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let angle = -70;
+  function draw() {
+    const w = canvas.parentElement.clientWidth;
+    const h = canvas.parentElement.clientHeight;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w; canvas.height = h;
+    }
+    ctx.clearRect(0, 0, w, h);
+    // Arc grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,.04)';
+    ctx.lineWidth = 0.5;
+    for (let r = 0.3; r < 1; r += 0.2) {
+      ctx.beginPath();
+      ctx.ellipse(w/2, h * 0.9, w/2 * r, h * r * 0.5, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // Sweep line
+    const rad = angle * Math.PI / 180;
+    ctx.strokeStyle = 'rgba(91,155,245,.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(w/2, h * 0.9);
+    ctx.lineTo(w/2 + Math.sin(rad) * w * 0.5, h * 0.9 - Math.cos(rad) * h * 0.4);
+    ctx.stroke();
+    // Gradient cone
+    const grad = ctx.createRadialGradient(w/2, h * 0.9, 0, w/2, h * 0.9, w * 0.5);
+    grad.addColorStop(0, 'rgba(91,155,245,.04)');
+    grad.addColorStop(0.5, 'rgba(91,155,245,.02)');
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(w/2, h * 0.9);
+    ctx.arc(w/2, h * 0.9, w * 0.5, rad - 0.4, rad + 0.4);
+    ctx.fill();
+
+    angle += 1.2;
+    if (angle > 70) angle = -70;
+    requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+// Simulate a few blocks on startup and periodically
+const blockTimers = [];
+function startBlockSimulation() {
+  blockTimers.push(setTimeout(() => {
+    for (let i = 0; i < 5; i++) blockTimers.push(setTimeout(simulateBlock, i * 300));
+  }, 1000));
+
+  function scheduleNext() {
+    if (!blockTimers.length) return;
+    const delay = 2000 + Math.random() * 4000;
+    blockTimers.push(setTimeout(() => { simulateBlock(); scheduleNext(); }, delay));
+  }
+  scheduleNext();
+}
+function stopBlockSimulation() {
+  blockTimers.forEach(clearTimeout);
+  blockTimers.length = 0;
+}
+
+// Wire settings toggles to block categories
+document.addEventListener('change', function(e) {
+  if (e.target.type === 'checkbox' && e.target.closest('.settings-content')) {
+    const key = e.target.closest('.setting-row')?.querySelector('.setting-label')?.textContent?.trim().toLowerCase() || '';
+    if (key.includes('block ads')) blockCategories.ad = e.target.checked;
+    if (key.includes('block trackers')) blockCategories.tracker = e.target.checked;
+    if (key.includes('block analytics')) blockCategories.analytics = e.target.checked;
+    if (key.includes('block social')) blockCategories.social = e.target.checked;
+    if (key.includes('block fingerprint')) blockCategories.fingerprinting = e.target.checked;
+    if (key.includes('block crypto')) blockCategories.crypto = e.target.checked;
+    if (key.includes('block annoyance')) blockCategories.annoyance = e.target.checked;
+  }
+});
+
+/* ── DevTools ── */
+function renderDevTools(dtab) {
+  const dc = document.getElementById('devtools-content');
+  if (dtab === 'console') { renderBlockLog(); return; }
+  if (dtab === 'elements') dc.innerHTML='<span style="color:#569cd6">&lt;html&gt;</span>\n  <span style="color:#569cd6">&lt;head&gt;</span>…<span style="color:#569cd6">&lt;/head&gt;</span>\n  <span style="color:#569cd6">&lt;body&gt;</span>\n    <span style="color:#569cd6">&lt;div</span> <span style="color:#9cdcfe">class=</span><span style="color:#ce9178">"content"</span><span style="color:#569cd6">&gt;</span>…<span style="color:#569cd6">&lt;/div&gt;</span>\n  <span style="color:#569cd6">&lt;/body&gt;</span>\n<span style="color:#569cd6">&lt;/html&gt;</span>';
+  else if (dtab === 'network') {
+    const lines = blockLog.slice(0, 8).map(e =>
+      `<span style="color:#d95040">BLOCKED</span> <span style="color:#9cdcfe">${e.url}</span> <span style="color:#d95040">🛡 Nova Shield</span>`
+    );
+    lines.push('<span style="color:#6a6a64">GET</span> <span style="color:#9cdcfe">https://nova-browser.dev</span> <span style="color:#27c93f">200 OK</span>');
+    lines.push('<span style="color:#6a6a64">GET</span> <span style="color:#9cdcfe">https://nova-browser.dev/style.css</span> <span style="color:#27c93f">200 OK</span>');
+    dc.innerHTML = lines.join('\n');
+  }
+  else dc.innerHTML='<span style="color:#6a6a64">Sources panel — file tree would appear here</span>';
+}
+
+document.querySelectorAll('.devtools-tab').forEach(el=>{
+  el.addEventListener('click',()=>{
+    document.querySelectorAll('.devtools-tab').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+    renderDevTools(el.dataset.dtab);
+  });
+});
+document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key==='I'){e.preventDefault();document.getElementById('devtools').classList.toggle('open')}});
+
+/* ── Menu item shortcuts ── */
+document.querySelector('.menu-item[data-menu="view"]').addEventListener('dblclick',()=>document.getElementById('devtools').classList.toggle('open'));
+
+/* ── SETTINGS PAGE ── */
+const settingsData = {
+  sections: [
+    {id:'general',title:'General',icon:'⚙',settings:[
+      {key:'homePage',label:'Home page',desc:'Page shown on new tab',type:'text',def:'about:blank'},
+      {key:'searchEngine',label:'Search engine',desc:'Default search provider',type:'select',def:'google',opts:[{l:'Google',v:'google'},{l:'Bing',v:'bing'},{l:'DuckDuckGo',v:'duckduckgo'}]},
+      {key:'restoreSession',label:'Restore last session',desc:'Reopen tabs from last session on startup',type:'boolean',def:true},
+      {key:'maxTabs',label:'Maximum tabs',desc:'Upper limit on open tabs (requires restart)',type:'select',def:'20',opts:[{l:'10',v:'10'},{l:'20',v:'20'},{l:'50',v:'50'},{l:'100',v:'100'}]},
+    ]},
+    {id:'privacy',title:'Privacy & Security',icon:'🔒',settings:[
+      {key:'csp',label:'Content Security Policy',desc:'Enforce CSP headers on loaded pages',type:'boolean',def:true},
+      {key:'blockPopups',label:'Block pop-ups',desc:'Block automatic pop-up windows',type:'boolean',def:true},
+      {key:'safeBrowsing',label:'Safe Browsing',desc:'Warn about dangerous sites',type:'boolean',def:true},
+      {key:'doNotTrack',label:'Send Do Not Track',desc:'Request sites not to track your browsing',type:'boolean',def:false},
+      {key:'clearData',label:'Clear browsing data',desc:'Remove history, cookies, cache',type:'button',def:'Clear Data'},
+      {key:'adBlock',label:'Block Ads',desc:'Prevent ad networks from loading content',type:'boolean',def:true},
+      {key:'trackerBlock',label:'Block Trackers',desc:'Block analytics & tracking scripts from Google, Facebook, etc.',type:'boolean',def:true},
+      {key:'analyticsBlock',label:'Block Analytics',desc:'Block analytics platforms (Segment, Mixpanel, Amplitude, etc.)',type:'boolean',def:true},
+      {key:'socialBlock',label:'Block Social Widgets',desc:'Block embedded social media widgets (Twitter, Facebook, LinkedIn)',type:'boolean',def:true},
+      {key:'fingerprintBlock',label:'Block Fingerprinting',desc:'Prevent browser fingerprinting scripts',type:'boolean',def:true},
+      {key:'cryptoBlock',label:'Block Crypto Miners',desc:'Prevent in-browser cryptocurrency mining',type:'boolean',def:true},
+      {key:'annoyanceBlock',label:'Block Annoyances',desc:'Block cookie banners, chat widgets, and survey popups',type:'boolean',def:true},
+    ]},
+    {id:'appearance',title:'Appearance',icon:'🎨',settings:[
+      {key:'theme',label:'Theme',desc:'Browser color theme',type:'select',def:'system',opts:[{l:'System',v:'system'},{l:'Light',v:'light'},{l:'Dark',v:'dark'}]},
+      {key:'fontSize',label:'Font size',desc:'Default page font size',type:'range',def:16,min:10,max:32,step:1},
+      {key:'zoom',label:'Zoom level',desc:'Default page zoom',type:'select',def:'100',opts:[{l:'75%',v:'75'},{l:'100%',v:'100'},{l:'125%',v:'125'},{l:'150%',v:'150'},{l:'200%',v:'200'}]},
+    ]},
+    {id:'downloads',title:'Downloads',icon:'📥',settings:[
+      {key:'dlPath',label:'Download location',desc:'Where to save downloaded files',type:'text',def:'./downloads'},
+      {key:'askPath',label:'Ask where to save',desc:'Prompt for location before each download',type:'boolean',def:true},
+      {key:'autoOpen',label:'Auto-open safe files',desc:'Automatically open downloaded PDFs, images',type:'boolean',def:false},
+    ]},
+    {id:'shortcuts',title:'Shortcuts',icon:'⌨',settings:[
+      {key:'enableShortcuts',label:'Enable keyboard shortcuts',desc:'Use keyboard shortcuts for navigation',type:'boolean',def:true},
+    ]},
+    {id:'system',title:'System',icon:'⚡',settings:[
+      {key:'hardwareAccel',label:'Hardware acceleration',desc:'Use GPU for rendering when available',type:'boolean',def:true},
+      {key:'language',label:'Language',desc:'Browser UI language',type:'select',def:'en-US',opts:[{l:'English (US)',v:'en-US'},{l:'English (UK)',v:'en-GB'},{l:'Spanish',v:'es'},{l:'French',v:'fr'},{l:'German',v:'de'},{l:'Japanese',v:'ja'}]},
+      {key:'userAgent',label:'User Agent',desc:'Custom user agent string',type:'text',def:'NovaBrowser/1.0'},
+    ]},
+  ]
+};
+
+function renderSettings() {
+  const root = document.getElementById('settings-root');
+  const vals = new Map(); let active = 'general';
+  settingsData.sections.forEach(s=>s.settings.forEach(st=>vals.set(st.key,st.def)));
+  function renderContent(){
+    const c = root.querySelector('.settings-content'); if(!c) return;
+    const sec = settingsData.sections.find(s=>s.id===active); if(!sec) return;
+    c.innerHTML = `<h2>${sec.icon} ${sec.title}</h2>`;
+    sec.settings.forEach(st=>{
+      const row = document.createElement('div'); row.className='setting-row';
+      row.innerHTML = `<div class="setting-label">${st.label}</div><div class="setting-desc">${st.desc}</div>`;
+      const v = vals.get(st.key)??st.def;
+      if(st.type==='text'){
+        const inp = document.createElement('input'); inp.type='text'; inp.value=String(v);
+        inp.addEventListener('change',()=>vals.set(st.key,inp.value));
+        row.appendChild(inp);
+      } else if(st.type==='boolean'){
+        const wrap = document.createElement('div'); wrap.className='setting-flex-wrap';
+        const cb = document.createElement('input'); cb.type='checkbox'; cb.checked=v===true;
+        const lbl = document.createElement('label'); lbl.className='setting-label-inline'; lbl.textContent=v?'Enabled':'Disabled';
+        cb.addEventListener('change',()=>{vals.set(st.key,cb.checked);lbl.textContent=cb.checked?'Enabled':'Disabled'});
+        wrap.appendChild(cb); wrap.appendChild(lbl); row.appendChild(wrap);
+      } else if(st.type==='select'){
+        const sel = document.createElement('select');
+        (st.opts||[]).forEach(o=>{const op=document.createElement('option');op.value=o.v;op.textContent=o.l;op.selected=o.v===v;sel.appendChild(op)});
+        sel.addEventListener('change',()=>vals.set(st.key,sel.value));
+        row.appendChild(sel);
+      } else if(st.type==='range'){
+        const wrap = document.createElement('div'); wrap.className='setting-flex-wrap';
+        const sl = document.createElement('input'); sl.type='range'; sl.min=st.min; sl.max=st.max; sl.step=st.step||1; sl.value=String(v);
+        const vl = document.createElement('span'); vl.className='range-val'; vl.textContent=String(v);
+        sl.addEventListener('input',()=>{vals.set(st.key,Number(sl.value));vl.textContent=sl.value});
+        wrap.appendChild(sl); wrap.appendChild(vl); row.appendChild(wrap);
+      } else if(st.type==='button'){
+        const btn = document.createElement('button');
+        btn.className='dl-clear'; btn.textContent=String(v);
+        btn.addEventListener('click',()=>toast('Browsing data cleared (simulated)'));
+        row.appendChild(btn);
+      }
+      c.appendChild(row);
+    });
+  }
+  const sidebar = document.createElement('div'); sidebar.className='settings-sidebar';
+  settingsData.sections.forEach(s=>{
+    const item = document.createElement('div'); item.className='settings-nav-item'+(s.id===active?' active':'');
+    item.textContent=`${s.icon} ${s.title}`;
+    item.addEventListener('click',()=>{active=s.id;sidebar.querySelectorAll('.settings-nav-item').forEach(e=>e.classList.remove('active'));item.classList.add('active');renderContent()});
+    sidebar.appendChild(item);
+  });
+  root.appendChild(sidebar);
+  const content = document.createElement('div'); content.className='settings-content';
+  root.appendChild(content);
+  renderContent();
+}
+
+/* ── DOWNLOADS PAGE ── */
+const downloadItems = [
+  {id:'d1',filename:'nova-browser-source.tar.gz',url:'https://github.com/nova-browser/archive/v1.0.tar.gz',state:'completed',totalBytes:2_456_000,receivedBytes:2_456_000,createdAt:Date.now()-3600000,completedAt:Date.now()-3500000,error:null},
+  {id:'d2',filename:'documentation.pdf',url:'https://docs.nova-browser.dev/guide.pdf',state:'downloading',totalBytes:1_200_000,receivedBytes:723_000,createdAt:Date.now()-120000,completedAt:null,error:null},
+  {id:'d3',filename:'screenshot.png',url:'https://nova-browser.dev/preview.png',state:'paused',totalBytes:340_000,receivedBytes:180_000,createdAt:Date.now()-7200000,completedAt:null,error:null},
+  {id:'d4',filename:'extension-v2.zip',url:'https://extensions.nova-browser.dev/v2.zip',state:'failed',totalBytes:890_000,receivedBytes:450_000,createdAt:Date.now()-86400000,completedAt:null,error:'Connection lost'},
+  {id:'d5',filename:'typescript-handbook.epub',url:'https://www.typescriptlang.org/assets/handbook.epub',state:'completed',totalBytes:1_800_000,receivedBytes:1_800_000,createdAt:Date.now()-172800000,completedAt:Date.now()-172790000,error:null},
+];
+
+function formatBytes(b){if(b===0)return'0 B';const k=1024,s=['B','KB','MB','GB'];const i=Math.floor(Math.log(b)/Math.log(k));return parseFloat((b/Math.pow(k,i)).toFixed(1))+' '+s[i]}
+function dlIcon(s){switch(s){case'queued':return'⏳';case'downloading':return'⬇';case'paused':return'⏸';case'completed':return'✅';case'failed':return'❌';case'cancelled':return'🚫'}}
+
+let downloads = downloadItems.map(d=>({...d}));
+function renderDownloads() {
+  const root = document.getElementById('downloads-root');
+  if(!downloads.length){
+    root.innerHTML=`<div class="dl-empty"><div class="dl-e-icon">📥</div><p>No downloads yet</p><p>Downloads will appear here when you download files</p></div>`;
+    return;
+  }
+  root.innerHTML=`<div class="dl-header"><h1>📥 Downloads</h1><button class="dl-clear" onclick="clearDownloads()">Clear completed</button></div>`;
+  const list = document.createElement('div');
+  downloads.forEach(d=>{
+    const row = document.createElement('div'); row.className='dl-item';
+    const pct = d.totalBytes>0?Math.round(d.receivedBytes/d.totalBytes*100):0;
+    let meta = formatBytes(d.receivedBytes)+(d.totalBytes?` / ${formatBytes(d.totalBytes)}`:'');
+    if(d.state==='completed'&&d.completedAt) meta+=` · Completed ${new Date(d.completedAt).toLocaleString()}`;
+    if(d.state==='failed'&&d.error) meta+=` · ${d.error}`;
+    row.innerHTML=`<div class="dl-icon">${dlIcon(d.state)}</div><div class="dl-info"><div class="dl-name">${d.filename}</div><div class="dl-meta">${meta}</div>${d.state==='downloading'?`<div class="dl-progress"><div class="dl-progress-bar" style="width:${pct}%"></div></div>`:''}</div><div class="dl-actions">${actionBtns(d)}</div>`;
+    list.appendChild(row);
+  });
+  root.appendChild(list);
+
+  // Simulate download progress
+  const d2 = downloads.find(d=>d.id==='d2');
+  if(d2&&d2.state==='downloading'){
+    clearTimeout(d2._timer);
+    d2._timer = setTimeout(()=>{
+      const inc = Math.min(50000,d2.totalBytes-d2.receivedBytes);
+      if(inc>0){d2.receivedBytes+=inc;renderDownloads()} else {d2.state='completed';d2.completedAt=Date.now();renderDownloads()}
+    },800);
+  }
+}
+function actionBtns(d){
+  let btns='';
+  if(d.state==='completed') btns+='<button class="dl-action-btn" title="Open file" onclick="toast(\'Open: '+d.filename+'\')">📂</button><button class="dl-action-btn" title="Show in folder" onclick="toast(\'Show in folder: '+d.filename+'\')">📁</button>';
+  if(d.state==='downloading') btns+='<button class="dl-action-btn" title="Pause" onclick="pauseDl(\''+d.id+'\')">⏸</button>';
+  if(d.state==='paused') btns+='<button class="dl-action-btn" title="Resume" onclick="resumeDl(\''+d.id+'\')">▶</button>';
+  if(d.state==='queued'||d.state==='downloading') btns+='<button class="dl-action-btn" title="Cancel" onclick="cancelDl(\''+d.id+'\')">✕</button>';
+  btns+='<button class="dl-action-btn" title="Remove" onclick="removeDl(\''+d.id+'\')">🗑</button>';
+  return btns;
+}
+function pauseDl(id){const d=downloads.find(x=>x.id===id);if(d){d.state='paused';clearTimeout(d._timer);renderDownloads();toast('Download paused')}}
+function resumeDl(id){const d=downloads.find(x=>x.id===id);if(d){d.state='downloading';renderDownloads();toast('Download resumed')}}
+function cancelDl(id){const d=downloads.find(x=>x.id===id);if(d){d.state='cancelled';clearTimeout(d._timer);renderDownloads();toast('Download cancelled')}}
+function removeDl(id){downloads=downloads.filter(x=>x.id!==id);renderDownloads()}
+function clearDownloads(){downloads=downloads.filter(d=>d.state!=='completed'&&d.state!=='failed'&&d.state!=='cancelled');renderDownloads();toast('Completed downloads cleared')}
+
+/* ── HISTORY PAGE ── */
+const historyEntries = [
+  {url:'https://nova-browser.dev',title:'Nova Browser — A TypeScript browser engine',time:Date.now()-300000,count:12},
+  {url:'https://github.com/nova-browser',title:'GitHub — Nova Browser',time:Date.now()-1800000,count:5},
+  {url:'https://stackoverflow.com/questions/123',title:'TypeScript strict mode options — Stack Overflow',time:Date.now()-3600000,count:3},
+  {url:'https://www.typescriptlang.org/docs/',title:'TypeScript Documentation — TypeScript',time:Date.now()-7200000,count:8},
+  {url:'https://developer.mozilla.org/en-US/docs/Web/API',title:'Web APIs — MDN',time:Date.now()-14400000,count:6},
+  {url:'https://vitest.dev/guide/',title:'Getting Started — Vitest',time:Date.now()-28800000,count:4},
+  {url:'https://google.com/search?q=browser+engine+typescript',title:'Google Search — browser engine typescript',time:Date.now()-86400000,count:2},
+  {url:'https://news.ycombinator.com/item?id=12345',title:'Show HN: Nova Browser — Hacker News',time:Date.now()-172800000,count:15},
+  {url:'https://nodejs.org/en/docs/',title:'Node.js Documentation',time:Date.now()-259200000,count:3},
+  {url:'https://eslint.org/docs/latest/',title:'ESLint Configuration — ESLint',time:Date.now()-345600000,count:1},
+];
+
+function renderHistory(filter='') {
+  const root = document.getElementById('history-root');
+  let items = historyEntries;
+  if(filter){const q=filter.toLowerCase();items=items.filter(e=>e.url.includes(q)||e.title.toLowerCase().includes(q))}
+  if(!items.length){
+    root.innerHTML=`<div class="hist-empty"><div class="he-icon">🕐</div><p>No history entries</p></div>`;
+    return;
+  }
+  root.innerHTML=`<h1>🕐 History</h1>
+    <div class="history-search"><input type="text" id="hist-search" placeholder="Search history..." value="${filter}"><button class="hs-btn" onclick="document.getElementById(\'hist-search\').value=\'\';renderHistory()">Clear</button><button class="hs-btn" onclick="historyEntries.length=0;renderHistory();toast('History cleared')">Clear All</button></div>`;
+  const list = document.createElement('div');
+  items.forEach(e=>{
+    const ago = timeAgo(e.time);
+    const row = document.createElement('div'); row.className='hist-item';
+    row.innerHTML=`<div class="hist-icon">${e.count>5?'🔥':'🔗'}</div><div class="hist-info"><div class="hist-title" onclick="navigateTo('${e.url}')" data-page="browser">${e.title}</div><div class="hist-url">${e.url}</div></div><div class="hist-time">${ago}</div><button class="hist-del" onclick="deleteHistEntry('${e.url}')">✕</button>`;
+    list.appendChild(row);
+  });
+  root.appendChild(list);
+  setTimeout(()=>{
+    const inp=document.getElementById('hist-search');
+    if(inp) inp.addEventListener('input',()=>renderHistory(inp.value));
+  },0);
+}
+function deleteHistEntry(url){const i=historyEntries.findIndex(e=>e.url===url);if(i!==-1){historyEntries.splice(i,1);renderHistory(document.getElementById('hist-search')?.value||'')}}
+function timeAgo(t){const d=Date.now()-t;if(d<60000)return'just now';if(d<3600000)return Math.floor(d/60000)+'m ago';if(d<86400000)return Math.floor(d/3600000)+'h ago';return Math.floor(d/86400000)+'d ago'}
+document.querySelectorAll('.hist-title').forEach(el=>el.addEventListener('click',function(){document.querySelector('[data-page="browser"]').click()}))
+
+/* ── BOOKMARKS PAGE ── */
+const bmState = [
+  {id:'bf1',title:'Favorites',folder:true,children:[
+    {id:'b1',title:'Nova Browser',url:'https://nova-browser.dev',icon:'🌐'},
+    {id:'b2',title:'GitHub',url:'https://github.com',icon:'🐙'},
+  ]},
+  {id:'bf2',title:'Dev Tools',folder:true,children:[
+    {id:'b3',title:'TypeScript Docs',url:'https://www.typescriptlang.org/docs/',icon:'📘'},
+    {id:'b4',title:'MDN Web Docs',url:'https://developer.mozilla.org',icon:'📙'},
+    {id:'b5',title:'Stack Overflow',url:'https://stackoverflow.com',icon:'💬'},
+    {id:'bf3',title:'Testing',folder:true,children:[
+      {id:'b6',title:'Vitest',url:'https://vitest.dev',icon:'⚡'},
+      {id:'b7',title:'Playwright',url:'https://playwright.dev',icon:'🎭'},
+    ]},
+  ]},
+  {id:'b8',title:'TypeScript Handbook',url:'https://www.typescriptlang.org/assets/typescript-handbook.pdf',icon:'📄'},
+  {id:'b9',title:'Hacker News',url:'https://news.ycombinator.com',icon:'🔗'},
+];
+const flatBm = []; function flattenBm(items, indent=0){items.forEach(i=>{flatBm.push({...i,_indent:indent,_open:true});if(i.folder&&i.children)flattenBm(i.children,indent+1)})}
+
+function renderBookmarks(){
+  const root = document.getElementById('bm-root');
+  flatBm.length=0; flattenBm(bmState);
+  root.innerHTML=`<h1>🔖 Bookmarks</h1>
+    <div class="bm-header">
+      <button class="bm-btn" onclick="toast('New bookmark added')">+ New Bookmark</button>
+      <button class="bm-btn" onclick="toast('New folder created')">+ New Folder</button>
+      <button class="bm-btn primary" onclick="toast('Bookmarks imported')">Import</button>
+      <button class="bm-btn" onclick="toast('Bookmarks exported')">Export</button>
+    </div>`;
+  const tree = document.createElement('div'); tree.className='bm-tree';
+  let html='';
+  flatBm.forEach((b,i)=>{
+    const indent = b._indent*16;
+    if(b.folder){
+      html+=`<div style="padding-left:${indent}px"><div class="bm-folder-row"><span class="bm-arrow open">▶</span>📁 ${b.title}</div><div class="bm-folder-children" id="bmc-${i}">`;
+    } else {
+      html+=`<div style="padding-left:${indent}px"><div class="bm-bookmark-row" onclick="navigateTo('${b.url}');document.querySelector('[data-page=\"browser\"]').click()"><span class="bm-fav">${b.icon||'🔖'}</span><span class="bm-title">${b.title}</span><span class="bm-url">${b.url}</span><button class="bm-rm" onclick="event.stopPropagation();toast('Bookmark removed')">✕</button></div>`;
+    }
+    // Close folders
+    if(b.folder){
+      // find next sibling at same or lower indent
+      let j=i+1;
+      while(j<flatBm.length&&flatBm[j]._indent>indent/16) j++;
+      // we need to close all open folder divs
+    }
+  });
+  // Simple approach: rebuild
+  tree.innerHTML = renderBmTree(bmState,0);
+  root.appendChild(tree);
+}
+function renderBmTree(items,depth){
+  let html='';
+  items.forEach(item=>{
+    if(item.folder){
+      html+=`<div style="padding-left:${depth*16}px"><div class="bm-folder-row" onclick="toggleBmFolder(this)"><span class="bm-arrow open">▶</span>📁 ${item.title}</div><div class="bm-folder-children">`;
+      if(item.children) html+=renderBmTree(item.children,depth+1);
+      html+=`</div></div>`;
+    } else {
+      html+=`<div style="padding-left:${depth*16}px"><div class="bm-bookmark-row" onclick="goToBm('${item.url}')"><span class="bm-fav">${item.icon||'🔖'}</span><span class="bm-title">${item.title}</span><span class="bm-url">${item.url}</span><button class="bm-rm" onclick="event.stopPropagation();toast('Removed: ${item.title}')">✕</button></div></div>`;
+    }
+  });
+  return html;
+}
+function goToBm(url){navigateTo(url);document.querySelector('[data-page="browser"]').click()}
+function toggleBmFolder(el){el.querySelector('.bm-arrow').classList.toggle('open');const ch=el.nextElementSibling;if(ch)ch.style.display=ch.style.display==='none'?'':'none'}
+
+/* ── Shield Page ── */
+let shieldFilter = 'all';
+
+function renderShield() {
+  const root = document.getElementById('shield-root');
+  const counts = {};
+  Object.keys(CATEGORY_META).forEach(k => counts[k] = 0);
+  blockLog.forEach(e => { counts[e.cat] = (counts[e.cat] || 0) + 1; });
+
+  const maxCount = Math.max(...Object.values(counts), 1);
+
+  let filtered = blockLog;
+  if (shieldFilter !== 'all') filtered = blockLog.filter(e => e.cat === shieldFilter);
+
+  const enabledCount = Object.values(blockCategories).filter(Boolean).length;
+  const totalCats = Object.keys(blockCategories).length;
+
+  root.innerHTML = `
+    <div class="shield-header">
+      <h1>🛡 Nova Shield</h1>
+      <div class="shield-status">
+        <span class="shield-badge ${shieldEnabled ? 'active' : 'inactive'}">${shieldEnabled ? 'Active' : 'Disabled'}</span>
+        <span>${enabledCount}/${totalCats} categories enabled</span>
+        <span>·</span>
+        <span>${blockedTotal} total blocked</span>
+      </div>
+      <div class="shield-actions">
+        <button class="shield-btn" onclick="shieldEnabled=!shieldEnabled;document.getElementById('status-shield').textContent=shieldEnabled?'🛡️':'🚫';document.getElementById('status-shield').style.opacity=shieldEnabled?'1':'0.5';renderShield();toast('Shield '+(shieldEnabled?'enabled':'disabled'))">${shieldEnabled ? 'Disable' : 'Enable'} Shield</button>
+        <button class="shield-btn danger" onclick="blockLog.length=0;blockedTotal=0;updateBlockedUI();renderShield();toast('Block log cleared')">Clear Log</button>
+      </div>
+    </div>
+    <div class="shield-cards">
+      ${Object.entries(CATEGORY_META).map(([k, meta]) => {
+        const c = counts[k] || 0;
+        const pct = maxCount > 0 ? (c / maxCount * 100) : 0;
+        const enabled = blockCategories[k];
+        return `<div class="shield-card" style="opacity:${enabled ? 1 : 0.4}">
+          <div class="sc-num" style="color:${meta.color}">${c}</div>
+          <div class="sc-label">${meta.labelPl} ${enabled ? '' : '(off)'}</div>
+          <div class="sc-bar"><div class="sc-bar-fill" style="width:${pct}%;background:${meta.color}"></div></div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="shield-filter">
+      <button class="shield-filter-btn ${shieldFilter === 'all' ? 'active' : ''}" onclick="shieldFilter='all';renderShield()">All</button>
+      ${Object.entries(CATEGORY_META).map(([k, meta]) =>
+        `<button class="shield-filter-btn ${shieldFilter === k ? 'active' : ''}" onclick="shieldFilter='${k}';renderShield()" style="${!blockCategories[k] ? 'opacity:0.4' : ''}">${meta.labelPl}</button>`
+      ).join('')}
+    </div>
+    ${filtered.length === 0 ? `
+      <div class="shield-empty">
+        <div class="se-icon">🛡️</div>
+        <p>No ${shieldFilter !== 'all' ? (CATEGORY_META[shieldFilter]?.labelPl || '').toLowerCase() + ' ' : ''}requests blocked</p>
+        <p class="shield-empty-desc">Browse the web and Nova Shield will protect you automatically</p>
+      </div>
+    ` : `
+      <div class="shield-log">
+        <div class="shield-log-header">
+          <span class="slh-time">Time</span>
+          <span class="slh-cat">Category</span>
+          <span class="slh-url">URL</span>
+          <span class="slh-desc">Description</span>
+        </div>
+        ${filtered.map(e => {
+          const m = catMeta(e.cat);
+          return `<div class="shield-log-entry">
+            <span class="sl-time">${e.timestamp || ''}</span>
+            <span class="sl-cat ${m.cls}">${m.label}</span>
+            <span class="sl-url" title="${e.url}">${e.url}</span>
+            <span class="sl-desc">${e.desc || ''}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    `}
+  `;
+}
+
+/* ── Mobile ── */
+document.getElementById('mobile-toggle').addEventListener('change',function(){
+  document.getElementById('desktop-shell').style.display=this.checked?'none':'flex';
+  document.getElementById('mobile-shell').classList.toggle('show',this.checked);
+});
+document.getElementById('mobile-input').addEventListener('keydown',function(e){if(e.key==='Enter'){toast('Mobile navigate to: '+this.value);this.blur()}});
+document.querySelectorAll('#mb-back,#mb-fwd,#mb-home,#mb-tabs,#mb-menu').forEach(b=>b.addEventListener('click',function(){toast('Mobile: '+this.textContent+' (simulated)')}));
+
+/* ── Toast ── */
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._hide);t._hide=setTimeout(()=>t.classList.remove('show'),2000)}
+
+/* ── Init ── */
+buildMenu();
+renderTabs();
+renderBookmarkBar();
+renderSettings();
+renderDownloads();
+renderHistory();
+renderBookmarks();
+renderShield();
+navigateTo('https://nova-browser.dev');
+initMotionCanvas();
+startBlockSimulation();
+
+// Periodically update shield page if it's visible
+setInterval(() => {
+  const shieldPage = document.getElementById('page-shield');
+  if (shieldPage && shieldPage.classList.contains('active')) renderShield();
+}, 2000);
+
+// Network tab should show blocked entries
+setTimeout(() => {
+  const dc = document.getElementById('devtools-content');
+  const active = document.querySelector('.devtools-tab.active');
+  if (active) renderDevTools(active.dataset.dtab);
+}, 500);
+
+// Keyboard shortcut for devtools
+document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key==='I'){e.preventDefault();document.getElementById('devtools').classList.toggle('open')}});
+
+// Page switcher
+document.querySelectorAll('[data-page]').forEach(btn=>{
+  btn.addEventListener('click',function(){
+    document.querySelectorAll('[data-page]').forEach(b=>b.classList.remove('active'));
+    this.classList.add('active');
+    document.querySelectorAll('.page-tab').forEach(p=>p.classList.remove('active'));
+    document.getElementById('page-'+this.dataset.page).classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
