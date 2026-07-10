@@ -108,7 +108,7 @@ class InMemoryHistoryStore implements IHistoryStore {
 
   async getRecent(maxResults = 50): Promise<readonly HistoryEntry[]> {
     const sorted = [...this.entries.values()]
-      .sort((a, b) => b.lastVisitTime - a.lastVisitTime);
+      .sort((a, b) => b.lastVisitTime - a.lastVisitTime || b.visitTime - a.visitTime || String(b.id).localeCompare(String(a.id)));
     return sorted.slice(0, maxResults);
   }
 

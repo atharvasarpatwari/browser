@@ -212,6 +212,7 @@ describe('DownloadManager', () => {
     const keep = await dm.download('https://example.com/keep');
     (keep as any).state = 'queued';
     const del = await dm.download('https://example.com/del');
+    (del as any).state = 'completed';
 
     const cleared = await dm.clearCompleted();
     expect(cleared).toBe(1);

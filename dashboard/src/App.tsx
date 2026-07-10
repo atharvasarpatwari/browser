@@ -9,6 +9,7 @@ import SearchBar from './components/SearchBar'
 import SearchEngineSelector from './components/SearchEngineSelector'
 import SearchWithCard from './components/SearchWithCard'
 import BottomDock from './components/BottomDock'
+import AiSection from './components/AiSection'
 import FloatingButtons from './components/FloatingButtons'
 
 function Particles() {
@@ -96,6 +97,16 @@ function App() {
               </div>
             </motion.div>
           </div>
+
+          {/* ─── AI SECTION ─── */}
+          <motion.div
+            className="relative z-10 w-full max-w-6xl mx-auto mt-8"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: .5, delay: .4 }}
+          >
+            <AiSection />
+          </motion.div>
 
           {/* ─── BOTTOM DOCK ─── */}
           <motion.div

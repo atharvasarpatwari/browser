@@ -46,6 +46,10 @@ import { PermissionManager } from '../browser/security/permission-manager';
 import type { IPermissionManager } from '../browser/security/permission-manager';
 import { TrackerBlocker } from '../browser/security/tracker-blocker';
 import type { ITrackerBlocker } from '../browser/security/tracker-blocker';
+import { AdBlocker } from '../browser/security/ad-blocker';
+import type { IAdBlocker } from '../browser/security/ad-blocker';
+import { ThirdPartySecurityManager, extractOrigin } from '../browser/security/third-party-security';
+import type { IThirdPartySecurityManager } from '../browser/security/third-party-security';
 
 // JavaScript runtime
 import { JsRuntimeBridge } from '../browser/javascript/js-runtime-bridge';
@@ -112,6 +116,8 @@ const Tokens = Object.freeze({
   SandboxManager: Symbol('SandboxManager'),
   PermissionManager: Symbol('PermissionManager'),
   TrackerBlocker: Symbol('TrackerBlocker'),
+  AdBlocker: Symbol('AdBlocker'),
+  ThirdPartySecurityManager: Symbol('ThirdPartySecurityManager'),
   JsRuntimeBridge: Symbol('JsRuntimeBridge'),
   EventLoop: Symbol('EventLoop'),
   DomBindings: Symbol('DomBindings'),
@@ -346,6 +352,16 @@ class ApplicationBootstrap {
       () => new TrackerBlocker(),
       ServiceLifetime.Singleton,
     );
+    c.register<IAdBlocker>(
+      Tokens.AdBlocker,
+      () => new AdBlocker(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<IThirdPartySecurityManager>(
+      Tokens.ThirdPartySecurityManager,
+      () => new ThirdPartySecurityManager(),
+      ServiceLifetime.Singleton,
+    );
 
     // 7. JavaScript runtime
     c.register<IJsRuntimeBridge>(
@@ -463,12 +479,35 @@ class ApplicationBootstrap {
     const resourceLoader = this.container.resolve<IResourceLoader>(Tokens.ResourceLoader);
     engine.setPageLoader(this.createPageLoader(resourceLoader));
 
-    // Add ad/tracker blocking middleware
+    // Add ad blocking middleware
+    const adBlocker = this.container.resolve<IAdBlocker>(Tokens.AdBlocker);
+    engine.addMiddleware(async (session) => {
+      const check = adBlocker.shouldBlock(session.entry.url);
+      if (check.blocked) {
+        console.warn(`[AdBlocker] Blocked ad page load: ${session.entry.url} (${check.match!.rule.category})`);
+        return false;
+      }
+      return true;
+    });
+
+    // Add tracker blocking middleware
     const blocker = this.container.resolve<ITrackerBlocker>(Tokens.TrackerBlocker);
     engine.addMiddleware(async (session) => {
       const check = blocker.shouldBlock(session.entry.url);
       if (check.blocked) {
         console.warn(`[Blocker] Blocked main page load: ${session.entry.url} (${check.category})`);
+        return false;
+      }
+      return true;
+    });
+
+    // Add third-party security middleware
+    const thirdPartySecurity = this.container.resolve<IThirdPartySecurityManager>(Tokens.ThirdPartySecurityManager);
+    engine.addMiddleware(async (session) => {
+      const pageOrigin = extractOrigin(session.entry.url);
+      const check = thirdPartySecurity.checkFetchAllowed(pageOrigin, pageOrigin, session.entry.url);
+      if (!check.allowed) {
+        console.warn(`[ThirdPartySecurity] Blocked fetch: ${session.entry.url} (${check.reason})`);
         return false;
       }
       return true;
