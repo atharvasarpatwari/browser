@@ -1,6 +1,7 @@
 import type { ISharedService } from '../../app/app-shell';
 import type { IBookmarkStore, BookmarkEntry, BookmarkQuery } from '../storage/bookmark-store';
 import { InMemoryBookmarkStore } from '../storage/bookmark-store';
+import { BookmarkValidator } from './bookmark-validator';
 
 type BookmarkServiceEventType =
   | 'bookmarkCreated' | 'bookmarkRemoved' | 'bookmarkUpdated'
@@ -103,6 +104,7 @@ class BookmarkService implements IBookmarkService {
 
   private readonly store: IBookmarkStore;
   private readonly bus = new BookmarkServiceEventBus();
+  private readonly validator = new BookmarkValidator();
   private _initialized = false;
 
   constructor(store: IBookmarkStore = new InMemoryBookmarkStore()) {
@@ -115,17 +117,23 @@ class BookmarkService implements IBookmarkService {
 
   async shutdown(): Promise<void> {
     this.bus.dispose();
+    this.validator.dispose();
     this._initialized = false;
   }
 
   async addBookmark(title: string, url: string, options?: { parentId?: string; iconUrl?: string }): Promise<BookmarkEntry> {
-    const existing = await this.findByUrl(url);
+    const validation = this.validator.validateBookmark(url, title);
+    if (!validation.valid) {
+      throw new Error(`Invalid bookmark: ${validation.error}`);
+    }
+
+    const existing = await this.findByUrl(validation.sanitizedUrl);
     if (existing) return existing;
 
     const bookmark = await this.store.create({
       parentId: options?.parentId,
-      title,
-      url,
+      title: validation.sanitizedTitle,
+      url: validation.sanitizedUrl,
       iconUrl: options?.iconUrl,
     });
 
@@ -161,6 +169,17 @@ class BookmarkService implements IBookmarkService {
   }
 
   async updateBookmark(id: string, changes: Partial<Pick<BookmarkEntry, 'title' | 'url' | 'iconUrl'>>): Promise<BookmarkEntry | null> {
+    if (changes.url !== undefined) {
+      const urlResult = this.validator.validateUrl(changes.url);
+      if (!urlResult.valid) throw new Error(`Invalid URL: ${urlResult.error}`);
+      changes = { ...changes, url: urlResult.sanitized };
+    }
+    if (changes.title !== undefined) {
+      const titleResult = this.validator.validateTitle(changes.title);
+      if (!titleResult.valid) throw new Error(`Invalid title: ${titleResult.error}`);
+      changes = { ...changes, title: titleResult.sanitized };
+    }
+
     const updated = await this.store.update(id, changes);
     if (updated) {
       this.bus.emit({ kind: 'bookmarkUpdated', id, changes });

@@ -125,12 +125,33 @@ function extractOrigin(url: string): string {
   }
 }
 
+/**
+ * Remove a leading "www." prefix from a hostname, if present.
+ * Useful when comparing origins where www and non-www variants
+ * should be treated as the same party.
+ *
+ * @example
+ *   stripWwwPrefix("www.example.com")  → "example.com"
+ *   stripWwwPrefix("example.com")      → "example.com"
+ *   stripWwwPrefix("www.com")          → "www.com"   (preserved — not a subdomain)
+ *   stripWwwPrefix("www-something.com")→ "www-something.com" (not "www." prefix)
+ */
+function stripWwwPrefix(hostname: string): string {
+  if (hostname.startsWith('www.') && hostname.length > 4) {
+    const rest = hostname.slice(4);
+    // Only strip when the remainder still contains a dot (i.e. a real domain
+    // follows).  "www.com" → rest is "com" (no dot) → preserved.
+    if (rest.includes('.')) return rest;
+  }
+  return hostname;
+}
+
 function isThirdParty(requestOrigin: string, pageOrigin: string): boolean {
   if (!requestOrigin || !pageOrigin) return false;
   try {
     const r = new URL(requestOrigin);
     const p = new URL(pageOrigin);
-    return r.hostname !== p.hostname;
+    return stripWwwPrefix(r.hostname) !== stripWwwPrefix(p.hostname);
   } catch {
     return true;
   }
@@ -387,5 +408,5 @@ class ThirdPartySecurityManager implements IThirdPartySecurityManager {
   }
 }
 
-export { ThirdPartySecurityManager, DEFAULT_THIRD_PARTY_CONFIG, ISOLATED_IFRAME_PERMISSIONS, RESTRICTED_IFRAME_PERMISSIONS, STRICT_CSP_DIRECTIVES, extractOrigin };
+export { ThirdPartySecurityManager, DEFAULT_THIRD_PARTY_CONFIG, ISOLATED_IFRAME_PERMISSIONS, RESTRICTED_IFRAME_PERMISSIONS, STRICT_CSP_DIRECTIVES, extractOrigin, stripWwwPrefix };
 export type { IThirdPartySecurityManager, ThirdPartySecurityConfig, ThirdPartyPolicy, BlockedThirdPartyRequest, ThirdPartySecurityEvent, ThirdPartySecurityEventType, OriginPermission };

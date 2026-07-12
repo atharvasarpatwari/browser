@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ThirdPartySecurityManager, DEFAULT_THIRD_PARTY_CONFIG, ISOLATED_IFRAME_PERMISSIONS, RESTRICTED_IFRAME_PERMISSIONS, STRICT_CSP_DIRECTIVES, extractOrigin } from '../src/browser/security/third-party-security';
+import { ThirdPartySecurityManager, DEFAULT_THIRD_PARTY_CONFIG, ISOLATED_IFRAME_PERMISSIONS, RESTRICTED_IFRAME_PERMISSIONS, STRICT_CSP_DIRECTIVES, extractOrigin, stripWwwPrefix } from '../src/browser/security/third-party-security';
 
 describe('ThirdPartySecurityManager', () => {
   describe('initial state', () => {
@@ -28,6 +28,28 @@ describe('ThirdPartySecurityManager', () => {
 
     it('should return the input for invalid URLs', () => {
       expect(extractOrigin('not-a-url')).toBe('not-a-url');
+    });
+  });
+
+  describe('stripWwwPrefix', () => {
+    it('should strip www. prefix from hostname', () => {
+      expect(stripWwwPrefix('www.example.com')).toBe('example.com');
+    });
+
+    it('should return unchanged for hostname without www', () => {
+      expect(stripWwwPrefix('example.com')).toBe('example.com');
+    });
+
+    it('should preserve www when it is part of the domain (www.com)', () => {
+      expect(stripWwwPrefix('www.com')).toBe('www.com');
+    });
+
+    it('should preserve www-something as it is not a www subdomain', () => {
+      expect(stripWwwPrefix('www-something.com')).toBe('www-something.com');
+    });
+
+    it('should handle nested subdomains with www', () => {
+      expect(stripWwwPrefix('www.sub.example.com')).toBe('sub.example.com');
     });
   });
 

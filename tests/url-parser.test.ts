@@ -69,6 +69,21 @@ describe('UrlParser', () => {
       expect(() => parser.parse('not even close to a url')).toThrow(MalformedUrlError);
     });
 
+    it('should parse bare "www" as a single-label hostname', () => {
+      const result = parser.parse('www');
+      expect(result.protocol).toBe('https:');
+      expect(result.hostname).toBe('www');
+      expect(result.normalized).toBe('https://www');
+    });
+
+    it('should parse "www" with port and path', () => {
+      const result = parser.parse('www:3000/api');
+      expect(result.protocol).toBe('https:');
+      expect(result.hostname).toBe('www');
+      expect(result.port).toBe('3000');
+      expect(result.pathname).toBe('/api');
+    });
+
     it('should parse file:// URLs', () => {
       const result = parser.parse('file:///C:/path/to/file.html');
       expect(result.protocol).toBe('file:');
@@ -104,6 +119,14 @@ describe('UrlParser', () => {
 
     it('should add https:// for bare domain', () => {
       expect(parser.normalize('example.com')).toBe('https://example.com');
+    });
+
+    it('should add https:// for bare "www"', () => {
+      expect(parser.normalize('www')).toBe('https://www');
+    });
+
+    it('should add https:// for bare "www" with port', () => {
+      expect(parser.normalize('www:3000')).toBe('https://www:3000');
     });
 
     it('should not modify already valid URLs', () => {

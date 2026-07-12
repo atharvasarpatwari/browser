@@ -101,6 +101,7 @@ class PermissionManager implements IPermissionManager {
     const session = this.sessionDecisions.get(sessionKey);
     if (session) return session;
 
+    this.requests.push({ origin, name, decision: 'once', timestamp: Date.now() });
     return 'prompt';
   }
 

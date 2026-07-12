@@ -1,4 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
+import { generateSecureId } from '../bookmarks/bookmark-validator';
 
 interface BookmarkEntry {
   readonly id: string;
@@ -39,11 +40,6 @@ interface IBookmarkStore extends IDisposable {
   readonly totalFolders: number;
 }
 
-let _bookmarkSeq = 0;
-function nextBookmarkId(): string {
-  return `bm-${Date.now()}-${(++_bookmarkSeq).toString(36)}`;
-}
-
 class InMemoryBookmarkStore implements IBookmarkStore {
   private readonly entries = new Map<string, BookmarkEntry>();
 
@@ -54,7 +50,7 @@ class InMemoryBookmarkStore implements IBookmarkStore {
     iconUrl?: string;
   }): Promise<BookmarkEntry> {
     const now = Date.now();
-    const id = nextBookmarkId();
+    const id = generateSecureId();
     const parentId = options.parentId ?? null;
 
     const entry: BookmarkEntry = {
@@ -83,7 +79,7 @@ class InMemoryBookmarkStore implements IBookmarkStore {
 
   async createFolder(title: string, parentId?: string | null): Promise<BookmarkEntry> {
     const now = Date.now();
-    const id = nextBookmarkId();
+    const id = generateSecureId();
     const pId = parentId ?? null;
 
     const folder: BookmarkEntry = {
@@ -158,9 +154,16 @@ class InMemoryBookmarkStore implements IBookmarkStore {
     if (!entry) return null;
 
     const updated: BookmarkEntry = {
-      ...entry,
-      ...changes,
+      id: entry.id,
+      parentId: entry.parentId,
+      title: changes.title ?? entry.title,
+      url: changes.url !== undefined ? changes.url : entry.url,
+      iconUrl: changes.iconUrl !== undefined ? changes.iconUrl : entry.iconUrl,
+      addedTime: entry.addedTime,
       lastModifiedTime: Date.now(),
+      children: entry.children,
+      folder: entry.folder,
+      synced: entry.synced,
     };
 
     this.entries.set(id, updated);

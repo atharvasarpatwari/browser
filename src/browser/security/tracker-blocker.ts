@@ -276,12 +276,35 @@ const DEFAULT_RULES: BlockRule[] = [
   { domain: 'ct.pinterest.com', category: 'analytics', description: 'Pinterest Analytics' },
 ];
 
-type RuleMatch = { rule: BlockRule; domain: string } | null;
+function extractHostname(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+function matchesDomain(hostname: string, ruleDomain: string): boolean {
+  const h = hostname.toLowerCase();
+  const d = ruleDomain.toLowerCase();
+  if (h === d) return true;
+  if (h.endsWith('.' + d)) return true;
+  return false;
+}
 
 function matchRule(url: string): RuleMatch {
-  const lower = url.toLowerCase();
+  const hostname = extractHostname(url);
+  const path = (() => { try { return new URL(url).pathname.toLowerCase(); } catch { return ''; } })();
+
   for (const rule of DEFAULT_RULES) {
-    if (lower.includes(rule.domain)) return { rule, domain: rule.domain };
+    const ruleDomain = rule.domain.toLowerCase();
+    if (ruleDomain.includes('/')) {
+      if (hostname + path === ruleDomain || hostname + path.includes(ruleDomain)) {
+        return { rule, domain: rule.domain };
+      }
+    } else if (matchesDomain(hostname, ruleDomain)) {
+      return { rule, domain: rule.domain };
+    }
   }
   return null;
 }

@@ -298,9 +298,33 @@ class UrlParser implements IUrlParser {
    *   • "localhost"  (handled by LOCALHOST_RE)
    *   • Raw IPs     (handled by IPV4_RE)
    *   • Strings that already carry a scheme
+   *   • Single-label hostnames like "www" (handled by SINGLE_LABEL_HOSTNAME_RE)
    */
   private static readonly BARE_HOSTNAME_RE =
     /^[a-zA-Z0-9]([a-zA-Z0-9-]*\.)+[a-zA-Z]{2,}(:\d{1,5})?(\/[^\s]*)?(\?[^\s]*)?(#[^\s]*)?$/;
+
+  /**
+   * Matches a bare single-label hostname with an optional port, path, query,
+   * and fragment — no dot required.
+   *
+   * This catches inputs like "www" that are valid DNS labels but don't carry
+   * a TLD suffix.  The WHATWG URL constructor accepts these as valid hostnames
+   * once the "https://" prefix is applied.
+   *
+   * Matches:
+   *   • "www"
+   *   • "www:3000"
+   *   • "mail/path"
+   *   • "server:8080/api?v=1"
+   *
+   * Does NOT match:
+   *   • "localhost"               (handled by LOCALHOST_RE)
+   *   • Single characters         (minimum 2 chars)
+   *   • Labels starting with a digit  (avoid matching IPs or version strings)
+   *   • Strings already carrying a scheme
+   */
+  private static readonly SINGLE_LABEL_HOSTNAME_RE =
+    /^[a-zA-Z][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](:\d{1,5})?(\/[^\s\/][^\s]*)?(\?[^\s]*)?(#[^\s]*)?$/;
 
   /**
    * Matches bare IPv4 addresses with optional port and path.
@@ -394,7 +418,15 @@ class UrlParser implements IUrlParser {
       return 'https://' + s;
     }
 
-    // 5. Already carries a real scheme — lowercase the scheme part only.
+    // 5. Single-label hostname (e.g. "www", "mail", "server").
+    //    Checked BEFORE the general scheme detection so that inputs like
+    //    "www:3000/api" are treated as a hostname+port+path and NOT as a
+    //    URL with an unknown scheme "www:".
+    if (UrlParser.SINGLE_LABEL_HOSTNAME_RE.test(s)) {
+      return 'https://' + s;
+    }
+
+    // 6. Already carries a real scheme — lowercase the scheme part only.
     //    Matches "https://…", "ftp://…", "about:blank", "nova://…", etc.
     const schemeMatch = UrlParser.ANY_SCHEME_RE.exec(s);
     if (schemeMatch !== null) {
@@ -409,12 +441,12 @@ class UrlParser implements IUrlParser {
       return candidate;
     }
 
-    // 6. Looks like a bare hostname (e.g. "google.com", "sub.domain.co.uk/path").
+    // 7. Looks like a bare hostname (e.g. "google.com", "sub.domain.co.uk/path").
     if (UrlParser.BARE_HOSTNAME_RE.test(s)) {
       return 'https://' + s;
     }
 
-    // 7. Unknown shape — return as-is; NavigationController will treat it
+    // 8. Unknown shape — return as-is; NavigationController will treat it
     //    as a search query when parse() throws MalformedUrlError.
     return s;
   }

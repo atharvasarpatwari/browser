@@ -172,6 +172,51 @@ const ALL_AD_CATEGORIES: readonly AdCategory[] = [
   'banner', 'video', 'popup', 'native', 'malvertising', 'tracking-ad', 'sponsored',
 ];
 
+function extractAdHostname(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+function matchesAdDomain(hostname: string, rulePattern: string): boolean {
+  const h = hostname.toLowerCase();
+  const p = rulePattern.toLowerCase();
+  if (h === p) return true;
+  if (h.endsWith('.' + p)) return true;
+  if (p.startsWith('/') && urlPathMatches(h, p)) return true;
+  return false;
+}
+
+function urlPathMatches(_hostname: string, _pattern: string): boolean {
+  return false;
+}
+
+function matchesAdPattern(url: string, pattern: string): boolean {
+  const hostname = extractAdHostname(url);
+  const lower = url.toLowerCase();
+  const p = pattern.toLowerCase();
+
+  if (p.startsWith('/')) {
+    try {
+      const path = new URL(url).pathname.toLowerCase();
+      return path.includes(p);
+    } catch {
+      return false;
+    }
+  }
+
+  return matchesAdDomain(hostname, p) || lower.includes(p);
+}
+
+function validateCustomAdRule(rule: AdFilterRule): boolean {
+  if (!rule.pattern || rule.pattern.length === 0) return false;
+  if (rule.pattern.length > 256) return false;
+  if (/[<>"'`]/.test(rule.pattern)) return false;
+  return true;
+}
+
 class AdBlocker implements IAdBlocker {
   private _enabled = true;
   private _blockedAds: BlockedAd[] = [];
@@ -190,11 +235,10 @@ class AdBlocker implements IAdBlocker {
   shouldBlock(url: string, _resourceKind?: string): { blocked: boolean; match?: AdBlockMatch } {
     if (!this._enabled) return { blocked: false };
 
-    const lower = url.toLowerCase();
     const allRules = [...AD_FILTER_RULES, ...this.customRules];
 
     for (const rule of allRules) {
-      if (lower.includes(rule.pattern)) {
+      if (matchesAdPattern(url, rule.pattern)) {
         const match: AdBlockMatch = { rule, matchedPattern: rule.pattern, url };
         return { blocked: true, match };
       }
@@ -231,6 +275,7 @@ class AdBlocker implements IAdBlocker {
   }
 
   addCustomRule(rule: AdFilterRule): void {
+    if (!validateCustomAdRule(rule)) return;
     this.customRules.push(rule);
   }
 

@@ -25,8 +25,8 @@ const DEFAULT_DESKTOP_CONFIG: DesktopLayoutConfig = {
 
 interface DesktopLayoutAreas {
   readonly menuBar: HTMLElement | null;
+  readonly toolbar: HTMLElement | null;
   readonly tabBar: HTMLElement | null;
-  readonly addressBar: HTMLElement | null;
   readonly bookmarkBar: HTMLElement | null;
   readonly content: HTMLElement | null;
   readonly statusBar: HTMLElement | null;
@@ -90,8 +90,8 @@ class DesktopLayout implements IDesktopLayout {
   private container: HTMLElement | null = null;
 
   private _menuBar: HTMLElement | null = null;
+  private _toolbar: HTMLElement | null = null;
   private _tabBar: HTMLElement | null = null;
-  private _addressBar: HTMLElement | null = null;
   private _bookmarkBar: HTMLElement | null = null;
   private _content: HTMLElement | null = null;
   private _statusBar: HTMLElement | null = null;
@@ -107,8 +107,8 @@ class DesktopLayout implements IDesktopLayout {
   get areas(): DesktopLayoutAreas {
     return {
       menuBar: this._menuBar,
+      toolbar: this._toolbar,
       tabBar: this._tabBar,
-      addressBar: this._addressBar,
       bookmarkBar: this._bookmarkBar,
       content: this._content,
       statusBar: this._statusBar,
@@ -132,8 +132,8 @@ class DesktopLayout implements IDesktopLayout {
       this.container = null;
     }
     this._menuBar = null;
+    this._toolbar = null;
     this._tabBar = null;
-    this._addressBar = null;
     this._bookmarkBar = null;
     this._content = null;
     this._statusBar = null;
@@ -188,9 +188,9 @@ class DesktopLayout implements IDesktopLayout {
       this._menuBar = this.createSection('menu-bar');
     }
 
-    this._tabBar = this.createSection('tab-bar');
+    this._toolbar = this.createSection('title-bar');
 
-    this._addressBar = this.createSection('address-bar-area');
+    this._tabBar = this.createSection('tab-bar');
 
     if (this.config.showBookmarkBar) {
       this._bookmarkBar = this.createSection('bookmark-bar');
