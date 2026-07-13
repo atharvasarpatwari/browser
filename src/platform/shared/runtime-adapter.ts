@@ -170,15 +170,15 @@ class RuntimeAdapter implements IRuntimeAdapter {
         osc.connect(ctx.destination);
         osc.start();
         osc.stop(ctx.currentTime + 0.1);
-      } catch {}
+      } catch { /* audio not available */ }
     }
   }
 
-  async showSaveDialog(options?: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }): Promise<string | null> {
+  async showSaveDialog(_options?: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }): Promise<string | null> {
     return null;
   }
 
-  async showOpenDialog(options?: { multiple?: boolean; filters?: Array<{ name: string; extensions: string[] }> }): Promise<readonly string[]> {
+  async showOpenDialog(_options?: { multiple?: boolean; filters?: Array<{ name: string; extensions: string[] }> }): Promise<readonly string[]> {
     return [];
   }
 

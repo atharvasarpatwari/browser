@@ -4,6 +4,8 @@ import {
   EmptyInputError,
   BlockedProtocolError,
   MalformedUrlError,
+  ALLOWED_PROTOCOLS,
+  BLOCKED_PROTOCOLS,
 } from '../src/browser/navigation/url-parser';
 
 describe('UrlParser', () => {
@@ -61,8 +63,8 @@ describe('UrlParser', () => {
       expect(() => parser.parse('javascript:alert(1)')).toThrow(BlockedProtocolError);
     });
 
-    it('should throw BlockedProtocolError for data:', () => {
-      expect(() => parser.parse('data:text/html,<script>alert(1)</script>')).toThrow(BlockedProtocolError);
+    it('should throw BlockedProtocolError for vbscript:', () => {
+      expect(() => parser.parse('vbscript:MsgBox(1)')).toThrow(BlockedProtocolError);
     });
 
     it('should throw MalformedUrlError for nonsense input', () => {
@@ -102,6 +104,118 @@ describe('UrlParser', () => {
       expect(result.params.get('foo')).toBe('bar');
       expect(result.params.get('baz')).toBe('qux');
     });
+
+    // ── New protocol tests ──────────────────────────────────────────────────
+
+    it('should parse HTTP URLs', () => {
+      const result = parser.parse('http://example.com');
+      expect(result.protocol).toBe('http:');
+      expect(result.isSecure).toBe(false);
+    });
+
+    it('should parse WebSocket URLs (ws:)', () => {
+      const result = parser.parse('ws://example.com/socket');
+      expect(result.protocol).toBe('ws:');
+      expect(result.isSecure).toBe(false);
+    });
+
+    it('should parse WebSocket Secure URLs (wss:)', () => {
+      const result = parser.parse('wss://example.com/socket');
+      expect(result.protocol).toBe('wss:');
+      expect(result.isSecure).toBe(true);
+    });
+
+    it('should parse FTP URLs', () => {
+      const result = parser.parse('ftp://files.example.com/pub/');
+      expect(result.protocol).toBe('ftp:');
+      expect(result.isSecure).toBe(false);
+    });
+
+    it('should parse FTPS URLs', () => {
+      const result = parser.parse('ftps://secure-files.example.com/pub/');
+      expect(result.protocol).toBe('ftps:');
+      expect(result.isSecure).toBe(true);
+    });
+
+    it('should parse SFTP URLs', () => {
+      const result = parser.parse('sftp://server.example.com/home/user');
+      expect(result.protocol).toBe('sftp:');
+      expect(result.isSecure).toBe(true);
+    });
+
+    it('should parse mailto: URLs', () => {
+      const result = parser.parse('mailto:user@example.com');
+      expect(result.protocol).toBe('mailto:');
+      expect(result.isSecure).toBe(true);
+    });
+
+    it('should parse tel: URLs', () => {
+      const result = parser.parse('tel:+1234567890');
+      expect(result.protocol).toBe('tel:');
+      expect(result.isSecure).toBe(true);
+    });
+
+    it('should parse sms: URLs', () => {
+      const result = parser.parse('sms:+1234567890');
+      expect(result.protocol).toBe('sms:');
+      expect(result.isSecure).toBe(true);
+    });
+
+    it('should parse smsto: URLs', () => {
+      const result = parser.parse('smsto:+1234567890');
+      expect(result.protocol).toBe('smsto:');
+      expect(result.isSecure).toBe(true);
+    });
+
+    it('should parse ssh: URLs', () => {
+      const result = parser.parse('ssh://user@server.example.com');
+      expect(result.protocol).toBe('ssh:');
+      expect(result.isSecure).toBe(true);
+    });
+
+    it('should parse magnet: URLs', () => {
+      const result = parser.parse('magnet:?xt=urn:btih:abc123');
+      expect(result.protocol).toBe('magnet:');
+      expect(result.isSecure).toBe(true);
+    });
+
+    it('should parse news: URLs', () => {
+      const result = parser.parse('news:newsgroup.example.com');
+      expect(result.protocol).toBe('news:');
+      expect(result.isSecure).toBe(false);
+    });
+
+    it('should parse nntp: URLs', () => {
+      const result = parser.parse('nntp://news.example.com/group');
+      expect(result.protocol).toBe('nntp:');
+      expect(result.isSecure).toBe(false);
+    });
+
+    it('should parse gopher: URLs', () => {
+      const result = parser.parse('gopher://gopher.example.com/');
+      expect(result.protocol).toBe('gopher:');
+      expect(result.isSecure).toBe(false);
+    });
+
+    it('should parse wais: URLs', () => {
+      const result = parser.parse('wais://wais.example.com/database');
+      expect(result.protocol).toBe('wais:');
+      expect(result.isSecure).toBe(false);
+    });
+
+    it('should parse data: URIs', () => {
+      const result = parser.parse('data:text/html,<h1>Hello</h1>');
+      expect(result.protocol).toBe('data:');
+      expect(result.isSecure).toBe(true);
+      expect(result.isSpecialPage).toBe(true);
+    });
+
+    it('should parse blob: URLs', () => {
+      const result = parser.parse('blob:http://example.com/abc-123');
+      expect(result.protocol).toBe('blob:');
+      expect(result.isSecure).toBe(true);
+      expect(result.isSpecialPage).toBe(true);
+    });
   });
 
   describe('normalize', () => {
@@ -140,6 +254,40 @@ describe('UrlParser', () => {
     it('should return empty string for whitespace-only input', () => {
       expect(parser.normalize('   ')).toBe('');
     });
+
+    it('should lowercase ws: scheme', () => {
+      expect(parser.normalize('WS://EXAMPLE.COM')).toBe('ws://example.com/');
+    });
+
+    it('should lowercase wss: scheme', () => {
+      expect(parser.normalize('WSS://EXAMPLE.COM')).toBe('wss://example.com/');
+    });
+
+    it('should lowercase ftp: scheme', () => {
+      expect(parser.normalize('FTP://EXAMPLE.COM')).toBe('ftp://example.com/');
+    });
+
+    it('should lowercase ftps: scheme', () => {
+      // ftps: is not a WHATWG standard scheme, so URL constructor preserves case
+      expect(parser.normalize('FTPS://EXAMPLE.COM')).toBe('ftps://EXAMPLE.COM');
+    });
+
+    it('should lowercase sftp: scheme', () => {
+      // sftp: is not a WHATWG standard scheme, so URL constructor preserves case
+      expect(parser.normalize('SFTP://EXAMPLE.COM')).toBe('sftp://EXAMPLE.COM');
+    });
+
+    it('should lowercase mailto: scheme', () => {
+      expect(parser.normalize('MAILTO:user@example.com')).toBe('mailto:user@example.com');
+    });
+
+    it('should lowercase tel: scheme', () => {
+      expect(parser.normalize('TEL:+1234567890')).toBe('tel:+1234567890');
+    });
+
+    it('should lowercase magnet: scheme', () => {
+      expect(parser.normalize('MAGNET:?xt=urn:btih:abc')).toBe('magnet:?xt=urn:btih:abc');
+    });
   });
 
   describe('validate', () => {
@@ -164,6 +312,21 @@ describe('UrlParser', () => {
       const result = parser.validate('not a url !!!');
       expect(result.valid).toBe(false);
       expect(result.errorKind).toBe('malformed');
+    });
+
+    it('should return valid for ws: URLs', () => {
+      const result = parser.validate('ws://example.com');
+      expect(result.valid).toBe(true);
+    });
+
+    it('should return valid for mailto: URLs', () => {
+      const result = parser.validate('mailto:user@example.com');
+      expect(result.valid).toBe(true);
+    });
+
+    it('should return valid for magnet: URLs', () => {
+      const result = parser.validate('magnet:?xt=urn:btih:abc');
+      expect(result.valid).toBe(true);
     });
   });
 
@@ -190,8 +353,8 @@ describe('UrlParser', () => {
       expect(parser.isBlockedProtocol('javascript:void(0)')).toBe(true);
     });
 
-    it('should return true for data:', () => {
-      expect(parser.isBlockedProtocol('data:text/plain,hello')).toBe(true);
+    it('should return true for vbscript:', () => {
+      expect(parser.isBlockedProtocol('vbscript:MsgBox(1)')).toBe(true);
     });
 
     it('should return false for https:', () => {
@@ -200,6 +363,93 @@ describe('UrlParser', () => {
 
     it('should return false for no scheme', () => {
       expect(parser.isBlockedProtocol('example.com')).toBe(false);
+    });
+
+    it('should return false for ws: (no longer blocked)', () => {
+      expect(parser.isBlockedProtocol('ws://example.com')).toBe(false);
+    });
+
+    it('should return false for wss: (no longer blocked)', () => {
+      expect(parser.isBlockedProtocol('wss://example.com')).toBe(false);
+    });
+
+    it('should return false for data: (no longer blocked)', () => {
+      expect(parser.isBlockedProtocol('data:text/html,test')).toBe(false);
+    });
+
+    it('should return false for blob: (no longer blocked)', () => {
+      expect(parser.isBlockedProtocol('blob:http://example.com/abc')).toBe(false);
+    });
+  });
+
+  describe('ALLOWED_PROTOCOLS', () => {
+    it('should contain all web protocols', () => {
+      expect(ALLOWED_PROTOCOLS.has('http:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('https:')).toBe(true);
+    });
+
+    it('should contain WebSocket protocols', () => {
+      expect(ALLOWED_PROTOCOLS.has('ws:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('wss:')).toBe(true);
+    });
+
+    it('should contain file transfer protocols', () => {
+      expect(ALLOWED_PROTOCOLS.has('ftp:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('ftps:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('sftp:')).toBe(true);
+    });
+
+    it('should contain internal protocols', () => {
+      expect(ALLOWED_PROTOCOLS.has('file:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('data:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('blob:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('about:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('nova:')).toBe(true);
+    });
+
+    it('should contain external protocols', () => {
+      expect(ALLOWED_PROTOCOLS.has('mailto:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('tel:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('sms:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('smsto:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('ssh:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('magnet:')).toBe(true);
+    });
+
+    it('should contain usenet protocols', () => {
+      expect(ALLOWED_PROTOCOLS.has('news:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('nntp:')).toBe(true);
+    });
+
+    it('should contain legacy protocols', () => {
+      expect(ALLOWED_PROTOCOLS.has('gopher:')).toBe(true);
+      expect(ALLOWED_PROTOCOLS.has('wais:')).toBe(true);
+    });
+  });
+
+  describe('BLOCKED_PROTOCOLS', () => {
+    it('should contain javascript:', () => {
+      expect(BLOCKED_PROTOCOLS.has('javascript:')).toBe(true);
+    });
+
+    it('should contain vbscript:', () => {
+      expect(BLOCKED_PROTOCOLS.has('vbscript:')).toBe(true);
+    });
+
+    it('should not contain ws:', () => {
+      expect(BLOCKED_PROTOCOLS.has('ws:')).toBe(false);
+    });
+
+    it('should not contain wss:', () => {
+      expect(BLOCKED_PROTOCOLS.has('wss:')).toBe(false);
+    });
+
+    it('should not contain data:', () => {
+      expect(BLOCKED_PROTOCOLS.has('data:')).toBe(false);
+    });
+
+    it('should not contain blob:', () => {
+      expect(BLOCKED_PROTOCOLS.has('blob:')).toBe(false);
     });
   });
 });

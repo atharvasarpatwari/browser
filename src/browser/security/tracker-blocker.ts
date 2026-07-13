@@ -48,6 +48,11 @@ type BlockerEventUnion =
   | BlockerToggledEvent
   | CategoryToggledEvent;
 
+interface RuleMatch {
+  readonly rule: BlockRule;
+  readonly domain: string;
+}
+
 type BlockerEventHandler = (event: BlockerEventUnion) => void;
 
 interface ITrackerBlocker extends IDisposable {
@@ -292,7 +297,7 @@ function matchesDomain(hostname: string, ruleDomain: string): boolean {
   return false;
 }
 
-function matchRule(url: string): RuleMatch {
+function matchRule(url: string): RuleMatch | null {
   const hostname = extractHostname(url);
   const path = (() => { try { return new URL(url).pathname.toLowerCase(); } catch { return ''; } })();
 

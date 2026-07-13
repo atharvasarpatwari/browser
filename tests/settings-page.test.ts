@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { SettingsPage, DEFAULT_SECTIONS } from '../src/ui/pages/settings-page';
+import { SettingsPage } from '../src/ui/pages/settings-page';
 
 function createDomContainer(): HTMLElement {
   const div = document.createElement('div');

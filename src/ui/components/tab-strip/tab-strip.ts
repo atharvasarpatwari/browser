@@ -1,6 +1,5 @@
 import type { IDisposable } from '../../../app/dependency-container';
-import type { ITabManager, TabManagerEventUnion } from '../../../browser/tabs/tab-manager';
-import type { ITabSession, TabSessionState } from '../../../browser/tabs/tab-session';
+import type { ITabManager } from '../../../browser/tabs/tab-manager';
 
 type TabStripEventType =
   | 'tabSelected' | 'tabClosed' | 'newTabRequested'

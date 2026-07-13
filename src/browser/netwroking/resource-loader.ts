@@ -203,10 +203,10 @@ class ResourceLoader implements IResourceLoader {
     this.maxConcurrent = Math.max(1, max);
   }
 
-  on(type: RequestEventType, handler: (event: RequestEvent) => void): void {
+  on(_type: RequestEventType, _handler: (event: RequestEvent) => void): void {
   }
 
-  off(type: RequestEventType, handler: (event: RequestEvent) => void): void {
+  off(_type: RequestEventType, _handler: (event: RequestEvent) => void): void {
   }
 
   private async acquireSlot(): Promise<void> {

@@ -91,7 +91,7 @@ class JsRuntimeBridge implements IJsRuntimeBridge {
   private _initialized = false;
   private _moduleSupported = false;
 
-  initialize(context: RuntimeContext): Promise<void> {
+  initialize(_context: RuntimeContext): Promise<void> {
     this._initialized = true;
     this._moduleSupported = typeof eval !== 'undefined';
     return Promise.resolve();

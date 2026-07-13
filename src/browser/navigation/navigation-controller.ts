@@ -46,7 +46,6 @@
  */
 
 import type { IUrlParser, ParsedUrl } from './url-parser';
-import { UrlParseError } from './url-parser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UNIQUE ID

@@ -171,7 +171,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.bookmarkBarView.attach(areas.bookmarkBar);
       this.bookmarkBarView.setEventHandler((e) => {
         if (e.kind === 'bookmarkClicked') {
-          void this.navigate(e.bookmark.url);
+          if (e.bookmark.url) void this.navigate(e.bookmark.url);
         }
       });
     }
@@ -235,20 +235,148 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.statusBar?.setStatus(`Loading ${url}...`);
     this.statusBar?.setUrl(url);
 
+    // Determine protocol and security from the URL.
+    let protocol = 'HTTPS';
+    let isSecure = true;
+    try {
+      const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
+      protocol = this.getProtocolLabel(urlObj.protocol);
+      isSecure = this.isSecureProtocol(urlObj.protocol);
+    } catch {
+      // If URL parsing fails, assume HTTPS for bare input.
+      protocol = 'HTTPS';
+      isSecure = true;
+    }
+
+    this.statusBar?.setProtocol(protocol);
+    this.statusBar?.setSecure(isSecure);
+
     tab.setUrl(url);
     tab.setLoading(true);
 
     await new Promise(r => setTimeout(r, 500));
 
     tab.setLoading(false);
-    tab.setTitle(new URL(url.startsWith('http') ? url : `https://${url}`).hostname);
+    try {
+      const hostname = new URL(url.startsWith('http') ? url : `https://${url}`).hostname;
+      tab.setTitle(hostname);
+    } catch {
+      tab.setTitle(url);
+    }
 
     this.toolbar?.setLoading(false);
     this.toolbar?.setCanGoBack(tab.canGoBack());
     this.toolbar?.setCanGoForward(tab.canGoForward());
     this.statusBar?.setStatus('Done');
-    this.statusBar?.setSecure(url.startsWith('https'));
     this.syncAll();
+  }
+
+  /**
+   * Map a protocol scheme to a human-readable label for the status bar.
+   */
+  private getProtocolLabel(scheme: string): string {
+    const labels: Record<string, string> = {
+      'https:': 'HTTPS',
+      'http:':  'HTTP',
+      'ws:':    'WS',
+      'wss:':   'WSS',
+      'ftp:':   'FTP',
+      'ftps:':  'FTPS',
+      'sftp:':  'SFTP',
+      'file:':  'FILE',
+      'data:':  'DATA',
+      'blob:':  'BLOB',
+      'about:': 'ABOUT',
+      'nova:':  'NOVA',
+      'mailto:': 'MAILTO',
+      'tel:':   'TEL',
+      'sms:':   'SMS',
+      'smsto:': 'SMS',
+      'ssh:':   'SSH',
+      'magnet:': 'MAGNET',
+      'news:':  'NEWS',
+      'nntp:':  'NNTP',
+      'gopher:': 'GOPHER',
+      'wais:':  'WAIS',
+      // Gateway: Proxy
+      'http-proxy:':  'HTTP-PROXY',
+      'https-proxy:': 'HTTPS-PROXY',
+      'socks4:':  'SOCKS4',
+      'socks4a:': 'SOCKS4A',
+      'socks5:':  'SOCKS5',
+      'pac+http:':  'PAC',
+      'pac+https:': 'PAC/TLS',
+      'wpad:':    'WPAD',
+      // Gateway: DNS
+      'dns:':       'DNS',
+      'dns+udp:':   'DNS/UDP',
+      'dns+tcp:':   'DNS/TCP',
+      'https+dns:': 'DoH',
+      'tls+dns:':   'DoT',
+      'quic+dns:':  'DoQ',
+      'dnssec:':    'DNSSEC',
+      'mdns:':      'mDNS',
+      // Gateway: Tunnel
+      'ssh-tunnel:': 'SSH-TUNNEL',
+      'wg:':         'WIREGUARD',
+      'openvpn:':    'OPENVPN',
+      'ipsec:':      'IPSEC',
+      'ikev2:':      'IKEV2',
+      'l2tp:':       'L2TP',
+      'gre:':        'GRE',
+      'ipip:':       'IPIP',
+      'vxlan:':      'VXLAN',
+      'geneve:':     'GENEVE',
+      '6to4:':       '6TO4',
+      'isatap:':     'ISATAP',
+      'teredo:':     'TEREDO',
+      // Gateway: NAT
+      'upnp:':     'UPnP',
+      'nat-pmp:':  'NAT-PMP',
+      'pcp:':      'PCP',
+      'stun:':     'STUN',
+      'stuns:':    'STUN/TLS',
+      'turn:':     'TURN',
+      'turns:':    'TURN/TLS',
+      'ice:':      'ICE',
+      // Gateway: Access
+      'captive:':    'CAPTIVE',
+      'radius:':     'RADIUS',
+      'radiustls:':  'RADIUS/TLS',
+      'tacacs:':     'TACACS+',
+      'dot1x:':      '802.1X',
+      'wispr:':      'WISPr',
+      // Gateway: Load Balancer
+      'health:':  'HEALTH',
+      'consul:':  'CONSUL',
+      // Gateway: CDN
+      'cdn:':       'CDN',
+      'cdn+push:':  'CDN-PUSH',
+      'cdn+pull:':  'CDN-PULL',
+      // Gateway: Discovery
+      'ssdp:':    'SSDP',
+      'bonjour:': 'BONJOUR',
+      'avahi:':   'AVAHI',
+      'dnssd:':   'DNS-SD',
+    };
+    return labels[scheme] ?? scheme.replace(':', '').toUpperCase();
+  }
+
+  /**
+   * Determine whether a protocol scheme represents an encrypted connection.
+   */
+  private isSecureProtocol(scheme: string): boolean {
+    const secureProtocols = new Set([
+      'https:', 'wss:', 'ftps:', 'sftp:', 'ssh:',
+      'file:', 'nova:', 'about:', 'data:', 'blob:',
+      'mailto:', 'tel:', 'sms:', 'smsto:', 'magnet:',
+      // Gateway: encrypted protocols
+      'https-proxy:', 'pac+https:', 'tls+dns:', 'quic+dns:', 'https+dns:',
+      'ssh-tunnel:', 'wg:', 'openvpn:', 'ipsec:', 'ikev2:', 'vxlan:', 'geneve:',
+      'stuns:', 'turns:', 'captive:', 'radiustls:', 'tacacs:', 'wispr:',
+      'consul:', 'cdn:', 'cdn+push:', 'cdn+pull:',
+    ]);
+    return secureProtocols.has(scheme);
   }
 
   reload(): void {

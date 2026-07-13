@@ -197,31 +197,33 @@ class DomTree implements IDomTree {
   }
 
   private convertDocument(htmlDoc: HtmlDocument): DomDocument {
-    const doc: DomDocument = {
-      domId: nextDomNodeId(),
-      nodeType: 'document',
-      parent: null,
-      children: [],
-      htmlElement: null,
-      headElement: null,
-      bodyElement: null,
-    };
+    const id = nextDomNodeId();
+    const children: DomNode[] = [];
 
     for (const child of htmlDoc.children) {
-      const converted = this.convertNode(child, doc);
-      if (converted) doc.children.push(converted);
+      const converted = this.convertNode(child, null);
+      if (converted) children.push(converted);
     }
+
+    let htmlElement: DomElement | null = null;
+    let headElement: DomElement | null = null;
+    let bodyElement: DomElement | null = null;
 
     if (htmlDoc.htmlElement) {
-      doc.htmlElement = this.findDomElement(doc.children, htmlDoc.htmlElement.tagName, htmlDoc.htmlElement.attributes.get('id') ?? null);
+      htmlElement = this.findDomElement(children, htmlDoc.htmlElement.tagName, htmlDoc.htmlElement.attributes.get('id') ?? null);
     }
     if (htmlDoc.headElement) {
-      doc.headElement = this.findDomElement(doc.children, 'head');
+      headElement = this.findDomElement(children, 'head');
     }
     if (htmlDoc.bodyElement) {
-      doc.bodyElement = this.findDomElement(doc.children, 'body');
+      bodyElement = this.findDomElement(children, 'body');
     }
 
+    // Reassign parent for top-level children now that the document exists
+    const doc: DomDocument = { domId: id, nodeType: 'document', parent: null, children, htmlElement, headElement, bodyElement };
+    for (const child of doc.children) {
+      (child as { parent: DomNode | null }).parent = doc;
+    }
     return doc;
   }
 

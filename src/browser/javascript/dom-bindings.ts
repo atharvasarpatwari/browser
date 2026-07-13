@@ -162,7 +162,7 @@ class DomBindings implements IDomBindings {
     return this.document;
   }
 
-  private indexElements(node: HtmlDocument | HtmlNode, parentId?: string): void {
+  private indexElements(node: HtmlDocument | HtmlNode, _parentId?: string): void {
     if (node.nodeType === 'element' as NodeType) {
       const el = node as HtmlElement;
       const id = nextDomElementId();
@@ -185,7 +185,7 @@ class DomBindings implements IDomBindings {
         tagName: tag,
         attributes: new Map<string, string>(),
         children: [],
-        setAttribute: (attr: string, value: string) => {},
+        setAttribute: (_attr: string, _value: string) => {},
         appendChild: () => {},
       }),
     };

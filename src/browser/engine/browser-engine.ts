@@ -486,11 +486,16 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
       this.throwIfAborted(signal, session);
     }
 
-    // ── Step 3: Fetch (web content and local files only) ──────────────────
+    // ── Step 3: Fetch (web content, local files, and network protocols only) ──
     let raw: PageLoadResult | null = null;
     if (
       routeResult.type === RouteType.WebContent ||
-      routeResult.type === RouteType.LocalFile
+      routeResult.type === RouteType.LocalFile   ||
+      routeResult.type === RouteType.WebSocket   ||
+      routeResult.type === RouteType.SecureFileTransfer ||
+      routeResult.type === RouteType.Usenet      ||
+      routeResult.type === RouteType.LegacyProtocol ||
+      routeResult.type === RouteType.Gateway
     ) {
       this.throwIfAborted(signal, session);
       raw = await this.loader.load(session.entry.url, signal);

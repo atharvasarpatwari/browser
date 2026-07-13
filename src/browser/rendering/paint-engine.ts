@@ -1,5 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { DomDocument, DomElement, DomNode, LayoutBox } from './dom-tree';
+import type { DomDocument, DomElement, LayoutBox } from './dom-tree';
 
 type PaintCommandType =
   | 'clearRect' | 'fillRect' | 'strokeRect'

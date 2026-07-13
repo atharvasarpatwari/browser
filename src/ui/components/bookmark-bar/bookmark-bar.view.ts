@@ -1,5 +1,4 @@
 import type { IDisposable } from '../../../app/dependency-container';
-import type { BookmarkEntry } from '../../../browser/bookmarks/bookmark-services';
 import type { IBookmarkBar, BookmarkBarState, BookmarkBarEventUnion } from './bookmark-bar';
 
 interface BookmarkBarViewConfig {

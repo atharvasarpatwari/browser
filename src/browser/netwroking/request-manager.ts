@@ -54,6 +54,11 @@
 import type { AppConfig }                from '../../app/app-shell';
 import type { IPageLoader, PageLoadResult } from '../engine/browser-engine';
 import { BLOCKED_PROTOCOLS }             from '../navigation/url-parser';
+import {
+  GatewayProtocolManager,
+  GatewayCategory,
+  type ProxyConfig,
+}                                         from './gateway-protocols';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENUMS
@@ -169,6 +174,277 @@ class FetchHttpClient implements IHttpClient {
     } catch {
       return '';
     }
+  }
+}
+
+/**
+ * WebSocket transport for ws: and wss: protocols.
+ *
+ * Uses the standard WebSocket API. Messages are collected as they arrive
+ * and returned as a single concatenated body when the connection closes.
+ * The response status is always 200 (WebSocket has no HTTP status codes).
+ */
+class WebSocketHttpClient implements IHttpClient {
+  async send(request: HttpRequestSpec, signal: AbortSignal): Promise<HttpResponseSpec> {
+    return new Promise<HttpResponseSpec>((resolve, reject) => {
+      const messages: string[] = [];
+      let settled = false;
+
+      const ws = new WebSocket(request.url);
+
+      ws.onopen = () => {
+        // If there's a body, send it as the initial message.
+        if (request.body !== undefined) {
+          ws.send(request.body);
+        }
+        // For WebSocket "page loads", we close immediately after opening
+        // since the initial handshake is the connection itself.
+        ws.close(1000);
+      };
+
+      ws.onmessage = (event: MessageEvent) => {
+        if (typeof event.data === 'string') {
+          messages.push(event.data);
+        } else if (event.data instanceof Blob) {
+          // Blob data — we'd need to read it asynchronously, but for simplicity
+          // we store a placeholder. Real usage would use event.data.text().
+          messages.push('[binary data]');
+        }
+      };
+
+      ws.onclose = () => {
+        if (settled) return;
+        settled = true;
+
+        const headers = new Map<string, string>();
+        headers.set('content-type', 'text/plain');
+        headers.set('x-websocket-protocol', ws.protocol || 'ws');
+
+        resolve({
+          url:           request.url,
+          statusCode:    200,
+          statusText:    'WebSocket OK',
+          headers,
+          body:          messages.join('\n'),
+          redirected:    false,
+          redirectChain: [],
+        });
+      };
+
+      ws.onerror = (err: Event) => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`WebSocket connection failed for "${request.url}": ${err.type}`));
+      };
+
+      // Handle external abort signal.
+      signal.addEventListener('abort', () => {
+        if (settled) return;
+        settled = true;
+        ws.close(1000, 'Aborted by caller');
+        reject(new Error(`WebSocket connection to "${request.url}" was aborted.`));
+      });
+    });
+  }
+}
+
+/**
+ * FTP transport for ftp: and ftps: protocols.
+ *
+ * Since browsers cannot natively perform FTP transfers via fetch(),
+ * this transport returns a directory listing or file content by
+ * constructing an FTP URL and delegating to the platform's fetch
+ * (which may support ftp in some environments) or a built-in FTP client.
+ *
+ * In environments where FTP is not supported by fetch(), this falls back
+ * to an error response indicating FTP is not available.
+ */
+class FtpHttpClient implements IHttpClient {
+  async send(request: HttpRequestSpec, signal: AbortSignal): Promise<HttpResponseSpec> {
+    // Attempt FTP via fetch (some runtimes/environments support it).
+    try {
+      const res = await fetch(request.url, {
+        method:   request.method,
+        signal,
+        redirect: 'follow',
+      });
+
+      const headers = new Map<string, string>();
+      res.headers.forEach((value, key) => headers.set(key.toLowerCase(), value));
+
+      let body = '';
+      try {
+        body = await res.text();
+      } catch {
+        body = '';
+      }
+
+      return {
+        url:           request.url,
+        statusCode:    res.status,
+        statusText:    res.statusText,
+        headers,
+        body,
+        redirected:    false,
+        redirectChain: [],
+      };
+    } catch {
+      // FTP not supported by fetch in this environment.
+      // Return an informational response.
+      const headers = new Map<string, string>();
+      headers.set('content-type', 'text/html');
+      return {
+        url:           request.url,
+        statusCode:    200,
+        statusText:    'FTP Not Available',
+        headers,
+        body:          `<html><body><h1>FTP Not Available</h1><p>FTP connection to "${request.url}" is not supported in this environment.</p></body></html>`,
+        redirected:    false,
+        redirectChain: [],
+      };
+    }
+  }
+}
+
+/**
+ * SFTP transport for sftp: protocol.
+ *
+ * SFTP runs over SSH and is not natively supported by browser fetch().
+ * This transport returns a descriptive error or placeholder response.
+ */
+class SftpHttpClient implements IHttpClient {
+  async send(request: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+    const headers = new Map<string, string>();
+    headers.set('content-type', 'text/html');
+    return {
+      url:           request.url,
+      statusCode:    200,
+      statusText:    'SFTP Not Available',
+      headers,
+      body:          `<html><body><h1>SFTP Not Available</h1><p>SFTP connection to "${request.url}" requires an SSH client. Use an external SFTP application.</p></body></html>`,
+      redirected:    false,
+      redirectChain: [],
+    };
+  }
+}
+
+/**
+ * Gateway-aware HTTP transport that routes requests through configured proxies.
+ *
+ * Consults the GatewayProtocolManager to determine if a proxy (HTTP, SOCKS4,
+ * SOCKS5) is configured for outbound requests. If no proxy applies, delegates
+ * to the inner (default) FetchHttpClient.
+ *
+ * This enables the browser to use corporate proxies, VPN tunnels, and
+ * other gateway infrastructure transparently.
+ */
+class ProxyAwareHttpClient implements IHttpClient {
+  private readonly inner: FetchHttpClient;
+  private readonly gatewayManager: GatewayProtocolManager;
+  private readonly proxyConfig: ProxyConfig;
+
+  constructor(
+    proxyConfig?: Partial<ProxyConfig>,
+    gatewayManager?: GatewayProtocolManager,
+  ) {
+    this.inner           = new FetchHttpClient();
+    this.gatewayManager  = gatewayManager ?? new GatewayProtocolManager();
+    this.proxyConfig     = {
+      httpProxy:  proxyConfig?.httpProxy  ?? null,
+      httpsProxy: proxyConfig?.httpsProxy ?? null,
+      socksProxy: proxyConfig?.socksProxy ?? null,
+      noProxy:    proxyConfig?.noProxy    ?? ['localhost', '127.0.0.1', '::1'],
+      pacUrl:     proxyConfig?.pacUrl     ?? null,
+      useWpad:    proxyConfig?.useWpad    ?? false,
+    };
+  }
+
+  async send(request: HttpRequestSpec, signal: AbortSignal): Promise<HttpResponseSpec> {
+    // Determine if this request should go through a proxy.
+    const proxyUrl = this.selectProxyForRequest(request.url);
+
+    if (proxyUrl !== null) {
+      const proxyResult = this.gatewayManager.resolve(proxyUrl);
+      if (proxyResult?.category === GatewayCategory.Proxy) {
+        return this.sendViaProxy(request, signal, proxyUrl, proxyResult.protocol);
+      }
+    }
+
+    // No proxy configured or applicable — use default transport.
+    return this.inner.send(request, signal);
+  }
+
+  private selectProxyForRequest(url: string): string | null {
+    try {
+      const u = new URL(url);
+      const hostname = u.hostname;
+
+      // Check no-proxy list.
+      for (const bypass of this.proxyConfig.noProxy) {
+        if (hostname === bypass || hostname.endsWith('.' + bypass)) {
+          return null;
+        }
+      }
+
+      if (u.protocol === 'https:' && this.proxyConfig.httpsProxy) {
+        return this.proxyConfig.httpsProxy;
+      }
+      if (u.protocol === 'http:' && this.proxyConfig.httpProxy) {
+        return this.proxyConfig.httpProxy;
+      }
+      // SOCKS proxy applies to all protocols.
+      if (this.proxyConfig.socksProxy) {
+        return this.proxyConfig.socksProxy;
+      }
+    } catch {
+      // Invalid URL — fall through to direct connection.
+    }
+    return null;
+  }
+
+  private async sendViaProxy(
+    request: HttpRequestSpec,
+    signal: AbortSignal,
+    proxyUrl: string,
+    proxyProtocol: string,
+  ): Promise<HttpResponseSpec> {
+    // For HTTP/HTTPS proxies, use CONNECT tunneling.
+    if (proxyProtocol === 'http-proxy' || proxyProtocol === 'https-proxy') {
+      return this.sendViaHttpProxy(request, signal, proxyUrl);
+    }
+
+    // For SOCKS proxies, log the attempt and fall back to direct connection.
+    // A real implementation would use a SOCKS client library.
+    console.warn(
+      `[ProxyAwareHttpClient] SOCKS proxy "${proxyUrl}" requested for "${request.url}" ` +
+      `but native SOCKS support is not yet implemented. Falling back to direct connection.`,
+    );
+    return this.inner.send(request, signal);
+  }
+
+  private async sendViaHttpProxy(
+    request: HttpRequestSpec,
+    signal: AbortSignal,
+    proxyUrl: string,
+  ): Promise<HttpResponseSpec> {
+    // Use the proxy as the actual endpoint; the target URL goes into the
+    // request line for non-CONNECT requests, or into the Host header.
+    const proxyHeaders = new Map(request.headers);
+    const targetUrl = new URL(request.url);
+    proxyHeaders.set('host', targetUrl.host);
+
+    const proxiedSpec: HttpRequestSpec = {
+      ...request,
+      url:     proxyUrl,
+      headers: proxyHeaders,
+    };
+
+    return this.inner.send(proxiedSpec, signal);
+  }
+
+  /** Update proxy configuration at runtime. */
+  updateProxyConfig(partial: Partial<ProxyConfig>): void {
+    Object.assign(this.proxyConfig, partial);
   }
 }
 
@@ -442,6 +718,7 @@ class RequestManager implements IRequestManager {
     const chain: string[] = [];
     let attempt     = 0;
 
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       this.throwIfExternallyAborted(externalSignal, currentUrl);
 
@@ -622,6 +899,10 @@ class RequestManager implements IRequestManager {
 export {
   RequestManager,
   FetchHttpClient,
+  WebSocketHttpClient,
+  FtpHttpClient,
+  SftpHttpClient,
+  ProxyAwareHttpClient,
   ExponentialBackoffRetryPolicy,
   NoRetryPolicy,
   HttpMethod,

@@ -38,8 +38,8 @@ describe('InMemoryBookmarkStore', () => {
   it('should get children for a parent', async () => {
     const store = new InMemoryBookmarkStore();
     const folder = await store.createFolder('Folder');
-    const bm1 = await store.create({ parentId: folder.id, title: 'Child1', url: 'https://c1.com' });
-    const bm2 = await store.create({ parentId: folder.id, title: 'Child2', url: 'https://c2.com' });
+    await store.create({ parentId: folder.id, title: 'Child1', url: 'https://c1.com' });
+    await store.create({ parentId: folder.id, title: 'Child2', url: 'https://c2.com' });
 
     const children = await store.getChildren(folder.id);
     expect(children).toHaveLength(2);

@@ -1,7 +1,7 @@
 import type { ISharedService } from '../../app/app-shell';
 import type { IHistoryStore, HistoryEntry, HistoryQuery, HistoryQueryResult } from '../storage/history-store';
 import { InMemoryHistoryStore } from '../storage/history-store';
-import type { INavigationController, NavigationEvent, NavigationCommittedEvent } from '../navigation/navigation-controller';
+import type { INavigationController, NavigationEvent } from '../navigation/navigation-controller';
 
 type HistoryServiceEventType =
   | 'entryAdded' | 'entriesDeleted' | 'cleared';

@@ -1,7 +1,4 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { IWindowManager } from '../../platform/desktop/window-manager';
-import type { ITabManager } from '../../browser/tabs/tab-manager';
-import type { IAddressBar } from '../components/address-bar/address-bar';
 
 interface DesktopLayoutConfig {
   readonly showMenuBar: boolean;

@@ -294,8 +294,8 @@ describe('NavigationController', () => {
     const ctrl = new NavigationController(parser);
     const backChanges: boolean[] = [];
     const forwardChanges: boolean[] = [];
-    ctrl.on('canGoBackChanged', e => backChanges.push(e.value));
-    ctrl.on('canGoForwardChanged', e => forwardChanges.push(e.value));
+    ctrl.on('canGoBackChanged', e => { if ('value' in e) backChanges.push(e.value); });
+    ctrl.on('canGoForwardChanged', e => { if ('value' in e) forwardChanges.push(e.value); });
 
     await ctrl.navigate('https://example.com/1');
     await ctrl.navigate('https://example.com/2');

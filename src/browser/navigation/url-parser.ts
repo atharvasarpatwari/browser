@@ -81,8 +81,9 @@ interface ParsedUrl {
   readonly isSpecialPage: boolean;
 
   /**
-   * True when the connection is encrypted (https:) or a trusted local source
-   * (file:, nova:, about:).
+   * True when the connection is encrypted (https:, wss:, ftps:, sftp:, ssh:)
+   * or a trusted local/internal source (file:, nova:, about:, data:, blob:)
+   * or a safe external handler (mailto:, tel:, sms:, smsto:, magnet:).
    */
   readonly isSecure: boolean;
 
@@ -217,16 +218,112 @@ class EmptyInputError extends UrlParseError {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The only schemes the browser will load from the address bar.
+ * The schemes the browser will load from the address bar.
  * Add new schemes here — UrlParser.parse() picks them up automatically.
+ *
+ * Categories:
+ *   Web:             http:, https:
+ *   WebSocket:       ws:, wss:
+ *   File Transfer:   ftp:, ftps:, sftp:
+ *   Local:           file:
+ *   Internal:        data:, blob:, about:, nova:
+ *   External:        mailto:, tel:, sms:, smsto:, ssh:
+ *   Torrent:         magnet:
+ *   Usenet:          news:, nntp:
+ *   Legacy:          gopher:, wais:
  */
 const ALLOWED_PROTOCOLS = new Set<string>([
+  // Web
   'http:',
   'https:',
+  // WebSocket
+  'ws:',
+  'wss:',
+  // File transfer
   'ftp:',
+  'ftps:',
+  'sftp:',
+  // Local
   'file:',
+  // Internal
+  'data:',
+  'blob:',
   'about:',
-  'nova:',    // internal browser pages
+  'nova:',
+  // External handlers
+  'mailto:',
+  'tel:',
+  'sms:',
+  'smsto:',
+  'ssh:',
+  // Torrent
+  'magnet:',
+  // Usenet
+  'news:',
+  'nntp:',
+  // Legacy
+  'gopher:',
+  'wais:',
+  // Gateway: Proxy
+  'http-proxy:',
+  'https-proxy:',
+  'socks4:',
+  'socks4a:',
+  'socks5:',
+  'pac+http:',
+  'pac+https:',
+  'wpad:',
+  // Gateway: DNS
+  'dns:',
+  'dns+udp:',
+  'dns+tcp:',
+  'https+dns:',
+  'tls+dns:',
+  'quic+dns:',
+  'dnssec:',
+  'mdns:',
+  // Gateway: Tunnel
+  'ssh-tunnel:',
+  'wg:',
+  'openvpn:',
+  'ipsec:',
+  'ikev2:',
+  'l2tp:',
+  'gre:',
+  'ipip:',
+  'vxlan:',
+  'geneve:',
+  '6to4:',
+  'isatap:',
+  'teredo:',
+  // Gateway: NAT
+  'upnp:',
+  'nat-pmp:',
+  'pcp:',
+  'stun:',
+  'stuns:',
+  'turn:',
+  'turns:',
+  'ice:',
+  // Gateway: Access
+  'captive:',
+  'radius:',
+  'radiustls:',
+  'tacacs:',
+  'dot1x:',
+  'wispr:',
+  // Gateway: Load Balancer
+  'health:',
+  'consul:',
+  // Gateway: CDN
+  'cdn:',
+  'cdn+push:',
+  'cdn+pull:',
+  // Gateway: Discovery
+  'ssdp:',
+  'bonjour:',
+  'avahi:',
+  'dnssd:',
 ]);
 
 /**
@@ -237,17 +334,10 @@ const ALLOWED_PROTOCOLS = new Set<string>([
  * ───────────────────
  *   javascript: — XSS vector, never safe from the address bar.
  *   vbscript:   — legacy IE attack vector.
- *   data:       — can carry executable scripts as base64.
- *   blob:       — managed internally; must never come from user input.
- *   ws: / wss:  — WebSocket; handled by the networking layer, not navigation.
  */
 const BLOCKED_PROTOCOLS = new Set<string>([
   'javascript:',
   'vbscript:',
-  'data:',
-  'blob:',
-  'ws:',
-  'wss:',
 ]);
 
 /**
@@ -324,7 +414,7 @@ class UrlParser implements IUrlParser {
    *   • Strings already carrying a scheme
    */
   private static readonly SINGLE_LABEL_HOSTNAME_RE =
-    /^[a-zA-Z][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](:\d{1,5})?(\/[^\s\/][^\s]*)?(\?[^\s]*)?(#[^\s]*)?$/;
+    /^[a-zA-Z][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](:\d{1,5})?(\/[^\s/][^\s]*)?(\?[^\s]*)?(#[^\s]*)?$/;
 
   /**
    * Matches bare IPv4 addresses with optional port and path.
@@ -555,14 +645,50 @@ class UrlParser implements IUrlParser {
    */
   private buildParsedUrl(raw: string, normalized: string, url: URL): ParsedUrl {
     const isSecure =
-      url.protocol === 'https:' ||
-      url.protocol === 'file:'  ||
-      url.protocol === 'nova:'  ||
-      url.protocol === 'about:';
+      url.protocol === 'https:'     ||
+      url.protocol === 'wss:'       ||
+      url.protocol === 'ftps:'      ||
+      url.protocol === 'sftp:'      ||
+      url.protocol === 'ssh:'       ||
+      url.protocol === 'file:'      ||
+      url.protocol === 'nova:'      ||
+      url.protocol === 'about:'     ||
+      url.protocol === 'data:'      ||
+      url.protocol === 'blob:'      ||
+      url.protocol === 'mailto:'    ||
+      url.protocol === 'tel:'       ||
+      url.protocol === 'sms:'       ||
+      url.protocol === 'smsto:'     ||
+      url.protocol === 'magnet:'    ||
+      // Gateway: encrypted protocols
+      url.protocol === 'https-proxy:' ||
+      url.protocol === 'pac+https:'   ||
+      url.protocol === 'tls+dns:'     ||
+      url.protocol === 'quic+dns:'    ||
+      url.protocol === 'https+dns:'   ||
+      url.protocol === 'ssh-tunnel:'  ||
+      url.protocol === 'wg:'          ||
+      url.protocol === 'openvpn:'     ||
+      url.protocol === 'ipsec:'       ||
+      url.protocol === 'ikev2:'       ||
+      url.protocol === 'vxlan:'       ||
+      url.protocol === 'geneve:'      ||
+      url.protocol === 'stuns:'       ||
+      url.protocol === 'turns:'       ||
+      url.protocol === 'captive:'     ||
+      url.protocol === 'radiustls:'   ||
+      url.protocol === 'tacacs:'      ||
+      url.protocol === 'wispr:'       ||
+      url.protocol === 'consul:'      ||
+      url.protocol === 'cdn:'         ||
+      url.protocol === 'cdn+push:'    ||
+      url.protocol === 'cdn+pull:';
 
     const isSpecialPage =
       url.protocol === 'about:' ||
-      url.protocol === 'nova:';
+      url.protocol === 'nova:'  ||
+      url.protocol === 'data:'  ||
+      url.protocol === 'blob:';
 
     return {
       raw,

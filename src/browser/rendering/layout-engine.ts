@@ -1,9 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { DomDocument, DomElement, DomNode, LayoutBox } from './dom-tree';
-
-type DisplayType = 'block' | 'inline' | 'inline-block' | 'none' | 'flex' | 'grid';
-type PositionType = 'static' | 'relative' | 'absolute' | 'fixed' | 'sticky';
-type BoxSizing = 'content-box' | 'border-box';
+import type { DomDocument, DomElement, LayoutBox } from './dom-tree';
 
 interface LayoutConfig {
   readonly viewportWidth: number;

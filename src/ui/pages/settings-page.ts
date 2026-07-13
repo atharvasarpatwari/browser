@@ -27,12 +27,6 @@ interface SettingsPageEvent {
   readonly value?: unknown;
 }
 
-interface SettingChangedEvent extends SettingsPageEvent {
-  readonly kind: 'settingChanged';
-  readonly key: string;
-  readonly value: unknown;
-}
-
 interface ISettingsPage extends IDisposable {
   readonly sections: readonly SettingsSection[];
   readonly isMounted: boolean;
@@ -88,6 +82,32 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'enableKeyboardShortcuts', label: 'Enable keyboard shortcuts', description: 'Use keyboard shortcuts for navigation', type: 'boolean', defaultValue: true },
     ],
   },
+  {
+    id: 'menu', title: 'Browser Menu', icon: '☰',
+    settings: [
+      { key: 'menuShowNewTab', label: 'New tab', description: 'Show "New tab" in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowNewWindow', label: 'New window', description: 'Show "New window" in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowPrivateWindow', label: 'New private window', description: 'Show "New private window" in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowTorWindow', label: 'New private window with Tor', description: 'Show Tor window option in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowLeoAI', label: 'Leo AI', description: 'Show "Leo AI" assistant in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowWallet', label: 'Wallet', description: 'Show "Wallet" in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowVPN', label: 'Brave VPN', description: 'Show "Brave VPN" in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowSidebar', label: 'Sidebar', description: 'Show sidebar toggle in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuSidebarAutohide', label: 'Sidebar autohide', description: 'Autohide the sidebar when not in use', type: 'boolean', defaultValue: false },
+      { key: 'menuShowPasswords', label: 'Passwords and autofill', description: 'Show passwords section in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowHistory', label: 'History', description: 'Show history in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowBookmarks', label: 'Bookmarks and lists', description: 'Show bookmarks in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowDownloads', label: 'Downloads', description: 'Show downloads in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowExtensions', label: 'Extensions', description: 'Show extensions in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowClearData', label: 'Delete browsing data', description: 'Show "Delete browsing data" in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuDefaultZoom', label: 'Default zoom', description: 'Default zoom level for new pages', type: 'select', defaultValue: '100', options: [{ label: '50%', value: '50' }, { label: '75%', value: '75' }, { label: '80%', value: '80' }, { label: '90%', value: '90' }, { label: '100%', value: '100' }, { label: '110%', value: '110' }, { label: '125%', value: '125' }, { label: '150%', value: '150' }, { label: '175%', value: '175' }, { label: '200%', value: '200' }] },
+      { key: 'menuShowPrint', label: 'Print', description: 'Show print option in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowFind', label: 'Find and edit', description: 'Show find/edit in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowShare', label: 'Save and share', description: 'Show save/share in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowMoreTools', label: 'More tools', description: 'Show more tools submenu in menu', type: 'boolean', defaultValue: true },
+      { key: 'menuShowHelp', label: 'Help', description: 'Show help in menu', type: 'boolean', defaultValue: true },
+    ],
+  },
 ];
 
 class SettingsPage implements ISettingsPage {
@@ -113,22 +133,29 @@ class SettingsPage implements ISettingsPage {
   mount(container: HTMLElement): void {
     this.container = container;
     this.container.className = 'settings-page';
-    this.container.style.cssText = 'display:flex;height:100%;font-family:sans-serif;';
+    this.container.style.cssText = 'display:flex;height:100%;font-family:system-ui,-apple-system,sans-serif;background:var(--bg-body,#0f0f0f);color:var(--text-primary,#e0e0e0);';
 
     const sidebar = document.createElement('nav');
     sidebar.className = 'settings-sidebar';
-    sidebar.style.cssText = 'width:200px;border-right:1px solid #ddd;padding:16px 0;overflow-y:auto;flex-shrink:0;';
+    sidebar.style.cssText = 'width:210px;border-right:1px solid var(--border-subtle,rgba(255,255,255,.06));padding:12px 0;overflow-y:auto;flex-shrink:0;background:var(--bg-surface,#161618);';
 
     for (const section of this.sections) {
       const item = document.createElement('div');
       item.className = `settings-nav-item${section.id === this._activeSection ? ' active' : ''}`;
-      item.textContent = `${section.icon} ${section.title}`;
-      item.style.cssText = 'padding:8px 16px;cursor:pointer;font-size:13px;border-left:3px solid transparent;';
+      item.textContent = `${section.icon}  ${section.title}`;
+      item.style.cssText = 'padding:9px 16px;cursor:pointer;font-size:13px;border-left:3px solid transparent;color:var(--text-secondary,#a0a098);transition:all .12s;';
       if (section.id === this._activeSection) {
-        item.style.borderLeftColor = '#1a73e8';
-        item.style.background = '#e8f0fe';
-        item.style.fontWeight = 'bold';
+        item.style.borderLeftColor = 'var(--accent,#7c9cf5)';
+        item.style.background = 'var(--bg-overlay,rgba(255,255,255,.04))';
+        item.style.color = 'var(--text-primary,#e0e0e0)';
+        item.style.fontWeight = '600';
       }
+      item.addEventListener('mouseenter', () => {
+        if (section.id !== this._activeSection) item.style.background = 'var(--bg-overlay,rgba(255,255,255,.03))';
+      });
+      item.addEventListener('mouseleave', () => {
+        if (section.id !== this._activeSection) item.style.background = 'none';
+      });
       item.addEventListener('click', () => {
         this.setActiveSection(section.id);
         this.render();
@@ -139,7 +166,7 @@ class SettingsPage implements ISettingsPage {
 
     const content = document.createElement('div');
     content.className = 'settings-content';
-    content.style.cssText = 'flex:1;padding:24px;overflow-y:auto;';
+    content.style.cssText = 'flex:1;padding:24px 32px;overflow-y:auto;';
     this.container.appendChild(content);
 
     this._mounted = true;
@@ -208,21 +235,21 @@ class SettingsPage implements ISettingsPage {
     content.innerHTML = '';
 
     const title = document.createElement('h2');
-    title.textContent = `${section.icon} ${section.title}`;
-    title.style.cssText = 'margin:0 0 16px;font-size:20px;';
+    title.textContent = `${section.icon}  ${section.title}`;
+    title.style.cssText = 'margin:0 0 20px;font-size:20px;font-weight:600;color:var(--text-primary,#e0e0e0);';
     content.appendChild(title);
 
     for (const setting of section.settings) {
       const row = document.createElement('div');
-      row.style.cssText = 'margin-bottom:16px;padding:12px;border:1px solid #eee;border-radius:6px;';
+      row.style.cssText = 'margin-bottom:12px;padding:12px 14px;border:1px solid var(--border-subtle,rgba(255,255,255,.06));border-radius:var(--radius-md,6px);background:var(--bg-surface,#161618);';
 
       const label = document.createElement('div');
-      label.style.cssText = 'font-weight:bold;font-size:14px;margin-bottom:2px;';
+      label.style.cssText = 'font-weight:600;font-size:13px;margin-bottom:2px;color:var(--text-primary,#e0e0e0);';
       label.textContent = setting.label;
       row.appendChild(label);
 
       const desc = document.createElement('div');
-      desc.style.cssText = 'font-size:12px;color:#666;margin-bottom:8px;';
+      desc.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin-bottom:8px;';
       desc.textContent = setting.description;
       row.appendChild(desc);
 
@@ -233,26 +260,38 @@ class SettingsPage implements ISettingsPage {
           const input = document.createElement('input');
           input.type = 'text';
           input.value = String(currentValue);
-          input.style.cssText = 'width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;font-size:13px;';
+          input.style.cssText = 'width:100%;padding:7px 10px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);outline:none;transition:border .15s;';
+          input.addEventListener('focus', () => { input.style.borderColor = 'var(--border-accent,rgba(124,156,245,.4))'; });
+          input.addEventListener('blur', () => { input.style.borderColor = 'var(--border-default,rgba(255,255,255,.1))'; });
           input.addEventListener('change', () => this.setSetting(setting.key, input.value));
           row.appendChild(input);
           break;
         }
         case 'boolean': {
-          const toggle = document.createElement('input');
-          toggle.type = 'checkbox';
-          toggle.checked = currentValue === true;
-          toggle.addEventListener('change', () => this.setSetting(setting.key, toggle.checked));
-          row.appendChild(toggle);
+          const toggleWrap = document.createElement('div');
+          toggleWrap.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;';
+          const toggle = document.createElement('div');
+          const isOn = currentValue === true;
+          toggle.style.cssText = `width:36px;height:20px;border-radius:10px;position:relative;transition:background .2s;cursor:pointer;background:${isOn ? 'var(--toggle-on-bg,#3a7afd)' : 'var(--toggle-off-bg,#555568)'};`;
+          const knob = document.createElement('div');
+          knob.style.cssText = `width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;transition:left .2s;left:${isOn ? '18px' : '2px'};`;
+          toggle.appendChild(knob);
           const toggleLabel = document.createElement('span');
-          toggleLabel.style.cssText = 'margin-left:8px;font-size:13px;';
-          toggleLabel.textContent = currentValue ? 'Enabled' : 'Disabled';
-          row.appendChild(toggleLabel);
+          toggleLabel.style.cssText = 'font-size:12px;';
+          toggleLabel.textContent = isOn ? 'On' : 'Off';
+          toggleLabel.style.color = isOn ? 'var(--toggle-on-bg,#3a7afd)' : 'var(--text-tertiary,#6a6a68)';
+          toggleWrap.appendChild(toggle);
+          toggleWrap.appendChild(toggleLabel);
+          toggleWrap.addEventListener('click', () => {
+            const newVal = !(this.values.get(setting.key) ?? setting.defaultValue);
+            this.setSetting(setting.key, newVal);
+          });
+          row.appendChild(toggleWrap);
           break;
         }
         case 'select': {
           const select = document.createElement('select');
-          select.style.cssText = 'padding:6px;border:1px solid #ccc;border-radius:4px;font-size:13px;';
+          select.style.cssText = 'padding:7px 10px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);outline:none;cursor:pointer;';
           for (const opt of setting.options ?? []) {
             const option = document.createElement('option');
             option.value = opt.value;
@@ -266,17 +305,18 @@ class SettingsPage implements ISettingsPage {
         }
         case 'range': {
           const rangeContainer = document.createElement('div');
-          rangeContainer.style.cssText = 'display:flex;align-items:center;gap:8px;';
+          rangeContainer.style.cssText = 'display:flex;align-items:center;gap:10px;';
           const slider = document.createElement('input');
           slider.type = 'range';
           slider.min = String(setting.min ?? 0);
           slider.max = String(setting.max ?? 100);
           slider.step = String(setting.step ?? 1);
           slider.value = String(currentValue);
+          slider.style.cssText = 'flex:1;accent-color:var(--accent,#7c9cf5);';
           slider.addEventListener('input', () => this.setSetting(setting.key, Number(slider.value)));
           rangeContainer.appendChild(slider);
           const valueLabel = document.createElement('span');
-          valueLabel.style.cssText = 'font-size:13px;min-width:30px;';
+          valueLabel.style.cssText = 'font-size:12px;min-width:30px;color:var(--text-secondary,#a0a098);';
           valueLabel.textContent = String(currentValue);
           rangeContainer.appendChild(valueLabel);
           row.appendChild(rangeContainer);
@@ -285,6 +325,30 @@ class SettingsPage implements ISettingsPage {
       }
 
       content.appendChild(row);
+    }
+
+    // Add preview button for the menu section
+    if (section.id === 'menu') {
+      const previewRow = document.createElement('div');
+      previewRow.style.cssText = 'margin-top:20px;padding:16px;border:1px solid var(--border-accent,rgba(124,156,245,.3));border-radius:var(--radius-md,6px);background:var(--accent-dim,rgba(124,156,245,.08));';
+      const previewLabel = document.createElement('div');
+      previewLabel.style.cssText = 'font-size:13px;color:var(--text-primary,#e0e0e0);margin-bottom:8px;font-weight:600;';
+      previewLabel.textContent = '☰  Preview Browser Menu';
+      previewRow.appendChild(previewLabel);
+      const previewDesc = document.createElement('div');
+      previewDesc.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin-bottom:12px;';
+      previewDesc.textContent = 'See how the browser dropdown menu looks with your current settings. Click below to open the preview.';
+      previewRow.appendChild(previewDesc);
+      const previewBtn = document.createElement('button');
+      previewBtn.textContent = 'Open Menu Preview';
+      previewBtn.style.cssText = 'padding:8px 20px;border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:var(--radius-sm,4px);background:var(--accent,#7c9cf5);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;';
+      previewBtn.addEventListener('mouseenter', () => { previewBtn.style.background = 'var(--accent-hover,#9bb5ff)'; });
+      previewBtn.addEventListener('mouseleave', () => { previewBtn.style.background = 'var(--accent,#7c9cf5)'; });
+      previewBtn.addEventListener('click', () => {
+        window.open('../ui/browser-menu.html', '_blank', 'width=340,height=700');
+      });
+      previewRow.appendChild(previewBtn);
+      content.appendChild(previewRow);
     }
   }
 

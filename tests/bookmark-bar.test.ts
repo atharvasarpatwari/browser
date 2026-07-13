@@ -105,7 +105,7 @@ describe('BookmarkBarEventBus', () => {
     const bus = new BookmarkBarEventBus();
     const handler = vi.fn();
     bus.on('bookmarkClicked', handler);
-    bus.emit({ kind: 'bookmarkClicked', bookmark: { id: '1', title: 'T', url: 'U', folder: false, parentId: null, children: [], createdAt: 0 } });
+    bus.emit({ kind: 'bookmarkClicked', bookmark: { id: '1', title: 'T', url: 'U', folder: false, parentId: null, children: [], addedTime: 0, lastModifiedTime: 0, iconUrl: null, synced: false } });
     expect(handler).toHaveBeenCalledTimes(1);
     bus.dispose();
   });
@@ -134,7 +134,7 @@ describe('BookmarkBarEventBus', () => {
     const handler = vi.fn();
     bus.on('bookmarkClicked', handler);
     for (let i = 0; i < 110; i++) {
-      bus.emit({ kind: 'bookmarkClicked', bookmark: { id: '1', title: 'T', url: 'U', folder: false, parentId: null, children: [], createdAt: 0 } });
+      bus.emit({ kind: 'bookmarkClicked', bookmark: { id: '1', title: 'T', url: 'U', folder: false, parentId: null, children: [], addedTime: 0, lastModifiedTime: 0, iconUrl: null, synced: false } });
     }
     expect(handler).toHaveBeenCalledTimes(100);
     bus.dispose();

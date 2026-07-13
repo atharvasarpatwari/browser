@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ThirdPartySecurityManager, DEFAULT_THIRD_PARTY_CONFIG, ISOLATED_IFRAME_PERMISSIONS, RESTRICTED_IFRAME_PERMISSIONS, STRICT_CSP_DIRECTIVES, extractOrigin, stripWwwPrefix } from '../src/browser/security/third-party-security';
+import { ThirdPartySecurityManager, extractOrigin, stripWwwPrefix } from '../src/browser/security/third-party-security';
 
 describe('ThirdPartySecurityManager', () => {
   describe('initial state', () => {

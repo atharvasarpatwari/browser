@@ -1,5 +1,5 @@
 import type { ISharedService } from '../../app/app-shell';
-import type { IBookmarkStore, BookmarkEntry, BookmarkQuery } from '../storage/bookmark-store';
+import type { IBookmarkStore, BookmarkEntry } from '../storage/bookmark-store';
 import { InMemoryBookmarkStore } from '../storage/bookmark-store';
 import { BookmarkValidator } from './bookmark-validator';
 
@@ -169,12 +169,12 @@ class BookmarkService implements IBookmarkService {
   }
 
   async updateBookmark(id: string, changes: Partial<Pick<BookmarkEntry, 'title' | 'url' | 'iconUrl'>>): Promise<BookmarkEntry | null> {
-    if (changes.url !== undefined) {
+    if (changes.url !== undefined && changes.url !== null) {
       const urlResult = this.validator.validateUrl(changes.url);
       if (!urlResult.valid) throw new Error(`Invalid URL: ${urlResult.error}`);
       changes = { ...changes, url: urlResult.sanitized };
     }
-    if (changes.title !== undefined) {
+    if (changes.title !== undefined && changes.title !== null) {
       const titleResult = this.validator.validateTitle(changes.title);
       if (!titleResult.valid) throw new Error(`Invalid title: ${titleResult.error}`);
       changes = { ...changes, title: titleResult.sanitized };
@@ -242,3 +242,4 @@ class BookmarkService implements IBookmarkService {
 
 export { BookmarkService, BookmarkServiceEventBus };
 export type { IBookmarkService, BookmarkServiceEventUnion, BookmarkServiceEventType };
+export type { BookmarkEntry } from '../storage/bookmark-store';

@@ -1,5 +1,5 @@
 import type { IDisposable } from '../../../app/dependency-container';
-import type { IAddressBar, AddressBarState, AddressBarEventUnion, AddressBarEventType } from './address-bar';
+import type { IAddressBar, AddressBarState, AddressBarEventUnion } from './address-bar';
 
 interface AddressBarViewConfig {
   readonly containerId: string;

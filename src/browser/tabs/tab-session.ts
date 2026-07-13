@@ -1,6 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { NavigationEntry, NavigationState } from '../navigation/navigation-controller';
-import type { PageLoadState } from '../engine/browser-engine';
+import type { NavigationEntry } from '../navigation/navigation-controller';
 
 type TabEventType =
   | 'titleChanged' | 'urlChanged' | 'loadingStateChanged'

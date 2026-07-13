@@ -69,7 +69,7 @@ import type { ILayoutEngine } from '../browser/rendering/layout-engine';
 import { PaintEngine } from '../browser/rendering/paint-engine';
 import type { IPaintEngine } from '../browser/rendering/paint-engine';
 import { HtmlParser } from '../browser/rendering/html-parser';
-import type { IHtmlParser } from '../browser/rendering/html-parser';
+
 
 // Storage
 import { InMemorySessionsStore } from '../browser/storage/sessions-store';
@@ -92,6 +92,12 @@ import { DesktopLayout } from '../ui/layout/desktop-layout';
 import type { IDesktopLayout } from '../ui/layout/desktop-layout';
 import { BrowserWindowPage } from '../ui/pages/browser-window';
 import type { IBrowserWindowPage } from '../ui/pages/browser-window';
+
+// Auth
+import { AuthManager } from '../browser/auth/auth-manager';
+import type { IAuthManager } from '../browser/auth/auth-manager';
+import { InMemoryTokenStore } from '../browser/auth/token-store';
+import type { ITokenStore } from '../browser/auth/token-store';
 
 // ── Service tokens ─────────────────────────────────────────────────────────────
 
@@ -133,6 +139,8 @@ const Tokens = Object.freeze({
   AddressBar: Symbol('AddressBar'),
   DesktopLayout: Symbol('DesktopLayout'),
   BrowserWindowPage: Symbol('BrowserWindowPage'),
+  AuthManager: Symbol('AuthManager'),
+  TokenStore: Symbol('TokenStore'),
 } as const);
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -429,6 +437,22 @@ class ApplicationBootstrap {
     c.register<IBrowserWindowPage>(
       Tokens.BrowserWindowPage,
       () => new BrowserWindowPage(),
+      ServiceLifetime.Singleton,
+    );
+
+    // 12. Authentication
+    c.register<ITokenStore>(
+      Tokens.TokenStore,
+      () => new InMemoryTokenStore({
+        maxTokensPerProvider: 10,
+        autoCleanupExpired: true,
+        masterKey: 'nova-browser-default-key',
+      }),
+      ServiceLifetime.Singleton,
+    );
+    c.register<IAuthManager>(
+      Tokens.AuthManager,
+      (ctx) => new AuthManager(ctx.resolve<ITokenStore>(Tokens.TokenStore)),
       ServiceLifetime.Singleton,
     );
   }

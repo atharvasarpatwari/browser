@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { HtmlParser, NodeType } from '../src/browser/rendering/html-parser';
+import { HtmlParser } from '../src/browser/rendering/html-parser';
 import { DomTree } from '../src/browser/rendering/dom-tree';
 
 describe('DomTree', () => {
@@ -44,7 +44,7 @@ describe('DomTree', () => {
 
   it('should index elements by id attribute', () => {
     const parseResult = parser.parse('<html><body><div id="main-content"></div></body></html>');
-    const doc = tree.buildFromHtml(parseResult.document);
+    tree.buildFromHtml(parseResult.document);
     const el = tree.getElementById('main-content');
     expect(el).not.toBeNull();
     expect(el!.tagName).toBe('div');
@@ -59,7 +59,7 @@ describe('DomTree', () => {
 
   it('appendChild should add a node and record mutation', () => {
     const parseResult = parser.parse('<html><body><div id="parent"></div></body></html>');
-    const doc = tree.buildFromHtml(parseResult.document);
+    tree.buildFromHtml(parseResult.document);
     const parent = tree.getElementById('parent')!;
 
     const newChild: any = {
@@ -83,7 +83,7 @@ describe('DomTree', () => {
 
   it('removeChild should remove a node and record mutation', () => {
     const parseResult = parser.parse('<html><body><div id="parent"><p id="child">x</p></div></body></html>');
-    const doc = tree.buildFromHtml(parseResult.document);
+    tree.buildFromHtml(parseResult.document);
     const parent = tree.getElementById('parent')!;
     const child = tree.getElementById('child')!;
 
@@ -106,7 +106,7 @@ describe('DomTree', () => {
 
   it('removeAttribute should delete from idIndex', () => {
     const parseResult = parser.parse('<html><body><div id="remove-me"></div></body></html>');
-    const doc = tree.buildFromHtml(parseResult.document);
+    tree.buildFromHtml(parseResult.document);
     const div = tree.getElementById('remove-me')!;
 
     tree.removeAttribute(div, 'id');
@@ -187,7 +187,7 @@ describe('DomTree', () => {
 
   it('insertBefore should add node at correct position', () => {
     const parseResult = parser.parse('<html><body><div id="parent"><p id="first">1</p><p id="second">2</p></div></body></html>');
-    const doc = tree.buildFromHtml(parseResult.document);
+    tree.buildFromHtml(parseResult.document);
     const parent = tree.getElementById('parent')!;
     const second = tree.getElementById('second')!;
 
@@ -210,7 +210,7 @@ describe('DomTree', () => {
 
   it('insertBefore with null reference should append', () => {
     const parseResult = parser.parse('<html><body><div id="parent"><p>1</p></div></body></html>');
-    const doc = tree.buildFromHtml(parseResult.document);
+    tree.buildFromHtml(parseResult.document);
     const parent = tree.getElementById('parent')!;
 
     const newNode: any = {

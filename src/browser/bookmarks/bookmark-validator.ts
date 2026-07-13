@@ -21,6 +21,7 @@ interface IBookmarkValidator extends IDisposable {
 }
 
 function sanitizeTitle(title: string): string {
+  // eslint-disable-next-line no-control-regex
   let t = title.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
   t = t.replace(/\s+/g, ' ').trim();
   if (t.length > MAX_TITLE_LENGTH) t = t.slice(0, MAX_TITLE_LENGTH);
@@ -28,6 +29,7 @@ function sanitizeTitle(title: string): string {
 }
 
 function sanitizeUrl(url: string): string {
+  // eslint-disable-next-line no-control-regex
   let u = url.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
   u = u.trim();
   return u;

@@ -21,10 +21,6 @@ interface CssStylesheet {
   readonly url: string | null;
 }
 
-interface ComputedStyleMap {
-  readonly [property: string]: string;
-}
-
 interface ICssParser extends IDisposable {
   parseStylesheet(css: string, url?: string): CssStylesheet;
   parseInlineStyle(styleAttr: string): ReadonlyMap<string, string>;

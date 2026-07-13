@@ -38,7 +38,7 @@ describe('InMemoryHistoryStore', () => {
   it('should query with fromTime/toTime', async () => {
     const store = new InMemoryHistoryStore();
     const now = Date.now();
-    const e1 = await store.addVisit('https://old.com', 'Old', false);
+    await store.addVisit('https://old.com', 'Old', false);
     // simulate by adjusting ... not possible since store uses Date.now()
     // just verify the filter contract
     const result = await store.query({ fromTime: 0, toTime: now + 100000 });

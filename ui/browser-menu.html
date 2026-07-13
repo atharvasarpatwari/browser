@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Browser Menu</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+  :root {
+    --bg-menu: #1e1e2e;
+    --bg-hover: #3a3a4e;
+    --bg-active: #4a4a6a;
+    --text-primary: #e0e0e0;
+    --text-secondary: #a0a0a0;
+    --text-muted: #6a6a7a;
+    --divider: #3a3a4e;
+    --accent: #6e9dff;
+    --accent-dim: #4a6aa0;
+    --toggle-on-bg: #3a7afd;
+    --toggle-off-bg: #555568;
+    --btn-bg: #2e2e40;
+    --btn-hover: #4a4a5e;
+    --btn-border: #4a4a5e;
+    --zoom-bg: #2a2a3c;
+    --radius-menu: 12px;
+    --radius-btn: 6px;
+    --radius-pill: 10px;
+  }
+
+  body {
+    font-family: system-ui, -apple-system, 'Segoe UI', Inter, Roboto, sans-serif;
+    background: #121218;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding-top: 40px;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .menu-container {
+    position: relative;
+  }
+
+  .menu-trigger {
+    background: #2a2a3c;
+    border: 1px solid #3a3a4e;
+    color: var(--text-primary);
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s;
+  }
+  .menu-trigger:hover { background: #3a3a4e; }
+
+  .menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 300px;
+    background: var(--bg-menu);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-menu);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.3);
+    padding: 6px 0;
+    z-index: 1000;
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+    pointer-events: none;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+  .menu.open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+  }
+
+  .menu-item {
+    display: flex;
+    align-items: center;
+    padding: 7px 14px;
+    cursor: pointer;
+    transition: background 0.1s;
+    position: relative;
+    min-height: 34px;
+  }
+  .menu-item:hover { background: var(--bg-hover); }
+  .menu-item:active { background: var(--bg-active); }
+
+  .menu-item .icon {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    margin-right: 10px;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+  }
+  .menu-item .icon.accent { color: var(--accent); }
+
+  .menu-item .label {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+  }
+
+  .menu-item .shortcut {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    margin-left: 12px;
+    flex-shrink: 0;
+    font-family: inherit;
+    letter-spacing: 0.2px;
+  }
+
+  .menu-item .arrow {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 8px;
+    flex-shrink: 0;
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--divider);
+    margin: 4px 10px;
+  }
+
+  /* Sidebar toggle section */
+  .sidebar-section { padding: 0; }
+  .sidebar-row {
+    display: flex;
+    align-items: center;
+    padding: 7px 14px;
+    min-height: 34px;
+  }
+  .sidebar-row .icon {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    margin-right: 10px;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+  }
+  .sidebar-row .label {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+  .sidebar-row .sub-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: 32px;
+    margin-top: 1px;
+  }
+
+  .toggle-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+  .toggle-state {
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .toggle-state.on { color: var(--toggle-on-bg); }
+  .toggle-state.off { color: var(--text-muted); }
+
+  .toggle-switch {
+    width: 32px;
+    height: 18px;
+    border-radius: 9px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle-switch.on { background: var(--toggle-on-bg); }
+  .toggle-switch.off { background: var(--toggle-off-bg); }
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    top: 2px;
+    transition: left 0.2s;
+  }
+  .toggle-switch.on::after { left: 16px; }
+  .toggle-switch.off::after { left: 2px; }
+
+  /* Zoom widget */
+  .zoom-row {
+    display: flex;
+    align-items: center;
+    padding: 7px 14px;
+    min-height: 38px;
+  }
+  .zoom-row .icon {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    margin-right: 10px;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+  }
+  .zoom-row .label {
+    font-size: 13px;
+    color: var(--text-primary);
+    margin-right: auto;
+  }
+  .zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+  }
+  .zoom-btn {
+    width: 28px;
+    height: 26px;
+    border-radius: var(--radius-btn);
+    border: 1px solid var(--btn-border);
+    background: var(--btn-bg);
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 400;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s;
+    font-family: inherit;
+    line-height: 1;
+  }
+  .zoom-btn:hover { background: var(--btn-hover); }
+  .zoom-btn:active { background: var(--bg-active); }
+
+  .zoom-pct {
+    font-size: 12px;
+    color: var(--text-primary);
+    min-width: 36px;
+    text-align: center;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+  }
+
+  .zoom-key {
+    width: 26px;
+    height: 22px;
+    border-radius: 4px;
+    border: 1px solid var(--btn-border);
+    background: var(--btn-bg);
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 4px;
+    transition: background 0.12s;
+    font-family: inherit;
+  }
+  .zoom-key:hover { background: var(--btn-hover); color: var(--text-secondary); }
+
+  /* Indented sub-items */
+  .sub-item {
+    padding-left: 46px;
+  }
+  .sub-item .icon { display: none; }
+
+  /* Scrollable max-height */
+  .menu-scroll {
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #4a4a5e transparent;
+  }
+  .menu-scroll::-webkit-scrollbar { width: 5px; }
+  .menu-scroll::-webkit-scrollbar-track { background: transparent; }
+  .menu-scroll::-webkit-scrollbar-thumb { background: #4a4a5e; border-radius: 3px; }
+
+  /* Click outside to close */
+  .backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+  }
+  .backdrop.visible { display: block; }
+</style>
+</head>
+<body>
+
+<div class="menu-container">
+  <button class="menu-trigger" id="menuBtn">☰ Menu</button>
+  <div class="backdrop" id="backdrop"></div>
+  <div class="menu" id="menu">
+    <div class="menu-scroll">
+
+      <!-- Top Section: Shortcuts -->
+      <div class="menu-item" data-action="new-tab">
+        <span class="icon">📄</span>
+        <span class="label">New tab</span>
+        <span class="shortcut">Ctrl+T</span>
+      </div>
+      <div class="menu-item" data-action="new-window">
+        <span class="icon">🪟</span>
+        <span class="label">New window</span>
+        <span class="shortcut">Ctrl+N</span>
+      </div>
+      <div class="menu-item" data-action="new-private">
+        <span class="icon">🕶️</span>
+        <span class="label">New private window</span>
+        <span class="shortcut">Ctrl+Shift+N</span>
+      </div>
+      <div class="menu-item" data-action="new-tor">
+        <span class="icon">🔮</span>
+        <span class="label">New private window with Tor</span>
+        <span class="shortcut">Shift+Alt+N</span>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Middle Section: Features -->
+      <div class="menu-item" data-action="leo">
+        <span class="icon accent">✨</span>
+        <span class="label">Leo AI</span>
+      </div>
+      <div class="menu-item" data-action="wallet">
+        <span class="icon accent">💰</span>
+        <span class="label">Wallet</span>
+      </div>
+      <div class="menu-item" data-action="vpn">
+        <span class="icon accent">🛡️</span>
+        <span class="label">Brave VPN</span>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Sidebar Toggle -->
+      <div class="sidebar-section">
+        <div class="sidebar-row" data-action="sidebar-toggle" id="sidebarRow" style="cursor:pointer">
+          <span class="icon">📐</span>
+          <span class="label">Sidebar</span>
+          <div class="toggle-group">
+            <span class="toggle-state on" id="sidebarState">On</span>
+            <div class="toggle-switch on" id="sidebarSwitch"></div>
+          </div>
+        </div>
+        <div class="sidebar-row sub-item" data-action="autohide-toggle" id="autohideRow" style="cursor:pointer">
+          <span class="label" style="padding-left:32px;font-size:12.5px;color:var(--text-secondary)">Autohide</span>
+          <div class="toggle-group">
+            <span class="toggle-state off" id="autohideState">Off</span>
+            <div class="toggle-switch off" id="autohideSwitch"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Navigation & Data -->
+      <div class="menu-item" data-action="passwords">
+        <span class="icon">🔑</span>
+        <span class="label">Passwords and autofill</span>
+      </div>
+      <div class="menu-item" data-action="history">
+        <span class="icon">🕐</span>
+        <span class="label">History</span>
+      </div>
+      <div class="menu-item" data-action="bookmarks">
+        <span class="icon">📑</span>
+        <span class="label">Bookmarks and lists</span>
+      </div>
+      <div class="menu-item" data-action="downloads">
+        <span class="icon">⬇️</span>
+        <span class="label">Downloads</span>
+        <span class="shortcut">Ctrl+J</span>
+      </div>
+      <div class="menu-item" data-action="extensions">
+        <span class="icon">🧩</span>
+        <span class="label">Extensions</span>
+      </div>
+      <div class="menu-item" data-action="clear-data">
+        <span class="icon">🗑️</span>
+        <span class="label">Delete browsing data...</span>
+        <span class="shortcut">Ctrl+Shift+Del</span>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Zoom Control -->
+      <div class="zoom-row">
+        <span class="icon">🔍</span>
+        <span class="label">Zoom</span>
+        <div class="zoom-controls">
+          <button class="zoom-btn" id="zoomOut" title="Zoom out">−</button>
+          <span class="zoom-pct" id="zoomPct">80%</span>
+          <button class="zoom-btn" id="zoomIn" title="Zoom in">+</button>
+          <button class="zoom-key" title="Actual size">⌘</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Bottom Section -->
+      <div class="menu-item" data-action="print">
+        <span class="icon">🖨️</span>
+        <span class="label">Print...</span>
+        <span class="shortcut">Ctrl+P</span>
+      </div>
+      <div class="menu-item" data-action="find">
+        <span class="icon">🔎</span>
+        <span class="label">Find and edit</span>
+        <span class="arrow">›</span>
+      </div>
+      <div class="menu-item" data-action="share">
+        <span class="icon">📤</span>
+        <span class="label">Save and share</span>
+        <span class="arrow">›</span>
+      </div>
+      <div class="menu-item" data-action="more-tools">
+        <span class="icon">🔧</span>
+        <span class="label">More tools</span>
+        <span class="arrow">›</span>
+      </div>
+      <div class="menu-item" data-action="help">
+        <span class="icon">❓</span>
+        <span class="label">Help</span>
+        <span class="arrow">›</span>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  const menuBtn = document.getElementById('menuBtn');
+  const menu = document.getElementById('menu');
+  const backdrop = document.getElementById('backdrop');
+  let isOpen = false;
+
+  function toggleMenu(forceState) {
+    isOpen = forceState !== undefined ? forceState : !isOpen;
+    menu.classList.toggle('open', isOpen);
+    backdrop.classList.toggle('visible', isOpen);
+    if (isOpen) {
+      menuBtn.setAttribute('aria-expanded', 'true');
+    } else {
+      menuBtn.removeAttribute('aria-expanded');
+    }
+  }
+
+  menuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleMenu();
+  });
+
+  backdrop.addEventListener('click', () => toggleMenu(false));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isOpen) toggleMenu(false);
+  });
+
+  // Sidebar toggle
+  let sidebarOn = true;
+  const sidebarSwitch = document.getElementById('sidebarSwitch');
+  const sidebarState = document.getElementById('sidebarState');
+  document.getElementById('sidebarRow').addEventListener('click', () => {
+    sidebarOn = !sidebarOn;
+    sidebarSwitch.className = 'toggle-switch ' + (sidebarOn ? 'on' : 'off');
+    sidebarState.className = 'toggle-state ' + (sidebarOn ? 'on' : 'off');
+    sidebarState.textContent = sidebarOn ? 'On' : 'Off';
+  });
+
+  // Autohide toggle
+  let autohideOn = false;
+  const autohideSwitch = document.getElementById('autohideSwitch');
+  const autohideState = document.getElementById('autohideState');
+  document.getElementById('autohideRow').addEventListener('click', () => {
+    autohideOn = !autohideOn;
+    autohideSwitch.className = 'toggle-switch ' + (autohideOn ? 'on' : 'off');
+    autohideState.className = 'toggle-state ' + (autohideOn ? 'on' : 'off');
+    autohideState.textContent = autohideOn ? 'On' : 'Off';
+  });
+
+  // Zoom controls
+  let zoomLevel = 80;
+  const zoomPct = document.getElementById('zoomPct');
+  const ZOOM_STEPS = [25, 33, 50, 67, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
+
+  function updateZoom() {
+    zoomPct.textContent = zoomLevel + '%';
+  }
+
+  document.getElementById('zoomOut').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const idx = ZOOM_STEPS.indexOf(zoomLevel);
+    if (idx > 0) { zoomLevel = ZOOM_STEPS[idx - 1]; updateZoom(); }
+    else if (idx === -1) {
+      const prev = ZOOM_STEPS.filter(s => s < zoomLevel).pop();
+      if (prev !== undefined) { zoomLevel = prev; updateZoom(); }
+    }
+  });
+
+  document.getElementById('zoomIn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const idx = ZOOM_STEPS.indexOf(zoomLevel);
+    if (idx < ZOOM_STEPS.length - 1) { zoomLevel = ZOOM_STEPS[idx + 1]; updateZoom(); }
+    else if (idx === -1) {
+      const next = ZOOM_STEPS.find(s => s > zoomLevel);
+      if (next !== undefined) { zoomLevel = next; updateZoom(); }
+    }
+  });
+
+  // Click on zoom-key to reset to 100%
+  document.querySelector('.zoom-key').addEventListener('click', (e) => {
+    e.stopPropagation();
+    zoomLevel = 100;
+    updateZoom();
+  });
+
+  // Menu item click feedback
+  document.querySelectorAll('.menu-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const action = item.dataset.action;
+      console.log('[Menu]', action);
+      toggleMenu(false);
+    });
+  });
+</script>
+
+</body>
+</html>

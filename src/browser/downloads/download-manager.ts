@@ -1,6 +1,4 @@
 import type { ISharedService } from '../../app/app-shell';
-import type { IDisposable } from '../../app/dependency-container';
-
 type DownloadState = 'queued' | 'downloading' | 'paused' | 'completed' | 'failed' | 'cancelled';
 
 interface DownloadItem {
@@ -127,7 +125,7 @@ function suggestedFilename(url: string, mimeType: string): string {
       const last = segments[segments.length - 1]!;
       if (last.includes('.')) return last;
     }
-  } catch {}
+  } catch { /* extension not available */ }
   const ext = mimeType.split('/')[1] ?? 'bin';
   return `download.${ext}`;
 }
@@ -209,6 +207,7 @@ class DownloadManager implements IDownloadManager {
       const chunks: Uint8Array[] = [];
       let received = 0;
 
+      // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;

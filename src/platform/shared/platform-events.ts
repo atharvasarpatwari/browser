@@ -17,12 +17,6 @@ interface PlatformEvent {
   readonly data: Readonly<Record<string, unknown>>;
 }
 
-interface INativeEventBus {
-  on(type: PlatformEventType, handler: (event: PlatformEvent) => void): void;
-  off(type: PlatformEventType, handler: (event: PlatformEvent) => void): void;
-  emit(event: PlatformEvent): void;
-}
-
 interface IPlatformEvents extends IDisposable {
   readonly isOnline: boolean;
   readonly isFocused: boolean;
@@ -116,7 +110,7 @@ class PlatformEvents implements IPlatformEvents {
       });
     });
 
-    add('beforeunload', (e: Event) => {
+    add('beforeunload', (_e: Event) => {
       this.bus.emit({ kind: 'beforeUnload', timestamp: Date.now(), data: {} });
     });
 

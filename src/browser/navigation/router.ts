@@ -55,6 +55,10 @@ import type {
   INavigationController,
   NavigationEvent,
 } from './navigation-controller';
+import {
+  GatewayProtocolManager,
+  GatewayCategory,
+} from '../netwroking/gateway-protocols';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENUMS
@@ -77,6 +81,22 @@ enum RouteType {
   NewTabPage   = 'new-tab-page',
   /** A dedicated error page (navigation failure, CSP block, etc.) */
   ErrorPage    = 'error-page',
+  /** Secure file transfer (FTPS, SFTP) */
+  SecureFileTransfer = 'secure-file-transfer',
+  /** WebSocket connection (ws:, wss:) */
+  WebSocket    = 'websocket',
+  /** External protocol delegated to OS (mailto:, tel:, ssh:, magnet:, etc.) */
+  ExternalProtocol = 'external-protocol',
+  /** Inline data URI rendered in-browser (data:) */
+  DataUri      = 'data-uri',
+  /** Blob URL rendered in-browser (blob:) */
+  BlobUrl      = 'blob-url',
+  /** Legacy protocol (gopher:, wais:) */
+  LegacyProtocol = 'legacy-protocol',
+  /** Usenet protocol (news:, nntp:) */
+  Usenet       = 'usenet',
+  /** Gateway protocol (proxy, DNS, tunnel, NAT, access, LB, CDN, discovery) */
+  Gateway      = 'gateway',
   /** URL matched no registered route */
   Unknown      = 'unknown',
 }
@@ -495,6 +515,97 @@ class Router implements IRouter {
       });
     }
 
+    // ── Internal data/blob protocols (protocol match, high priority) ───────
+    add({
+      pattern:  'data:',
+      strategy: MatchStrategy.Protocol,
+      type:     RouteType.DataUri,
+      priority: 50,
+      label:    'built-in:data',
+      handler:  Router.makeDataUriHandler(),
+    });
+
+    add({
+      pattern:  'blob:',
+      strategy: MatchStrategy.Protocol,
+      type:     RouteType.BlobUrl,
+      priority: 50,
+      label:    'built-in:blob',
+      handler:  Router.makeBlobUrlHandler(),
+    });
+
+    // ── External protocols (protocol match, delegated to OS) ──────────────
+    const externalProtocols: Array<[string, string]> = [
+      ['mailto:',  'built-in:mailto'],
+      ['tel:',     'built-in:tel'],
+      ['sms:',     'built-in:sms'],
+      ['smsto:',   'built-in:smsto'],
+      ['ssh:',     'built-in:ssh'],
+      ['magnet:',  'built-in:magnet'],
+    ];
+
+    for (const [proto, label] of externalProtocols) {
+      add({
+        pattern:  proto,
+        strategy: MatchStrategy.Protocol,
+        type:     RouteType.ExternalProtocol,
+        priority: 30,
+        label,
+        handler:  Router.makeExternalHandler(),
+      });
+    }
+
+    // ── WebSocket protocols (protocol match) ──────────────────────────────
+    const wsProtocols: Array<[string, string]> = [
+      ['wss:', 'built-in:wss'],
+      ['ws:',  'built-in:ws'],
+    ];
+
+    for (const [proto, label] of wsProtocols) {
+      add({
+        pattern:  proto,
+        strategy: MatchStrategy.Protocol,
+        type:     RouteType.WebSocket,
+        priority: 20,
+        label,
+        handler:  Router.makeWebSocketHandler(),
+      });
+    }
+
+    // ── Usenet protocols (protocol match) ─────────────────────────────────
+    const usenetProtocols: Array<[string, string]> = [
+      ['news:', 'built-in:news'],
+      ['nntp:', 'built-in:nntp'],
+    ];
+
+    for (const [proto, label] of usenetProtocols) {
+      add({
+        pattern:  proto,
+        strategy: MatchStrategy.Protocol,
+        type:     RouteType.Usenet,
+        priority: 15,
+        label,
+        handler:  Router.makeWebHandler(),
+      });
+    }
+
+    // ── Legacy protocols (protocol match) ─────────────────────────────────
+    const legacyProtocols: Array<[string, string]> = [
+      ['gopher:', 'built-in:gopher'],
+      ['wais:',   'built-in:wais'],
+    ];
+
+    for (const [proto, label] of legacyProtocols) {
+      add({
+        pattern:  proto,
+        strategy: MatchStrategy.Protocol,
+        type:     RouteType.LegacyProtocol,
+        priority: 12,
+        label,
+        handler:  Router.makeLegacyHandler(),
+      });
+    }
+
     // ── Protocol-based fallbacks (lowest built-in priority) ─────────────────
     const webProtocols: Array<[string, string]> = [
       ['https:', 'built-in:https'],
@@ -511,6 +622,53 @@ class Router implements IRouter {
         label,
         handler:  Router.makeWebHandler(),
       });
+    }
+
+    // ── Secure file transfer protocols ─────────────────────────────────────
+    const sftpProtocols: Array<[string, string]> = [
+      ['ftps:', 'built-in:ftps'],
+      ['sftp:', 'built-in:sftp'],
+    ];
+
+    for (const [proto, label] of sftpProtocols) {
+      add({
+        pattern:  proto,
+        strategy: MatchStrategy.Protocol,
+        type:     RouteType.SecureFileTransfer,
+        priority: 10,
+        label,
+        handler:  Router.makeSftpHandler(),
+      });
+    }
+
+    // ── Gateway protocols (protocol match, delegated to gateway manager) ───
+    const gatewayManager = new GatewayProtocolManager();
+    const gatewayCategories: Array<[GatewayCategory, string]> = [
+      [GatewayCategory.Proxy,        'proxy'],
+      [GatewayCategory.DNS,          'dns'],
+      [GatewayCategory.Tunnel,       'tunnel'],
+      [GatewayCategory.NAT,          'nat'],
+      [GatewayCategory.Access,       'access'],
+      [GatewayCategory.LoadBalancer, 'load-balancer'],
+      [GatewayCategory.CDN,          'cdn'],
+      [GatewayCategory.Discovery,    'discovery'],
+    ];
+
+    for (const [category, categoryLabel] of gatewayCategories) {
+      const schemes = gatewayManager.getSchemesByCategory(category);
+      for (const scheme of schemes) {
+        const result = gatewayManager.resolveScheme(scheme);
+        if (result) {
+          add({
+            pattern:  scheme,
+            strategy: MatchStrategy.Protocol,
+            type:     RouteType.Gateway,
+            priority: 5,
+            label:    `built-in:gateway:${categoryLabel}:${result.label}`,
+            handler:  Router.makeGatewayHandler(categoryLabel, result.label),
+          });
+        }
+      }
     }
 
     add({
@@ -566,6 +724,109 @@ class Router implements IRouter {
       data: {
         url:      ctx.parsedUrl.href,
         pathname: ctx.parsedUrl.pathname,
+      },
+    });
+  }
+
+  /** Handler for secure file transfer (FTPS, SFTP). */
+  private static makeSftpHandler(): RouteHandler {
+    return async (ctx: RouteContext): Promise<RouteResult> => ({
+      type:   RouteType.SecureFileTransfer,
+      pageId: 'secure-file-transfer',
+      title:  ctx.parsedUrl.hostname || ctx.parsedUrl.href,
+      data: {
+        url:      ctx.parsedUrl.href,
+        hostname: ctx.parsedUrl.hostname,
+        protocol: ctx.parsedUrl.protocol,
+        isSecure: ctx.parsedUrl.isSecure,
+      },
+    });
+  }
+
+  /** Handler for WebSocket (ws:, wss:). */
+  private static makeWebSocketHandler(): RouteHandler {
+    return async (ctx: RouteContext): Promise<RouteResult> => ({
+      type:   RouteType.WebSocket,
+      pageId: 'websocket',
+      title:  ctx.parsedUrl.hostname || ctx.parsedUrl.href,
+      data: {
+        url:      ctx.parsedUrl.href,
+        hostname: ctx.parsedUrl.hostname,
+        protocol: ctx.parsedUrl.protocol,
+        isSecure: ctx.parsedUrl.isSecure,
+      },
+    });
+  }
+
+  /** Handler for external protocols (mailto:, tel:, ssh:, magnet:, etc.). */
+  private static makeExternalHandler(): RouteHandler {
+    return async (ctx: RouteContext): Promise<RouteResult> => ({
+      type:   RouteType.ExternalProtocol,
+      pageId: 'external-protocol',
+      title:  ctx.parsedUrl.protocol.replace(':', '').toUpperCase(),
+      data: {
+        url:      ctx.parsedUrl.href,
+        protocol: ctx.parsedUrl.protocol,
+        action:   'delegate-to-os',
+      },
+    });
+  }
+
+  /** Handler for data: URIs. */
+  private static makeDataUriHandler(): RouteHandler {
+    return async (ctx: RouteContext): Promise<RouteResult> => ({
+      type:   RouteType.DataUri,
+      pageId: 'data-uri',
+      title:  'Data URI',
+      data: {
+        url:      ctx.parsedUrl.href,
+        protocol: ctx.parsedUrl.protocol,
+      },
+    });
+  }
+
+  /** Handler for blob: URLs. */
+  private static makeBlobUrlHandler(): RouteHandler {
+    return async (ctx: RouteContext): Promise<RouteResult> => ({
+      type:   RouteType.BlobUrl,
+      pageId: 'blob-url',
+      title:  'Blob',
+      data: {
+        url:      ctx.parsedUrl.href,
+        protocol: ctx.parsedUrl.protocol,
+      },
+    });
+  }
+
+  /** Handler for legacy protocols (gopher:, wais:). */
+  private static makeLegacyHandler(): RouteHandler {
+    return async (ctx: RouteContext): Promise<RouteResult> => ({
+      type:   RouteType.LegacyProtocol,
+      pageId: 'legacy-protocol',
+      title:  ctx.parsedUrl.protocol.replace(':', '').toUpperCase(),
+      data: {
+        url:      ctx.parsedUrl.href,
+        hostname: ctx.parsedUrl.hostname,
+        protocol: ctx.parsedUrl.protocol,
+      },
+    });
+  }
+
+  /** Handler for gateway protocols (proxy, DNS, tunnel, NAT, etc.). */
+  private static makeGatewayHandler(
+    category: string,
+    protocolLabel: string,
+  ): RouteHandler {
+    return async (ctx: RouteContext): Promise<RouteResult> => ({
+      type:   RouteType.Gateway,
+      pageId: `gateway-${category}`,
+      title:  `${protocolLabel} (${ctx.parsedUrl.protocol.replace(':', '').toUpperCase()})`,
+      data: {
+        url:      ctx.parsedUrl.href,
+        hostname: ctx.parsedUrl.hostname,
+        protocol: ctx.parsedUrl.protocol,
+        category,
+        protocolLabel,
       },
     });
   }

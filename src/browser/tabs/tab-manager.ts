@@ -1,5 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { ITabSession, TabSessionEvent, TabEventType } from './tab-session';
+import type { ITabSession } from './tab-session';
 import { TabSession } from './tab-session';
 
 type TabManagerEventType =

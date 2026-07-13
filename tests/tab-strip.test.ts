@@ -34,7 +34,7 @@ describe('TabStrip', () => {
 
   it('should update when a tab is removed', () => {
     const tab1 = manager.createTab();
-    const tab2 = manager.createTab();
+    manager.createTab();
     const strip = new TabStrip(manager);
     expect(strip.state.tabs.length).toBe(2);
     manager.removeTab(tab1.id);

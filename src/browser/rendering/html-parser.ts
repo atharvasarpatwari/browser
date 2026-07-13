@@ -371,7 +371,7 @@ class Tokenizer {
     const selfClose = raw.endsWith('/');
     const content   = selfClose ? raw.slice(0, -1).trim() : raw.trim();
 
-    const spaceIdx = content.search(/[\s\/]/);
+    const spaceIdx = content.search(/[\s/]/);
     const tagName  = (spaceIdx === -1 ? content : content.slice(0, spaceIdx)).toLowerCase();
     const attrStr  = spaceIdx === -1 ? '' : content.slice(spaceIdx + 1);
     const attrs    = this.parseAttributes(attrStr);
@@ -417,7 +417,7 @@ class Tokenizer {
 
   private parseAttributes(raw: string): Map<string, string> {
     const attrs = new Map<string, string>();
-    const re    = /([^\s='"\/]+)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/g;
+    const re    = /([^\s='"/]+)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/g;
     let m: RegExpExecArray | null;
 
     while ((m = re.exec(raw)) !== null) {

@@ -19,12 +19,6 @@ interface DownloadsPageEvent {
   readonly downloadId?: string;
 }
 
-interface DownloadActionEvent extends DownloadsPageEvent {
-  readonly kind: 'downloadAction';
-  readonly action: 'pause' | 'resume' | 'cancel' | 'remove' | 'openFile' | 'showInFolder';
-  readonly downloadId: string;
-}
-
 interface IDownloadsPage extends IDisposable {
   readonly isMounted: boolean;
   mount(container: HTMLElement, items: readonly DownloadItem[]): void;
