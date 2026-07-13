@@ -155,6 +155,22 @@ interface IUrlParser {
    * Useful for showing a security warning before attempting to parse.
    */
   isBlockedProtocol(rawInput: string): boolean;
+
+  /**
+   * True when the input is NOT a valid URL and should be treated as a
+   * search query routed to the default search engine.
+   */
+  isSearchQuery(rawInput: string): boolean;
+
+  /**
+   * Build a full search-engine URL for the given query string.
+   *
+   * @param query       The raw search text the user typed.
+   * @param engineUrl   Base URL of the search engine (must contain a %s
+   *                    placeholder).  Defaults to DuckDuckGo.
+   * @returns           The complete URL ready for navigation.
+   */
+  buildSearchUrl(query: string, engineUrl?: string): string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -586,6 +602,33 @@ class UrlParser implements IUrlParser {
     const match = UrlParser.ANY_SCHEME_RE.exec(s);
     if (match === null) return false;
     return BLOCKED_PROTOCOLS.has(match[1]! + ':');
+  }
+
+  // ── IUrlParser: isSearchQuery ────────────────────────────────────────────
+
+  isSearchQuery(rawInput: string): boolean {
+    const s = this.sanitize(rawInput);
+    if (s.length === 0) return false;
+
+    const validation = this.validate(s);
+    if (validation.valid) return false;
+
+    // Has a scheme like "ftp:" or "nova:" but is malformed — not a search query.
+    if (UrlParser.ANY_SCHEME_RE.test(s)) return false;
+
+    // Looks like a domain or IP but failed parse — not a search query.
+    if (UrlParser.BARE_HOSTNAME_RE.test(s)) return false;
+    if (UrlParser.LOCALHOST_RE.test(s)) return false;
+    if (UrlParser.IPV4_RE.test(s)) return false;
+
+    return true;
+  }
+
+  // ── IUrlParser: buildSearchUrl ───────────────────────────────────────────
+
+  buildSearchUrl(query: string, engineUrl = 'https://duckduckgo.com/?q=%s'): string {
+    const encoded = encodeURIComponent(this.sanitize(query));
+    return engineUrl.replace('%s', encoded);
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────

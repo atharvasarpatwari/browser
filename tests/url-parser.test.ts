@@ -452,4 +452,81 @@ describe('UrlParser', () => {
       expect(BLOCKED_PROTOCOLS.has('blob:')).toBe(false);
     });
   });
+
+  describe('isSearchQuery', () => {
+    it('should return true for plain text', () => {
+      expect(parser.isSearchQuery('hello world')).toBe(true);
+    });
+
+    it('should return true for multi-word queries', () => {
+      expect(parser.isSearchQuery('how to bake a cake')).toBe(true);
+    });
+
+    it('should return false for empty string', () => {
+      expect(parser.isSearchQuery('')).toBe(false);
+    });
+
+    it('should return false for valid URLs', () => {
+      expect(parser.isSearchQuery('https://example.com')).toBe(false);
+    });
+
+    it('should return false for bare hostnames', () => {
+      expect(parser.isSearchQuery('google.com')).toBe(false);
+    });
+
+    it('should return false for localhost', () => {
+      expect(parser.isSearchQuery('localhost')).toBe(false);
+    });
+
+    it('should return false for localhost with port', () => {
+      expect(parser.isSearchQuery('localhost:3000')).toBe(false);
+    });
+
+    it('should return false for IPv4 addresses', () => {
+      expect(parser.isSearchQuery('192.168.1.1')).toBe(false);
+    });
+
+    it('should return false for schemes even if malformed', () => {
+      expect(parser.isSearchQuery('ftp://broken')).toBe(false);
+    });
+
+    it('should return false for about:blank', () => {
+      expect(parser.isSearchQuery('about:blank')).toBe(false);
+    });
+
+    it('should return true for text with special characters', () => {
+      expect(parser.isSearchQuery('what is 2+2?')).toBe(true);
+    });
+
+    it('should return true for non-English text', () => {
+      expect(parser.isSearchQuery('hola mundo')).toBe(true);
+    });
+  });
+
+  describe('buildSearchUrl', () => {
+    it('should build a DuckDuckGo URL by default', () => {
+      const url = parser.buildSearchUrl('hello world');
+      expect(url).toBe('https://duckduckgo.com/?q=hello%20world');
+    });
+
+    it('should encode special characters', () => {
+      const url = parser.buildSearchUrl('a & b < c');
+      expect(url).toContain(encodeURIComponent('a & b < c'));
+    });
+
+    it('should use custom engine URL when provided', () => {
+      const url = parser.buildSearchUrl('test', 'https://google.com/search?q=%s');
+      expect(url).toBe('https://google.com/search?q=test');
+    });
+
+    it('should handle empty query', () => {
+      const url = parser.buildSearchUrl('');
+      expect(url).toBe('https://duckduckgo.com/?q=');
+    });
+
+    it('should replace %s placeholder in engine URL', () => {
+      const url = parser.buildSearchUrl('my query', 'https://example.com/search?q=%s&page=1');
+      expect(url).toBe('https://example.com/search?q=my%20query&page=1');
+    });
+  });
 });

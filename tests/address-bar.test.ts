@@ -141,3 +141,66 @@ describe('AddressBarEventBus', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 });
+
+describe('AddressBar search events', () => {
+  it('should emit search event for plain text input', () => {
+    const bar = new AddressBar();
+    const handler = vi.fn();
+    bar.on('search', handler);
+
+    bar.setValue('hello world');
+
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'search', query: 'hello world' }),
+    );
+  });
+
+  it('should emit navigate event for valid URLs, not search', () => {
+    const bar = new AddressBar();
+    const searchHandler = vi.fn();
+    const navigateHandler = vi.fn();
+    bar.on('search', searchHandler);
+    bar.on('navigate', navigateHandler);
+
+    bar.setValue('https://example.com');
+
+    expect(navigateHandler).toHaveBeenCalled();
+    expect(searchHandler).not.toHaveBeenCalled();
+  });
+
+  it('should emit navigate for bare hostnames, not search', () => {
+    const bar = new AddressBar();
+    const searchHandler = vi.fn();
+    const navigateHandler = vi.fn();
+    bar.on('search', searchHandler);
+    bar.on('navigate', navigateHandler);
+
+    bar.setValue('google.com');
+
+    expect(navigateHandler).toHaveBeenCalled();
+    expect(searchHandler).not.toHaveBeenCalled();
+  });
+
+  it('should not emit search for empty input', () => {
+    const bar = new AddressBar();
+    const handler = vi.fn();
+    bar.on('search', handler);
+
+    bar.setValue('');
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('should emit both inputChanged and search for search queries', () => {
+    const bar = new AddressBar();
+    const inputHandler = vi.fn();
+    const searchHandler = vi.fn();
+    bar.on('inputChanged', inputHandler);
+    bar.on('search', searchHandler);
+
+    bar.setValue('my search query');
+
+    expect(inputHandler).toHaveBeenCalled();
+    expect(searchHandler).toHaveBeenCalled();
+  });
+});

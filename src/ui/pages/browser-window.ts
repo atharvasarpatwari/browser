@@ -8,6 +8,9 @@ import type { IStatusBar } from '../components/status-bar/status-bar';
 import type { IToolbar } from '../components/toolbar/toolbar';
 import type { ITrackerBlocker } from '../../browser/security/tracker-blocker';
 import type { IAdBlocker } from '../../browser/security/ad-blocker';
+import type { IUrlParser } from '../../browser/navigation/url-parser';
+import type { IContentRenderer } from '../components/content-renderer/content-renderer';
+import type { SearchResult } from '../components/content-renderer/content-renderer';
 
 import { TabManager } from '../../browser/tabs/tab-manager';
 import { AddressBar } from '../components/address-bar/address-bar';
@@ -23,6 +26,8 @@ import { ToolbarView } from '../components/toolbar/toolbar.view';
 import { DesktopLayout } from '../layout/desktop-layout';
 import { TrackerBlocker } from '../../browser/security/tracker-blocker';
 import { AdBlocker } from '../../browser/security/ad-blocker';
+import { UrlParser } from '../../browser/navigation/url-parser';
+import { ContentRenderer } from '../components/content-renderer/content-renderer';
 
 interface BrowserWindowPageConfig {
   readonly containerId: string;
@@ -71,8 +76,15 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private container: HTMLElement | null = null;
   private _mounted = false;
 
+  private readonly parser: IUrlParser;
+  private contentRenderer: IContentRenderer | null = null;
+  private contentArea: HTMLElement | null = null;
+  private currentUrl = '';
+  private contentNavigateHandler: ((e: Event) => void) | null = null;
+
   constructor(config?: Partial<BrowserWindowPageConfig>) {
     this.config = { ...DEFAULT_PAGE_CONFIG, ...config };
+    this.parser = new UrlParser();
   }
 
   get isMounted(): boolean { return this._mounted; }
@@ -156,6 +168,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.addressBarView.setEventHandler((e) => {
           if (e.kind === 'navigate' && 'url' in e) {
             void this.navigate(e.url);
+          } else if (e.kind === 'search' && 'query' in e) {
+            void this.navigate(e.query);
           } else if (e.kind === 'reload') {
             this.reload();
           } else if (e.kind === 'stop') {
@@ -194,7 +208,19 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.tabManager.createTab();
 
     if (areas.content) {
-      this.renderNewTabPage(areas.content);
+      this.contentArea = areas.content;
+      this.contentRenderer = new ContentRenderer();
+      this.contentRenderer.attach(areas.content);
+      this.contentRenderer.renderNewTab();
+
+      // Listen for navigation events from rendered content (e.g. search result links).
+      this.contentNavigateHandler = (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        if (detail?.url) {
+          void this.navigate(detail.url);
+        }
+      };
+      areas.content.addEventListener('nova-navigate', this.contentNavigateHandler);
     }
 
     this._mounted = true;
@@ -209,6 +235,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.trackerBlocker?.dispose();
     this.adBlocker?.dispose();
     this.tabManager?.dispose();
+    this.contentRenderer?.dispose();
+    if (this.contentArea && this.contentNavigateHandler) {
+      this.contentArea.removeEventListener('nova-navigate', this.contentNavigateHandler);
+    }
     this.layout?.dispose();
     if (this.container) {
       this.container.innerHTML = '';
@@ -221,6 +251,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.trackerBlocker = null;
     this.adBlocker = null;
     this.tabManager = null;
+    this.contentRenderer = null;
+    this.contentArea = null;
+    this.contentNavigateHandler = null;
     this.layout = null;
     this._mounted = false;
   }
@@ -230,20 +263,63 @@ class BrowserWindowPage implements IBrowserWindowPage {
     const tab = this.tabManager.activeTab;
     if (!tab) return;
 
-    this.addressBar?.setValue(url);
+    this.currentUrl = url;
     this.toolbar?.setLoading(true);
     this.statusBar?.setStatus(`Loading ${url}...`);
     this.statusBar?.setUrl(url);
+    tab.setLoading(true);
+
+    // Show loading state in content area.
+    this.contentRenderer?.renderLoading(url);
+
+    // ── Search query detection ────────────────────────────────────────────
+    if (this.parser.isSearchQuery(url)) {
+      const searchUrl = this.parser.buildSearchUrl(url);
+      const results = this.generateSearchResults(url);
+
+      this.addressBar?.setValue(url);
+      this.addressBar?.setLoading(false);
+
+      const protocol = 'HTTPS';
+      this.statusBar?.setProtocol(protocol);
+      this.statusBar?.setSecure(true);
+      this.statusBar?.setUrl(searchUrl);
+
+      tab.setUrl(searchUrl);
+      tab.setTitle(`${url} - Nova Search`);
+
+      // Simulate brief network delay for realism.
+      await new Promise(r => setTimeout(r, 150));
+
+      this.contentRenderer?.renderSearchResults(url, searchUrl, results);
+
+      this.toolbar?.setLoading(false);
+      this.toolbar?.setCanGoBack(tab.canGoBack());
+      this.toolbar?.setCanGoForward(tab.canGoForward());
+      this.statusBar?.setStatus('Done');
+      this.syncAll();
+      return;
+    }
+
+    // ── URL navigation ────────────────────────────────────────────────────
+    let normalizedUrl = url;
+    try {
+      normalizedUrl = this.parser.normalize(url);
+    } catch {
+      // If normalize fails, try with https:// prefix.
+      if (!url.startsWith('http')) normalizedUrl = `https://${url}`;
+    }
+
+    this.addressBar?.setValue(url);
 
     // Determine protocol and security from the URL.
     let protocol = 'HTTPS';
     let isSecure = true;
     try {
-      const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
+      const urlObj = new URL(normalizedUrl);
       protocol = this.getProtocolLabel(urlObj.protocol);
       isSecure = this.isSecureProtocol(urlObj.protocol);
     } catch {
-      // If URL parsing fails, assume HTTPS for bare input.
       protocol = 'HTTPS';
       isSecure = true;
     }
@@ -251,17 +327,21 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.statusBar?.setProtocol(protocol);
     this.statusBar?.setSecure(isSecure);
 
-    tab.setUrl(url);
-    tab.setLoading(true);
+    tab.setUrl(normalizedUrl);
 
-    await new Promise(r => setTimeout(r, 500));
-
-    tab.setLoading(false);
     try {
-      const hostname = new URL(url.startsWith('http') ? url : `https://${url}`).hostname;
-      tab.setTitle(hostname);
+      const parsed = this.parser.parse(url);
+      tab.setTitle(parsed.hostname || url);
     } catch {
       tab.setTitle(url);
+    }
+
+    // ── Render content based on URL type ──────────────────────────────────
+    try {
+      await this.renderUrlContent(normalizedUrl);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.contentRenderer?.renderError('Navigation Failed', message, normalizedUrl);
     }
 
     this.toolbar?.setLoading(false);
@@ -269,6 +349,157 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.toolbar?.setCanGoForward(tab.canGoForward());
     this.statusBar?.setStatus('Done');
     this.syncAll();
+  }
+
+  /**
+   * Render content based on the URL's protocol and type.
+   */
+  private async renderUrlContent(url: string): Promise<void> {
+    try {
+      const parsed = this.parser.parse(url);
+
+      // Special pages: about:blank, nova://, etc.
+      if (parsed.isSpecialPage) {
+        if (parsed.normalized === 'about:blank') {
+          this.contentRenderer?.clear();
+        } else {
+          this.contentRenderer?.renderHtml(
+            `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
+              <div style="text-align:center;color:#5f6368;">
+                <h2 style="margin:0 0 8px;">Nova Browser</h2>
+                <p style="margin:0;">${parsed.normalized}</p>
+              </div>
+            </body></html>`,
+            { title: parsed.normalized },
+          );
+        }
+        return;
+      }
+
+      // Data URLs: render directly.
+      if (parsed.protocol === 'data:') {
+        this.contentRenderer?.renderHtml(
+          `<html><body style="margin:0;"><iframe src="${url}" style="width:100%;height:100vh;border:none;"></iframe></body></html>`,
+          { title: 'Data URL' },
+        );
+        return;
+      }
+
+      // File URLs: show file info.
+      if (parsed.protocol === 'file:') {
+        this.contentRenderer?.renderHtml(
+          `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
+            <div style="text-align:center;color:#5f6368;">
+              <div style="font-size:48px;margin-bottom:16px;">📁</div>
+              <h2 style="margin:0 0 8px;">Local File</h2>
+              <p style="margin:0;word-break:break-all;max-width:500px;">${parsed.pathname}</p>
+            </div>
+          </body></html>`,
+          { title: parsed.pathname || 'Local File' },
+        );
+        return;
+      }
+
+      // HTTP/HTTPS: render a page with the URL info.
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        this.contentRenderer?.renderHtml(
+          `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
+            <div style="text-align:center;color:#5f6368;">
+              <div style="font-size:48px;margin-bottom:16px;">🌐</div>
+              <h2 style="margin:0 0 8px;">${parsed.hostname}</h2>
+              <p style="margin:0 0 16px;word-break:break-all;max-width:500px;">${url}</p>
+              <p style="margin:0;font-size:12px;color:#9aa0a6;">Page loaded via Nova Browser</p>
+            </div>
+          </body></html>`,
+          { title: parsed.hostname || url },
+        );
+        return;
+      }
+
+      // All other protocols: show protocol info.
+      this.contentRenderer?.renderHtml(
+        `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
+          <div style="text-align:center;color:#5f6368;">
+            <div style="font-size:48px;margin-bottom:16px;">🔗</div>
+            <h2 style="margin:0 0 8px;">${parsed.protocol.replace(':', '').toUpperCase()} Protocol</h2>
+            <p style="margin:0;word-break:break-all;max-width:500px;">${url}</p>
+          </div>
+        </body></html>`,
+        { title: parsed.protocol + url },
+      );
+    } catch {
+      this.contentRenderer?.renderError(
+        'Unable to Load',
+        `The URL "${url}" could not be parsed.`,
+        url,
+      );
+    }
+  }
+
+  /**
+   * Generate search result entries for a given query.
+   */
+  private generateSearchResults(query: string): readonly SearchResult[] {
+    const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 0);
+    const results: SearchResult[] = [];
+
+    results.push({
+      title: query,
+      url: `https://duckduckgo.com/?q=${encodeURIComponent(query)}`,
+      snippet: `Search for "${query}" on DuckDuckGo — the privacy-focused search engine that doesn't track you.`,
+    });
+
+    if (words.length <= 4) {
+      results.push({
+        title: `${query} — Wikipedia`,
+        url: `https://en.wikipedia.org/wiki/${encodeURIComponent(query.replace(/\s+/g, '_'))}`,
+        snippet: `Wikipedia article about ${query}. Read about the history, concepts, and related topics.`,
+      });
+    }
+
+    const programmingTerms = ['javascript', 'python', 'typescript', 'html', 'css', 'react', 'node', 'api', 'database', 'sql', 'git', 'docker', 'algorithm', 'function', 'class', 'array', 'string', 'loop', 'variable', 'error', 'debug', 'test', 'deploy', 'server', 'client'];
+    if (words.some(w => programmingTerms.includes(w))) {
+      results.push({
+        title: `${query} — Stack Overflow`,
+        url: `https://stackoverflow.com/search?q=${encodeURIComponent(query)}`,
+        snippet: `Questions and answers about ${query} on Stack Overflow, the largest developer community.`,
+      });
+    }
+
+    const newsTerms = ['news', 'today', 'latest', 'recent', 'breaking', 'update', 'report'];
+    if (words.some(w => newsTerms.includes(w))) {
+      results.push({
+        title: `${query} — Latest News`,
+        url: `https://news.google.com/search?q=${encodeURIComponent(query)}`,
+        snippet: `Get the latest news and updates about ${query} from sources around the world.`,
+      });
+    }
+
+    const tutorialTerms = ['how', 'tutorial', 'guide', 'learn', 'example', 'setup', 'install', 'create', 'build', 'make'];
+    if (words.some(w => tutorialTerms.includes(w))) {
+      results.push({
+        title: `${query} — Tutorial`,
+        url: `https://www.google.com/search?q=${encodeURIComponent(query + ' tutorial')}`,
+        snippet: `Step-by-step tutorial and guide for ${query}. Learn with examples and best practices.`,
+      });
+    }
+
+    const shopTerms = ['buy', 'price', 'cheap', 'best', 'review', 'compare', 'deal'];
+    if (words.some(w => shopTerms.includes(w))) {
+      results.push({
+        title: `${query} — Reviews & Prices`,
+        url: `https://www.google.com/search?q=${encodeURIComponent(query + ' reviews')}`,
+        snippet: `Compare prices, read reviews, and find the best deals for ${query}.`,
+      });
+    }
+
+    results.push({
+      title: `${query} — Documentation`,
+      url: `https://developer.mozilla.org/search?q=${encodeURIComponent(query)}`,
+      snippet: `Official documentation and reference materials for ${query}.`,
+    });
+
+    return results;
   }
 
   /**
@@ -423,22 +654,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.tabStripView?.update(this.tabStrip!.state);
     this.syncToolbar();
     this.syncBookmarkBar();
-  }
-
-  private renderNewTabPage(contentArea: HTMLElement): void {
-    contentArea.innerHTML = '';
-    const placeholder = document.createElement('div');
-    placeholder.className = 'webview-placeholder';
-    placeholder.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:50px 20px;position:relative;overflow:hidden;';
-    placeholder.innerHTML = `
-      <div class="wv-logo" style="font-family:var(--font-display);font-size:42px;font-weight:700;letter-spacing:-.03em;margin-bottom:2px;background:linear-gradient(135deg,#f0eee6 0%,#9bb5ff 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">No<span>va</span></div>
-      <div class="wv-sub" style="font-size:13px;color:var(--text-tertiary);margin-bottom:30px;letter-spacing:.3px;">Private & secure browsing</div>
-      <div class="wv-search" style="display:flex;align-items:center;width:100%;max-width:440px;background:var(--bg-glass);border:.5px solid var(--border-default);border-radius:var(--radius-lg);padding:0 12px;margin-bottom:18px;transition:all var(--t-norm);backdrop-filter:blur(12px);">
-        <span class="wv-search-icon" style="color:var(--text-tertiary);font-size:15px;margin-right:8px;">🔍</span>
-        <input type="text" placeholder="Search the web..." style="flex:1;border:none;background:none;color:var(--text-primary);font-size:13px;padding:9px 0;outline:none;font-family:inherit;min-width:0;">
-      </div>
-    `;
-    contentArea.appendChild(placeholder);
   }
 
   dispose(): void {

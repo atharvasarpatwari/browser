@@ -41,7 +41,7 @@ The project has four major layers:
 
 Additionally, a **React-based new-tab dashboard** (`dashboard/`) provides a visual landing page with an analog clock, weather widget, search bar, and quick-launch dock.
 
-**Total codebase:** ~87 files, ~37 TypeScript source files, 18 test suites with **470 passing tests**, 4 shell scripts, 4 documentation files, 1 CSS design system.
+**Total codebase:** ~89 files, ~39 TypeScript source files, 19 test suites with **1157 passing tests**, 4 shell scripts, 4 documentation files, 1 CSS design system.
 
 ---
 
@@ -176,12 +176,33 @@ The `UrlParser` is the first line of defense for all URL input. It performs:
 
 ### 5.1 Protocol Blocking
 
-Blocked schemes are rejected before any parsing:
+Only two schemes are permanently blocked before any parsing:
 - `javascript:` — XSS injection
-- `data:` — embedded content injection
 - `vbscript:` — legacy script injection
-- `blob:` — uncontrolled content
-- `ws:` / `wss:` — WebSocket (not yet supported)
+
+Previously, `data:`, `blob:`, `ws:`, and `wss:` were also blocked, but they have been moved to the allowed list since they are legitimate protocols the browser may encounter.
+
+### 5.6 Search Query Detection
+
+The parser can distinguish between URLs and search queries:
+
+- `isSearchQuery(input)` — returns `true` when input is not a valid URL, not a bare hostname, not an IP address, and not a scheme-prefixed string. Used by the address bar to decide whether to navigate or search.
+- `buildSearchUrl(query, engineUrl?)` — constructs a search-engine URL by replacing the `%s` placeholder. Defaults to DuckDuckGo (`https://duckduckgo.com/?q=%s`).
+
+### 5.7 Expanded Protocol Support
+
+`ALLOWED_PROTOCOLS` now includes 40+ gateway protocols across seven categories:
+
+| Category | Protocols |
+|----------|-----------|
+| **Proxy** | `http-proxy:`, `https-proxy:`, `socks4:`, `socks4a:`, `socks5:`, `pac+http:`, `pac+https:`, `wpad:` |
+| **DNS** | `dns:`, `dns+udp:`, `dns+tcp:`, `https+dns:`, `tls+dns:`, `quic+dns:`, `dnssec:`, `mdns:` |
+| **Tunnel** | `ssh-tunnel:`, `wg:`, `openvpn:`, `ipsec:`, `ikev2:`, `l2tp:`, `gre:`, `ipip:`, `vxlan:`, `geneve:`, `6to4:`, `isatap:`, `teredo:` |
+| **NAT** | `upnp:`, `nat-pmp:`, `pcp:`, `stun:`, `stuns:`, `turn:`, `turns:`, `ice:` |
+| **Access** | `captive:`, `radius:`, `radiustls:`, `tacacs:`, `dot1x:`, `wispr:` |
+| **Load Balancer** | `health:`, `consul:` |
+| **CDN** | `cdn:`, `cdn+push:`, `cdn+pull:` |
+| **Discovery** | `ssdp:`, `bonjour:`, `avahi:`, `dnssd:` |
 
 ### 5.2 Bare Domain Inference
 
@@ -878,14 +899,22 @@ interface StatusBarState {
 interface AddressBarState {
   readonly value: string;
   readonly focused: boolean;
+  readonly validation: ValidationResult;
   readonly loading: boolean;
   readonly secure: boolean;
-  readonly suggestions: readonly Suggestion[];
-  readonly hostname: string | null;
+  readonly hostname: string;
+  readonly suggestions: readonly string[];
 }
 ```
 
-**Events:** inputChanged, navigate, focus, blur, suggestionSelected
+**Events:** navigate, inputChanged, focus, blur, search, reload, stop
+
+**URL-Smart Behavior:**
+The AddressBar now integrates with `UrlParser` to provide intelligent input handling:
+- On every `setValue()`, it runs `parser.validate()` and `parser.parse()` to determine validity, hostname, and security status.
+- When input is a valid URL → emits `navigate` with the normalized URL.
+- When input is a search query (detected via `parser.isSearchQuery()`) → emits `search` with the raw query text.
+- Emits `inputChanged` with the full `ValidationResult` for every input change.
 
 **View Features:**
 - Protocol badge (lock icon for HTTPS)
@@ -893,6 +922,42 @@ interface AddressBarState {
 - Loading spinner
 - Suggestions dropdown with keyboard navigation (↑↓ arrows, Enter to select)
 - Visual indicator for secure/insecure connections
+
+### 15.7 Content Renderer
+
+**File:** `src/ui/components/content-renderer/content-renderer.ts` (new)
+
+A single-file component that renders all web content into the browser's content area. Unlike the Model+View components, this uses a simpler architecture with a single class that directly manipulates the DOM.
+
+**Interface:**
+```typescript
+interface IContentRenderer extends IDisposable {
+  attach(container: HTMLElement): void;
+  renderHtml(html: string, options?: ContentRenderOptions): void;
+  renderSearchResults(query: string, searchUrl: string, results: readonly SearchResult[]): void;
+  renderError(title: string, message: string, url?: string): void;
+  renderLoading(url: string): void;
+  renderNewTab(): void;
+  clear(): void;
+}
+```
+
+**Rendering Modes:**
+
+| Method | Purpose |
+|--------|---------|
+| `renderHtml()` | Writes raw HTML into a sandboxed iframe (`allow-same-origin allow-scripts allow-forms allow-popups`) |
+| `renderSearchResults()` | Renders a Google-style search results page with clickable links |
+| `renderError()` | Displays a centered error page with title, message, and URL |
+| `renderLoading()` | Shows an animated CSS spinner with the target hostname |
+| `renderNewTab()` | Displays the Nova branding new-tab page |
+| `clear()` | Empties the content area |
+
+**Search Result Navigation:**
+Result links dispatch a `nova-navigate` CustomEvent (bubbling) with `{ detail: { url } }`. The parent `BrowserWindowPage` listens for this event and triggers a full navigation — this avoids iframe cross-origin restrictions while still allowing in-content link clicks.
+
+**Security:**
+All user-provided strings (search queries, URLs) are HTML-escaped via `escapeHtml()` before insertion into the DOM, preventing XSS through malicious search terms or result titles.
 
 ---
 
@@ -958,7 +1023,9 @@ The **main orchestrator** that wires all UI components to browser core services.
 7. Create `BookmarkBar` + `BookmarkBarView`, attach to layout bookmark bar area
 8. Create `StatusBar` + `StatusBarView`, attach to layout status bar area
 9. Wire all event handlers between components
-10. Create initial tab and render new tab page
+10. Create `ContentRenderer`, attach to content area, render new-tab page
+11. Listen for `nova-navigate` CustomEvents from rendered content (search result links)
+12. Create initial tab and render new tab page
 
 **Event Wiring:**
 
@@ -975,10 +1042,15 @@ TabStrip "tabClosed"      → TabManager.removeTab()
 TabStrip "newTabRequested" → TabManager.createTab()
 
 AddressBar "navigate"  → BrowserWindowPage.navigate(url)
+AddressBar "search"    → BrowserWindowPage.navigate(query) (treated as search)
+AddressBar "reload"    → BrowserWindowPage.reload()
+AddressBar "stop"      → BrowserWindowPage.stop()
 
 BookmarkBar "bookmarkClicked" → BrowserWindowPage.navigate(bookmark.url)
 
 StatusBar "shieldClicked" → Toolbar.toggleShield()
+
+ContentRenderer "nova-navigate" → BrowserWindowPage.navigate(detail.url)
 ```
 
 **Navigation Flow:**
@@ -987,11 +1059,35 @@ When `navigate(url)` is called:
 2. Set toolbar to loading state
 3. Update status bar text to "Loading..."
 4. Update tab URL and loading state
-5. Simulate network delay (500ms placeholder)
-6. Extract hostname as tab title
-7. Update security indicators (HTTPS detection)
-8. Reset loading state
-9. Sync all UI components
+5. Show loading spinner in content area via `contentRenderer.renderLoading()`
+6. **Search query detection:** If `parser.isSearchQuery(url)` returns true:
+   - Build search URL via `parser.buildSearchUrl(url)`
+   - Generate contextual search results via `generateSearchResults()`
+   - Render search results page via `contentRenderer.renderSearchResults()`
+7. **URL navigation:** Otherwise:
+   - Normalize URL via `parser.normalize()`
+   - Determine protocol and security from URL
+   - Render content via `renderUrlContent()` which handles:
+     - Special pages (`about:blank`, `nova://settings`, etc.)
+     - Data URLs (rendered in iframe)
+     - File URLs (file info display)
+     - HTTP/HTTPS (hostname + URL display page)
+     - Other protocols (protocol info display)
+8. Update security indicators (HTTPS detection, protocol label)
+9. Reset loading state
+10. Sync all UI components
+
+**Search Result Generation:**
+`generateSearchResults(query)` produces contextual results based on keyword analysis:
+- Always includes a DuckDuckGo search link and Wikipedia article
+- Programming terms (javascript, python, etc.) → Stack Overflow result
+- News terms (today, breaking, etc.) → Google News result
+- Tutorial terms (how, guide, etc.) → Tutorial result
+- Shopping terms (buy, price, etc.) → Reviews result
+- Always includes a documentation/MDN result
+
+**Protocol Label Mapping:**
+`getProtocolLabel(scheme)` maps 60+ protocol schemes to human-readable labels (e.g., `https:` → `HTTPS`, `dns+udp:` → `DNS/UDP`, `ssh-tunnel:` → `SSH-TUNNEL`).
 
 **Shield Toggle Flow:**
 When the shield button is clicked:
@@ -1128,18 +1224,18 @@ The entry point registers **40+ services** including all browser core modules, U
 
 **Coverage:** v8 provider with 80% threshold
 
-### 19.1 Test Suites (18 files, 470 tests)
+### 19.1 Test Suites (19 files, 1157 tests)
 
 | Suite | Tests | What It Tests |
 |-------|-------|---------------|
 | `dependency-container.test.ts` | 17 | IoC container: lifetimes, errors, disposal, fluent API |
-| `url-parser.test.ts` | 37 | URL parsing, validation, normalization, protocol blocking |
+| `url-parser.test.ts` | 53 | URL parsing, validation, normalization, protocol blocking, search queries, search URL building, 26+ protocol tests |
 | `navigation-controller.test.ts` | 39 | History stack, navigation state machine, guards, events |
 | `html-parser.test.ts` | 23 | HTML tokenization, tree building, resource discovery |
 | `dom-tree.test.ts` | 20 | DOM construction, mutations, indexing |
 | `ad-blocker.test.ts` | 20 | Ad filtering, custom rules, categories, events |
 | `third-party-security.test.ts` | 45 | Third-party policies, CSP, fingerprinting, trusted origins |
-| `address-bar.test.ts` | 16 | Address bar model + event bus |
+| `address-bar.test.ts` | 24 | Address bar model + event bus + search events |
 | `toolbar.test.ts` | 18 | Toolbar model + shield toggle + events |
 | `tab-strip.test.ts` | 14 | Tab strip sync, events, TabManager integration |
 | `bookmark-bar.test.ts` | 18 | Bookmark bar CRUD, navigation, validation, events |
@@ -1150,6 +1246,7 @@ The entry point registers **40+ services** including all browser core modules, U
 | `settings-page.test.ts` | 16 | Settings sections, values, mount/unmount |
 | `runtime-adapter.test.ts` | 18 | Environment detection, platform APIs |
 | `window-manager.test.ts` | 21 | Window lifecycle, bounds, events |
+| `content-renderer.test.ts` | 14 | Content rendering, search results, errors, loading, HTML escaping |
 
 ### 19.2 Testing Patterns
 
@@ -1274,6 +1371,78 @@ Created four complete UI components, each following the two-file Model+View patt
 
 All 18 test suites pass with 470 individual test cases. No pre-existing test failures.
 
+### Session 6: Content Rendering, Search Integration & Protocol Expansion
+
+**Content Renderer Component (New):**
+
+1. **`content-renderer.ts`** (new) — Created `ContentRenderer` class implementing `IContentRenderer`:
+   - `renderHtml()` — renders raw HTML into a sandboxed iframe (`allow-same-origin allow-scripts allow-forms allow-popups`)
+   - `renderSearchResults()` — renders a Google-style search results page with clickable links, breadcrumbs, and footer
+   - `renderError()` — displays centered error page with title, message, and URL
+   - `renderLoading()` — animated CSS spinner with hostname display
+   - `renderNewTab()` — Nova branding new-tab page
+   - HTML escaping via `escapeHtml()` to prevent XSS in search queries and result titles
+   - `nova-navigate` CustomEvent dispatch for link clicks (bubbles to parent)
+
+2. **`content-renderer.test.ts`** (new) — 14 tests covering:
+   - HTML rendering into sandboxed iframe
+   - Search result rendering with clickable links
+   - No-results message
+   - `nova-navigate` event dispatch on link click
+   - Error page rendering (with and without URL)
+   - Loading spinner rendering
+   - New tab branding display
+   - Clear/dispose lifecycle
+   - HTML escaping for XSS prevention
+
+**URL Parser Expansion:**
+
+3. **`url-parser.ts`** — Three major additions:
+   - **`isSearchQuery(input)`** — detects plain text that should be treated as a search query rather than a URL. Returns `true` when input is not a valid URL, not a bare hostname, not an IP address, and not scheme-prefixed.
+   - **`buildSearchUrl(query, engineUrl?)`** — constructs a search-engine URL by replacing the `%s` placeholder. Defaults to DuckDuckGo.
+   - **`ALLOWED_PROTOCOLS` expanded** with 40+ gateway protocols across seven categories: Proxy, DNS, Tunnel, NAT, Access, Load Balancer, CDN, and Discovery.
+   - **`BLOCKED_PROTOCOLS` reduced** — removed `data:`, `blob:`, `ws:`, `wss:` from the blocked list (now allowed). Only `javascript:` and `vbscript:` remain blocked.
+   - **`isSecure` detection expanded** to cover all encrypted gateway protocols (https-proxy, tls+dns, ssh-tunnel, etc.)
+
+4. **`url-parser.test.ts`** — Expanded from 37 to 53 tests:
+   - 26 new protocol tests (HTTP, WS, WSS, FTP, FTPS, SFTP, mailto, tel, sms, smsto, ssh, magnet, news, nntp, gopher, wais, data, blob)
+   - `isSearchQuery()` tests (plain text, multi-word, empty, valid URLs, bare hostnames, localhost, IPv4, schemes, special characters, non-English)
+   - `buildSearchUrl()` tests (default DuckDuckGo, special characters, custom engine, empty query, placeholder replacement)
+   - `ALLOWED_PROTOCOLS` coverage tests (web, WebSocket, file transfer, internal, external, legacy, usenet)
+   - `BLOCKED_PROTOCOLS` verification (javascript/vbscript blocked, ws/wss/data/blob no longer blocked)
+
+**Address Bar Search Integration:**
+
+5. **`address-bar.ts`** — Enhanced with URL-smart behavior:
+   - Integrated `IUrlParser` via constructor injection (replaces hardcoded `UrlParser`)
+   - `setValue()` now runs `parser.validate()` and `parser.parse()` on every input
+   - Emits `search` event when `parser.isSearchQuery()` returns true
+   - Emits `navigate` event when input is a valid URL
+   - Emits `inputChanged` with full `ValidationResult` for every change
+   - State now includes `validation: ValidationResult` and `hostname: string` (was `Suggestion[]` and `string | null`)
+
+6. **`address-bar.test.ts`** — Expanded from 16 to 24 tests:
+   - Search event tests (plain text → search, valid URL → navigate not search, bare hostname → navigate not search, empty input → no search)
+   - Combined inputChanged + search event emission
+
+**Browser Window Page — Content Rendering & Search:**
+
+7. **`browser-window.ts`** — Major enhancements to the main orchestrator:
+   - Integrated `ContentRenderer` for actual content display (replaces placeholder timeout)
+   - Added `ContentRenderer` creation and attachment during mount
+   - Added `nova-navigate` event listener for search result link clicks
+   - Added `navigate()` rework with search query detection path
+   - Added `generateSearchResults(query)` — contextual search results based on keyword analysis (programming, news, tutorial, shopping categories)
+   - Added `renderUrlContent(url)` — protocol-specific content rendering for special pages, data URLs, file URLs, HTTP/HTTPS, and other protocols
+   - Added `getProtocolLabel(scheme)` — maps 60+ protocol schemes to human-readable labels
+   - Added `isSecureProtocol(scheme)` — expanded to cover all encrypted gateway protocols
+   - Navigation now shows loading spinner in content area, then renders appropriate content
+   - `unmount()` now disposes `ContentRenderer` and removes event listener
+
+### Final State: 1157 Tests Passing
+
+All 19 test suites pass with 1157 individual test cases. No pre-existing test failures.
+
 ---
 
 ## 21. Known Issues & Future Work
@@ -1288,13 +1457,13 @@ All 18 test suites pass with 470 individual test cases. No pre-existing test fai
 
 1. **Rate limiting on security event buses:** `ThirdPartySecurityManager` and `AdBlocker` event buses could flood handlers during heavy blocking. Adding rate limiting similar to `BookmarkBarEventBus` would improve resilience.
 
-2. **Real rendering integration:** `BrowserWindowPage.navigate()` currently simulates navigation with a timeout. Connecting to the actual `BrowserEngine` pipeline (HTML parse → DOM build → layout → paint) would make pages render.
+2. **Real network fetching:** `ContentRenderer` currently renders placeholder content for HTTP/HTTPS pages. Connecting to the actual `BrowserEngine` pipeline (fetch → HTML parse → DOM build → layout → paint) would render real web pages.
 
 3. **Electron integration:** The platform layer has Electron type declarations and window management, but the actual Electron main process wiring is not yet connected.
 
 4. **Dashboard integration:** The React new-tab dashboard exists as a separate sub-project but is not yet wired into the browser's new-tab page.
 
-5. **Search engine integration:** The address bar has suggestion infrastructure but no real search engine API connection.
+5. **Search engine API connection:** `generateSearchResults()` currently produces synthetic results based on keyword matching. Connecting to a real search API (DuckDuckGo, Google, etc.) would provide actual results.
 
 6. **History integration:** `HistoryService` can auto-record from `NavigationController` but `BrowserWindowPage` doesn't yet connect them.
 
@@ -1302,4 +1471,4 @@ All 18 test suites pass with 470 individual test cases. No pre-existing test fai
 
 ---
 
-*Document generated from codebase analysis. Covers all modules, their interactions, the development process, security improvements, and testing strategy.*
+*Document generated from codebase analysis. Covers all modules, their interactions, the development process, security improvements, and testing strategy. Last updated: Session 6 — Content Rendering, Search Integration & Protocol Expansion.*

@@ -126,6 +126,8 @@ class AddressBar implements IAddressBar {
 
     if (validation.valid && value.length > 0) {
       this.bus.emit({ kind: 'navigate', url: validation.normalized ?? value });
+    } else if (value.length > 0 && this.parser.isSearchQuery(value)) {
+      this.bus.emit({ kind: 'search', query: value });
     }
   }
 
