@@ -26,7 +26,7 @@
  * Parsing model
  * ─────────────
  * Two-stage pipeline matching the WHATWG HTML parsing specification:
- *   Stage 1 — Tokenizer   : text → flat token stream
+ *   Stage 1 — Tokenizer   : text → flat token stream  (html5-tokenizer.ts)
  *   Stage 2 — Tree builder: tokens → HtmlDocument tree
  *
  * Error recovery follows the WHATWG "tree construction error" model:
@@ -35,20 +35,9 @@
  * Supported token types:
  *   Doctype, OpenTag, CloseTag, SelfClosingTag,
  *   Text, Comment, CdataSection, ProcessingInstruction
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * OOP PRINCIPLES
- * ─────────────────────────────────────────────────────────────────────────────
- *  Abstraction      IHtmlParser is the only type callers import.
- *  Encapsulation    Tokenizer and TreeBuilder are private inner-collaborators;
- *                   their state is fully hidden from callers.
- *  Single-Resp.     HtmlParser parses HTML only — no CSS, no JS, no network.
- *  Open / Closed    New void-element names: add to VOID_ELEMENTS set.
- *                   New raw-text elements: add to RAW_TEXT_ELEMENTS set.
- *                   HtmlParser itself never changes.
- *  Dependency-Inv.  HtmlParser has no dependencies on other project files —
- *                   it is a pure transformation: string → HtmlDocument.
  */
+
+import { Html5Tokenizer, type Token, type TokenKind } from './html5-tokenizer';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NODE TYPES
@@ -220,218 +209,6 @@ const LINK_REL_MAP: ReadonlyMap<string, DiscoveredResourceKind> = new Map([
   ['shortcut icon','other'],
   ['manifest',     'other'],
 ]);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TOKEN  (internal — not exported)
-// ─────────────────────────────────────────────────────────────────────────────
-
-type TokenKind =
-  | 'doctype' | 'open' | 'close' | 'selfclose'
-  | 'text' | 'comment' | 'cdata' | 'pi' | 'eof';
-
-interface Token {
-  kind:       TokenKind;
-  tagName?:   string;
-  attrs?:     Map<string, string>;
-  data?:      string;
-  offset:     number;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TOKENIZER  (Stage 1)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class Tokenizer {
-  private src:    string;
-  private pos:    number;
-  private tokens: Token[];
-
-  constructor() {
-    this.src    = '';
-    this.pos    = 0;
-    this.tokens = [];
-  }
-
-  tokenize(src: string): Token[] {
-    this.src    = src;
-    this.pos    = 0;
-    this.tokens = [];
-
-    while (this.pos < this.src.length) {
-      if (this.src[this.pos] === '<') {
-        this.readTag();
-      } else {
-        this.readText();
-      }
-    }
-
-    this.tokens.push({ kind: 'eof', offset: this.pos });
-    return this.tokens;
-  }
-
-  // ── Tag dispatch ──────────────────────────────────────────────────────────
-
-  private readTag(): void {
-    const start = this.pos;
-    this.pos++; // consume '<'
-
-    if (this.peek() === '!') {
-      this.pos++;
-      if (this.src.startsWith('--', this.pos)) {
-        this.readComment(start);
-      } else if (this.src.slice(this.pos, this.pos + 7).toUpperCase() === 'DOCTYPE') {
-        this.readDoctype(start);
-      } else if (this.src.startsWith('[CDATA[', this.pos)) {
-        this.readCdata(start);
-      } else {
-        // Bogus comment
-        const end = this.src.indexOf('>', this.pos);
-        const data = end === -1
-          ? this.src.slice(this.pos)
-          : this.src.slice(this.pos, end);
-        this.pos = end === -1 ? this.src.length : end + 1;
-        this.tokens.push({ kind: 'comment', data, offset: start });
-      }
-    } else if (this.peek() === '?') {
-      this.readPi(start);
-    } else if (this.peek() === '/') {
-      this.readCloseTag(start);
-    } else {
-      this.readOpenTag(start);
-    }
-  }
-
-  private readComment(start: number): void {
-    this.pos += 2; // skip '--'
-    const end = this.src.indexOf('-->', this.pos);
-    const data = end === -1
-      ? this.src.slice(this.pos)
-      : this.src.slice(this.pos, end);
-    this.pos = end === -1 ? this.src.length : end + 3;
-    this.tokens.push({ kind: 'comment', data, offset: start });
-  }
-
-  private readDoctype(start: number): void {
-    this.pos += 7; // skip 'DOCTYPE'
-    const end = this.src.indexOf('>', this.pos);
-    const raw  = end === -1
-      ? this.src.slice(this.pos)
-      : this.src.slice(this.pos, end);
-    this.pos = end === -1 ? this.src.length : end + 1;
-    // Extract public/system ids (simplified)
-    const parts = raw.trim().split(/\s+/);
-    this.tokens.push({
-      kind:    'doctype',
-      tagName: (parts[0] ?? 'html').toLowerCase(),
-      data:    raw.trim(),
-      offset:  start,
-    });
-  }
-
-  private readCdata(start: number): void {
-    this.pos += 7; // skip '[CDATA['
-    const end = this.src.indexOf(']]>', this.pos);
-    const data = end === -1
-      ? this.src.slice(this.pos)
-      : this.src.slice(this.pos, end);
-    this.pos = end === -1 ? this.src.length : end + 3;
-    this.tokens.push({ kind: 'cdata', data, offset: start });
-  }
-
-  private readPi(start: number): void {
-    this.pos++; // skip '?'
-    const end = this.src.indexOf('?>', this.pos);
-    const raw  = end === -1
-      ? this.src.slice(this.pos)
-      : this.src.slice(this.pos, end);
-    this.pos = end === -1 ? this.src.length : end + 2;
-    const space    = raw.search(/\s/);
-    const target   = space === -1 ? raw : raw.slice(0, space);
-    const data     = space === -1 ? '' : raw.slice(space + 1);
-    this.tokens.push({ kind: 'pi', tagName: target.toLowerCase(), data, offset: start });
-  }
-
-  private readCloseTag(start: number): void {
-    this.pos++; // skip '/'
-    const end = this.src.indexOf('>', this.pos);
-    const raw  = end === -1
-      ? this.src.slice(this.pos)
-      : this.src.slice(this.pos, end);
-    this.pos = end === -1 ? this.src.length : end + 1;
-    this.tokens.push({ kind: 'close', tagName: raw.trim().toLowerCase(), offset: start });
-  }
-
-  private readOpenTag(start: number): void {
-    const end = this.src.indexOf('>', this.pos);
-    const raw  = end === -1
-      ? this.src.slice(this.pos)
-      : this.src.slice(this.pos, end);
-    this.pos = end === -1 ? this.src.length : end + 1;
-
-    const selfClose = raw.endsWith('/');
-    const content   = selfClose ? raw.slice(0, -1).trim() : raw.trim();
-
-    const spaceIdx = content.search(/[\s/]/);
-    const tagName  = (spaceIdx === -1 ? content : content.slice(0, spaceIdx)).toLowerCase();
-    const attrStr  = spaceIdx === -1 ? '' : content.slice(spaceIdx + 1);
-    const attrs    = this.parseAttributes(attrStr);
-
-    const isVoid = VOID_ELEMENTS.has(tagName);
-
-    // For raw-text elements read the content until the matching close tag.
-    if (RAW_TEXT_ELEMENTS.has(tagName) && !isVoid) {
-      this.tokens.push({ kind: 'open', tagName, attrs, offset: start });
-      const closePattern = new RegExp(`</${tagName}[\\s>]`, 'i');
-      const closeIdx = closePattern.exec(this.src.slice(this.pos));
-      let rawContent: string;
-      if (closeIdx === null) {
-        rawContent = this.src.slice(this.pos);
-        this.pos   = this.src.length;
-      } else {
-        rawContent = this.src.slice(this.pos, this.pos + closeIdx.index);
-        this.pos  += closeIdx.index;
-      }
-      if (rawContent.length > 0) {
-        this.tokens.push({ kind: 'text', data: rawContent, offset: start });
-      }
-    } else if (isVoid || selfClose) {
-      this.tokens.push({ kind: 'selfclose', tagName, attrs, offset: start });
-    } else {
-      this.tokens.push({ kind: 'open', tagName, attrs, offset: start });
-    }
-  }
-
-  private readText(): void {
-    const start = this.pos;
-    const end   = this.src.indexOf('<', this.pos);
-    const text  = end === -1
-      ? this.src.slice(this.pos)
-      : this.src.slice(this.pos, end);
-    this.pos = end === -1 ? this.src.length : end;
-    if (text.length > 0) {
-      this.tokens.push({ kind: 'text', data: text, offset: start });
-    }
-  }
-
-  // ── Attribute parsing ─────────────────────────────────────────────────────
-
-  private parseAttributes(raw: string): Map<string, string> {
-    const attrs = new Map<string, string>();
-    const re    = /([^\s='"/]+)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/g;
-    let m: RegExpExecArray | null;
-
-    while ((m = re.exec(raw)) !== null) {
-      const name  = m[1]!.toLowerCase();
-      const value = m[2] ?? m[3] ?? m[4] ?? '';
-      attrs.set(name, value);
-    }
-    return attrs;
-  }
-
-  private peek(): string {
-    return this.src[this.pos] ?? '';
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TREE BUILDER  (Stage 2)
@@ -690,7 +467,7 @@ class TreeBuilder {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class HtmlParser implements IHtmlParser {
-  private readonly tokenizer   = new Tokenizer();
+  private readonly tokenizer   = new Html5Tokenizer();
   private readonly treeBuilder = new TreeBuilder();
 
   parse(html: string, baseUrl = ''): HtmlParseResult {
