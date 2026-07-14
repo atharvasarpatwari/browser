@@ -38,6 +38,7 @@
  */
 
 import { Html5Tokenizer, type Token, type TokenKind } from './html5-tokenizer';
+import { TreeBuilder } from './html5-tree-builder';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NODE TYPES
@@ -210,257 +211,7 @@ const LINK_REL_MAP: ReadonlyMap<string, DiscoveredResourceKind> = new Map([
   ['manifest',     'other'],
 ]);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TREE BUILDER  (Stage 2)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class TreeBuilder {
-  private stack:   HtmlElement[];
-  private errors:  HtmlParseError[];
-  private children: HtmlNode[];   // root-level children
-
-  constructor() {
-    this.stack    = [];
-    this.errors   = [];
-    this.children = [];
-  }
-
-  build(
-    tokens: Token[],
-    baseUrl: string,
-  ): { document: HtmlDocument; resources: DiscoveredResource[] } {
-
-    this.stack    = [];
-    this.errors   = [];
-    this.children = [];
-    const resources: DiscoveredResource[] = [];
-
-    let doctype:     HtmlDoctype | null    = null;
-    let htmlEl:      HtmlElement | null    = null;
-    let headEl:      HtmlElement | null    = null;
-    let bodyEl:      HtmlElement | null    = null;
-    let metaCharset: string | null         = null;
-
-    for (const token of tokens) {
-      switch (token.kind) {
-
-        case 'doctype': {
-          const node: HtmlDoctype = {
-            nodeType: NodeType.Doctype,
-            name:     token.tagName ?? 'html',
-            publicId: '',
-            systemId: '',
-            parent:   null,
-            sourceOffset: token.offset,
-          };
-          doctype = node;
-          this.appendNode(node);
-          break;
-        }
-
-        case 'open':
-        case 'selfclose': {
-          const tag    = token.tagName!;
-          const attrs  = token.attrs ?? new Map<string, string>();
-          const isVoid = VOID_ELEMENTS.has(tag);
-          const isRaw  = RAW_TEXT_ELEMENTS.has(tag);
-
-          const element: HtmlElement = {
-            nodeType:   NodeType.Element,
-            tagName:    tag,
-            attributes: attrs,
-            children:   [],
-            parent:     null,
-            isVoid,
-            isRawText:  isRaw,
-            rawContent: '',
-            sourceOffset: token.offset,
-          };
-
-          this.appendNode(element);
-
-          if (!isVoid && token.kind !== 'selfclose') {
-            this.stack.push(element);
-          }
-
-          // Track structural elements.
-          if (tag === 'html' && htmlEl === null) htmlEl = element;
-          if (tag === 'head' && headEl === null) headEl = element;
-          if (tag === 'body' && bodyEl === null) bodyEl = element;
-
-          // Meta charset.
-          if (tag === 'meta' && metaCharset === null) {
-            const charset = attrs.get('charset');
-            if (charset) {
-              metaCharset = charset.toLowerCase();
-            } else if (attrs.get('http-equiv')?.toLowerCase() === 'content-type') {
-              const ct = attrs.get('content') ?? '';
-              const m  = /charset=([^\s;]+)/i.exec(ct);
-              if (m) metaCharset = m[1]!.toLowerCase();
-            }
-          }
-
-          // Resource discovery.
-          const res = TreeBuilder.discoverResource(tag, attrs, baseUrl, headEl !== null && bodyEl === null);
-          if (res) resources.push(res);
-          break;
-        }
-
-        case 'close': {
-          const tag = token.tagName!;
-          // Pop to matching open tag (skip over mis-nested tags).
-          for (let i = this.stack.length - 1; i >= 0; i--) {
-            if (this.stack[i]!.tagName === tag) {
-              this.stack.length = i;
-              break;
-            }
-          }
-          break;
-        }
-
-        case 'text': {
-          const text = token.data ?? '';
-          // Attach raw text content to the current raw-text element.
-          const current = this.stack[this.stack.length - 1];
-          if (current && current.isRawText) {
-            (current as { rawContent: string }).rawContent = text;
-          }
-          if (text.trim().length === 0 && (current?.isRawText)) break;
-          const node: HtmlTextNode = {
-            nodeType: NodeType.Text,
-            text,
-            parent:   null,
-            sourceOffset: token.offset,
-          };
-          this.appendNode(node);
-          break;
-        }
-
-        case 'comment': {
-          const node: HtmlComment = {
-            nodeType: NodeType.Comment,
-            data:     token.data ?? '',
-            parent:   null,
-            sourceOffset: token.offset,
-          };
-          this.appendNode(node);
-          break;
-        }
-
-        case 'cdata': {
-          const node: HtmlCdata = {
-            nodeType: NodeType.CdataSection,
-            data:     token.data ?? '',
-            parent:   null,
-            sourceOffset: token.offset,
-          };
-          this.appendNode(node);
-          break;
-        }
-
-        case 'pi': {
-          const node: HtmlProcessingInstruction = {
-            nodeType: NodeType.ProcessingInstruction,
-            target:   token.tagName ?? '',
-            data:     token.data ?? '',
-            parent:   null,
-            sourceOffset: token.offset,
-          };
-          this.appendNode(node);
-          break;
-        }
-
-        case 'eof':
-          break;
-      }
-    }
-
-    const document: HtmlDocument = {
-      nodeType:    NodeType.Document,
-      children:    this.children,
-      doctype,
-      htmlElement:  htmlEl,
-      headElement:  headEl,
-      bodyElement:  bodyEl,
-      errors:       this.errors,
-      hasDoctype:   doctype !== null,
-      metaCharset,
-    };
-
-    return { document, resources };
-  }
-
-  // ── Node appending ────────────────────────────────────────────────────────
-
-  private appendNode(node: HtmlNode): void {
-    const parent = this.stack[this.stack.length - 1];
-    if (parent) {
-      (parent.children as HtmlNode[]).push(node);
-      (node as { parent: HtmlElement }).parent = parent;
-    } else {
-      this.children.push(node);
-    }
-  }
-
-  // ── Resource discovery ────────────────────────────────────────────────────
-
-  private static discoverResource(
-    tag:       string,
-    attrs:     Map<string, string>,
-    baseUrl:   string,
-    inHead:    boolean,
-  ): DiscoveredResource | null {
-    const resolve = (href: string): string => {
-      try { return new URL(href, baseUrl || undefined).href; }
-      catch { return href; }
-    };
-
-    switch (tag) {
-      case 'link': {
-        const rel  = (attrs.get('rel') ?? '').toLowerCase().trim();
-        const href = attrs.get('href');
-        if (!href) return null;
-        const kind = LINK_REL_MAP.get(rel) ?? 'other';
-        return {
-          url:      resolve(href),
-          kind,
-          blocking: rel === 'stylesheet' && inHead,
-          deferred: false,
-          sourceTag: 'link',
-        };
-      }
-      case 'script': {
-        const src = attrs.get('src');
-        if (!src) return null;
-        return {
-          url:      resolve(src),
-          kind:     'script',
-          blocking: !attrs.has('defer') && !attrs.has('async') && inHead,
-          deferred: attrs.has('defer') || attrs.has('async'),
-          sourceTag: 'script',
-        };
-      }
-      case 'img': {
-        const src = attrs.get('src') ?? attrs.get('data-src');
-        if (!src) return null;
-        return { url: resolve(src), kind: 'image', blocking: false, deferred: false, sourceTag: 'img' };
-      }
-      case 'video':
-      case 'audio': {
-        const src = attrs.get('src');
-        if (!src) return null;
-        return { url: resolve(src), kind: 'media', blocking: false, deferred: true, sourceTag: tag };
-      }
-      case 'iframe': {
-        const src = attrs.get('src');
-        if (!src) return null;
-        return { url: resolve(src), kind: 'document', blocking: false, deferred: true, sourceTag: 'iframe' };
-      }
-      default:
-        return null;
-    }
-  }
-}
+// TreeBuilder is imported from html5-tree-builder.ts
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HTML PARSER  (public facade)
@@ -482,8 +233,11 @@ class HtmlParser implements IHtmlParser {
   }
 
   parseFragment(html: string, _contextTag = 'div'): readonly HtmlNode[] {
-    const tokens  = this.tokenizer.tokenize(html);
+    const tokens = this.tokenizer.tokenize(html);
     const { document } = this.treeBuilder.build(tokens, '');
+    if (document.bodyElement) {
+      return document.bodyElement.children;
+    }
     return document.children;
   }
 }
@@ -545,6 +299,7 @@ function decodeHtmlEntities(text: string): string {
 
 export {
   HtmlParser,
+  TreeBuilder,
   NodeType,
   VOID_ELEMENTS,
   RAW_TEXT_ELEMENTS,
