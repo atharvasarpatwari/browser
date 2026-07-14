@@ -38,118 +38,40 @@
  */
 
 import { Html5Tokenizer, type Token, type TokenKind } from './html5-tokenizer';
-import { TreeBuilder } from './html5-tree-builder';
+import { TreeBuilder } from './html5/tree-builder';
+import { decodeBytes, type SniffOptions } from './html5/encoding';
+import { NodeType } from './html5/dom';
+import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from './html5/constants';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NODE TYPES
+// NODE TYPES  (re-exported from html5/dom.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum NodeType {
-  Document            = 'document',
-  Element             = 'element',
-  Text                = 'text',
-  Comment             = 'comment',
-  Doctype             = 'doctype',
-  CdataSection        = 'cdata',
-  ProcessingInstruction = 'pi',
-  ParseError          = 'error',
-}
+export { NodeType } from './html5/dom';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NODE HIERARCHY  (Composite pattern)
+// NODE INTERFACES  (re-exported from html5/dom.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Base for every node in the parse tree. */
-interface HtmlNode {
-  readonly nodeType:  NodeType;
-  readonly parent:    HtmlElement | HtmlDocument | null;
-  /** Byte offset of this node's start in the original source. */
-  readonly sourceOffset: number;
-}
-
-/** An HTML element: <tag attr="value">children</tag> */
-interface HtmlElement extends HtmlNode {
-  readonly nodeType:    NodeType.Element;
-  readonly tagName:     string;           // always lower-cased
-  readonly attributes:  ReadonlyMap<string, string>;
-  readonly children:    readonly HtmlNode[];
-  /** True for <img>, <br>, <input> etc. — no closing tag, no children. */
-  readonly isVoid:      boolean;
-  /** True for <script>, <style> — content is raw text, not parsed as HTML. */
-  readonly isRawText:   boolean;
-  /** For <script>: the inline script content or '' when src= is used. */
-  readonly rawContent:  string;
-}
-
-interface HtmlTextNode extends HtmlNode {
-  readonly nodeType: NodeType.Text;
-  readonly text:     string;
-}
-
-interface HtmlComment extends HtmlNode {
-  readonly nodeType: NodeType.Comment;
-  readonly data:     string;
-}
-
-interface HtmlDoctype extends HtmlNode {
-  readonly nodeType:   NodeType.Doctype;
-  readonly name:       string;
-  readonly publicId:   string;
-  readonly systemId:   string;
-}
-
-interface HtmlCdata extends HtmlNode {
-  readonly nodeType: NodeType.CdataSection;
-  readonly data:     string;
-}
-
-interface HtmlProcessingInstruction extends HtmlNode {
-  readonly nodeType: NodeType.ProcessingInstruction;
-  readonly target:   string;
-  readonly data:     string;
-}
-
-interface HtmlParseError extends HtmlNode {
-  readonly nodeType: NodeType.ParseError;
-  readonly message:  string;
-}
-
-interface HtmlDocument {
-  readonly nodeType:  NodeType.Document;
-  readonly children:  readonly HtmlNode[];
-  readonly doctype:   HtmlDoctype | null;
-  /** Convenience: the first <html> element, or null if absent. */
-  readonly htmlElement: HtmlElement | null;
-  /** Convenience: the <head> element, or null. */
-  readonly headElement: HtmlElement | null;
-  /** Convenience: the <body> element, or null. */
-  readonly bodyElement: HtmlElement | null;
-  /** All parse errors encountered (WHATWG parse-error model). */
-  readonly errors:    readonly HtmlParseError[];
-  /** Whether the document was served with an explicit <!DOCTYPE html>. */
-  readonly hasDoctype: boolean;
-  /** The declared charset from <meta charset="…"> or <meta http-equiv="content-type">, or null. */
-  readonly metaCharset: string | null;
-}
+export type {
+  HtmlNode,
+  HtmlElement,
+  HtmlTextNode,
+  HtmlComment,
+  HtmlDoctype,
+  HtmlCdata,
+  HtmlProcessingInstruction,
+  HtmlParseError,
+  HtmlDocument,
+  DiscoveredResourceKind,
+  DiscoveredResource,
+} from './html5/dom';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DISCOVERED SUB-RESOURCES
+// CONSTANTS  (re-exported from html5/constants.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Resource type tags used by ResourceLoader (matching ResourceType enum). */
-type DiscoveredResourceKind =
-  | 'stylesheet' | 'script' | 'image' | 'font' | 'media' | 'document' | 'other';
-
-interface DiscoveredResource {
-  readonly url:        string;
-  readonly kind:       DiscoveredResourceKind;
-  /** true for render-blocking resources (<link rel="stylesheet"> in <head>). */
-  readonly blocking:   boolean;
-  /** true for <script defer> / <script async>. */
-  readonly deferred:   boolean;
-  /** The element that referenced this resource. */
-  readonly sourceTag:  string;
-}
+export { VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from './html5/constants';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PARSE RESULT
@@ -159,6 +81,14 @@ interface HtmlParseResult {
   readonly document:   HtmlDocument;
   readonly resources:  readonly DiscoveredResource[];
   readonly durationMs: number;
+}
+
+/** Options for parsing raw bytes. */
+interface ParseBytesOptions {
+  /** Content-Type header value, e.g. "text/html; charset=windows-1252". */
+  contentType?: string;
+  /** Page URL (used for relative URL resolution). */
+  url?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -175,43 +105,13 @@ interface IHtmlParser {
 
   /** Parse an HTML fragment (no <html>/<head>/<body> wrapping). */
   parseFragment(html: string, contextTag?: string): readonly HtmlNode[];
+
+  /**
+   * Parse raw bytes, auto-detecting encoding via BOM, Content-Type header,
+   * or <meta charset> prescan.
+   */
+  parseBytes(data: Uint8Array, options?: ParseBytesOptions): HtmlParseResult;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CONSTANTS
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Elements that are self-closing by definition (WHATWG void elements).
- * They never have children and need no closing tag.
- */
-const VOID_ELEMENTS = new Set<string>([
-  'area','base','br','col','embed','hr','img','input',
-  'link','meta','param','source','track','wbr',
-]);
-
-/**
- * Elements whose content is treated as raw text (not parsed as child HTML).
- * The tokenizer switches to "raw text" mode when it opens one of these.
- */
-const RAW_TEXT_ELEMENTS = new Set<string>([
-  'script','style','textarea','title',
-]);
-
-/**
- * <link rel="…"> → resource kind mapping.
- * Unknown rel values are treated as 'other'.
- */
-const LINK_REL_MAP: ReadonlyMap<string, DiscoveredResourceKind> = new Map([
-  ['stylesheet',   'stylesheet'],
-  ['preload',      'other'],
-  ['modulepreload','script'],
-  ['icon',         'other'],
-  ['shortcut icon','other'],
-  ['manifest',     'other'],
-]);
-
-// TreeBuilder is imported from html5-tree-builder.ts
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HTML PARSER  (public facade)
@@ -226,7 +126,7 @@ class HtmlParser implements IHtmlParser {
     const tokens = this.tokenizer.tokenize(html);
     const { document, resources } = this.treeBuilder.build(tokens, baseUrl);
     return {
-      document,
+      document: document as HtmlDocument,
       resources,
       durationMs: Date.now() - start,
     };
@@ -236,9 +136,34 @@ class HtmlParser implements IHtmlParser {
     const tokens = this.tokenizer.tokenize(html);
     const { document } = this.treeBuilder.build(tokens, '');
     if (document.bodyElement) {
-      return document.bodyElement.children;
+      return document.bodyElement.children as readonly HtmlNode[];
     }
-    return document.children;
+    return document.children as readonly HtmlNode[];
+  }
+
+  parseBytes(data: Uint8Array, options?: ParseBytesOptions): HtmlParseResult {
+    const start = Date.now();
+    const { text, charset, source } = decodeBytes(data, options);
+
+    const sniffOptions: SniffOptions = options
+      ? { contentType: options.contentType, url: options.url }
+      : undefined;
+    const tokens = this.tokenizer.tokenize(text);
+    const { document, resources } = this.treeBuilder.build(tokens, options?.url ?? '');
+
+    const doc = document as HtmlDocument;
+    // Set detectedCharset from the encoding sniffing step
+    (doc as any).detectedCharset = charset;
+    // If the document didn't declare a charset via <meta>, set metaCharset to the detected one
+    if (!doc.declaredCharset) {
+      (doc as any).metaCharset = charset;
+    }
+
+    return {
+      document: doc,
+      resources,
+      durationMs: Date.now() - start,
+    };
   }
 }
 
@@ -300,9 +225,6 @@ function decodeHtmlEntities(text: string): string {
 export {
   HtmlParser,
   TreeBuilder,
-  NodeType,
-  VOID_ELEMENTS,
-  RAW_TEXT_ELEMENTS,
   walkTree,
   getElementsByTagName,
   decodeHtmlEntities,
@@ -310,16 +232,6 @@ export {
 
 export type {
   IHtmlParser,
-  HtmlNode,
-  HtmlElement,
-  HtmlTextNode,
-  HtmlComment,
-  HtmlDoctype,
-  HtmlCdata,
-  HtmlProcessingInstruction,
-  HtmlParseError,
-  HtmlDocument,
   HtmlParseResult,
-  DiscoveredResource,
-  DiscoveredResourceKind,
+  ParseBytesOptions,
 };
