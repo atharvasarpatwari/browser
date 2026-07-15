@@ -14,6 +14,7 @@ import {
   removeChild,
   replaceChild,
   cloneElement,
+  cloneNode,
   hasChildNodes,
   contains,
   getParentChildren,
@@ -21,12 +22,41 @@ import {
   elementSetAttribute,
   elementRemoveAttribute,
   elementHasAttribute,
+  elementToggleAttribute,
+  elementGetAttributeNames,
+  // Convenience mutation methods
+  nodeRemove,
+  nodeAppend,
+  nodePrepend,
+  nodeBefore,
+  nodeAfter,
+  nodeReplaceWith,
+  // Element-only child accessors
+  getFirstChildElement,
+  getLastChildElement,
+  getNextElementSibling,
+  getPreviousElementSibling,
+  getChildElementCount,
+  // Text content / node accessors
+  getTextContent,
+  setTextContent,
+  getNodeName,
+  getNodeValue,
+  // Normalize
+  normalize,
+  // Factories
+  createDocumentFragment,
+  createTextNode,
+  createComment,
   type HtmlElement,
   type HtmlTextNode,
   type HtmlComment,
   type HtmlDoctype,
   type HtmlCdata,
   type HtmlDocument,
+  type MutableElement,
+  type MutableTextNode,
+  type MutableComment,
 } from '../src/browser/rendering/html5/dom';
 import { HtmlParser } from '../src/browser/rendering/html-parser';
 
@@ -456,5 +486,474 @@ describe('Integration with HtmlParser', () => {
     expect(document.firstChild!.nodeType).toBe(NodeType.Element);
     expect(document.lastChild).not.toBeNull();
     expect(document.childNodes).toBe(document.children);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONVENIENCE MUTATION METHODS
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('nodeRemove', () => {
+  it('should remove a node from its parent', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    const b = createMutableElement('b');
+    appendChild(doc, a);
+    appendChild(doc, b);
+    nodeRemove(b);
+    expect(doc.children.length).toBe(1);
+    expect(doc.children[0]).toBe(a);
+    expect(b.parent).toBeNull();
+  });
+
+  it('should do nothing if node has no parent', () => {
+    const orphan = createMutableElement('orphan');
+    nodeRemove(orphan); // should not throw
+  });
+});
+
+describe('nodeAppend', () => {
+  it('should append multiple nodes', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    const b = createMutableElement('b');
+    nodeAppend(doc, a, b);
+    expect(doc.children).toEqual([a, b]);
+  });
+
+  it('should accept string arguments (auto-create text nodes)', () => {
+    const el = createMutableElement('div');
+    nodeAppend(el, 'hello', ' ', 'world');
+    expect(el.children.length).toBe(3);
+    expect(getTextContent(el)).toBe('hello world');
+  });
+
+  it('should skip null and undefined', () => {
+    const el = createMutableElement('div');
+    nodeAppend(el, null as any, undefined as any, 'text');
+    expect(el.children.length).toBe(1);
+  });
+});
+
+describe('nodePrepend', () => {
+  it('should prepend nodes at the beginning', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    const b = createMutableElement('b');
+    appendChild(doc, a);
+    nodePrepend(doc, b);
+    expect(doc.children).toEqual([b, a]);
+  });
+
+  it('should prepend multiple nodes in order', () => {
+    const doc = createMutableDocument();
+    const c = createMutableElement('c');
+    appendChild(doc, c);
+    const a = createMutableElement('a');
+    const b = createMutableElement('b');
+    nodePrepend(doc, a, b);
+    expect(doc.children).toEqual([a, b, c]);
+  });
+
+  it('should accept string arguments', () => {
+    const el = createMutableElement('div');
+    nodePrepend(el, 'start');
+    expect(el.children.length).toBe(1);
+    expect(getTextContent(el)).toBe('start');
+  });
+});
+
+describe('nodeBefore', () => {
+  it('should insert nodes before the reference node', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    const b = createMutableElement('b');
+    appendChild(doc, a);
+    nodeBefore(a, b);
+    expect(doc.children).toEqual([b, a]);
+  });
+
+  it('should do nothing if node has no parent', () => {
+    const orphan = createMutableElement('orphan');
+    const extra = createMutableElement('extra');
+    nodeBefore(orphan, extra); // should not throw
+    expect(orphan.parent).toBeNull();
+  });
+});
+
+describe('nodeAfter', () => {
+  it('should insert nodes after the reference node', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    const b = createMutableElement('b');
+    appendChild(doc, a);
+    nodeAfter(a, b);
+    expect(doc.children).toEqual([a, b]);
+  });
+
+  it('should insert at end when reference is last', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    const b = createMutableElement('b');
+    appendChild(doc, a);
+    nodeAfter(a, b);
+    expect(doc.lastChild).toBe(b);
+  });
+
+  it('should accept string arguments', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    appendChild(doc, a);
+    nodeAfter(a, 'text');
+    expect(doc.children.length).toBe(2);
+    expect(getTextContent(doc.children[1] as any)).toBe('text');
+  });
+});
+
+describe('nodeReplaceWith', () => {
+  it('should replace a node with one or more nodes', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    const b = createMutableElement('b');
+    const c = createMutableElement('c');
+    appendChild(doc, a);
+    appendChild(doc, b);
+    appendChild(doc, c);
+    nodeReplaceWith(b, createMutableElement('new'));
+    expect(doc.children.length).toBe(3);
+    expect((doc.children[1] as any).tagName).toBe('new');
+  });
+
+  it('should replace with multiple nodes', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    const old = createMutableElement('old');
+    const b = createMutableElement('b');
+    appendChild(doc, a);
+    appendChild(doc, old);
+    appendChild(doc, b);
+    const x = createMutableElement('x');
+    const y = createMutableElement('y');
+    nodeReplaceWith(old, x, y);
+    expect(doc.children).toEqual([a, x, y, b]);
+  });
+
+  it('should remove node when called with no arguments', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    appendChild(doc, a);
+    nodeReplaceWith(a);
+    expect(doc.children.length).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ELEMENT-ONLY CHILD ACCESSORS
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Element-only child accessors', () => {
+  it('getFirstChildElement should skip text nodes', () => {
+    const parent = createMutableElement('div');
+    const text = createMutableTextNode('hello');
+    const el = createMutableElement('span');
+    appendChild(parent, text);
+    appendChild(parent, el);
+    expect(getFirstChildElement(parent)).toBe(el);
+  });
+
+  it('getLastChildElement should skip text nodes', () => {
+    const parent = createMutableElement('div');
+    const el = createMutableElement('span');
+    const text = createMutableTextNode('hello');
+    appendChild(parent, el);
+    appendChild(parent, text);
+    expect(getLastChildElement(parent)).toBe(el);
+  });
+
+  it('getNextElementSibling should skip text nodes', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    const text = createMutableTextNode(' ');
+    const b = createMutableElement('b');
+    appendChild(doc, a);
+    appendChild(doc, text);
+    appendChild(doc, b);
+    expect(getNextElementSibling(a)).toBe(b);
+  });
+
+  it('getPreviousElementSibling should skip text nodes', () => {
+    const doc = createMutableDocument();
+    const a = createMutableElement('a');
+    const text = createMutableTextNode(' ');
+    const b = createMutableElement('b');
+    appendChild(doc, a);
+    appendChild(doc, text);
+    appendChild(doc, b);
+    expect(getPreviousElementSibling(b)).toBe(a);
+  });
+
+  it('getChildElementCount should count only element children', () => {
+    const parent = createMutableElement('div');
+    appendChild(parent, createMutableTextNode('a'));
+    appendChild(parent, createMutableElement('span'));
+    appendChild(parent, createMutableTextNode('b'));
+    appendChild(parent, createMutableElement('p'));
+    expect(getChildElementCount(parent)).toBe(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOGGLE ATTRIBUTE / GET ATTRIBUTE NAMES
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('elementToggleAttribute', () => {
+  it('should add attribute if missing', () => {
+    const el = createMutableElement('div');
+    const result = elementToggleAttribute(el, 'hidden');
+    expect(result).toBe(true);
+    expect(elementHasAttribute(el, 'hidden')).toBe(true);
+  });
+
+  it('should remove attribute if present', () => {
+    const el = createMutableElement('div', new Map([['hidden', '']]));
+    const result = elementToggleAttribute(el, 'hidden');
+    expect(result).toBe(false);
+    expect(elementHasAttribute(el, 'hidden')).toBe(false);
+  });
+
+  it('should force-set with force=true', () => {
+    const el = createMutableElement('div');
+    const result = elementToggleAttribute(el, 'hidden', true);
+    expect(result).toBe(true);
+    expect(elementHasAttribute(el, 'hidden')).toBe(true);
+  });
+
+  it('should force-remove with force=false', () => {
+    const el = createMutableElement('div', new Map([['hidden', '']]));
+    const result = elementToggleAttribute(el, 'hidden', false);
+    expect(result).toBe(false);
+    expect(elementHasAttribute(el, 'hidden')).toBe(false);
+  });
+});
+
+describe('elementGetAttributeNames', () => {
+  it('should return all attribute names', () => {
+    const el = createMutableElement('div', new Map([['id', 'test'], ['class', 'foo']]));
+    const names = elementGetAttributeNames(el);
+    expect(names).toContain('id');
+    expect(names).toContain('class');
+    expect(names.length).toBe(2);
+  });
+
+  it('should return empty array for no attributes', () => {
+    const el = createMutableElement('div');
+    expect(elementGetAttributeNames(el)).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEXT CONTENT / NODE ACCESSORS
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('getTextContent', () => {
+  it('should return text for text nodes', () => {
+    const text = createMutableTextNode('hello');
+    expect(getTextContent(text)).toBe('hello');
+  });
+
+  it('should return data for comment nodes', () => {
+    const comment = createMutableComment('a comment');
+    expect(getTextContent(comment)).toBe('a comment');
+  });
+
+  it('should return data for CDATA nodes', () => {
+    const cdata = createMutableCdata('raw data');
+    expect(getTextContent(cdata)).toBe('raw data');
+  });
+
+  it('should concatenate all descendant text for elements', () => {
+    const el = createMutableElement('div');
+    appendChild(el, createMutableTextNode('hello'));
+    const span = createMutableElement('span');
+    appendChild(span, createMutableTextNode(' world'));
+    appendChild(el, span);
+    appendChild(el, createMutableTextNode('!'));
+    expect(getTextContent(el)).toBe('hello world!');
+  });
+});
+
+describe('setTextContent', () => {
+  it('should set text on text nodes', () => {
+    const text = createMutableTextNode('old');
+    setTextContent(text, 'new');
+    expect(text.text).toBe('new');
+  });
+
+  it('should replace all children on elements with a single text node', () => {
+    const el = createMutableElement('div');
+    appendChild(el, createMutableElement('span'));
+    appendChild(el, createMutableTextNode('text'));
+    setTextContent(el, 'new text');
+    expect(el.children.length).toBe(1);
+    expect(getTextContent(el)).toBe('new text');
+  });
+
+  it('should clear children if value is empty', () => {
+    const el = createMutableElement('div');
+    appendChild(el, createMutableTextNode('text'));
+    setTextContent(el, '');
+    expect(el.children.length).toBe(0);
+  });
+});
+
+describe('getNodeName', () => {
+  it('should return uppercase tag for elements', () => {
+    const el = createMutableElement('div');
+    expect(getNodeName(el)).toBe('DIV');
+  });
+
+  it('should return #text for text nodes', () => {
+    expect(getNodeName(createMutableTextNode('x'))).toBe('#text');
+  });
+
+  it('should return #comment for comments', () => {
+    expect(getNodeName(createMutableComment('x'))).toBe('#comment');
+  });
+
+  it('should return #document for documents', () => {
+    expect(getNodeName(createMutableDocument())).toBe('#document');
+  });
+
+  it('should return #cdata-section for CDATA', () => {
+    expect(getNodeName(createMutableCdata('x'))).toBe('#cdata-section');
+  });
+});
+
+describe('getNodeValue', () => {
+  it('should return text for text nodes', () => {
+    expect(getNodeValue(createMutableTextNode('hello'))).toBe('hello');
+  });
+
+  it('should return data for comments', () => {
+    expect(getNodeValue(createMutableComment('data'))).toBe('data');
+  });
+
+  it('should return null for elements', () => {
+    expect(getNodeValue(createMutableElement('div'))).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NORMALIZE
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('normalize', () => {
+  it('should merge adjacent text nodes', () => {
+    const el = createMutableElement('div');
+    const t1 = createMutableTextNode('hello');
+    const t2 = createMutableTextNode(' world');
+    appendChild(el, t1);
+    appendChild(el, t2);
+    normalize(el);
+    expect(el.children.length).toBe(1);
+    expect(getTextContent(el)).toBe('hello world');
+  });
+
+  it('should not merge text nodes separated by elements', () => {
+    const el = createMutableElement('div');
+    const t1 = createMutableTextNode('a');
+    const span = createMutableElement('span');
+    const t2 = createMutableTextNode('b');
+    appendChild(el, t1);
+    appendChild(el, span);
+    appendChild(el, t2);
+    normalize(el);
+    expect(el.children.length).toBe(3);
+  });
+
+  it('should recursively normalize nested elements', () => {
+    const outer = createMutableElement('div');
+    const inner = createMutableElement('span');
+    appendChild(outer, inner);
+    appendChild(inner, createMutableTextNode('x'));
+    appendChild(inner, createMutableTextNode('y'));
+    normalize(outer);
+    expect(inner.children.length).toBe(1);
+    expect(getTextContent(inner)).toBe('xy');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GENERIC cloneNode
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('cloneNode', () => {
+  it('should clone elements (shallow)', () => {
+    const el = createMutableElement('div', new Map([['id', 'test']]));
+    const clone = cloneNode(el) as MutableElement;
+    expect(clone.tagName).toBe('div');
+    expect(clone.attributes.get('id')).toBe('test');
+    expect(clone.children.length).toBe(0);
+  });
+
+  it('should clone elements (deep)', () => {
+    const parent = createMutableElement('div');
+    const child = createMutableElement('span');
+    const text = createMutableTextNode('hello');
+    appendChild(parent, child);
+    appendChild(parent, text);
+    const clone = cloneNode(parent, true) as MutableElement;
+    expect(clone.children.length).toBe(2);
+    expect(clone).not.toBe(parent);
+    expect(clone.children[0]).not.toBe(child);
+  });
+
+  it('should clone text nodes', () => {
+    const text = createMutableTextNode('hello');
+    const clone = cloneNode(text) as MutableTextNode;
+    expect(clone.text).toBe('hello');
+    expect(clone).not.toBe(text);
+  });
+
+  it('should clone comment nodes', () => {
+    const comment = createMutableComment('data');
+    const clone = cloneNode(comment) as MutableComment;
+    expect(clone.data).toBe('data');
+    expect(clone).not.toBe(comment);
+  });
+
+  it('should clone doctype nodes', () => {
+    const doctype = createMutableDoctype('html', 'public', 'system');
+    const clone = cloneNode(doctype);
+    expect(clone.nodeType).toBe(NodeType.Doctype);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOCUMENT FRAGMENT + FACTORY METHODS
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('createDocumentFragment', () => {
+  it('should create a fragment element', () => {
+    const frag = createDocumentFragment();
+    expect(frag.nodeType).toBe(NodeType.Element);
+    expect(frag.tagName).toBe('');
+    expect(frag.children.length).toBe(0);
+  });
+});
+
+describe('createTextNode', () => {
+  it('should create a text node', () => {
+    const text = createTextNode('hello');
+    expect(text.nodeType).toBe(NodeType.Text);
+    expect(text.text).toBe('hello');
+  });
+});
+
+describe('createComment', () => {
+  it('should create a comment node', () => {
+    const comment = createComment('data');
+    expect(comment.nodeType).toBe(NodeType.Comment);
+    expect(comment.data).toBe('data');
   });
 });

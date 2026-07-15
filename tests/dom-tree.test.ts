@@ -143,7 +143,7 @@ describe('DomTree', () => {
     const doc = tree.buildFromHtml(parseResult.document);
     const p = doc.bodyElement!.children[0] as any;
 
-    const box = { x: 10, y: 20, width: 100, height: 50, marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0, paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0 };
+    const box = { x: 10, y: 20, width: 100, height: 50, marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0, paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0, borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0 };
     tree.setLayoutBox(p, box);
     expect(p.layoutBox).toEqual(box);
   });

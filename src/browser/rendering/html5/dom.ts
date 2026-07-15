@@ -7,6 +7,8 @@
  * DocumentFragment, proper child management.
  */
 
+import { fireMutation, cleanupRegistrations } from './mutation-observer';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // NODE TYPES
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,6 +72,9 @@ interface HtmlElement extends HtmlNode {
   setAttribute(name: string, value: string): void;
   removeAttribute(name: string): void;
   hasAttribute(name: string): boolean;
+  // Shadow DOM API (read-only view)
+  readonly shadowRoot: any;         // ShadowRoot | null (open mode only)
+  readonly assignedSlot: HtmlElement | null;  // The <slot> element this node is assigned to
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -224,6 +229,14 @@ interface MutableElement {
   nextSibling:  HtmlNode | null;
   previousSibling: HtmlNode | null;
   namespaceURI: Namespace | null;
+  // Shadow DOM fields
+  _shadowRoot: any;           // MutableShadowRoot | null
+  _assignedSlot: MutableElement | null;  // The <slot> element this node is assigned to
+  _internals: any;            // ElementInternals | null
+  childNodes:  HtmlNode[];
+  firstChild:  HtmlNode | null;
+  lastChild:   HtmlNode | null;
+  childElementCount: number;
 }
 
 /** Mutable text node used internally. */
@@ -345,6 +358,13 @@ function createMutableElement(
     nextSibling:  null,
     previousSibling: null,
     namespaceURI: Namespace.HTML,
+    _shadowRoot: null,
+    _assignedSlot: null,
+    _internals: null,
+    childNodes: [],
+    firstChild: null,
+    lastChild: null,
+    childElementCount: 0,
   };
 }
 
@@ -452,6 +472,13 @@ function appendChild(parent: MutableParentNode, node: MutableNode): void {
   }
   children.push(node);
   syncDocumentPointers(parent);
+  fireMutation({
+    target: parent as unknown as HtmlNode,
+    type: 'childList',
+    addedNodes: [node as HtmlNode],
+    previousSibling: last as HtmlNode | null,
+    nextSibling: null,
+  });
 }
 
 function insertBefore(parent: MutableParentNode, newNode: MutableNode, refNode: HtmlNode): void {
@@ -471,6 +498,13 @@ function insertBefore(parent: MutableParentNode, newNode: MutableNode, refNode: 
   (refNode as MutableNode).previousSibling = newNode as HtmlNode;
   children.splice(idx, 0, newNode);
   syncDocumentPointers(parent);
+  fireMutation({
+    target: parent as unknown as HtmlNode,
+    type: 'childList',
+    addedNodes: [newNode as HtmlNode],
+    previousSibling: prev as HtmlNode | null,
+    nextSibling: refNode,
+  });
 }
 
 function removeChild(parent: MutableParentNode, node: MutableNode): void {
@@ -486,6 +520,14 @@ function removeChild(parent: MutableParentNode, node: MutableNode): void {
   node.nextSibling = null;
   children.splice(idx, 1);
   syncDocumentPointers(parent);
+  fireMutation({
+    target: parent as unknown as HtmlNode,
+    type: 'childList',
+    removedNodes: [node as HtmlNode],
+    previousSibling: prev as HtmlNode | null,
+    nextSibling: next as HtmlNode | null,
+  });
+  cleanupRegistrations(node as unknown as HtmlNode);
 }
 
 function replaceChild(
@@ -506,6 +548,14 @@ function replaceChild(
   oldNode.nextSibling = null;
   children[idx] = newNode;
   syncDocumentPointers(parent);
+  fireMutation({
+    target: parent as unknown as HtmlNode,
+    type: 'childList',
+    addedNodes: [newNode as HtmlNode],
+    removedNodes: [oldNode as HtmlNode],
+    previousSibling: prev as HtmlNode | null,
+    nextSibling: next as HtmlNode | null,
+  });
 }
 
 function syncDocumentPointers(parent: MutableParentNode): void {
@@ -526,6 +576,10 @@ function cloneElement(el: HtmlElement, deep = false): MutableElement {
   clone.isRawText = el.isRawText;
   clone.rawContent = el.rawContent;
   clone.namespaceURI = (el as MutableElement).namespaceURI ?? Namespace.HTML;
+  // Preserve shadow DOM fields (shallow copy — shadow root is not deep-cloned here)
+  clone._shadowRoot = (el as MutableElement)._shadowRoot ?? null;
+  clone._assignedSlot = (el as MutableElement)._assignedSlot ?? null;
+  clone._internals = (el as MutableElement)._internals ?? null;
   if (deep) {
     for (const child of el.children) {
       if (child.nodeType === NodeType.Element) {
@@ -570,15 +624,434 @@ function elementGetAttribute(el: MutableElement, name: string): string | null {
 }
 
 function elementSetAttribute(el: MutableElement, name: string, value: string): void {
-  el.attributes.set(name.toLowerCase(), value);
+  const ln = name.toLowerCase();
+  const oldValue = el.attributes.get(ln) ?? null;
+  el.attributes.set(ln, value);
+  fireMutation({
+    target: el as unknown as HtmlNode,
+    type: 'attributes',
+    attributeName: ln,
+    oldValue,
+  });
 }
 
 function elementRemoveAttribute(el: MutableElement, name: string): void {
-  el.attributes.delete(name.toLowerCase());
+  const ln = name.toLowerCase();
+  const oldValue = el.attributes.get(ln) ?? null;
+  el.attributes.delete(ln);
+  fireMutation({
+    target: el as unknown as HtmlNode,
+    type: 'attributes',
+    attributeName: ln,
+    oldValue,
+  });
 }
 
 function elementHasAttribute(el: MutableElement, name: string): boolean {
   return el.attributes.has(name.toLowerCase());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONVENIENCE MUTATION METHODS  (standard DOM API)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function nodeRemove(node: MutableNode): void {
+  if (node.parent && 'children' in node.parent) {
+    removeChild(node.parent as MutableParentNode, node);
+  }
+}
+
+function nodeAppend(parent: MutableParentNode, ...nodes: MutableNode[]): void {
+  for (const n of nodes) {
+    if (n === null || n === undefined) continue;
+    if (typeof n === 'string') {
+      appendChild(parent, createMutableTextNode(n));
+    } else {
+      appendChild(parent, n);
+    }
+  }
+}
+
+function nodePrepend(parent: MutableParentNode, ...nodes: (MutableNode | string)[]): void {
+  const children = getParentChildren(parent);
+  const refNode = children.length > 0 ? children[0] as HtmlNode : null;
+  for (const n of nodes) {
+    if (n === null || n === undefined) continue;
+    if (typeof n === 'string') {
+      const textNode = createMutableTextNode(n);
+      if (refNode) {
+        insertBefore(parent, textNode, refNode);
+      } else {
+        appendChild(parent, textNode);
+      }
+    } else {
+      if (refNode) {
+        insertBefore(parent, n, refNode);
+      } else {
+        appendChild(parent, n);
+      }
+    }
+  }
+}
+
+function nodeBefore(node: MutableNode, ...nodes: (MutableNode | string)[]): void {
+  const parent = node.parent as MutableParentNode | null;
+  if (!parent) return;
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    if (n === null || n === undefined) continue;
+    if (typeof n === 'string') {
+      insertBefore(parent, createMutableTextNode(n), node as HtmlNode);
+    } else {
+      insertBefore(parent, n, node as HtmlNode);
+    }
+  }
+}
+
+function nodeAfter(node: MutableNode, ...nodes: (MutableNode | string)[]): void {
+  const parent = node.parent as MutableParentNode | null;
+  if (!parent) return;
+  const children = getParentChildren(parent);
+  const idx = children.indexOf(node);
+  const refIdx = idx + 1;
+  const refNode = refIdx < children.length ? children[refIdx] as HtmlNode : null;
+  for (const n of nodes) {
+    if (n === null || n === undefined) continue;
+    if (typeof n === 'string') {
+      const textNode = createMutableTextNode(n);
+      if (refNode) {
+        insertBefore(parent, textNode, refNode);
+      } else {
+        appendChild(parent, textNode);
+      }
+    } else {
+      if (refNode) {
+        insertBefore(parent, n, refNode);
+      } else {
+        appendChild(parent, n);
+      }
+    }
+  }
+}
+
+function nodeReplaceWith(node: MutableNode, ...nodes: (MutableNode | string)[]): void {
+  const parent = node.parent as MutableParentNode | null;
+  if (!parent) return;
+  if (nodes.length === 0) {
+    nodeRemove(node);
+    return;
+  }
+  const children = getParentChildren(parent);
+  // Insert all new nodes before the old node
+  for (const n of nodes) {
+    if (n === null || n === undefined) continue;
+    if (typeof n === 'string') {
+      insertBefore(parent, createMutableTextNode(n), node as HtmlNode);
+    } else {
+      insertBefore(parent, n, node as HtmlNode);
+    }
+  }
+  // Now remove the old node
+  nodeRemove(node);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ELEMENT-ONLY CHILD ACCESSORS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getFirstChildElement(parent: MutableParentNode): MutableElement | null {
+  const children = getParentChildren(parent);
+  for (const child of children) {
+    if (child.nodeType === NodeType.Element) return child as MutableElement;
+  }
+  return null;
+}
+
+function getLastChildElement(parent: MutableParentNode): MutableElement | null {
+  const children = getParentChildren(parent);
+  for (let i = children.length - 1; i >= 0; i--) {
+    if (children[i].nodeType === NodeType.Element) return children[i] as MutableElement;
+  }
+  return null;
+}
+
+function getNextElementSibling(node: MutableNode): MutableElement | null {
+  let current = node.nextSibling as MutableNode | null;
+  while (current) {
+    if (current.nodeType === NodeType.Element) return current as MutableElement;
+    current = current.nextSibling as MutableNode | null;
+  }
+  return null;
+}
+
+function getPreviousElementSibling(node: MutableNode): MutableElement | null {
+  let current = node.previousSibling as MutableNode | null;
+  while (current) {
+    if (current.nodeType === NodeType.Element) return current as MutableElement;
+    current = current.previousSibling as MutableNode | null;
+  }
+  return null;
+}
+
+function getChildElementCount(parent: MutableParentNode): number {
+  const children = getParentChildren(parent);
+  let count = 0;
+  for (const child of children) {
+    if (child.nodeType === NodeType.Element) count++;
+  }
+  return count;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADDITIONAL ATTRIBUTE METHODS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function elementToggleAttribute(el: MutableElement, name: string, force?: boolean): boolean {
+  const lower = name.toLowerCase();
+  const has = el.attributes.has(lower);
+  if (force !== undefined) {
+    if (force) {
+      el.attributes.set(lower, el.attributes.get(lower) ?? '');
+      return true;
+    } else {
+      el.attributes.delete(lower);
+      return false;
+    }
+  }
+  if (has) {
+    el.attributes.delete(lower);
+    return false;
+  } else {
+    el.attributes.set(lower, '');
+    return true;
+  }
+}
+
+function elementGetAttributeNames(el: MutableElement): string[] {
+  return [...el.attributes.keys()];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEXT CONTENT / NODE ACCESSORS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getTextContent(node: HtmlNode): string {
+  switch (node.nodeType) {
+    case NodeType.Text:
+      return (node as HtmlTextNode).text;
+    case NodeType.Comment:
+      return (node as HtmlComment).data;
+    case NodeType.CdataSection:
+      return (node as HtmlCdata).data;
+    case NodeType.ProcessingInstruction:
+      return (node as HtmlProcessingInstruction).data;
+    case NodeType.Element:
+    case NodeType.Document:
+    case NodeType.DocumentFragment: {
+      let result = '';
+      const parent = node as MutableParentNode;
+      const children = getParentChildren(parent);
+      for (const child of children) {
+        result += getTextContent(child);
+      }
+      return result;
+    }
+    default:
+      return '';
+  }
+}
+
+function setTextContent(node: MutableNode, value: string): void {
+  switch (node.nodeType) {
+    case NodeType.Text: {
+      const oldValue = (node as MutableTextNode).text;
+      (node as MutableTextNode).text = value;
+      fireMutation({
+        target: node as unknown as HtmlNode,
+        type: 'characterData',
+        oldValue,
+      });
+      break;
+    }
+    case NodeType.Comment: {
+      const oldValue = (node as MutableComment).data;
+      (node as MutableComment).data = value;
+      fireMutation({
+        target: node as unknown as HtmlNode,
+        type: 'characterData',
+        oldValue,
+      });
+      break;
+    }
+    case NodeType.CdataSection: {
+      const oldValue = (node as MutableCdata).data;
+      (node as MutableCdata).data = value;
+      fireMutation({
+        target: node as unknown as HtmlNode,
+        type: 'characterData',
+        oldValue,
+      });
+      break;
+    }
+    case NodeType.Element:
+    case NodeType.Document: {
+      const parent = node as MutableParentNode;
+      const children = getParentChildren(parent);
+      // Remove all existing children
+      while (children.length > 0) {
+        removeChild(parent, children[0] as MutableNode);
+      }
+      // Add single text node if non-empty
+      if (value) {
+        appendChild(parent, createMutableTextNode(value));
+      }
+      break;
+    }
+  }
+}
+
+function getNodeName(node: HtmlNode): string {
+  switch (node.nodeType) {
+    case NodeType.Element:
+      return (node as HtmlElement).tagName.toUpperCase();
+    case NodeType.Text:
+      return '#text';
+    case NodeType.Comment:
+      return '#comment';
+    case NodeType.Doctype:
+      return (node as HtmlDoctype).name.toUpperCase() || 'html';
+    case NodeType.CdataSection:
+      return '#cdata-section';
+    case NodeType.ProcessingInstruction:
+      return (node as HtmlProcessingInstruction).target;
+    case NodeType.Document:
+      return '#document';
+    case NodeType.ParseError:
+      return '#error';
+    default:
+      return '';
+  }
+}
+
+function getNodeValue(node: HtmlNode): string | null {
+  switch (node.nodeType) {
+    case NodeType.Text:
+      return (node as HtmlTextNode).text;
+    case NodeType.Comment:
+      return (node as HtmlComment).data;
+    case NodeType.CdataSection:
+      return (node as HtmlCdata).data;
+    case NodeType.ProcessingInstruction:
+      return (node as HtmlProcessingInstruction).data;
+    default:
+      return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NORMALIZE  (merge adjacent text nodes)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function normalize(parent: MutableParentNode): void {
+  const children = getParentChildren(parent);
+  let i = 0;
+  while (i < children.length) {
+    const child = children[i];
+    if (child.nodeType === NodeType.Text) {
+      // Check next sibling
+      const next = child.nextSibling as MutableNode | null;
+      if (next && next.nodeType === NodeType.Text) {
+        // Merge: append next text to current
+        (child as MutableTextNode).text += (next as MutableTextNode).text;
+        removeChild(parent, next);
+        // Don't increment i — check if there's another text sibling
+        continue;
+      }
+    }
+    // If this node is a parent, normalize it recursively
+    if ('children' in child) {
+      normalize(child as MutableParentNode);
+    }
+    i++;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GENERIC cloneNode  (handles all node types)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function cloneNode(node: HtmlNode, deep = false): MutableNode {
+  switch (node.nodeType) {
+    case NodeType.Element: {
+      const el = node as HtmlElement;
+      const clone = createMutableElement(el.tagName, new Map(el.attributes), el.sourceOffset);
+      clone.isVoid = el.isVoid;
+      clone.isRawText = el.isRawText;
+      clone.rawContent = el.rawContent;
+      clone.namespaceURI = (el as MutableElement).namespaceURI ?? Namespace.HTML;
+      if (deep) {
+        for (const child of el.children) {
+          appendChild(clone, cloneNode(child, true));
+        }
+      }
+      return clone;
+    }
+    case NodeType.Text: {
+      const t = node as HtmlTextNode;
+      return createMutableTextNode(t.text, t.sourceOffset);
+    }
+    case NodeType.Comment: {
+      const c = node as HtmlComment;
+      return createMutableComment(c.data, c.sourceOffset);
+    }
+    case NodeType.Doctype: {
+      const d = node as HtmlDoctype;
+      return createMutableDoctype(d.name, d.publicId, d.systemId, d.sourceOffset);
+    }
+    case NodeType.CdataSection: {
+      const c = node as HtmlCdata;
+      return createMutableCdata(c.data, c.sourceOffset);
+    }
+    case NodeType.Document: {
+      // Documents are cloned shallow by default — deep clone copies children
+      const clone = createMutableDocument();
+      if (deep) {
+        const doc = node as HtmlDocument;
+        for (const child of doc.children) {
+          appendChild(clone, cloneNode(child, true));
+        }
+        clone.doctype = doc.doctype;
+        clone.htmlElement = doc.htmlElement;
+        clone.headElement = doc.headElement;
+        clone.bodyElement = doc.bodyElement;
+        clone.hasDoctype = doc.hasDoctype;
+        clone.declaredCharset = doc.declaredCharset;
+        clone.detectedCharset = doc.detectedCharset;
+        clone.metaCharset = doc.metaCharset;
+      }
+      return clone;
+    }
+    default:
+      // For ParseError, ProcessingInstruction — return a shallow copy as-is
+      return node as unknown as MutableNode;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOCUMENT FRAGMENT + DOCUMENT FACTORY METHODS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function createDocumentFragment(): MutableElement {
+  const frag = createMutableElement('');
+  return frag;
+}
+
+function createTextNode(text: string, offset = 0): MutableTextNode {
+  return createMutableTextNode(text, offset);
+}
+
+function createComment(data: string, offset = 0): MutableComment {
+  return createMutableComment(data, offset);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -588,14 +1061,17 @@ function elementHasAttribute(el: MutableElement, name: string): boolean {
 export {
   NodeType,
   Namespace,
+  // Core child management
   appendChild,
   insertBefore,
   removeChild,
   replaceChild,
   cloneElement,
+  cloneNode,
   hasChildNodes,
   contains,
   getParentChildren,
+  // Factory functions
   createMutableElement,
   createMutableTextNode,
   createMutableComment,
@@ -603,10 +1079,36 @@ export {
   createMutableCdata,
   createMutableDocument,
   createParseError,
+  createDocumentFragment,
+  createTextNode,
+  createComment,
+  // Element attribute API
   elementGetAttribute,
   elementSetAttribute,
   elementRemoveAttribute,
   elementHasAttribute,
+  elementToggleAttribute,
+  elementGetAttributeNames,
+  // Convenience mutation methods
+  nodeRemove,
+  nodeAppend,
+  nodePrepend,
+  nodeBefore,
+  nodeAfter,
+  nodeReplaceWith,
+  // Element-only child accessors
+  getFirstChildElement,
+  getLastChildElement,
+  getNextElementSibling,
+  getPreviousElementSibling,
+  getChildElementCount,
+  // Text content / node accessors
+  getTextContent,
+  setTextContent,
+  getNodeName,
+  getNodeValue,
+  // Normalize
+  normalize,
 };
 
 export type {
@@ -633,3 +1135,38 @@ export type {
   MutableCdata,
   MutableDocument,
 };
+
+// Re-export MutationObserver types
+export {
+  MutationObserver,
+} from './mutation-observer';
+export type {
+  MutationRecord,
+  MutationObserverInit,
+  MutationCallback,
+} from './mutation-observer';
+
+// Re-export Shadow DOM types
+export {
+  attachShadow,
+  getRootNode,
+  isShadowRoot,
+  findShadowRoot,
+  assignSlots,
+  getAssignedNodes,
+  getSlotName,
+  DEFAULT_SLOT_NAME,
+  attachInternals,
+  computeComposedPath,
+  retarget,
+  cloneShadowTree,
+} from './shadow';
+export type {
+  ShadowRoot,
+  ShadowRootMode,
+  ShadowRootInit,
+  MutableShadowRoot,
+  EventPathItem,
+  ElementInternals,
+  ValidityStateFlags,
+} from './shadow';

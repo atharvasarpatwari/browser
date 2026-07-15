@@ -189,20 +189,25 @@ class PaintEngine implements IPaintEngine {
     const layoutBox: LayoutBox | null = (node as { layoutBox: LayoutBox | null }).layoutBox ?? null;
 
     if (layoutBox) {
+      // ── Background (content + padding area) ─────────────────────────────
       const bgColor = style.get('background-color') ?? style.get('background') ?? 'transparent';
       if (bgColor !== 'transparent') {
         commands.push({ type: 'setFillStyle', params: [bgColor] });
         commands.push({
           type: 'fillRect',
           params: [
-            layoutBox.x + layoutBox.paddingLeft,
-            layoutBox.y + layoutBox.paddingTop,
-            layoutBox.width - layoutBox.paddingLeft - layoutBox.paddingRight,
-            layoutBox.height - layoutBox.paddingTop - layoutBox.paddingBottom,
+            layoutBox.x + layoutBox.borderLeft,
+            layoutBox.y + layoutBox.borderTop,
+            layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight,
+            layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom,
           ],
         });
       }
 
+      // ── Borders ─────────────────────────────────────────────────────────
+      this.paintBorders(commands, layoutBox, style);
+
+      // ── Text label (debug — shows element tag) ──────────────────────────
       const color = style.get('color') ?? '#000000';
       const fontSize = style.get('font-size') ?? '16px';
       commands.push({ type: 'setFillStyle', params: [color] });
@@ -211,11 +216,12 @@ class PaintEngine implements IPaintEngine {
         type: 'fillText',
         params: [
           `<${node.tagName}>`,
-          layoutBox.x + layoutBox.paddingLeft + 4,
-          layoutBox.y + layoutBox.paddingTop + 16,
+          layoutBox.x + layoutBox.borderLeft + layoutBox.paddingLeft + 4,
+          layoutBox.y + layoutBox.borderTop + layoutBox.paddingTop + 16,
         ],
       });
 
+      // ── Debug outer border (border box outline) ─────────────────────────
       if (this.config.showDebugBorders) {
         commands.push({ type: 'setStrokeStyle', params: ['rgba(0,0,255,0.3)'] });
         commands.push({ type: 'setLineWidth', params: [1] });
@@ -234,7 +240,7 @@ class PaintEngine implements IPaintEngine {
     const layer: PaintLayer = {
       id: nextLayerId(),
       zIndex,
-      opacity: 1,
+      opacity: parseFloat(style.get('opacity') ?? '1') || 1,
       commands,
       bounds: layoutBox,
     };
@@ -246,6 +252,37 @@ class PaintEngine implements IPaintEngine {
       if (child.nodeType === 'element') {
         this.paintNode(child as DomElement, zIndex + 1);
       }
+    }
+  }
+
+  /**
+   * Paints solid borders on all four sides of the border box.
+   * Reads border-*-width and border-*-color from computed style.
+   */
+  private paintBorders(commands: PaintCommand[], box: LayoutBox, style: ReadonlyMap<string, string>): void {
+    const borderWidths = [box.borderTop, box.borderRight, box.borderBottom, box.borderLeft];
+    const hasBorders = borderWidths.some(w => w > 0);
+    if (!hasBorders) return;
+
+    const borderColor = style.get('border-color')
+      ?? style.get('border-top-color')
+      ?? '#000000';
+
+    const sides: Array<{ width: number; x: number; y: number; w: number; h: number }> = [
+      // Top border
+      { width: box.borderTop, x: box.x, y: box.y, w: box.width, h: box.borderTop },
+      // Bottom border
+      { width: box.borderBottom, x: box.x, y: box.y + box.height - box.borderBottom, w: box.width, h: box.borderBottom },
+      // Left border (between top and bottom)
+      { width: box.borderLeft, x: box.x, y: box.y + box.borderTop, w: box.borderLeft, h: box.height - box.borderTop - box.borderBottom },
+      // Right border (between top and bottom)
+      { width: box.borderRight, x: box.x + box.width - box.borderRight, y: box.y + box.borderTop, w: box.borderRight, h: box.height - box.borderTop - box.borderBottom },
+    ];
+
+    for (const side of sides) {
+      if (side.width <= 0) continue;
+      commands.push({ type: 'setFillStyle', params: [borderColor] });
+      commands.push({ type: 'fillRect', params: [side.x, side.y, side.w, side.h] });
     }
   }
 

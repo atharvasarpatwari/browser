@@ -47,6 +47,10 @@ interface LayoutBox {
   readonly paddingRight: number;
   readonly paddingBottom: number;
   readonly paddingLeft: number;
+  readonly borderTop: number;
+  readonly borderRight: number;
+  readonly borderBottom: number;
+  readonly borderLeft: number;
 }
 
 type DomMutationType =

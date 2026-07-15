@@ -1,6 +1,25 @@
+/**
+ * @file css-parser.ts
+ * CSS Parser facade — backward-compatible interface wrapping the CSS5 engine.
+ *
+ * Maintains the same public API (ICssParser, CssRule, CssStylesheet, CssSpecificity)
+ * while using the new modular CSS5 engine internally.
+ */
+
 import type { IDisposable } from '../../app/dependency-container';
 import type { HtmlDocument, HtmlElement } from './html-parser';
 import { getElementsByTagName } from './html-parser';
+
+import { CssParser as Css5Parser, computeSelectorSpecificity } from './css5/parser';
+import { matchesSelector, querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll } from './css5/selector';
+import type { SelectableElement } from './css5/selector';
+import { computeComputedStyles, expandShorthands } from './css5/cascade';
+import type { StyleableElement } from './css5/cascade';
+import type { CssStylesheet as Css5Stylesheet, CssRule as Css5Rule, CssSelector, CssSpecificity as Css5Specificity, CssCompoundSelector } from './css5/types';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEGACY INTERFACES (backward compatible)
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface CssRule {
   readonly selector: string;
@@ -29,10 +48,15 @@ interface ICssParser extends IDisposable {
   computeStylesForElement(tagName: string, attributes: ReadonlyMap<string, string>, allRules: readonly CssRule[]): ReadonlyMap<string, string>;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// LEGACY FUNCTIONS (backward compatible exports)
+// ─────────────────────────────────────────────────────────────────────────────
+
 function specificityWeight(selector: string): CssSpecificity {
   const idCount = (selector.match(/#[a-zA-Z0-9_-]+/g) || []).length;
   const classCount = (selector.match(/\.[a-zA-Z0-9_-]+/g) || []).length;
-  const tagCount = (selector.match(/^[a-zA-Z]+|[^.#\s][a-zA-Z]+/g) || []).length;
+  // Match tag names: preceded by start/space (not by # . : -), followed by non-letter
+  const tagCount = (selector.match(/(?<![\w#.:\\-])[a-zA-Z]+(?![a-zA-Z])/g) || []).length;
   return { id: idCount, class: classCount, tag: tagCount };
 }
 
@@ -42,34 +66,37 @@ function compareSpecificity(a: CssSpecificity, b: CssSpecificity): number {
   return b.tag - a.tag;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CSS5-BACKED PARSER
+// ─────────────────────────────────────────────────────────────────────────────
+
 class CssParser implements ICssParser {
+  private css5: Css5Parser;
+
+  constructor() {
+    this.css5 = new Css5Parser();
+  }
+
   parseStylesheet(css: string, url?: string): CssStylesheet {
+    const css5Sheet = this.css5.parseStylesheetRobust(css, url);
+
+    // Convert CSS5 rules to legacy CssRule format
     const rules: CssRule[] = [];
-    const blockRe = /([^{]+)\{([^}]*)\}/g;
-    let match: RegExpExecArray | null;
+    let order = 0;
 
-    while ((match = blockRe.exec(css)) !== null) {
-      const rawSelector = match[1]!.trim();
-      const rawDeclarations = match[2]!.trim();
-
-      if (!rawSelector || !rawDeclarations) continue;
-
-      const declarations = this.parseDeclarations(rawDeclarations);
-
-      rules.push({
-        selector: rawSelector,
-        specificity: specificityWeight(rawSelector),
-        declarations,
-        source: 'style-tag',
-        sourceUrl: url ?? null,
-      });
+    for (const rule of css5Sheet.rules) {
+      const converted = this.convertRule(rule, order, url ?? null);
+      if (converted) {
+        rules.push(...converted);
+        order += converted.length;
+      }
     }
 
     return { rules, url: url ?? null };
   }
 
   parseInlineStyle(styleAttr: string): ReadonlyMap<string, string> {
-    return this.parseDeclarations(styleAttr);
+    return this.css5.parseInlineStyle(styleAttr);
   }
 
   extractStylesFromDocument(doc: HtmlDocument): readonly CssRule[] {
@@ -113,78 +140,166 @@ class CssParser implements ICssParser {
     attributes: ReadonlyMap<string, string>,
     allRules: readonly CssRule[],
   ): ReadonlyMap<string, string> {
-    const matched: CssRule[] = [];
-    const id = attributes.get('id') ?? '';
-    const classes = (attributes.get('class') ?? '').split(/\s+/).filter(Boolean);
+    // Convert legacy CssRule to CSS5 rule format for matching
+    const css5Rules: Css5Rule[] = [];
+    let order = 0;
 
     for (const rule of allRules) {
-      let matches = false;
-      const sel = rule.selector;
+      if (rule.selector === '__external__') continue;
 
-      if (sel === '*' || sel === tagName) matches = true;
-      if (id && sel === `#${id}`) matches = true;
-      for (const cls of classes) {
-        if (sel === `.${cls}`) matches = true;
-      }
-      if (sel.includes('#') && id) {
-        const selId = sel.match(/#([a-zA-Z0-9_-]+)/)?.[1];
-        if (selId === id) matches = true;
-      }
-      for (const cls of classes) {
-        if (sel.includes(`.${cls}`)) matches = true;
-      }
+      // Parse the selector string using CSS5 parser
+      const selector = this.css5.parseSelector(rule.selector);
+      if (!selector) continue;
 
-      if (matches) matched.push(rule);
+      const specificity = computeSelectorSpecificity(selector);
+      css5Rules.push({
+        type: 'style',
+        selectors: [selector],
+        declarations: Array.from(rule.declarations.entries()).map(([prop, value]) => ({
+          property: prop,
+          value,
+          important: false,
+        })),
+        specificity,
+        sourceOrder: order++,
+        sourceUrl: rule.sourceUrl,
+      });
     }
 
-    matched.sort((a, b) => compareSpecificity(a.specificity, b.specificity));
+    // Create a temporary stylesheet
+    const stylesheet: Css5Stylesheet = { rules: css5Rules, url: null };
 
-    const computed = new Map<string, string>();
-    for (const rule of matched) {
-      for (const [prop, value] of rule.declarations) {
-        computed.set(prop, value);
-      }
-    }
+    // Create a StyleableElement from the element
+    const styleable = this.toStyleableElement(tagName, attributes);
 
-    const inlineStyle = attributes.get('style');
-    if (inlineStyle) {
-      const inline = this.parseInlineStyle(inlineStyle);
-      for (const [prop, value] of inline) {
-        computed.set(prop, value);
-      }
-    }
+    // Compute styles using the CSS5 cascade
+    const computed = computeComputedStyles(styleable, stylesheet);
 
-    this.applyDefaults(tagName, computed);
     return computed;
   }
 
-  private parseDeclarations(raw: string): Map<string, string> {
-    const decls = new Map<string, string>();
-    const parts = raw.split(';');
-
-    for (const part of parts) {
-      const colon = part.indexOf(':');
-      if (colon === -1) continue;
-      const prop = part.slice(0, colon).trim().toLowerCase();
-      const value = part.slice(colon + 1).trim();
-      if (prop && value) decls.set(prop, value);
-    }
-
-    return decls;
-  }
-
-  private applyDefaults(tagName: string, computed: Map<string, string>): void {
-    if (!computed.has('display')) {
-      const blockTags = new Set(['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'section', 'article', 'nav', 'header', 'footer', 'main', 'aside', 'table', 'form', 'blockquote', 'hr']);
-      computed.set('display', blockTags.has(tagName) ? 'block' : 'inline');
-    }
-    if (!computed.has('color')) computed.set('color', '#000000');
-    if (!computed.has('font-size')) computed.set('font-size', '16px');
-    if (!computed.has('font-family')) computed.set('font-family', 'sans-serif');
+  /**
+   * Get the CSS5 parser for advanced usage.
+   */
+  getCss5Parser(): Css5Parser {
+    return this.css5;
   }
 
   dispose(): void {}
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PRIVATE HELPERS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private convertRule(rule: Css5Rule, order: number, sourceUrl: string | null): CssRule[] {
+    if (rule.type !== 'style') return [];
+
+    return rule.selectors.map((selector) => {
+      const selectorStr = selectorToString(selector);
+      const declMap = new Map<string, string>();
+      for (const decl of rule.declarations) {
+        declMap.set(decl.property, decl.value);
+      }
+
+      return {
+        selector: selectorStr,
+        specificity: { id: rule.specificity.id, class: rule.specificity.a, tag: rule.specificity.b },
+        declarations: declMap,
+        source: 'style-tag' as const,
+        sourceUrl: rule.sourceUrl ?? sourceUrl,
+      };
+    });
+  }
+
+  private toStyleableElement(tagName: string, attributes: ReadonlyMap<string, string>): StyleableElement {
+    return {
+      tagName,
+      attributes,
+      parent: null,
+      children: [],
+    };
+  }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SELECTOR → STRING (for backward compat)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function selectorToString(selector: CssSelector): string {
+  if (selector.type === 'compound') {
+    return compoundToString(selector);
+  }
+
+  // Complex selector
+  const left = selectorToString(selector.left);
+  const right = compoundToString(selector.right);
+
+  switch (selector.combinator) {
+    case ' ':  return `${left} ${right}`;
+    case '>':  return `${left} > ${right}`;
+    case '+':  return `${left} + ${right}`;
+    case '~':  return `${left} ~ ${right}`;
+    default:   return `${left} ${right}`;
+  }
+}
+
+function compoundToString(sel: CssCompoundSelector): string {
+  let result = '';
+
+  if (sel.tagName) {
+    result += sel.tagName;
+  } else if (sel.id || sel.classes.length > 0 || sel.attributes.length > 0 || sel.pseudoClass) {
+    result += '*';
+  }
+
+  if (sel.id) result += `#${sel.id}`;
+  for (const cls of sel.classes) result += `.${cls}`;
+
+  for (const attr of sel.attributes) {
+    if (attr.operator) {
+      const val = attr.value !== null ? `="${attr.value}"` : '';
+      result += `[${attr.name}${attr.operator}${val}]`;
+    } else {
+      result += `[${attr.name}]`;
+    }
+  }
+
+  if (sel.pseudoClass) {
+    if (sel.pseudoClass.type === 'negation') {
+      const inner = sel.pseudoClass.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
+      result += `:not(${inner})`;
+    } else if (sel.pseudoClass.type === 'is' || sel.pseudoClass.type === 'any') {
+      const inner = sel.pseudoClass.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
+      result += `:is(${inner})`;
+    } else if (sel.pseudoClass.type === 'has') {
+      const inner = sel.pseudoClass.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
+      result += `:has(${inner})`;
+    } else if (sel.pseudoClass.type === 'structural') {
+      result += `:${sel.pseudoClass.name}`;
+      if (sel.pseudoClass.value) result += `(${sel.pseudoClass.value})`;
+    } else {
+      result += `:${sel.pseudoClass.name}`;
+    }
+  }
+
+  if (sel.pseudoElement) result += `::${sel.pseudoElement}`;
+
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORTS (backward compatible)
+// ─────────────────────────────────────────────────────────────────────────────
 
 export { CssParser, compareSpecificity, specificityWeight };
 export type { ICssParser, CssRule, CssStylesheet, CssSpecificity };
+
+// Also export CSS5 modules for advanced usage
+export {
+  Css5Parser as Css5Engine,
+  computeComputedStyles,
+  expandShorthands,
+  matchesSelector as css5MatchesSelector,
+  css5QuerySelector,
+  css5QuerySelectorAll,
+};

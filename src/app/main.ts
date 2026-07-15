@@ -61,7 +61,7 @@ import type { IDomBindings } from '../browser/javascript/dom-bindings';
 
 // Rendering
 import { DomTree } from '../browser/rendering/dom-tree';
-import type { IDomTree } from '../browser/rendering/dom-tree';
+import type { IDomTree, DomDocument, DomNode, DomElement } from '../browser/rendering/dom-tree';
 import { CssParser } from '../browser/rendering/css-parser';
 import type { ICssParser, CssRule } from '../browser/rendering/css-parser';
 import { LayoutEngine } from '../browser/rendering/layout-engine';
@@ -69,6 +69,11 @@ import type { ILayoutEngine } from '../browser/rendering/layout-engine';
 import { PaintEngine } from '../browser/rendering/paint-engine';
 import type { IPaintEngine } from '../browser/rendering/paint-engine';
 import { HtmlParser } from '../browser/rendering/html-parser';
+
+// CSS5 cascade (directly for tree-level style computation)
+import { computeComputedStyles } from '../browser/rendering/css5/cascade';
+import type { StyleableElement } from '../browser/rendering/css5/cascade';
+import type { CssStylesheet as Css5Stylesheet, CssRule as Css5Rule, CssStyleRule } from '../browser/rendering/css5/types';
 
 
 // Storage
@@ -587,24 +592,138 @@ class ApplicationBootstrap {
         this.applyComputedStyles(domTree, cssParser, rules);
 
         // Run layout and paint
-        layoutEngine.layout(doc);
+        layoutEngine.layout(doc, domTree);
         paintEngine.paint(doc);
       },
     };
   }
 
   /**
-   * Iterates over every element in the DOM tree and applies the matching
-   * computed CSS styles so the layout / paint engines can consume them.
+   * Walks the DOM tree, builds a StyleableElement mirror for CSS5 selector
+   * matching, and applies computed styles to every element so the layout /
+   * paint engines can consume them via node.computedStyle.
    */
   private applyComputedStyles(
-    _domTree: IDomTree,
-    _cssParser: ICssParser,
-    _rules: readonly CssRule[],
+    domTree: IDomTree,
+    cssParser: ICssParser,
+    rules: readonly CssRule[],
   ): void {
-    // Walk the live DOM tree and set computedStyle on each DomElement.
-    // For now we rely on the layout engine's internal default styling;
-    // full CSS cascade resolution will be added in a follow-up.
+    const doc = domTree.getDocument();
+    if (!doc) return;
+
+    // Build a CSS5 stylesheet from legacy CssRule[] (reparse selectors once).
+    const stylesheet = this.buildCss5Stylesheet(cssParser, rules);
+
+    // Pass 1: Build StyleableElement tree mirroring the DOM tree.
+    const rootStyleables = this.buildStyleableTree(doc.children, null);
+
+    // Pass 2: Compute and apply styles top-down.
+    this.applyStylesRecursive(domTree, doc.children, rootStyleables, stylesheet, null);
+  }
+
+  /**
+   * Converts legacy CssRule[] (string selectors) into a CssStylesheet
+   * that the CSS5 cascade engine can consume.
+   */
+  private buildCss5Stylesheet(cssParser: ICssParser, rules: readonly CssRule[]): Css5Stylesheet {
+    const css5Rules: Css5Rule[] = [];
+    const parser = (cssParser as CssParser).getCss5Parser();
+
+    let order = 0;
+    for (const rule of rules) {
+      if (rule.selector === '__external__') continue;
+
+      const selector = parser.parseSelector(rule.selector);
+      if (!selector) continue;
+
+      const styleRule: CssStyleRule = {
+        type: 'style',
+        selectors: [selector],
+        declarations: Array.from(rule.declarations.entries()).map(([prop, value]) => ({
+          property: prop,
+          value,
+          important: false,
+        })),
+        specificity: { id: rule.specificity.id, a: rule.specificity.class, b: rule.specificity.tag },
+        sourceOrder: order++,
+        sourceUrl: rule.sourceUrl,
+      };
+      css5Rules.push(styleRule);
+    }
+
+    return { rules: css5Rules, url: null };
+  }
+
+  /**
+   * Builds a StyleableElement tree mirroring the DOM tree.
+   * Construction is bottom-up: children are built first, then the parent
+   * is created with correct child/parent pointers.
+   */
+  private buildStyleableTree(
+    domNodes: readonly DomNode[],
+    parentStyleable: StyleableElement | null,
+  ): StyleableElement[] {
+    const result: StyleableElement[] = [];
+
+    for (const node of domNodes) {
+      if (node.nodeType !== 'element') continue;
+      const el = node as DomElement;
+
+      // Build children first (bottom-up construction).
+      const childStyleables = this.buildStyleableTree(el.children, null);
+
+      const styleable: StyleableElement = {
+        tagName: el.tagName,
+        attributes: el.attributes,
+        parent: parentStyleable,
+        children: childStyleables,
+      };
+
+      // Fix children's parent pointers to point to this node.
+      for (const child of childStyleables) {
+        child.parent = styleable;
+      }
+
+      result.push(styleable);
+    }
+
+    return result;
+  }
+
+  /**
+   * Recursively computes and applies CSS styles to every element in the DOM tree.
+   * Walks top-down so parent computed styles can be passed for inheritance.
+   */
+  private applyStylesRecursive(
+    domTree: IDomTree,
+    domNodes: readonly DomNode[],
+    styleables: readonly StyleableElement[],
+    stylesheet: Css5Stylesheet,
+    parentComputed: Map<string, string> | null,
+  ): void {
+    let i = 0;
+    for (const node of domNodes) {
+      if (node.nodeType !== 'element') continue;
+      const el = node as DomElement;
+      const styleable = styleables[i++];
+
+      const computed = computeComputedStyles(
+        styleable,
+        stylesheet,
+        undefined,
+        parentComputed ?? undefined,
+      );
+      domTree.setComputedStyle(el, computed);
+
+      // Recurse into children with this element's computed styles as parent.
+      this.applyStylesRecursive(
+        domTree,
+        el.children,
+        styleable.children,
+        stylesheet,
+        computed,
+      );
+    }
   }
 
   // ── Diagnostics ───────────────────────────────────────────────────────────
