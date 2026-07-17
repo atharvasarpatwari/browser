@@ -78,6 +78,12 @@ export interface InlineLevelBox {
   isAnonymous: boolean;
   /** The text content for anonymous text runs. */
   textContent?: string;
+  /** Font size for this box (used for text measurement and rendering). */
+  fontSize?: number;
+  /** Font family for this box. */
+  fontFamily?: string;
+  /** Font weight for this box. */
+  fontWeight?: string;
 }
 
 /** A single line box within an inline formatting context.**
@@ -127,4 +133,24 @@ export interface ClassifiedChild {
   node: DomNode;
   display: string;
   isBlock: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLOAT EXCLUSION ZONES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A rectangular region where inline content cannot flow.
+ * Used by the float layout system to inform inline formatting contexts
+ * about available widths at various Y positions.
+ */
+export interface FloatExclusionZone {
+  /** Left edge of the exclusion (for left floats) or right edge (for right floats). */
+  x: number;
+  /** Top Y of the exclusion zone. */
+  y: number;
+  /** Bottom Y of the exclusion zone. */
+  bottom: number;
+  /** Side of the float: 'left' or 'right'. */
+  side: 'left' | 'right';
 }

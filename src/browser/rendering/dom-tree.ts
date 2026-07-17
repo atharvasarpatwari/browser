@@ -51,6 +51,22 @@ interface LayoutBox {
   readonly borderRight: number;
   readonly borderBottom: number;
   readonly borderLeft: number;
+  /** Text runs for rendering (populated by inline formatting context). */
+  textRuns?: TextRun[];
+}
+
+/**
+ * A positioned text segment for rendering.
+ * Stored on LayoutBox by the layout engine for the paint engine to consume.
+ */
+interface TextRun {
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+  readonly fontSize: number;
+  readonly fontFamily: string;
+  readonly fontWeight?: string;
+  readonly color: string;
 }
 
 type DomMutationType =
@@ -299,4 +315,4 @@ class DomTree implements IDomTree {
 }
 
 export { DomTree };
-export type { IDomTree, DomDocument, DomNode, DomElement, DomTextNode, DomMutation, DomMutationType, LayoutBox };
+export type { IDomTree, DomDocument, DomNode, DomElement, DomTextNode, DomMutation, DomMutationType, LayoutBox, TextRun };

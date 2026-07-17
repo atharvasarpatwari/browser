@@ -1,8 +1,10 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { IDomTree, DomDocument, DomElement, DomNode, LayoutBox } from './dom-tree';
+import type { IDomTree, DomDocument, DomElement, DomNode, LayoutBox, TextRun } from './dom-tree';
+import { findContainingBlock as findContainingBlockForScheme, resolveOutOfFlow, applyInFlowOffset } from './positioning';
 import { classifyDisplay, isBlockLevel } from './formatting/types';
 import { classifyChildren, collapseMargins, isMarginCollapseBlocked } from './formatting/block-context';
 import { InlineFormattingContext } from './formatting/inline-context';
+import { FloatContext } from './formatting/float-context';
 import {
   FlexFormattingContext,
   isRowDirection,
@@ -66,6 +68,18 @@ class LayoutEngine implements ILayoutEngine {
   private readonly elementPositions: Array<{ element: DomElement; box: LayoutBox }> = [];
   private rootFontSize = DEFAULT_LAYOUT_CONFIG.defaultFontSize;
 
+  /** Queue of absolute/fixed elements to lay out after normal flow. */
+  private positionedQueue: Array<{
+    element: DomElement;
+    containingBlock: DomElement | null;
+    fontSize: number;
+    availableWidth: number;
+    domTree?: IDomTree;
+  }> = [];
+
+  /** Current float context for the active block formatting context. */
+  private floatContext: FloatContext | null = null;
+
   constructor(config?: Partial<LayoutConfig>) {
     this.config = { ...DEFAULT_LAYOUT_CONFIG, ...config };
     this.rootFontSize = this.config.defaultFontSize;
@@ -76,6 +90,7 @@ class LayoutEngine implements ILayoutEngine {
     this.rootFontSize = this.config.defaultFontSize;
     this.layoutBoxes.clear();
     this.elementPositions.length = 0;
+    this.positionedQueue.length = 0;
 
     if (document.bodyElement) {
       this.layoutNode(document.bodyElement, 0, 0, this.config.viewportWidth, this.config.defaultFontSize, domTree);
@@ -87,6 +102,9 @@ class LayoutEngine implements ILayoutEngine {
         }
       }
     }
+
+    // ── Second pass: lay out positioned elements ──────────────────────────
+    this.layoutPositionedElements();
   }
 
   getLayoutBox(domId: string): LayoutBox | null {
@@ -131,6 +149,26 @@ class LayoutEngine implements ILayoutEngine {
     const position = style.get('position') ?? 'static';
 
     if (display === 'none') return y;
+
+    // ── Absolute/Fixed: removed from flow, laid out in second pass ──────
+    if (position === 'absolute' || position === 'fixed') {
+      // Still need a zero-size box so getElementAtPoint doesn't crash
+      const box: LayoutBox = {
+        x: 0, y: 0, width: 0, height: 0,
+        marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0,
+        paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0,
+        borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
+      };
+      this.layoutBoxes.set(node.domId, box);
+      this.elementPositions.push({ element: node, box });
+      // Queue for positioned layout after normal flow
+      const containingBlock = position === 'fixed'
+        ? null // viewport
+        : findContainingBlockForScheme(node, position as 'absolute' | 'fixed' | 'sticky');
+      const fontSize = this.resolveFontSize(style, parentFontSize);
+      this.positionedQueue.push({ element: node, containingBlock, fontSize, availableWidth, domTree });
+      return y; // doesn't take space in flow
+    }
 
     const fmtType = classifyDisplay(display);
     const isBlock = fmtType === 'block';
@@ -188,17 +226,8 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     // ── Position the border box ───────────────────────────────────────────
-    let posX = x + marginLeft;
-    let posY: number;
-
-    if (position === 'relative') {
-      const top  = resolve('top', '0');
-      const left = resolve('left', '0');
-      posX += left;
-      posY = y + marginTop + top;
-    } else {
-      posY = y + marginTop;
-    }
+    const posX = x + marginLeft;
+    const posY = y + marginTop;
 
     // ── Content area dimensions ───────────────────────────────────────────
     const contentWidth  = borderWidthBox - paddingLeft - paddingRight - borderLeft - borderRight;
@@ -218,9 +247,17 @@ class LayoutEngine implements ILayoutEngine {
     this.layoutBoxes.set(node.domId, box);
     this.elementPositions.push({ element: node, box });
 
+    // ── Apply relative offset (does NOT affect sibling layout) ────────────
+    if (position === 'relative') {
+      const cbWidth = availableWidth;
+      const cbHeight = availableWidth; // approximate
+      applyInFlowOffset(box, style, fontSize, cbWidth, cbHeight);
+    }
+
     // ── Layout children ────────────────────────────────────────────────────
-    const contentX = posX + borderLeft + paddingLeft;
-    const contentY = posY + borderTop + paddingTop;
+    // ── Layout children (use box.x/y which includes relative offset) ────
+    const contentX = box.x + borderLeft + paddingLeft;
+    const contentY = box.y + borderTop + paddingTop;
 
     let childY: number;
 
@@ -270,6 +307,16 @@ class LayoutEngine implements ILayoutEngine {
     domTree?: IDomTree,
   ): number {
     const style = parent.computedStyle ?? new Map();
+    const oldFloatContext = this.floatContext;
+
+    // Create a float context for this BFC
+    this.floatContext = new FloatContext(
+      contentX,
+      contentY,
+      availableWidth,
+      0, // height computed during layout
+    );
+
     let childY = contentY;
 
     for (const child of parent.children) {
@@ -279,11 +326,152 @@ class LayoutEngine implements ILayoutEngine {
       }
       if (child.nodeType === 'element') {
         const childEl = child as DomElement;
+        const childStyle = childEl.computedStyle ?? new Map();
+        const childPos = childStyle.get('position') ?? 'static';
+
+        // Absolute/fixed children: queue for positioned pass
+        if (childPos === 'absolute' || childPos === 'fixed') {
+          const childFontSize = this.resolveFontSize(childStyle, parentFontSize);
+          const cb = childPos === 'fixed' ? null : findContainingBlockForScheme(childEl, childPos as 'absolute' | 'fixed' | 'sticky');
+          this.positionedQueue.push({ element: childEl, containingBlock: cb, fontSize: childFontSize, availableWidth, domTree });
+          continue;
+        }
+
+        // Handle float
+        const floatVal = childStyle.get('float') ?? 'none';
+        if (floatVal === 'left' || floatVal === 'right') {
+          this.layoutFloatElement(childEl, floatVal as 'left' | 'right', contentX, childY, availableWidth, parentFontSize, domTree);
+          continue;
+        }
+
+        // Handle clear — move below all floats on the cleared side
+        const clearVal = childStyle.get('clear') ?? 'none';
+        if (clearVal !== 'none') {
+          childY = this.floatContext.getYAfterClear(clearVal as 'left' | 'right' | 'both' | 'none', childY);
+        }
+
         childY = this.layoutNode(childEl, contentX, childY, availableWidth, parentFontSize, domTree);
       }
     }
 
+    this.floatContext = oldFloatContext;
     return childY;
+  }
+
+  /**
+   * Lays out a floated element.
+   *
+   * Per CSS 2.2 §9.5: A float is placed as far to the left (or right) as
+   * possible, within the containing block's content area.
+   */
+  private layoutFloatElement(
+    el: DomElement,
+    side: 'left' | 'right',
+    contentX: number,
+    contentY: number,
+    availableWidth: number,
+    parentFontSize: number,
+    domTree?: IDomTree,
+  ): void {
+    const elStyle = el.computedStyle ?? new Map();
+    const elFontSize = this.resolveFontSize(elStyle, parentFontSize);
+
+    // Resolve box model
+    const resolve = (prop: string, fallback: string): number =>
+      this.resolveLength(elStyle.get(prop) ?? fallback, elFontSize, availableWidth);
+
+    const marginTop    = resolve('margin-top',    elStyle.get('margin') ?? '0');
+    const marginRight  = resolve('margin-right',  elStyle.get('margin') ?? '0');
+    const marginBottom = resolve('margin-bottom', elStyle.get('margin') ?? '0');
+    const marginLeft   = resolve('margin-left',   elStyle.get('margin') ?? '0');
+
+    const paddingTop    = resolve('padding-top',    elStyle.get('padding') ?? '0');
+    const paddingRight  = resolve('padding-right',  elStyle.get('padding') ?? '0');
+    const paddingBottom = resolve('padding-bottom', elStyle.get('padding') ?? '0');
+    const paddingLeft   = resolve('padding-left',   elStyle.get('padding') ?? '0');
+
+    const borderTop    = this.parseBorderWidth(elStyle.get('border-top-width') ?? '0');
+    const borderRight  = this.parseBorderWidth(elStyle.get('border-right-width') ?? '0');
+    const borderBottom = this.parseBorderWidth(elStyle.get('border-bottom-width') ?? '0');
+    const borderLeft   = this.parseBorderWidth(elStyle.get('border-left-width') ?? '0');
+
+    // Resolve width — floated elements shrink-wrap
+    const boxSizing = elStyle.get('box-sizing') ?? 'content-box';
+    const specWidth = elStyle.get('width');
+    let borderWidthBox: number;
+
+    if (specWidth && specWidth !== 'auto') {
+      const specified = resolve('width', '0');
+      if (boxSizing === 'border-box') {
+        borderWidthBox = specified;
+      } else {
+        borderWidthBox = specified + paddingLeft + paddingRight + borderLeft + borderRight;
+      }
+    } else {
+      // Auto width: shrink-wrap to content
+      const contentWidth = availableWidth - marginLeft - marginRight - paddingLeft - paddingRight - borderLeft - borderRight;
+      borderWidthBox = Math.max(0, contentWidth);
+    }
+
+    // Resolve height
+    const specHeight = elStyle.get('height');
+    let specifiedContentHeight: number;
+    if (specHeight && specHeight !== 'auto') {
+      if (boxSizing === 'border-box') {
+        specifiedContentHeight = resolve('height', '0') - paddingTop - paddingBottom - borderTop - borderBottom;
+      } else {
+        specifiedContentHeight = resolve('height', '0');
+      }
+    } else {
+      specifiedContentHeight = 0;
+    }
+
+    // Create preliminary box
+    const box: LayoutBox = {
+      x: 0,
+      y: 0,
+      width: borderWidthBox,
+      height: 0,
+      marginTop, marginRight, marginBottom, marginLeft,
+      paddingTop, paddingRight, paddingBottom, paddingLeft,
+      borderTop, borderRight, borderBottom, borderLeft,
+    };
+
+    // Layout children to determine height
+    const contentWidth = borderWidthBox - paddingLeft - paddingRight - borderLeft - borderRight;
+    const childContentX = contentX + borderLeft + paddingLeft;
+    const childContentY = contentY + borderTop + paddingTop;
+
+    let childY = contentY;
+    const fmtType = classifyDisplay(elStyle.get('display') ?? 'block');
+
+    if (fmtType === 'flex' || fmtType === 'inline-flex') {
+      childY = this.layoutFlexContainer(el, childContentX, childContentY, contentWidth, elFontSize, domTree);
+    } else if (fmtType === 'grid' || fmtType === 'inline-grid') {
+      childY = this.layoutGridContainer(el, childContentX, childContentY, contentWidth, elFontSize, domTree);
+    } else if (fmtType === 'block') {
+      childY = this.layoutBlockChildren(el, childContentX, childContentY, contentWidth, elFontSize, domTree);
+    } else {
+      childY = this.layoutInlineChildren(el, childContentX, childContentY, contentWidth, elFontSize, domTree);
+    }
+
+    // Compute final height
+    const contentHeight = Math.max(specifiedContentHeight, childY - childContentY);
+    box.height = contentHeight + paddingTop + paddingBottom + borderTop + borderBottom;
+
+    // Place the float
+    if (this.floatContext) {
+      this.floatContext.placeFloat(box, side, contentY);
+    }
+
+    // Register for hit testing
+    this.layoutBoxes.set(el.domId, box);
+    this.elementPositions.push({ element: el, box });
+
+    // Write back to DOM tree
+    if (domTree) {
+      domTree.setLayoutBox(el, box);
+    }
   }
 
   /**
@@ -301,7 +489,11 @@ class LayoutEngine implements ILayoutEngine {
     parentFontSize: number,
     domTree?: IDomTree,
   ): number {
-    const ifc = new InlineFormattingContext(availableWidth, startY);
+    const exclusionZones = this.floatContext?.getExclusionZones() ?? [];
+    const ifc = new InlineFormattingContext(availableWidth, startY, {
+      exclusionZones,
+      defaultFontSize: parentFontSize,
+    });
 
     for (const child of children) {
       if (child.node.nodeType === 'text') {
@@ -320,7 +512,16 @@ class LayoutEngine implements ILayoutEngine {
       const el = child.node as DomElement;
       const elStyle = el.computedStyle ?? new Map();
       const elDisplay = elStyle.get('display') ?? 'inline';
+      const elPosition = elStyle.get('position') ?? 'static';
       const elClassified = classifyDisplay(elDisplay);
+
+      // Absolute/fixed children are removed from flow
+      if (elPosition === 'absolute' || elPosition === 'fixed') {
+        const containingBlock = elPosition === 'fixed' ? null : findContainingBlockForScheme(el, elPosition as 'absolute' | 'fixed' | 'sticky');
+        const elFontSize = this.resolveFontSize(elStyle, parentFontSize);
+        this.positionedQueue.push({ element: el, containingBlock, fontSize: elFontSize, availableWidth, domTree });
+        continue;
+      }
 
       if (elClassified === 'inline-block') {
         // Layout as inline-block: block formatting inside, inline positioning outside
@@ -384,7 +585,13 @@ class LayoutEngine implements ILayoutEngine {
       const childDisplay = childStyle.get('display') ?? 'inline';
       if (childDisplay === 'none') continue;
       const childPos = childStyle.get('position') ?? 'static';
-      if (childPos === 'absolute' || childPos === 'fixed') continue;
+      if (childPos === 'absolute' || childPos === 'fixed') {
+        // Queue for positioned layout after flex flow
+        const containingBlock = childPos === 'fixed' ? null : findContainingBlockForScheme(childEl, childPos as 'absolute' | 'fixed' | 'sticky');
+        const childFontSize = this.resolveFontSize(childStyle, fontSize);
+        this.positionedQueue.push({ element: childEl, containingBlock, fontSize: childFontSize, availableWidth, domTree });
+        continue;
+      }
 
       const childFmtType = classifyDisplay(childDisplay);
       if (childFmtType === 'inline' || childFmtType === 'none') continue;
@@ -640,7 +847,13 @@ class LayoutEngine implements ILayoutEngine {
       const childDisplay = childStyle.get('display') ?? 'inline';
       if (childDisplay === 'none') continue;
       const childPos = childStyle.get('position') ?? 'static';
-      if (childPos === 'absolute' || childPos === 'fixed') continue;
+      if (childPos === 'absolute' || childPos === 'fixed') {
+        // Queue for positioned layout after grid flow
+        const containingBlock = childPos === 'fixed' ? null : findContainingBlockForScheme(childEl, childPos as 'absolute' | 'fixed' | 'sticky');
+        const childFontSize = this.resolveFontSize(childStyle, fontSize);
+        this.positionedQueue.push({ element: childEl, containingBlock, fontSize: childFontSize, availableWidth, domTree });
+        continue;
+      }
 
       const childFmtType = classifyDisplay(childDisplay);
       if (childFmtType === 'inline' || childFmtType === 'none') continue;
@@ -843,7 +1056,11 @@ class LayoutEngine implements ILayoutEngine {
     parentFontSize: number,
     domTree?: IDomTree,
   ): number {
-    const ifc = new InlineFormattingContext(availableWidth, contentY);
+    const exclusionZones = this.floatContext?.getExclusionZones() ?? [];
+    const ifc = new InlineFormattingContext(availableWidth, contentY, {
+      exclusionZones,
+      defaultFontSize: parentFontSize,
+    });
 
     for (const child of parent.children) {
       if (child.nodeType === 'text') {
@@ -860,7 +1077,16 @@ class LayoutEngine implements ILayoutEngine {
       const el = child as DomElement;
       const elStyle = el.computedStyle ?? new Map();
       const elDisplay = elStyle.get('display') ?? 'inline';
+      const elPosition = elStyle.get('position') ?? 'static';
       const elClassified = classifyDisplay(elDisplay);
+
+      // Absolute/fixed children are removed from flow
+      if (elPosition === 'absolute' || elPosition === 'fixed') {
+        const containingBlock = elPosition === 'fixed' ? null : findContainingBlockForScheme(el, elPosition as 'absolute' | 'fixed' | 'sticky');
+        const elFontSize = this.resolveFontSize(elStyle, parentFontSize);
+        this.positionedQueue.push({ element: el, containingBlock, fontSize: elFontSize, availableWidth, domTree });
+        continue;
+      }
 
       if (elClassified === 'inline-block') {
         this.layoutInlineBlockElement(el, ifc, contentX, contentY, availableWidth, parentFontSize, domTree);
@@ -877,7 +1103,50 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     const totalHeight = ifc.finalize();
+
+    // Populate text runs on the parent's LayoutBox for painting
+    this.populateTextRuns(parent, ifc, parentFontSize);
+
     return contentY + Math.max(totalHeight, this.resolveLineHeight(parent.computedStyle ?? new Map(), parentFontSize));
+  }
+
+  /**
+   * Populates textRuns on a LayoutBox from an InlineFormattingContext.
+   * The paint engine reads these to render actual text content.
+   */
+  private populateTextRuns(
+    el: DomElement,
+    ifc: InlineFormattingContext,
+    fontSize: number,
+  ): void {
+    const box = this.layoutBoxes.get(el.domId);
+    if (!box) return;
+
+    const runs: TextRun[] = [];
+    const elStyle = el.computedStyle ?? new Map();
+    const color = elStyle.get('color') ?? '#000000';
+    const fontFamily = elStyle.get('font-family') ?? 'sans-serif';
+    const fontWeight = elStyle.get('font-weight') ?? 'normal';
+
+    for (const line of ifc.lineBoxes) {
+      for (const ilBox of line.boxes) {
+        if (ilBox.textContent) {
+          runs.push({
+            text: ilBox.textContent,
+            x: ilBox.box.x,
+            y: ilBox.box.y + ilBox.baselineOffset,
+            fontSize: ilBox.fontSize ?? fontSize,
+            fontFamily: ilBox.fontFamily ?? fontFamily,
+            fontWeight: ilBox.fontWeight ?? fontWeight,
+            color,
+          });
+        }
+      }
+    }
+
+    if (runs.length > 0) {
+      box.textRuns = runs;
+    }
   }
 
   /**
@@ -1132,9 +1401,168 @@ class LayoutEngine implements ILayoutEngine {
     return this.resolveLength(value, this.rootFontSize, 0);
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // POSITIONED ELEMENTS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Second-pass: lay out all absolutely/fixed-positioned elements that were
+   * collected during normal flow. Per CSS 2.2 §10.3 and §10.5.
+   */
+  private layoutPositionedElements(): void {
+    for (const entry of this.positionedQueue) {
+      this.layoutSinglePositioned(entry.element, entry.containingBlock, entry.fontSize, entry.availableWidth, entry.domTree);
+    }
+    this.positionedQueue.length = 0;
+  }
+
+  private layoutSinglePositioned(
+    node: DomElement,
+    containingBlock: DomElement | null,
+    fontSize: number,
+    availableWidth: number,
+    domTree?: IDomTree,
+  ): void {
+    const style = node.computedStyle ?? new Map();
+    const display = style.get('display') ?? 'inline';
+
+    if (display === 'none') return;
+
+    const resolve = (prop: string, fallback: string): number =>
+      this.resolveLength(style.get(prop) ?? fallback, fontSize, availableWidth);
+
+    // ── Resolve box model ──────────────────────────────────────────────
+    const marginLeft   = resolve('margin-left',   style.get('margin') ?? '0');
+    const marginRight  = resolve('margin-right',  style.get('margin') ?? '0');
+    const marginTop    = resolve('margin-top',    style.get('margin') ?? '0');
+    const marginBottom = resolve('margin-bottom', style.get('margin') ?? '0');
+
+    const paddingTop    = resolve('padding-top',    style.get('padding') ?? '0');
+    const paddingRight  = resolve('padding-right',  style.get('padding') ?? '0');
+    const paddingBottom = resolve('padding-bottom', style.get('padding') ?? '0');
+    const paddingLeft   = resolve('padding-left',   style.get('padding') ?? '0');
+
+    const borderTop    = this.parseBorderWidth(style.get('border-top-width') ?? '0');
+    const borderRight  = this.parseBorderWidth(style.get('border-right-width') ?? '0');
+    const borderBottom = this.parseBorderWidth(style.get('border-bottom-width') ?? '0');
+    const borderLeft   = this.parseBorderWidth(style.get('border-left-width') ?? '0');
+
+    // ── Determine initial width ────────────────────────────────────────
+    const boxSizing = style.get('box-sizing') ?? 'content-box';
+    const specWidth = style.get('width');
+    let borderWidthBox: number;
+
+    if (specWidth && specWidth !== 'auto') {
+      const specified = resolve('width', '0');
+      if (boxSizing === 'border-box') {
+        borderWidthBox = specified;
+      } else {
+        borderWidthBox = specified + paddingLeft + paddingRight + borderLeft + borderRight;
+      }
+    } else {
+      // Auto width: will be resolved by resolveOutOfFlow
+      borderWidthBox = availableWidth;
+    }
+
+    // ── Register box at initial (0,0) — resolveOutOfFlow will reposition ─
+    const box: LayoutBox = {
+      x: 0,
+      y: 0,
+      width: borderWidthBox,
+      height: 0,
+      marginTop, marginRight, marginBottom, marginLeft,
+      paddingTop, paddingRight, paddingBottom, paddingLeft,
+      borderTop, borderRight, borderBottom, borderLeft,
+    };
+    this.layoutBoxes.set(node.domId, box);
+
+    // ── Resolve positioning via positioning module ──────────────────────
+    const cbBox = containingBlock ? (this.layoutBoxes.get(containingBlock.domId) ?? null) : null;
+    resolveOutOfFlow(
+      box,
+      node,
+      containingBlock,
+      cbBox,
+      this.config.viewportWidth,
+      this.config.viewportHeight,
+      fontSize,
+    );
+
+    // ── Layout children ────────────────────────────────────────────────
+    const contentWidth = box.width - paddingLeft - paddingRight - borderLeft - borderRight;
+    const contentX = box.x + borderLeft + paddingLeft;
+    const contentY = box.y + borderTop + paddingTop;
+
+    let childY: number;
+    const fmtType = classifyDisplay(display);
+
+    if (fmtType === 'flex' || fmtType === 'inline-flex') {
+      childY = this.layoutFlexContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
+    } else if (fmtType === 'grid' || fmtType === 'inline-grid') {
+      childY = this.layoutGridContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
+    } else if (fmtType === 'block') {
+      childY = this.layoutBlockChildren(node, contentX, contentY, contentWidth, fontSize, domTree);
+    } else {
+      childY = this.layoutInlineChildren(node, contentX, contentY, contentWidth, fontSize, domTree);
+    }
+
+    // ── Resolve height ──────────────────────────────────────────────────
+    const specHeight = style.get('height');
+    const hasTop = style.get('top') !== undefined && style.get('top') !== 'auto';
+    const hasBottom = style.get('bottom') !== undefined && style.get('bottom') !== 'auto';
+
+    // If both top and bottom are set and no explicit height, resolveOutOfFlow
+    // already stretched the height — don't overwrite it.
+    if (hasTop && hasBottom && (!specHeight || specHeight === 'auto')) {
+      // Height was already resolved by resolveOutOfFlow (top+bottom stretch)
+    } else {
+      let specifiedContentHeight: number;
+      if (specHeight && specHeight !== 'auto') {
+        if (boxSizing === 'border-box') {
+          specifiedContentHeight = resolve('height', '0')
+            - paddingTop - paddingBottom - borderTop - borderBottom;
+        } else {
+          specifiedContentHeight = resolve('height', '0');
+        }
+      } else {
+        specifiedContentHeight = 0; // computed from children
+      }
+
+      const contentHeight = Math.max(specifiedContentHeight, childY - contentY);
+      box.height = contentHeight + paddingTop + paddingBottom + borderTop + borderBottom;
+    }
+
+    // ── Handle auto margins for vertical centering ──────────────────────
+    if (!specHeight || specHeight === 'auto') {
+      const autoTop = style.get('top') === undefined || style.get('top') === 'auto';
+      const autoBottom = style.get('bottom') === undefined || style.get('bottom') === 'auto';
+      if (autoTop && autoBottom) {
+        const cbHeight = cbBox
+          ? cbBox.height - cbBox.borderTop - cbBox.borderBottom - cbBox.paddingTop - cbBox.paddingBottom
+          : this.config.viewportHeight;
+        const remaining = cbHeight - box.height - marginLeft - marginRight
+          - borderLeft - borderRight - paddingLeft - paddingRight;
+        const halfMargin = Math.max(0, remaining / 2);
+        const cbY = cbBox
+          ? cbBox.y + cbBox.borderTop + cbBox.paddingTop
+          : 0;
+        box.y = cbY + halfMargin + marginTop;
+      }
+    }
+
+    // Update layoutBoxes with final values
+    this.layoutBoxes.set(node.domId, box);
+
+    // Write back to DOM tree
+    if (domTree) {
+      domTree.setLayoutBox(node, box);
+    }
+  }
+
   dispose(): void {
     this.layoutBoxes.clear();
     this.elementPositions.length = 0;
+    this.positionedQueue.length = 0;
   }
 }
 

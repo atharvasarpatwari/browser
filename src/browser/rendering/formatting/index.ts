@@ -6,6 +6,7 @@ export {
   type LineBox,
   type ResolvedBox,
   type ClassifiedChild,
+  type FloatExclusionZone,
 } from './types';
 
 export {
@@ -22,6 +23,21 @@ export {
 } from './inline-context';
 
 export {
+  findBreakOpportunities,
+  segmentText,
+  type BreakOpportunity,
+  type TextSegment,
+} from './line-break';
+
+export {
+  getTextMeasurer,
+  setTextMeasurer,
+  HeuristicTextMeasurer,
+  type TextMeasurer,
+  type TextMetrics,
+} from './text-measure';
+
+export {
   FlexFormattingContext,
   isRowDirection,
   computeJustifyOffset,
@@ -35,6 +51,11 @@ export {
   type FlexItem,
   type FlexLine,
 } from './flex-context';
+
+export {
+  FloatContext,
+  type PlacedFloat,
+} from './float-context';
 
 export {
   GridFormattingContext,
