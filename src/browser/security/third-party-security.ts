@@ -389,6 +389,9 @@ class ThirdPartySecurityManager implements IThirdPartySecurityManager {
       reason,
     };
     this._blockedRequests.push(blocked);
+    if (this._blockedRequests.length > 5000) {
+      this._blockedRequests.splice(0, this._blockedRequests.length - 5000);
+    }
     this.emit({ kind: 'thirdPartyBlocked', blocked, totalBlocked: this._blockedRequests.length });
   }
 

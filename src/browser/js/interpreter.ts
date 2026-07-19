@@ -6,7 +6,7 @@ import {
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal,
-  setGlobalCaller,
+  setGlobalCaller, callJSFunction,
 } from './values';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,8 +16,10 @@ import {
 export class Interpreter {
   private globalEnv: Environment;
   private output: string[] = [];
-  /** Pending microtasks / setTimeout callbacks */
-  private taskQueue: Array<{ fn: () => void; delay: number }> = [];
+  private static readonly MAX_OUTPUT = 1000;
+  private nextTimerId = 1;
+  /** Pending timer callbacks keyed by ID for O(1) removal */
+  private timers = new Map<number, { fn: () => void; delay: number; recurring: boolean }>();
 
   constructor(globalEnv?: Environment) {
     this.globalEnv = globalEnv ?? this.createGlobalEnv();
@@ -60,8 +62,12 @@ export class Interpreter {
     return [...this.output];
   }
 
-  getTaskQueue(): Array<{ fn: () => void; delay: number }> {
-    return [...this.taskQueue];
+  clearOutput(): void {
+    this.output.length = 0;
+  }
+
+  getTaskQueue(): Array<{ fn: () => void; delay: number; recurring: boolean }> {
+    return [...this.timers.values()];
   }
 
   // ── Statement execution ──────────────────────────────────────────────────
@@ -597,12 +603,18 @@ export class Interpreter {
         ? String(this.evalExpr(expr.left.property, env))
         : (expr.left.property as AST.Identifier).name;
       if (expr.operator === '=') {
-        obj.properties.set(key, { value: right, writable: true, enumerable: true, configurable: true });
+        const existingDesc = obj.properties.get(key);
+        if (existingDesc?.setter) {
+          callJSFunction(existingDesc.setter, obj, [right]);
+        } else {
+          obj.properties.set(key, { value: right, writable: true, enumerable: true, configurable: true });
+        }
         return right;
       }
       let current: JSValue;
       if (obj.properties.has(key)) {
-        current = obj.properties.get(key)!.value;
+        const d = obj.properties.get(key)!;
+        current = d.getter ? callJSFunction(d.getter, obj, []) : d.value;
       } else if (obj.prototype) {
         let proto: JSObject | null = obj.prototype;
         let found = false;
@@ -629,7 +641,9 @@ export class Interpreter {
         case '>>>=': newVal = toNumber(current) >>> toNumber(right); break;
         default: newVal = right;
       }
-      obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
+      obj.properties.has(key) && obj.properties.get(key)!.setter
+        ? callJSFunction(obj.properties.get(key)!.setter!, obj, [newVal])
+        : obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
       return newVal;
     }
 
@@ -760,6 +774,15 @@ export class Interpreter {
       return instance;
     }
 
+    // Native function constructor (e.g. new IntersectionObserver(...))
+    // Must be checked before closure since createNativeFunction uses type: 'closure'
+    if (typeof ctor === 'object' && ctor !== null && 'isNative' in ctor && (ctor as JSFunction).isNative) {
+      const fn = ctor as JSFunction;
+      const instance = createObject(null);
+      const result = callJSFunction(fn, instance, args);
+      return (typeof result === 'object' && result !== null) ? result : instance;
+    }
+
     // Function constructor (JSFunction closure)
     if (typeof ctor === 'object' && ctor !== null && 'type' in ctor && (ctor as JSFunction).type === 'closure') {
       const fn = ctor as JSFunction;
@@ -837,12 +860,18 @@ export class Interpreter {
       ? String(this.evalExpr(expr.property, env))
       : (expr.property as AST.Identifier).name;
     const desc = nativeObj.properties.get(key);
-    if (desc) return desc.value;
+    if (desc) {
+      if (desc.getter) return callJSFunction(desc.getter, obj, []);
+      return desc.value;
+    }
     if (nativeObj.prototype) {
       let proto: JSObject | null = nativeObj.prototype;
       while (proto) {
         const protoDesc = proto.properties.get(key);
-        if (protoDesc) return protoDesc.value;
+        if (protoDesc) {
+          if (protoDesc.getter) return callJSFunction(protoDesc.getter, obj, []);
+          return protoDesc.value;
+        }
         proto = proto.prototype;
       }
     }
@@ -907,6 +936,7 @@ export class Interpreter {
     consoleObj.properties.set('log', {
       value: createNativeFunction('log', (_this, args) => {
         this.output.push(args.map(a => toString(a)).join(' '));
+        if (this.output.length > Interpreter.MAX_OUTPUT) this.output.splice(0, this.output.length - Interpreter.MAX_OUTPUT);
         return undefined;
       }),
       writable: true, enumerable: true, configurable: true,
@@ -914,6 +944,7 @@ export class Interpreter {
     consoleObj.properties.set('error', {
       value: createNativeFunction('error', (_this, args) => {
         this.output.push('ERROR: ' + args.map(a => toString(a)).join(' '));
+        if (this.output.length > Interpreter.MAX_OUTPUT) this.output.splice(0, this.output.length - Interpreter.MAX_OUTPUT);
         return undefined;
       }),
       writable: true, enumerable: true, configurable: true,
@@ -921,6 +952,7 @@ export class Interpreter {
     consoleObj.properties.set('warn', {
       value: createNativeFunction('warn', (_this, args) => {
         this.output.push('WARN: ' + args.map(a => toString(a)).join(' '));
+        if (this.output.length > Interpreter.MAX_OUTPUT) this.output.splice(0, this.output.length - Interpreter.MAX_OUTPUT);
         return undefined;
       }),
       writable: true, enumerable: true, configurable: true,
@@ -1025,7 +1057,8 @@ export class Interpreter {
       const delay = toNumber(args[1]) || 0;
       if (typeof fn === 'object' && fn !== null && (fn as JSFunction).type === 'closure') {
         const jsFn = fn as JSFunction;
-        this.taskQueue.push({
+        const id = this.nextTimerId++;
+        this.timers.set(id, {
           fn: () => {
             const callEnv = new Environment(jsFn.closure);
             callEnv.markFunctionScope();
@@ -1037,16 +1070,19 @@ export class Interpreter {
             }
           },
           delay,
+          recurring: false,
         });
+        return id as unknown as JSValue;
       }
-      return this.taskQueue.length;
+      return 0 as unknown as JSValue;
     }));
     env.setLocal('setInterval', createNativeFunction('setInterval', (_this, args) => {
       const fn = args[0];
       const delay = toNumber(args[1]) || 0;
       if (typeof fn === 'object' && fn !== null && (fn as JSFunction).type === 'closure') {
         const jsFn = fn as JSFunction;
-        this.taskQueue.push({
+        const id = this.nextTimerId++;
+        this.timers.set(id, {
           fn: () => {
             const callEnv = new Environment(jsFn.closure);
             callEnv.markFunctionScope();
@@ -1058,12 +1094,22 @@ export class Interpreter {
             }
           },
           delay,
+          recurring: true,
         });
+        return id as unknown as JSValue;
       }
-      return this.taskQueue.length;
+      return 0 as unknown as JSValue;
     }));
-    env.setLocal('clearTimeout', createNativeFunction('clearTimeout', () => undefined));
-    env.setLocal('clearInterval', createNativeFunction('clearInterval', () => undefined));
+    env.setLocal('clearTimeout', createNativeFunction('clearTimeout', (_this, args) => {
+      const id = toNumber(args[0]);
+      this.timers.delete(id);
+      return undefined;
+    }));
+    env.setLocal('clearInterval', createNativeFunction('clearInterval', (_this, args) => {
+      const id = toNumber(args[0]);
+      this.timers.delete(id);
+      return undefined;
+    }));
 
     return env;
   }

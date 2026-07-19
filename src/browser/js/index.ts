@@ -1,12 +1,13 @@
 import type { DomDocument } from '../rendering/dom-tree';
-import type { IDomTree } from '../rendering/dom-tree';
+import type { IDomTree, DomElement } from '../rendering/dom-tree';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
 import { createDocumentBinding } from './dom-bindings';
 import { EventLoop, bindTimers } from './event-loop';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean } from './values';
+import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction } from './values';
 import type { JSValue, JSObject } from './values';
+import { IntersectionObserver } from '../rendering/intersection-observer';
 
 export { Lexer } from './lexer';
 export { Parser } from './parser';
@@ -262,8 +263,79 @@ export function createGlobalEnv(
   const docBinding = createDocumentBinding(doc, domTree);
   env.setLocal('document', docBinding);
 
+  // window — the global scope object (like browser window)
+  const windowObj = createObject(null);
+  env.setLocal('window', windowObj);
+
   // Bind timers
   bindTimers(env, eventLoop);
+
+  // IntersectionObserver constructor
+  env.setLocal('IntersectionObserver', createNativeFunction('IntersectionObserver', (_this, args) => {
+    const callback = args[0];
+    const options = args[1] as JSObject | undefined;
+
+    let rootMargin = '0px';
+    let threshold: number | number[] = [0];
+    if (options && typeof options === 'object') {
+      const rm = options.properties.get('rootMargin');
+      if (rm) rootMargin = toString(rm.value);
+      const th = options.properties.get('threshold');
+      if (th && typeof th.value === 'number') threshold = th.value;
+    }
+
+    const ioObj = createObject(null);
+    const observed = new Set<string>();
+
+    const nativeIO = new IntersectionObserver(
+      (entries) => {
+        if (callback && typeof callback === 'object' && callback !== null && 'type' in callback) {
+          const entryArr = createArray(entries.map(entry => {
+            const eObj = createObject(null);
+            eObj.properties.set('isIntersecting', { value: entry.isIntersecting, writable: false, enumerable: true, configurable: false });
+            eObj.properties.set('intersectionRatio', { value: entry.intersectionRatio, writable: false, enumerable: true, configurable: false });
+            eObj.properties.set('time', { value: entry.time, writable: false, enumerable: true, configurable: false });
+            return eObj;
+          }));
+          callJSFunction(callback, ioObj, [entryArr, ioObj]);
+        }
+      },
+      { rootMargin, threshold },
+    );
+
+    ioObj.properties.set('observe', {
+      value: createNativeFunction('observe', (_t, a) => {
+        const wrapped = a[0] as JSObject;
+        if (wrapped && typeof wrapped === 'object' && '__domNode' in wrapped) {
+          const el = (wrapped as any).__domNode as DomElement;
+          nativeIO.observe(el);
+          observed.add(el.domId);
+        }
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    ioObj.properties.set('unobserve', {
+      value: createNativeFunction('unobserve', (_t, a) => {
+        const wrapped = a[0] as JSObject;
+        if (wrapped && typeof wrapped === 'object' && '__domNode' in wrapped) {
+          const el = (wrapped as any).__domNode as DomElement;
+          nativeIO.unobserve(el);
+          observed.delete(el.domId);
+        }
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    ioObj.properties.set('disconnect', {
+      value: createNativeFunction('disconnect', () => { nativeIO.disconnect(); observed.clear(); }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    ioObj.properties.set('takeRecords', {
+      value: createNativeFunction('takeRecords', () => createArray([])),
+      writable: true, enumerable: true, configurable: true,
+    });
+
+    return ioObj;
+  }));
 
   return env;
 }

@@ -72,3 +72,11 @@ export {
   type GridItem,
   type GridFormattingContextOptions,
 } from './grid-context';
+
+export {
+  buildStackingContextTree,
+  renderStackingContext,
+  createsStackingContext,
+  type StackingContext,
+  type PaintCmd,
+} from './stacking';

@@ -9,7 +9,7 @@
  * Only includes the classes needed for common Latin/CJK text.
  * Full spec has ~100 classes; this covers the 90% case.
  */
-const enum LB {
+enum LB {
   BK, // Mandatory break (newline, paragraph separator)
   CR, // Carriage return
   LF, // Line feed

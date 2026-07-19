@@ -119,6 +119,19 @@ export class EventLoop {
 
   get pendingCount(): number { return this.tasks.length; }
   get running_(): boolean { return this.running; }
+
+  /** Release all pending tasks, timers, and animation frame callbacks. */
+  clear(): void {
+    this.tasks.length = 0;
+    this.timers.clear();
+    this.rafCallbacks.length = 0;
+    this.running = false;
+  }
+
+  /** Alias for clear(). */
+  dispose(): void {
+    this.clear();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

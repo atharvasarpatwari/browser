@@ -174,8 +174,8 @@ interface StateChangedEvent  { kind: 'stateChanged';    from: LifecycleState; to
 interface PhaseStartedEvent  { kind: 'phaseStarted';    phase: string; order: number }
 interface PhaseCompletedEvent{ kind: 'phaseCompleted';  result: PhaseResult }
 interface PhaseFailedEvent   { kind: 'phaseFailed';     result: PhaseResult; critical: boolean }
-interface CrashedEvent       { kind: 'crashed';         error: Error; phase?: string }
-interface RecoveredEvent     { kind: 'recovered' }
+interface CrashedEvent       { kind: 'crashed';         error: Error; phase?: string; crashCount: number }
+interface RecoveredEvent     { kind: 'recovered';       attempt: number }
 
 type LifecycleEvent =
   | StateChangedEvent
@@ -184,6 +184,25 @@ type LifecycleEvent =
   | PhaseFailedEvent
   | CrashedEvent
   | RecoveredEvent;
+
+/** Configuration for automatic crash recovery with backoff. */
+interface RecoveryConfig {
+  /** Whether to automatically restart after a crash. */
+  readonly autoRecover: boolean;
+  /** Maximum number of auto-recovery attempts before giving up. */
+  readonly maxRecoveryAttempts: number;
+  /** Base delay in ms for exponential backoff. */
+  readonly backoffBaseMs: number;
+  /** Maximum delay in ms between recovery attempts. */
+  readonly backoffMaxMs: number;
+}
+
+const DEFAULT_RECOVERY_CONFIG: RecoveryConfig = {
+  autoRecover: false,
+  maxRecoveryAttempts: 3,
+  backoffBaseMs: 1_000,
+  backoffMaxMs: 30_000,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC CONTRACT
@@ -194,6 +213,8 @@ interface ILifecycleManager {
   readonly state: LifecycleState;
   /** Milliseconds since the manager last reached the Running state, or 0. */
   readonly uptime: number;
+  /** Number of times the manager has crashed since construction or last reset. */
+  readonly crashCount: number;
 
   // ── Transitions ────────────────────────────────────────────────────────────
   /** Run all startup phases in order. Idempotent when already Running. */
@@ -206,6 +227,8 @@ interface ILifecycleManager {
   resume(): Promise<void>;
   /** Full stop followed by start — useful after crash recovery. */
   restart(): Promise<void>;
+  /** Attempt recovery from a crashed state. Returns true if recovery was initiated. */
+  recover(): Promise<boolean>;
 
   // ── Phase registry ─────────────────────────────────────────────────────────
   /**
@@ -223,6 +246,16 @@ interface ILifecycleManager {
   // ── Events ─────────────────────────────────────────────────────────────────
   on(type: LifecycleEventType,  handler: (e: LifecycleEvent) => void): void;
   off(type: LifecycleEventType, handler: (e: LifecycleEvent) => void): void;
+
+  // ── Crash recovery ─────────────────────────────────────────────────────────
+  /** Get the last crash error, or null if no crash. */
+  getLastCrash(): Error | null;
+  /** Get the recovery configuration. */
+  getRecoveryConfig(): RecoveryConfig;
+  /** Update recovery configuration. */
+  updateRecoveryConfig(config: Partial<RecoveryConfig>): void;
+  /** Reset the crash count to zero. */
+  resetCrashCount(): void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,6 +363,10 @@ class LifecycleManager implements ILifecycleManager, ISharedService {
 
   private _state:     LifecycleState = LifecycleState.Idle;
   private _startedAt  = 0;
+  private _crashCount = 0;
+  private _lastCrash: Error | null = null;
+  private _recoveryConfig: RecoveryConfig = { ...DEFAULT_RECOVERY_CONFIG };
+  private _recoveryTimer: NodeJS.Timeout | null = null;
 
   // Default timeouts (ms)
   private static readonly DEFAULT_PHASE_TIMEOUT = 8_000;
@@ -367,6 +404,8 @@ class LifecycleManager implements ILifecycleManager, ISharedService {
       ? Date.now() - this._startedAt
       : 0;
   }
+
+  get crashCount(): number { return this._crashCount; }
 
   // ── Lifecycle transitions ──────────────────────────────────────────────────
 
@@ -432,6 +471,10 @@ class LifecycleManager implements ILifecycleManager, ISharedService {
    * After dispose(), this instance must not be reused.
    */
   dispose(): void {
+    if (this._recoveryTimer) {
+      clearTimeout(this._recoveryTimer);
+      this._recoveryTimer = null;
+    }
     this.bus.dispose();
   }
 
@@ -461,6 +504,26 @@ class LifecycleManager implements ILifecycleManager, ISharedService {
     this.log('Restarting…');
     await this.stop(true);
     await this.start();
+  }
+
+  async recover(): Promise<boolean> {
+    if (this._state !== LifecycleState.Crashed) return false;
+    if (this._recoveryConfig.maxRecoveryAttempts > 0 &&
+        this._crashCount >= this._recoveryConfig.maxRecoveryAttempts) {
+      this.log(`Recovery abandoned: crash count ${this._crashCount} >= max ${this._recoveryConfig.maxRecoveryAttempts}`);
+      return false;
+    }
+
+    this.log(`Recovery attempt #${this._crashCount}…`);
+    try {
+      await this.start();
+      this.bus.emit({ kind: 'recovered', attempt: this._crashCount });
+      this.log('Recovery successful');
+      return true;
+    } catch (err) {
+      this.log(`Recovery failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
   }
 
   // ── Phase registry ─────────────────────────────────────────────────────────
@@ -580,10 +643,26 @@ class LifecycleManager implements ILifecycleManager, ISharedService {
   // ── Private: crash handling ────────────────────────────────────────────────
 
   private async crash(error: Error, phase?: string): Promise<void> {
+    this._crashCount++;
+    this._lastCrash = error;
     this.transition(LifecycleState.Crashed);
-    this.bus.emit({ kind: 'crashed', error, phase });
+    this.bus.emit({ kind: 'crashed', error, phase, crashCount: this._crashCount });
     await this.notifyObservers('onCrash', error);
-    console.error('[LifecycleManager] CRASHED:', error.message);
+    console.error(`[LifecycleManager] CRASHED (count=${this._crashCount}):`, error.message);
+
+    // Schedule auto-recovery with exponential backoff if configured
+    if (this._recoveryConfig.autoRecover &&
+        this._crashCount < this._recoveryConfig.maxRecoveryAttempts) {
+      const delay = Math.min(
+        this._recoveryConfig.backoffBaseMs * Math.pow(2, this._crashCount - 1),
+        this._recoveryConfig.backoffMaxMs,
+      );
+      this.log(`Auto-recovery scheduled in ${delay}ms (attempt #${this._crashCount})`);
+      this._recoveryTimer = setTimeout(async () => {
+        this._recoveryTimer = null;
+        await this.recover();
+      }, delay);
+    }
   }
 
   // ── Private: state machine ─────────────────────────────────────────────────
@@ -673,6 +752,25 @@ class LifecycleManager implements ILifecycleManager, ISharedService {
     });
   }
 
+  // ── Private: crash recovery config ────────────────────────────────────────
+
+  getLastCrash(): Error | null {
+    return this._lastCrash;
+  }
+
+  getRecoveryConfig(): RecoveryConfig {
+    return { ...this._recoveryConfig };
+  }
+
+  updateRecoveryConfig(config: Partial<RecoveryConfig>): void {
+    this._recoveryConfig = { ...this._recoveryConfig, ...config };
+  }
+
+  resetCrashCount(): void {
+    this._crashCount = 0;
+    this._lastCrash = null;
+  }
+
   // ── Private: logging ───────────────────────────────────────────────────────
 
   private log(msg: string): void {
@@ -694,6 +792,7 @@ export {
   PhaseTimeoutError,
   DuplicatePhaseError,
   CrashError,
+  DEFAULT_RECOVERY_CONFIG,
 };
 
 export type {
@@ -709,4 +808,5 @@ export type {
   PhaseFailedEvent,
   CrashedEvent,
   RecoveredEvent,
+  RecoveryConfig,
 };

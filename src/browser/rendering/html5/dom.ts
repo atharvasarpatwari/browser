@@ -182,7 +182,8 @@ interface HtmlDocumentFragment {
 // ─────────────────────────────────────────────────────────────────────────────
 
 type DiscoveredResourceKind =
-  | 'stylesheet' | 'script' | 'image' | 'font' | 'media' | 'document' | 'other';
+  | 'stylesheet' | 'script' | 'image' | 'font' | 'media' | 'document'
+  | 'preload' | 'prefetch' | 'preconnect' | 'other';
 
 interface DiscoveredResource {
   readonly url:        string;
@@ -190,6 +191,7 @@ interface DiscoveredResource {
   readonly blocking:   boolean;
   readonly deferred:   boolean;
   readonly sourceTag:  string;
+  readonly fetchPriority?: 'high' | 'low' | 'auto';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

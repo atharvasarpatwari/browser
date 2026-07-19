@@ -25,6 +25,12 @@ function makeElement(tagName: string, parent: DomNode | null): DomElement {
     attributes: new Map(),
     computedStyle: null,
     layoutBox: null,
+    imageData: null,
+    naturalWidth: 0,
+    naturalHeight: 0,
+    loadingState: 'none',
+    _dirtyLayout: true,
+    _dirtyPaint: true,
   };
 }
 
@@ -36,6 +42,8 @@ function makeTextNode(text: string, parent: DomNode | null): DomNode {
     parent,
     children: [],
     text,
+    _dirtyLayout: true,
+    _dirtyPaint: true,
   } as DomNode & { text: string };
 }
 
@@ -150,11 +158,14 @@ function getAttr(el: DomElement, name: string): string | undefined {
   return el.attributes.get(name);
 }
 
-function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
+export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
   const cached = elementCache.get(el);
   if (cached) return cached;
 
   const obj = createObject(null);
+
+  // Cache immediately to prevent infinite recursion on circular parent/child references
+  elementCache.set(el, obj);
 
   // Store DOM reference on the JSObject
   (obj as JSObject & { __domNode: DomElement }).__domNode = el;
@@ -165,22 +176,39 @@ function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     writable: false, enumerable: true, configurable: false,
   });
 
-  // id (read from attributes)
+  // id (getter/setter backed by DOM attributes)
   obj.properties.set('id', {
     value: getAttr(el, 'id') ?? '',
     writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get id', () => getAttr(el, 'id') ?? ''),
+    setter: createNativeFunction('set id', (_t, args) => {
+      const val = toString(args[0]);
+      domTree.setAttribute(el, 'id', val);
+    }),
   });
 
-  // className (read from class attribute)
+  // className (getter/setter backed by DOM class attribute)
   obj.properties.set('className', {
     value: getAttr(el, 'class') ?? '',
     writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get className', () => getAttr(el, 'class') ?? ''),
+    setter: createNativeFunction('set className', (_t, args) => {
+      const val = toString(args[0]);
+      domTree.setAttribute(el, 'class', val);
+    }),
   });
 
-  // textContent
+  // textContent (getter/setter — clears children and sets text)
   obj.properties.set('textContent', {
     value: getTextContent(el),
     writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get textContent', () => getTextContent(el)),
+    setter: createNativeFunction('set textContent', (_t, args) => {
+      const val = toString(args[0]);
+      const textNode = makeTextNode(val, el);
+      (el as { children: DomNode[] }).children = [textNode];
+      domTree.setTextContent(el, val);
+    }),
   });
 
   // children (element nodes only)
@@ -383,7 +411,60 @@ function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     writable: true, enumerable: true, configurable: true,
   });
 
-  elementCache.set(el, obj);
+  // getBoundingClientRect
+  obj.properties.set('getBoundingClientRect', {
+    value: createNativeFunction('getBoundingClientRect', () => {
+      const box = el.layoutBox;
+      const rect = createObject(null);
+      rect.properties.set('x', { value: box ? box.x : 0, writable: false, enumerable: true, configurable: false });
+      rect.properties.set('y', { value: box ? box.y : 0, writable: false, enumerable: true, configurable: false });
+      rect.properties.set('width', { value: box ? box.width : 0, writable: false, enumerable: true, configurable: false });
+      rect.properties.set('height', { value: box ? box.height : 0, writable: false, enumerable: true, configurable: false });
+      rect.properties.set('top', { value: box ? box.y : 0, writable: false, enumerable: true, configurable: false });
+      rect.properties.set('left', { value: box ? box.x : 0, writable: false, enumerable: true, configurable: false });
+      rect.properties.set('right', { value: box ? box.x + box.width : 0, writable: false, enumerable: true, configurable: false });
+      rect.properties.set('bottom', { value: box ? box.y + box.height : 0, writable: false, enumerable: true, configurable: false });
+      return rect;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // Image-specific properties (getter/setter backed by DOM element state)
+  const tagName = el.tagName.toLowerCase();
+  if (tagName === 'img') {
+    obj.properties.set('loading', {
+      value: undefined,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+      getter: createNativeFunction('get loading', () => el.loadingState === 'lazy' ? 'lazy' : 'eager'),
+      setter: createNativeFunction('set loading', (_t, args) => {
+        el.loadingState = toString(args[0]) === 'lazy' ? 'lazy' : 'none';
+      }),
+    });
+    obj.properties.set('complete', {
+      value: undefined,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+      getter: createNativeFunction('get complete', () => el.loadingState === 'loaded' || el.loadingState === 'none'),
+    });
+    obj.properties.set('naturalWidth', {
+      value: undefined,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+      getter: createNativeFunction('get naturalWidth', () => el.naturalWidth),
+    });
+    obj.properties.set('naturalHeight', {
+      value: undefined,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+      getter: createNativeFunction('get naturalHeight', () => el.naturalHeight),
+    });
+  }
+
   return obj;
 }
 

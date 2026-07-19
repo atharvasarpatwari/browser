@@ -102,6 +102,9 @@ class PermissionManager implements IPermissionManager {
     if (session) return session;
 
     this.requests.push({ origin, name, decision: 'once', timestamp: Date.now() });
+    if (this.requests.length > 5000) {
+      this.requests.splice(0, this.requests.length - 5000);
+    }
     return 'prompt';
   }
 

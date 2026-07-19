@@ -1,5 +1,14 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { DomDocument, DomElement, LayoutBox, TextRun } from './dom-tree';
+import { DamageTracker } from './damage-tracker';
+import {
+  buildStackingContextTree,
+  renderStackingContext,
+  createsStackingContext,
+  type StackingContext,
+  type PaintCmd,
+} from './formatting/stacking';
+import { Rasterizer } from './rasterizer';
 
 type PaintCommandType =
   | 'clearRect' | 'fillRect' | 'strokeRect'
@@ -62,9 +71,11 @@ const DEFAULT_PAINT_CONFIG: PaintConfig = {
 
 interface IPaintEngine extends IDisposable {
   paint(document: DomDocument, config?: Partial<PaintConfig>): void;
+  paintIncremental(document: DomDocument, damage: DamageTracker, config?: Partial<PaintConfig>): DamageTracker;
   getLayers(): readonly PaintLayer[];
   getLayerById(id: string): PaintLayer | null;
   compositeFrame(): PaintCommand[];
+  rasterize(): ImageData;
   resize(width: number, height: number): void;
   getConfig(): PaintConfig;
   updateConfig(config: Partial<PaintConfig>): void;
@@ -77,66 +88,12 @@ function nextLayerId(): string {
   return `layer-${(++_layerSeq).toString(36)}`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STACKING CONTEXT
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface StackingEntry {
-  element: DomElement;
-  zIndex: number;
-  stackingLevel: number; // which phase: 0=bg, 1=neg-z, 2=block, 3=float, 4=inline, 5=pos-auto, 6=pos-z, 7=child-pos-z
-}
-
-/**
- * Per CSS 2.2 §4.4 and §9.9, determine the stacking level of an element
- * within its stacking context.
- *
- * Stacking levels:
- *   1. Background/borders of element forming the context (level 0)
- *   2. Child stacking contexts with negative z-index (level 1)
- *   3. In-flow non-inline-level, non-positioned descendants (level 2)
- *   4. Float non-positioned descendants (level 3)
- *   5. In-flow inline-level, non-positioned descendants (level 4)
- *   6. Positioned descendants with z-index: auto or 0 (level 5)
- *   7. Child stacking contexts with positive z-index (level 6)
- */
-function getStackingLevel(element: DomElement): number {
-  const style = element.computedStyle ?? new Map();
-  const position = style.get('position') ?? 'static';
-  const zIndexRaw = style.get('z-index');
-  const isPositioned = position === 'relative' || position === 'absolute'
-    || position === 'fixed' || position === 'sticky';
-
-  if (isPositioned) {
-    if (zIndexRaw && zIndexRaw !== 'auto') {
-      const z = parseInt(zIndexRaw, 10);
-      if (z < 0) return 1; // negative z-index
-      if (z > 0) return 6; // positive z-index
-      return 5; // z-index: 0
-    }
-    return 5; // z-index: auto → positioned with auto z
-  }
-  return 2; // non-positioned
-}
-
-function getZIndex(element: DomElement): number {
-  const style = element.computedStyle ?? new Map();
-  const zRaw = style.get('z-index');
-  if (!zRaw || zRaw === 'auto') return 0;
-  const z = parseInt(zRaw, 10);
-  return isNaN(z) ? 0 : z;
-}
-
-function isPositioned(element: DomElement): boolean {
-  const style = element.computedStyle ?? new Map();
-  const pos = style.get('position') ?? 'static';
-  return pos === 'relative' || pos === 'absolute' || pos === 'fixed' || pos === 'sticky';
-}
-
 class PaintEngine implements IPaintEngine {
   private config: PaintConfig;
   private readonly layers: PaintLayer[] = [];
   private readonly eventListeners = new Map<PaintEventType, Set<(e: PaintEventUnion) => void>>();
+  private stackingTree: StackingContext | null = null;
+  private readonly elementCommands = new Map<DomElement, PaintCommand[]>();
 
   constructor(config?: Partial<PaintConfig>) {
     this.config = { ...DEFAULT_PAINT_CONFIG, ...config };
@@ -145,25 +102,92 @@ class PaintEngine implements IPaintEngine {
   paint(document: DomDocument, config?: Partial<PaintConfig>): void {
     if (config) this.config = { ...this.config, ...config };
     this.layers.length = 0;
+    this.elementCommands.clear();
 
-    const bgLayer = this.createBackgroundLayer();
-    this.layers.push(bgLayer);
+    // Build the stacking context tree
+    const root = document.htmlElement ?? document.bodyElement;
+    if (!root) return;
 
-    // Collect all elements and their stacking contexts
-    const allElements: DomElement[] = [];
-    if (document.bodyElement) {
-      this.collectElements(document.bodyElement, allElements);
-    } else {
-      for (const child of document.children) {
-        if (child.nodeType === 'element') {
-          this.collectElements(child as DomElement, allElements);
-        }
+    this.stackingTree = buildStackingContextTree(root);
+
+    // Also build a flat list of PaintLayers for backward compat (getLayers/getLayerById)
+    this.buildFlatLayers(root);
+
+    // Clear all paint-dirty flags so incremental paint knows what changed
+    this.clearAllPaintDirty(root);
+  }
+
+  private clearAllPaintDirty(node: DomElement): void {
+    node._dirtyPaint = false;
+    for (const child of node.children) {
+      if (child.nodeType === 'element') {
+        this.clearAllPaintDirty(child as DomElement);
       }
     }
+  }
 
-    // Assign z-index and paint each element
+  /**
+   * Incremental paint: only re-paint elements whose paint commands are stale
+   * (missing or different layout box). Returns a paintDamage tracker.
+   */
+  paintIncremental(document: DomDocument, layoutDamage: DamageTracker, config?: Partial<PaintConfig>): DamageTracker {
+    if (config) this.config = { ...this.config, ...config };
+    const paintDamage = new DamageTracker();
+
+    const root = document.htmlElement ?? document.bodyElement;
+    if (!root) return paintDamage;
+
+    this.stackingTree = buildStackingContextTree(root);
+
+    const allElements: DomElement[] = [];
+    this.collectElements(root, allElements);
+    const currentElements = new Set(allElements);
+
     for (const el of allElements) {
-      this.paintNode(el);
+      const lb = el.layoutBox;
+      if (!lb || lb.width === 0 && lb.height === 0) continue;
+
+      const cached = this.elementCommands.get(el);
+      if (cached && !el._dirtyPaint) continue;
+
+      this.elementCommands.delete(el);
+      this.getElementPaintCommands(el);
+      paintDamage.addBox(lb);
+      el._dirtyPaint = false;
+    }
+
+    for (const [el] of this.elementCommands) {
+      if (!currentElements.has(el)) this.elementCommands.delete(el);
+    }
+
+    this.buildFlatLayers(root);
+
+    if (!paintDamage.isEmpty()) paintDamage.compact();
+    return paintDamage;
+  }
+
+  /**
+   * Build a flat layer list for backward-compatible getLayers/getLayerById.
+   * This traverses the DOM in document order, same as before.
+   */
+  private buildFlatLayers(root: DomElement): void {
+    // Background layer
+    this.layers.push({
+      id: nextLayerId(),
+      zIndex: -1,
+      opacity: 1,
+      commands: [
+        { type: 'setFillStyle', params: [this.config.backgroundColor] },
+        { type: 'fillRect', params: [0, 0, this.config.width, this.config.height] },
+      ],
+      bounds: null,
+    });
+
+    const allElements: DomElement[] = [];
+    this.collectElements(root, allElements);
+
+    for (const el of allElements) {
+      this.paintElement(el);
     }
   }
 
@@ -195,25 +219,39 @@ class PaintEngine implements IPaintEngine {
       { type: 'fillRect', params: [0, 0, this.config.width, this.config.height] },
     ];
 
-    // Sort by stacking level first, then by z-index within the level
-    const sortedLayers = [...this.layers].sort((a, b) => {
-      const diff = a.zIndex - b.zIndex;
-      return diff !== 0 ? diff : 0; // stable within same z-index
-    });
-
-    for (const layer of sortedLayers) {
-      if (layer.opacity <= 0) continue;
-      if (layer.opacity < 1) {
-        allCommands.push({ type: 'save', params: [] });
-        allCommands.push({ type: 'setGlobalAlpha', params: [layer.opacity] });
-      }
-      allCommands.push(...layer.commands);
-      if (layer.opacity < 1) {
-        allCommands.push({ type: 'restore', params: [] });
+    if (this.stackingTree) {
+      // Render using the stacking context tree (spec-compliant paint order)
+      const ctxCommands = renderStackingContext(this.stackingTree, (el) => {
+        return this.getElementPaintCommands(el);
+      });
+      allCommands.push(...ctxCommands);
+    } else {
+      // Fallback: flat sort (shouldn't happen but safe)
+      const sortedLayers = [...this.layers].sort((a, b) => a.zIndex - b.zIndex);
+      for (const layer of sortedLayers) {
+        if (layer.opacity <= 0) continue;
+        if (layer.opacity < 1) {
+          allCommands.push({ type: 'save', params: [] });
+          allCommands.push({ type: 'setGlobalAlpha', params: [layer.opacity] });
+        }
+        allCommands.push(...layer.commands);
+        if (layer.opacity < 1) {
+          allCommands.push({ type: 'restore', params: [] });
+        }
       }
     }
 
     return allCommands;
+  }
+
+  rasterize(): ImageData {
+    const commands = this.compositeFrame();
+    const rasterizer = new Rasterizer({
+      width: this.config.width,
+      height: this.config.height,
+      backgroundColor: 'transparent',
+    });
+    return rasterizer.rasterize(commands);
   }
 
   resize(width: number, height: number): void {
@@ -247,30 +285,18 @@ class PaintEngine implements IPaintEngine {
     }
   }
 
-  private createBackgroundLayer(): PaintLayer {
-    return {
-      id: nextLayerId(),
-      zIndex: -1,
-      opacity: 1,
-      commands: [
-        { type: 'setFillStyle', params: [this.config.backgroundColor] },
-        { type: 'fillRect', params: [0, 0, this.config.width, this.config.height] },
-      ],
-      bounds: null,
-    };
-  }
+  // ── ELEMENT PAINTING ──────────────────────────────────────────────────
 
   /**
-   * Paint a single element. The zIndex in the layer is set from CSS z-index,
-   * accounting for stacking context.
+   * Generate paint commands for a single element (background, borders, text).
+   * Also populates bgCommands on the stacking context if the element forms one.
    */
-  private paintNode(node: DomElement): void {
-    const style = node.computedStyle ?? new Map();
-    const display = style.get('display') ?? 'inline';
-
-    if (display === 'none') return;
+  private getElementPaintCommands(node: DomElement): PaintCommand[] {
+    const cached = this.elementCommands.get(node);
+    if (cached) return cached;
 
     const commands: PaintCommand[] = [];
+    const style = node.computedStyle ?? new Map();
     const layoutBox: LayoutBox | null = (node as { layoutBox: LayoutBox | null }).layoutBox ?? null;
 
     if (layoutBox && layoutBox.width > 0 && layoutBox.height > 0) {
@@ -291,6 +317,67 @@ class PaintEngine implements IPaintEngine {
 
       // ── Borders ─────────────────────────────────────────────────────────
       this.paintBorders(commands, layoutBox, style);
+
+      // ── Image (lazy-loaded or eager) ────────────────────────────────────
+      if (node.imageData && node.loadingState === 'loaded') {
+        const imgData = node.imageData;
+        const objectFit = style.get('object-fit') ?? 'fill';
+        const contentX = layoutBox.x + layoutBox.borderLeft + layoutBox.paddingLeft;
+        const contentY = layoutBox.y + layoutBox.borderTop + layoutBox.paddingTop;
+        const contentW = layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight - layoutBox.paddingLeft - layoutBox.paddingRight;
+        const contentH = layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom - layoutBox.paddingTop - layoutBox.paddingBottom;
+
+        let drawW = contentW;
+        let drawH = contentH;
+        let drawX = contentX;
+        let drawY = contentY;
+
+        if (objectFit === 'contain') {
+          const scale = Math.min(contentW / imgData.width, contentH / imgData.height);
+          drawW = imgData.width * scale;
+          drawH = imgData.height * scale;
+          drawX = contentX + (contentW - drawW) / 2;
+          drawY = contentY + (contentH - drawH) / 2;
+        } else if (objectFit === 'cover') {
+          const scale = Math.max(contentW / imgData.width, contentH / imgData.height);
+          drawW = imgData.width * scale;
+          drawH = imgData.height * scale;
+          drawX = contentX + (contentW - drawW) / 2;
+          drawY = contentY + (contentH - drawH) / 2;
+        } else if (objectFit === 'none') {
+          drawW = imgData.width;
+          drawH = imgData.height;
+        } else if (objectFit === 'scale-down') {
+          const scale = Math.min(1, Math.min(contentW / imgData.width, contentH / imgData.height));
+          drawW = imgData.width * scale;
+          drawH = imgData.height * scale;
+          drawX = contentX + (contentW - drawW) / 2;
+          drawY = contentY + (contentH - drawH) / 2;
+        }
+        // 'fill' uses contentW/contentH as-is
+
+        commands.push({
+          type: 'drawImage',
+          params: [imgData, drawX, drawY, drawW, drawH],
+        });
+      }
+
+      // ── Placeholder for unloaded lazy images ──────────────────────────
+      if (node.loadingState === 'lazy' && node.tagName.toLowerCase() === 'img') {
+        const contentX = layoutBox.x + layoutBox.borderLeft + layoutBox.paddingLeft;
+        const contentY = layoutBox.y + layoutBox.borderTop + layoutBox.paddingTop;
+        const contentW = layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight - layoutBox.paddingLeft - layoutBox.paddingRight;
+        const contentH = layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom - layoutBox.paddingTop - layoutBox.paddingBottom;
+        commands.push({ type: 'setFillStyle', params: ['#f0f0f0'] });
+        commands.push({ type: 'fillRect', params: [contentX, contentY, contentW, contentH] });
+        // Draw a placeholder icon (image symbol)
+        commands.push({ type: 'setFillStyle', params: ['#cccccc'] });
+        const iconW = Math.min(40, contentW * 0.3);
+        const iconH = Math.min(30, contentH * 0.3);
+        const iconX = contentX + (contentW - iconW) / 2;
+        const iconY = contentY + (contentH - iconH) / 2;
+        commands.push({ type: 'fillRect', params: [iconX, iconY, iconW, iconH] });
+      }
 
       // ── Text runs (actual text content from inline formatting context) ───
       const textRuns = layoutBox.textRuns;
@@ -322,19 +409,45 @@ class PaintEngine implements IPaintEngine {
       }
     }
 
-    // ── Compute layer z-index from CSS ───────────────────────────────────
-    // Positioned elements go on top of non-positioned elements.
-    // Within positioned, z-index sorts. Negative z goes behind normal.
+    this.elementCommands.set(node, commands);
+
+    // If this element creates a stacking context, populate bgCommands
+    // by finding it in the tree and setting its bg commands
+    if (this.stackingTree) {
+      const ctx = this.findStackingContext(this.stackingTree, node);
+      if (ctx) {
+        ctx.bgCommands = commands;
+      }
+    }
+
+    return commands;
+  }
+
+  /**
+   * Find a stacking context for the given element in the tree.
+   */
+  private findStackingContext(
+    ctx: StackingContext,
+    el: DomElement,
+  ): StackingContext | null {
+    if (ctx.element === el) return ctx;
+    for (const child of ctx.children) {
+      const found = this.findStackingContext(child, el);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /**
+   * Paint a single element into the flat layer list (for backward compat).
+   */
+  private paintElement(node: DomElement): void {
+    const style = node.computedStyle ?? new Map();
     const position = style.get('position') ?? 'static';
     const isPos = position === 'relative' || position === 'absolute'
       || position === 'fixed' || position === 'sticky';
     const zIndex = getZIndex(node);
 
-    // Encode into layer zIndex:
-    // - Non-positioned: 0
-    // - Positioned with z-index auto/0: 1000 + (0)
-    // - Positioned with z-index N: 1000 + N
-    // - Positioned with negative z-index N: N (stays negative, goes below 0)
     let layerZIndex: number;
     if (isPos) {
       layerZIndex = zIndex >= 0 ? 1000 + zIndex : zIndex;
@@ -342,12 +455,14 @@ class PaintEngine implements IPaintEngine {
       layerZIndex = 0;
     }
 
+    const commands = this.getElementPaintCommands(node);
+
     const layer: PaintLayer = {
       id: nextLayerId(),
       zIndex: layerZIndex,
       opacity: parseFloat(style.get('opacity') ?? '1') || 1,
       commands,
-      bounds: layoutBox,
+      bounds: (node as { layoutBox: LayoutBox | null }).layoutBox ?? null,
     };
 
     this.layers.push(layer);
@@ -356,7 +471,6 @@ class PaintEngine implements IPaintEngine {
 
   /**
    * Paints solid borders on all four sides of the border box.
-   * Reads border-*-width and border-*-color from computed style.
    */
   private paintBorders(commands: PaintCommand[], box: LayoutBox, style: ReadonlyMap<string, string>): void {
     const borderWidths = [box.borderTop, box.borderRight, box.borderBottom, box.borderLeft];
@@ -368,13 +482,9 @@ class PaintEngine implements IPaintEngine {
       ?? '#000000';
 
     const sides: Array<{ width: number; x: number; y: number; w: number; h: number }> = [
-      // Top border
       { width: box.borderTop, x: box.x, y: box.y, w: box.width, h: box.borderTop },
-      // Bottom border
       { width: box.borderBottom, x: box.x, y: box.y + box.height - box.borderBottom, w: box.width, h: box.borderBottom },
-      // Left border (between top and bottom)
       { width: box.borderLeft, x: box.x, y: box.y + box.borderTop, w: box.borderLeft, h: box.height - box.borderTop - box.borderBottom },
-      // Right border (between top and bottom)
       { width: box.borderRight, x: box.x + box.width - box.borderRight, y: box.y + box.borderTop, w: box.borderRight, h: box.height - box.borderTop - box.borderBottom },
     ];
 
@@ -387,8 +497,20 @@ class PaintEngine implements IPaintEngine {
 
   dispose(): void {
     this.layers.length = 0;
+    this.elementCommands.clear();
+    this.stackingTree = null;
     this.eventListeners.clear();
   }
+}
+
+// ── Helpers (kept for backward compat in flat layer mode) ────────────────
+
+function getZIndex(element: DomElement): number {
+  const style = element.computedStyle ?? new Map();
+  const zRaw = style.get('z-index');
+  if (!zRaw || zRaw === 'auto') return 0;
+  const z = parseInt(zRaw, 10);
+  return isNaN(z) ? 0 : z;
 }
 
 export { PaintEngine, DEFAULT_PAINT_CONFIG };

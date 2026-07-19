@@ -15,7 +15,8 @@
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",
     "format": "prettier --check src/ tests/",
-    "format:fix": "prettier --write src/ tests/"
+    "format:fix": "prettier --write src/ tests/",
+    "benchmark": "tsx src/benchmark/run.ts"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",

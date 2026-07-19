@@ -28,6 +28,9 @@ import { TrackerBlocker } from '../../browser/security/tracker-blocker';
 import { AdBlocker } from '../../browser/security/ad-blocker';
 import { UrlParser } from '../../browser/navigation/url-parser';
 import { ContentRenderer } from '../components/content-renderer/content-renderer';
+import { SettingsPage } from './settings-page';
+import type { ISettingsPage } from './settings-page';
+import type { ISettingsService } from '../../browser/storage/settings-service';
 
 interface BrowserWindowPageConfig {
   readonly containerId: string;
@@ -81,6 +84,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private contentArea: HTMLElement | null = null;
   private currentUrl = '';
   private contentNavigateHandler: ((e: Event) => void) | null = null;
+  private activeSettingsPage: ISettingsPage | null = null;
+  private settingsService: ISettingsService | null = null;
 
   constructor(config?: Partial<BrowserWindowPageConfig>) {
     this.config = { ...DEFAULT_PAGE_CONFIG, ...config };
@@ -227,6 +232,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   }
 
   async unmount(): Promise<void> {
+    this.cleanupSettingsPage();
     this.addressBarView?.dispose();
     this.tabStripView?.dispose();
     this.bookmarkBarView?.dispose();
@@ -362,6 +368,16 @@ class BrowserWindowPage implements IBrowserWindowPage {
       if (parsed.isSpecialPage) {
         if (parsed.normalized === 'about:blank') {
           this.contentRenderer?.clear();
+        } else if (parsed.normalized === 'nova://settings' || parsed.normalized === 'about:settings') {
+          this.cleanupSettingsPage();
+          const container = document.createElement('div');
+          container.style.cssText = 'width:100%;height:100%;';
+          this.contentArea?.appendChild(container);
+          this.activeSettingsPage = new SettingsPage();
+          this.activeSettingsPage.mount(container);
+          if (this.settingsService) {
+            this.settingsService.init(this.activeSettingsPage);
+          }
         } else {
           this.contentRenderer?.renderHtml(
             `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
@@ -654,6 +670,21 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.tabStripView?.update(this.tabStrip!.state);
     this.syncToolbar();
     this.syncBookmarkBar();
+  }
+
+  getActiveSettingsPage(): ISettingsPage | null {
+    return this.activeSettingsPage;
+  }
+
+  setSettingsService(service: ISettingsService): void {
+    this.settingsService = service;
+  }
+
+  private cleanupSettingsPage(): void {
+    if (this.activeSettingsPage) {
+      this.activeSettingsPage.dispose();
+      this.activeSettingsPage = null;
+    }
   }
 
   dispose(): void {

@@ -104,6 +104,7 @@ class TabStrip implements ITabStrip {
   private readonly bus = new TabStripEventBus();
   private _tabs: TabStripTabData[] = [];
   private _activeTabId: string | null = null;
+  private readonly _managerUnsubs: Array<() => void> = [];
 
   constructor(manager: ITabManager) {
     this.manager = manager;
@@ -134,30 +135,38 @@ class TabStrip implements ITabStrip {
   }
 
   private wireManagerEvents(): void {
-    this.manager.on('tabCreated', () => {
+    const onCreated = () => { this.syncWithManager(); };
+    const onRemoved = () => { this.syncWithManager(); };
+    const onActivated = (e: { kind: string; tabId: string }) => {
+      if (e.kind === 'tabActivated') this._activeTabId = e.tabId;
       this.syncWithManager();
-    });
-    this.manager.on('tabRemoved', () => {
-      this.syncWithManager();
-    });
-    this.manager.on('tabActivated', (e) => {
-      if (e.kind === 'tabActivated') {
-        this._activeTabId = e.tabId;
-      }
-      this.syncWithManager();
-    });
-    this.manager.on('tabMoved', (e) => {
+    };
+    const onMoved = (e: { kind: string; tabId: string; fromIndex: number; toIndex: number }) => {
       if (e.kind === 'tabMoved') {
         this.syncWithManager();
         this.bus.emit({ kind: 'tabMoved', tabId: e.tabId, fromIndex: e.fromIndex, toIndex: e.toIndex });
       }
-    });
-    this.manager.on('tabPinned', (e) => {
+    };
+    const onPinned = (e: { kind: string; tabId: string; pinned: boolean }) => {
       if (e.kind === 'tabPinned') {
         this.syncWithManager();
         this.bus.emit({ kind: 'tabPinned', tabId: e.tabId, pinned: e.pinned });
       }
-    });
+    };
+
+    this.manager.on('tabCreated', onCreated);
+    this.manager.on('tabRemoved', onRemoved);
+    this.manager.on('tabActivated', onActivated);
+    this.manager.on('tabMoved', onMoved);
+    this.manager.on('tabPinned', onPinned);
+
+    this._managerUnsubs.push(
+      () => this.manager.off('tabCreated', onCreated),
+      () => this.manager.off('tabRemoved', onRemoved),
+      () => this.manager.off('tabActivated', onActivated),
+      () => this.manager.off('tabMoved', onMoved),
+      () => this.manager.off('tabPinned', onPinned),
+    );
   }
 
   selectTab(tabId: string): void {
@@ -198,6 +207,8 @@ class TabStrip implements ITabStrip {
   }
 
   dispose(): void {
+    for (const unsub of this._managerUnsubs) unsub();
+    this._managerUnsubs.length = 0;
     this.bus.dispose();
   }
 }

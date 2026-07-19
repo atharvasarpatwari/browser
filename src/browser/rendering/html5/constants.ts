@@ -1,4 +1,4 @@
-/**
+ /**
  * @file html5/constants.ts
  * Element category sets, insertion mode enum, and constants
  * for the HTML5 tree builder.
@@ -245,7 +245,9 @@ import type { DiscoveredResourceKind } from './dom';
 
 const LINK_REL_MAP: ReadonlyMap<string, DiscoveredResourceKind> = new Map([
   ['stylesheet',    'stylesheet'],
-  ['preload',       'other'],
+  ['preload',       'preload'],
+  ['prefetch',      'prefetch'],
+  ['preconnect',    'preconnect'],
   ['modulepreload', 'script'],
   ['icon',          'other'],
   ['shortcut icon', 'other'],

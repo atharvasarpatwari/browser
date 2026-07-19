@@ -44,6 +44,7 @@ function nextHistoryId(): string {
 class InMemoryHistoryStore implements IHistoryStore {
   private readonly entries = new Map<string, HistoryEntry>();
   private readonly urlIndex = new Map<string, string>();
+  private static readonly MAX_ENTRIES = 10000;
 
   async addVisit(url: string, title: string, typed: boolean): Promise<HistoryEntry> {
     const existingId = this.urlIndex.get(url);
@@ -58,6 +59,14 @@ class InMemoryHistoryStore implements IHistoryStore {
       };
       this.entries.set(existingId, updated);
       return updated;
+    }
+
+    if (this.entries.size >= InMemoryHistoryStore.MAX_ENTRIES) {
+      const oldest = [...this.entries.values()].sort((a, b) => a.lastVisitTime - b.lastVisitTime)[0];
+      if (oldest) {
+        this.entries.delete(oldest.id);
+        this.urlIndex.delete(oldest.url);
+      }
     }
 
     const id = nextHistoryId();

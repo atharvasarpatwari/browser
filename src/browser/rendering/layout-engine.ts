@@ -1,5 +1,6 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { IDomTree, DomDocument, DomElement, DomNode, LayoutBox, TextRun } from './dom-tree';
+import { DamageTracker } from './damage-tracker';
 import { findContainingBlock as findContainingBlockForScheme, resolveOutOfFlow, applyInFlowOffset } from './positioning';
 import { classifyDisplay, isBlockLevel } from './formatting/types';
 import { classifyChildren, collapseMargins, isMarginCollapseBlocked } from './formatting/block-context';
@@ -105,6 +106,35 @@ class LayoutEngine implements ILayoutEngine {
 
     // ── Second pass: lay out positioned elements ──────────────────────────
     this.layoutPositionedElements();
+    this.floatContext = null;
+  }
+
+  /**
+   * Incremental layout: only re-lay-out elements marked dirty in the DOM tree.
+   * Returns the damage tracker containing bounding boxes of all re-laid-out elements.
+   */
+  layoutIncremental(document: DomDocument, domTree: IDomTree, config?: Partial<LayoutConfig>): DamageTracker {
+    if (config) this.config = { ...this.config, ...config };
+    this.rootFontSize = this.config.defaultFontSize;
+    const damage = new DamageTracker();
+
+    domTree.processMutations();
+
+    if (document.bodyElement) {
+      this.layoutNodeIncremental(document.bodyElement, 0, 0, this.config.viewportWidth, this.config.defaultFontSize, domTree, damage);
+    } else {
+      let y = 0;
+      for (const child of document.children) {
+        if (child.nodeType === 'element') {
+          y = this.layoutNodeIncremental(child as DomElement, 0, y, this.config.viewportWidth, this.config.defaultFontSize, domTree, damage);
+        }
+      }
+    }
+
+    this.layoutPositionedElements();
+
+    if (!damage.isEmpty()) damage.compact();
+    return damage;
   }
 
   getLayoutBox(domId: string): LayoutBox | null {
@@ -136,6 +166,7 @@ class LayoutEngine implements ILayoutEngine {
   // CORE LAYOUT
   // ─────────────────────────────────────────────────────────────────────────
 
+  /** Recursively layout a single DOM element and its children. Returns the total height consumed. */
   private layoutNode(
     node: DomElement,
     x: number,
@@ -284,6 +315,56 @@ class LayoutEngine implements ILayoutEngine {
 
     // Return the next Y position after this element's margin box.
     return posY + box.height + marginBottom;
+  }
+
+  /**
+   * Incremental version of layoutNode: skips clean subtrees, tracks damage.
+   */
+  private layoutNodeIncremental(
+    node: DomElement,
+    x: number,
+    y: number,
+    availableWidth: number,
+    parentFontSize: number,
+    domTree: IDomTree,
+    damage: DamageTracker,
+  ): number {
+    const style = node.computedStyle ?? new Map();
+    const display = style.get('display') ?? 'inline';
+    if (display === 'none' && !node._dirtyLayout) return y;
+
+    if (!node._dirtyLayout) {
+      const existingBox = this.layoutBoxes.get(node.domId);
+      if (existingBox) {
+        const childContentY = existingBox.y + existingBox.borderTop + existingBox.paddingTop;
+        let childY = childContentY;
+        for (const child of node.children) {
+          if (child.nodeType === 'element') {
+            childY = this.layoutNodeIncremental(child as DomElement, x, childY, availableWidth, parentFontSize, domTree, damage);
+          }
+        }
+        return existingBox.y + existingBox.height + existingBox.marginBottom;
+      }
+      return y;
+    }
+
+    const oldBox = this.layoutBoxes.get(node.domId);
+    const newEndY = this.layoutNode(node, x, y, availableWidth, parentFontSize, domTree);
+    const newBox = this.layoutBoxes.get(node.domId);
+    if (newBox) {
+      damage.addBox(newBox);
+      if (oldBox) {
+        const hasMoved = oldBox.x !== newBox.x || oldBox.y !== newBox.y;
+        const hasResized = oldBox.width !== newBox.width || oldBox.height !== newBox.height;
+        if (hasMoved || hasResized) {
+          damage.addBox(oldBox);
+        }
+      }
+    }
+
+    domTree.clearSubtreeDirty(node, 'layout');
+    domTree.clearSubtreeDirty(node, 'paint');
+    return newEndY;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -1,3 +1,10 @@
+/**
+ * @file Application entry point and dependency injection container.
+ *
+ * Wires together all subsystems: navigation, rendering, networking, security,
+ * storage, and UI.  The {@link ApplicationBootstrap} class orchestrates startup
+ * and exposes the rendering pipeline via {@link createPageRenderer}.
+ */
 import {
   DependencyContainer,
   ServiceLifetime,
@@ -8,6 +15,7 @@ import {
 } from './app-shell';
 import type { IServiceContainer } from './dependency-container';
 import type { IAppShell, AppConfig, ISharedService } from './app-shell';
+import { clearAllRegistrations as clearMutationObservers } from '../browser/rendering/html5/mutation-observer';
 
 // Core navigation / engine
 import { UrlParser } from '../browser/navigation/url-parser';
@@ -23,6 +31,24 @@ import type { IBrowserEngine, IPageLoader, IPageRenderer, PageLoadResult } from 
 import { TabManager } from '../browser/tabs/tab-manager';
 import type { ITabManager } from '../browser/tabs/tab-manager';
 
+// Tab-process adapter (bridges TabContextManager ↔ ProcessManager)
+import { TabProcessManager, createTabProcessManager } from '../browser/engine/tab-process-adapter';
+import type { ITabProcessManager } from '../browser/engine/tab-process-adapter';
+import { TabContextManager } from '../browser/engine/tab-context';
+import type { ITabContextManager } from '../browser/engine/tab-context';
+
+// Crash recovery / isolation
+import { ScriptGuard } from '../browser/engine/script-guard';
+import type { IScriptGuard } from '../browser/engine/script-guard';
+import { ErrorBoundary } from '../browser/engine/error-boundary';
+import type { IErrorBoundary } from '../browser/engine/error-boundary';
+import { CrashReporter, CrashReportBuilder } from '../browser/engine/crash-reporter';
+import type { ICrashReporter } from '../browser/engine/crash-reporter';
+import { ProcessGuard } from '../browser/engine/process-guard';
+import type { IProcessGuard } from '../browser/engine/process-guard';
+import { LifecycleManager } from '../browser/engine/lifecycle-manager';
+import type { ILifecycleManager } from '../browser/engine/lifecycle-manager';
+
 // Services
 import { HistoryService } from '../browser/history/history-service';
 import type { IHistoryService } from '../browser/history/history-service';
@@ -36,6 +62,9 @@ import { ResourceLoader } from '../browser/netwroking/resource-loader';
 import type { IResourceLoader } from '../browser/netwroking/resource-loader';
 import { CacheManager } from '../browser/netwroking/cache-manager';
 import type { ICacheManager } from '../browser/netwroking/cache-manager';
+import { ResourcePrioritizer } from '../browser/netwroking/resource-prioritizer';
+import { Firewall, applyBaselineRules } from '../browser/netwroking/firewall';
+import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from '../browser/netwroking/networking-setup';
 
 // Security
 import { CertificateValidator } from '../browser/security/certificate-validator';
@@ -51,14 +80,6 @@ import type { IAdBlocker } from '../browser/security/ad-blocker';
 import { ThirdPartySecurityManager, extractOrigin } from '../browser/security/third-party-security';
 import type { IThirdPartySecurityManager } from '../browser/security/third-party-security';
 
-// JavaScript runtime
-import { JsRuntimeBridge } from '../browser/javascript/js-runtime-bridge';
-import type { IJsRuntimeBridge } from '../browser/javascript/js-runtime-bridge';
-import { EventLoop } from '../browser/javascript/event-loop';
-import type { IEventLoop } from '../browser/javascript/event-loop';
-import { DomBindings } from '../browser/javascript/dom-bindings';
-import type { IDomBindings } from '../browser/javascript/dom-bindings';
-
 // Rendering
 import { DomTree } from '../browser/rendering/dom-tree';
 import type { IDomTree, DomDocument, DomNode, DomElement } from '../browser/rendering/dom-tree';
@@ -69,6 +90,14 @@ import type { ILayoutEngine } from '../browser/rendering/layout-engine';
 import { PaintEngine } from '../browser/rendering/paint-engine';
 import type { IPaintEngine } from '../browser/rendering/paint-engine';
 import { HtmlParser } from '../browser/rendering/html-parser';
+
+// Lazy loading
+import { LazyLoader } from '../browser/rendering/lazy-loader';
+import { ReflowRepaintController } from '../browser/rendering/reflow-repaint-controller';
+
+// JS engine (for inline script execution)
+import { runJS } from '../browser/js/index';
+import { EventLoop as JsEventLoop } from '../browser/js/event-loop';
 
 // CSS5 cascade (directly for tree-level style computation)
 import { computeComputedStyles } from '../browser/rendering/css5/cascade';
@@ -81,6 +110,10 @@ import { InMemorySessionsStore } from '../browser/storage/sessions-store';
 import type { ISessionsStore } from '../browser/storage/sessions-store';
 import { InMemoryCookieStore } from '../browser/storage/cookie-store';
 import type { ICookieStore } from '../browser/storage/cookie-store';
+import { SettingsStore } from '../browser/storage/settings-store';
+import type { ISettingsStore } from '../browser/storage/settings-store';
+import { SettingsService } from '../browser/storage/settings-service';
+import type { ISettingsService } from '../browser/storage/settings-service';
 
 // Platform
 import { RuntimeAdapter } from '../platform/shared/runtime-adapter';
@@ -129,9 +162,6 @@ const Tokens = Object.freeze({
   TrackerBlocker: Symbol('TrackerBlocker'),
   AdBlocker: Symbol('AdBlocker'),
   ThirdPartySecurityManager: Symbol('ThirdPartySecurityManager'),
-  JsRuntimeBridge: Symbol('JsRuntimeBridge'),
-  EventLoop: Symbol('EventLoop'),
-  DomBindings: Symbol('DomBindings'),
   DomTree: Symbol('DomTree'),
   CssParser: Symbol('CssParser'),
   LayoutEngine: Symbol('LayoutEngine'),
@@ -146,6 +176,21 @@ const Tokens = Object.freeze({
   BrowserWindowPage: Symbol('BrowserWindowPage'),
   AuthManager: Symbol('AuthManager'),
   TokenStore: Symbol('TokenStore'),
+  // Crash recovery / isolation
+  ScriptGuard: Symbol('ScriptGuard'),
+  ErrorBoundary: Symbol('ErrorBoundary'),
+  CrashReporter: Symbol('CrashReporter'),
+  ProcessGuard: Symbol('ProcessGuard'),
+  LifecycleManager: Symbol('LifecycleManager'),
+  // Tab-process adapter
+  TabContextManager: Symbol('TabContextManager'),
+  TabProcessManager: Symbol('TabProcessManager'),
+  // Firewall
+  Firewall: Symbol('Firewall'),
+  FirewallGuardedNetworking: Symbol('FirewallGuardedNetworking'),
+  // Settings
+  SettingsStore: Symbol('SettingsStore'),
+  SettingsService: Symbol('SettingsService'),
 } as const);
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -252,6 +297,7 @@ class ApplicationBootstrap {
     }
 
     this.container.dispose();
+    clearMutationObservers();
     this.running = false;
     this.log('Stopped');
   }
@@ -376,24 +422,7 @@ class ApplicationBootstrap {
       ServiceLifetime.Singleton,
     );
 
-    // 7. JavaScript runtime
-    c.register<IJsRuntimeBridge>(
-      Tokens.JsRuntimeBridge,
-      () => new JsRuntimeBridge(),
-      ServiceLifetime.Singleton,
-    );
-    c.register<IEventLoop>(
-      Tokens.EventLoop,
-      () => new EventLoop(),
-      ServiceLifetime.Singleton,
-    );
-    c.register<IDomBindings>(
-      Tokens.DomBindings,
-      () => new DomBindings(),
-      ServiceLifetime.Singleton,
-    );
-
-    // 8. Rendering pipeline
+    // 7. Rendering pipeline
     c.register<IDomTree>(Tokens.DomTree, () => new DomTree(), ServiceLifetime.Singleton);
     c.register<ICssParser>(Tokens.CssParser, () => new CssParser(), ServiceLifetime.Singleton);
     c.register<ILayoutEngine>(Tokens.LayoutEngine, () => new LayoutEngine(), ServiceLifetime.Singleton);
@@ -408,6 +437,18 @@ class ApplicationBootstrap {
     c.register<ICookieStore>(
       Tokens.CookieStore,
       () => new InMemoryCookieStore(),
+      ServiceLifetime.Singleton,
+    );
+
+    // 9b. Settings persistence & service
+    c.register<ISettingsStore>(
+      Tokens.SettingsStore,
+      () => new SettingsStore(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<ISettingsService>(
+      Tokens.SettingsService,
+      (ctx) => new SettingsService(ctx.resolve<ISettingsStore>(Tokens.SettingsStore)),
       ServiceLifetime.Singleton,
     );
 
@@ -460,6 +501,51 @@ class ApplicationBootstrap {
       (ctx) => new AuthManager(ctx.resolve<ITokenStore>(Tokens.TokenStore)),
       ServiceLifetime.Singleton,
     );
+
+    // 13. Crash recovery / isolation
+    c.register<IScriptGuard>(
+      Tokens.ScriptGuard,
+      () => new ScriptGuard(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<IErrorBoundary>(
+      Tokens.ErrorBoundary,
+      () => new ErrorBoundary({ name: 'main-boundary', strategy: 'retry', maxRetries: 2 }),
+      ServiceLifetime.Singleton,
+    );
+    c.register<ICrashReporter>(
+      Tokens.CrashReporter,
+      () => new CrashReporter({ maxReports: 200, logReports: true }),
+      ServiceLifetime.Singleton,
+    );
+    c.register<IProcessGuard>(
+      Tokens.ProcessGuard,
+      () => new ProcessGuard({ installHandlers: true, logErrors: true }),
+      ServiceLifetime.Singleton,
+    );
+
+    // 14. Tab-process adapter
+    c.register<ITabContextManager>(
+      Tokens.TabContextManager,
+      () => new TabContextManager(),
+      ServiceLifetime.Singleton,
+    );
+
+    // 15. Firewall
+    c.register<Firewall>(
+      Tokens.Firewall,
+      () => {
+        const fw = new Firewall({ blockPrivateNetworksByDefault: true });
+        applyBaselineRules(fw);
+        return fw;
+      },
+      ServiceLifetime.Singleton,
+    );
+    c.register<FirewallGuardedNetworking>(
+      Tokens.FirewallGuardedNetworking,
+      () => createFirewallGuardedNetworking({ applyBaseline: false }),
+      ServiceLifetime.Singleton,
+    );
   }
 
   /**
@@ -474,10 +560,44 @@ class ApplicationBootstrap {
       this.container.resolve<IBookmarkService>(Tokens.BookmarkService),
       this.container.resolve<IDownloadManager>(Tokens.DownloadManager),
       this.container.resolve<IBrowserEngine>(Tokens.BrowserEngine),
+      this.container.resolve<IProcessGuard>(Tokens.ProcessGuard),
     ];
 
     for (const svc of lifecycleServices) {
       shell.registerService(svc);
+    }
+
+    // Wire the TabProcessManager after shell is ready — it bridges
+    // TabContextManager ↔ ProcessManager for unified tab+process lifecycle.
+    this.wireTabProcessManager();
+  }
+
+  /**
+   * Creates a TabProcessManager that bridges TabContextManager and the IPC
+   * ProcessManager. On startup it becomes the unified tab+process API.
+   * Process crash events are automatically forwarded to the CrashReporter.
+   */
+  private async wireTabProcessManager(): Promise<void> {
+    try {
+      const tabProcessManager = await createTabProcessManager();
+      this.container.registerValue<ITabProcessManager>(Tokens.TabProcessManager, tabProcessManager);
+
+      const crashReporter = this.container.resolve<ICrashReporter>(Tokens.CrashReporter);
+      tabProcessManager.on('tabProcessCrashed', (event) => {
+        const report = new CrashReportBuilder()
+          .source('tab-context')
+          .error(event.error)
+          .severity('error')
+          .phase('script')
+          .tabId(event.tabId)
+          .context('processId', event.processId)
+          .build();
+        crashReporter.report(report);
+      });
+
+      console.log('[Bootstrap] TabProcessManager wired');
+    } catch (err) {
+      console.error('[Bootstrap] Failed to wire TabProcessManager:', err);
     }
   }
 
@@ -546,6 +666,10 @@ class ApplicationBootstrap {
     engine.setPageRenderer(this.createPageRenderer());
 
     this.log('Browser UI mounted');
+
+    // Wire SettingsService → BrowserWindowPage so nova://settings gets persistence
+    const settingsService = this.container.resolve<ISettingsService>(Tokens.SettingsService);
+    page.setSettingsService(settingsService);
   }
 
   /**
@@ -578,11 +702,18 @@ class ApplicationBootstrap {
     const cssParser = this.container.resolve<ICssParser>(Tokens.CssParser);
     const layoutEngine = this.container.resolve<ILayoutEngine>(Tokens.LayoutEngine);
     const paintEngine = this.container.resolve<IPaintEngine>(Tokens.PaintEngine);
+    const resourceLoader = this.container.resolve<IResourceLoader>(Tokens.ResourceLoader);
+    const prioritizer = new ResourcePrioritizer();
 
     return {
       render: async (result: PageLoadResult): Promise<void> => {
         const parseResult = htmlParser.parse(result.body, result.url);
         const htmlDoc = parseResult.document;
+
+        // Feed discovered resources to the prioritizer for batch loading
+        if (parseResult.resources.length > 0) {
+          prioritizer.submitBatch(parseResult.resources);
+        }
 
         // Convert the parsed HTML into our internal DOM tree representation
         const doc = domTree.buildFromHtml(htmlDoc);
@@ -591,8 +722,20 @@ class ApplicationBootstrap {
         const rules = cssParser.extractStylesFromDocument(htmlDoc);
         this.applyComputedStyles(domTree, cssParser, rules);
 
-        // Run layout and paint
+        // Execute scripts: inline synchronously, external fetched via ResourceLoader
+        await this.executeAllScripts(domTree, doc, resourceLoader, result.url);
+        this.applyComputedStyles(domTree, cssParser, rules);
+
+        // Run layout
         layoutEngine.layout(doc, domTree);
+
+        // Lazy load images/iframes via IntersectionObserver
+        const lazyLoader = new LazyLoader();
+        lazyLoader.init(doc, domTree);
+        lazyLoader.scanForLazyElements(doc);
+        lazyLoader.setViewport(1920, 1080);
+
+        // Paint
         paintEngine.paint(doc);
       },
     };
@@ -619,6 +762,121 @@ class ApplicationBootstrap {
 
     // Pass 2: Compute and apply styles top-down.
     this.applyStylesRecursive(domTree, doc.children, rootStyleables, stylesheet, null);
+  }
+
+  /**
+   * Executes all scripts found in the DOM tree — both inline and external.
+   *
+   * Per the WHATWG spec:
+   *   1. Blocking scripts (no defer/async): execute synchronously in document
+   *      order, pausing HTML parsing. External scripts are fetched first.
+   *   2. defer scripts: execute after DOM parsing completes, in document order.
+   *   3. async scripts: execute as soon as they finish downloading, regardless
+   *      of DOM state.
+   *
+   * This implementation:
+   *   - Executes inline scripts synchronously (already in DOM)
+   *   - Fetches external scripts via ResourceLoader and executes them
+   *   - Collects defer scripts and runs them after all blocking scripts
+   *   - Fires async scripts immediately after fetch (best-effort)
+   */
+  private async executeAllScripts(
+    domTree: IDomTree,
+    doc: DomDocument,
+    resourceLoader: IResourceLoader,
+    baseUrl: string,
+  ): Promise<void> {
+    const scripts = domTree.getElementsByTagName('script');
+    if (scripts.length === 0) return;
+
+    const eventLoop = new JsEventLoop();
+
+    const blockingScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
+    const deferScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
+    const asyncScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
+
+    // Categorize scripts
+    for (const script of scripts) {
+      const hasSrc = script.attributes.has('src');
+      const isDefer = script.attributes.has('defer');
+      const isAsync = script.attributes.has('async');
+
+      if (hasSrc) {
+        const src = script.attributes.get('src') ?? '';
+        const fullUrl = this.resolveUrl(src, baseUrl);
+
+        try {
+          const source = await resourceLoader.loadScript(fullUrl);
+
+          if (isAsync) {
+            asyncScripts.push({ source, el: script });
+          } else if (isDefer) {
+            deferScripts.push({ source, el: script });
+          } else {
+            blockingScripts.push({ source, el: script });
+          }
+        } catch (err) {
+          console.error(
+            `[ScriptEngine] Failed to fetch external script: ${fullUrl}`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      } else {
+        // Inline script — extract text content
+        let source = '';
+        for (const child of script.children) {
+          if (child.nodeType === 'text') {
+            source += (child as unknown as { text: string }).text;
+          }
+        }
+        source = source.trim();
+        if (source === '') continue;
+
+        // Inline scripts without defer/async are blocking by default
+        blockingScripts.push({ source, el: script });
+      }
+    }
+
+    // 1. Execute blocking scripts in document order
+    for (const { source } of blockingScripts) {
+      const result = runJS(source, { document: doc, domTree, eventLoop });
+      if (result.error) {
+        console.error(
+          `[ScriptEngine] Error executing blocking script: ${result.error.message}`,
+        );
+      }
+    }
+
+    // 2. Execute defer scripts in document order (after DOM is parsed)
+    for (const { source } of deferScripts) {
+      const result = runJS(source, { document: doc, domTree, eventLoop });
+      if (result.error) {
+        console.error(
+          `[ScriptEngine] Error executing defer script: ${result.error.message}`,
+        );
+      }
+    }
+
+    // 3. Fire async scripts (best-effort — they may already be downloaded)
+    for (const { source, el } of asyncScripts) {
+      // Fire and forget — async scripts don't block rendering
+      runJS(source, { document: doc, domTree, eventLoop });
+      void el; // used only for categorization
+    }
+  }
+
+  /**
+   * Simple URL resolution — resolves a relative URL against a base.
+   */
+  private resolveUrl(relative: string, base: string): string {
+    if (relative.startsWith('http://') || relative.startsWith('https://') || relative.startsWith('//')) {
+      return relative;
+    }
+    try {
+      return new URL(relative, base).href;
+    } catch {
+      return relative;
+    }
   }
 
   /**

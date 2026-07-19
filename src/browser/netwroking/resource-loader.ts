@@ -5,6 +5,9 @@ import type { IResponseParser } from './response-parser';
 import { ResponseParser } from './response-parser';
 import type { DiscoveredResource, DiscoveredResourceKind } from '../rendering/html-parser';
 import type { ITrackerBlocker } from '../security/tracker-blocker';
+import type { ICacheManager } from './cache-manager';
+import { PriorityQueue } from './priority-queue';
+import { BandwidthEstimator } from './bandwidth-estimator';
 
 interface ResourceLoadResult {
   readonly url: string;
@@ -51,24 +54,52 @@ class ResourceLoader implements IResourceLoader {
   private readonly responseParser: IResponseParser;
   private readonly retryPolicy: RetryPolicy;
   private readonly blocker: ITrackerBlocker | null;
+  private cache: ICacheManager | null = null;
   private maxConcurrent = 6;
   private activeCount = 0;
-  private readonly pendingQueue: Array<() => void> = [];
+  private readonly pendingQueue = new PriorityQueue<{ resolve: () => void }>();
+  private readonly bandwidth = new BandwidthEstimator();
 
   constructor(
     client: IHttpClient = new FetchHttpClient(),
     responseParser: IResponseParser = new ResponseParser(),
     retryPolicy: RetryPolicy = new ExponentialBackoffRetryPolicy({ maxRetries: 1 }),
     blocker: ITrackerBlocker | null = null,
+    cache: ICacheManager | null = null,
   ) {
     this.client = client;
     this.responseParser = responseParser;
     this.retryPolicy = retryPolicy;
     this.blocker = blocker;
+    this.cache = cache;
+  }
+
+  setCache(cache: ICacheManager): void {
+    this.cache = cache;
   }
 
   async loadResource(url: string, _kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
-    await this.acquireSlot();
+    // ── Cache check ─────────────────────────────────────────────────────────
+    if (this.cache) {
+      const cached = await this.cache.get(url);
+      if (cached) {
+        return {
+          url,
+          kind: _kind,
+          statusCode: cached.statusCode,
+          contentType: cached.contentType,
+          body: cached.body,
+          headers: cached.headers,
+          loadedAt: Date.now(),
+          durationMs: 0,
+          fromCache: true,
+          error: null,
+        };
+      }
+    }
+
+    const priorityWeight = options?.priority ? this.priorityWeight(options.priority) : 2;
+    await this.acquireSlot(priorityWeight);
 
     const start = Date.now();
 
@@ -114,6 +145,31 @@ class ResourceLoader implements IResourceLoader {
 
       const parsed = this.responseParser.parse(res);
       const durationMs = Date.now() - start;
+
+      // ── Record bandwidth ──────────────────────────────────────────────────
+      this.bandwidth.record(res.body.length, durationMs);
+
+      // ── Populate cache ────────────────────────────────────────────────────
+      if (this.cache && res.statusCode >= 200 && res.statusCode < 400) {
+        const etag = res.headers.get('etag') ?? null;
+        const lastModified = res.headers.get('last-modified') ?? null;
+        const cacheControl = res.headers.get('cache-control') ?? '';
+        const immutable = cacheControl.includes('immutable');
+        const maxAgeMatch = /max-age=(\d+)/.exec(cacheControl);
+        const ttlMs = maxAgeMatch ? parseInt(maxAgeMatch[1]!) * 1000 : undefined;
+
+        await this.cache.set(url, {
+          url,
+          body: res.body,
+          contentType: parsed.mimeType.full || 'application/octet-stream',
+          statusCode: res.statusCode,
+          headers: res.headers,
+          etag,
+          lastModified,
+          immutable,
+          expiresAt: ttlMs ? Date.now() + ttlMs : null,
+        });
+      }
 
       return {
         url,
@@ -209,23 +265,23 @@ class ResourceLoader implements IResourceLoader {
   off(_type: RequestEventType, _handler: (event: RequestEvent) => void): void {
   }
 
-  private async acquireSlot(): Promise<void> {
+  private async acquireSlot(priorityWeight: number = 2): Promise<void> {
     if (this.activeCount < this.maxConcurrent) {
       this.activeCount++;
       return;
     }
     return new Promise<void>(resolve => {
-      this.pendingQueue.push(() => {
-        this.activeCount++;
-        resolve();
-      });
+      this.pendingQueue.enqueue({ resolve }, priorityWeight);
     });
   }
 
   private releaseSlot(): void {
     this.activeCount--;
-    const next = this.pendingQueue.shift();
-    if (next) next();
+    const next = this.pendingQueue.dequeue();
+    if (next) {
+      this.activeCount++;
+      next.resolve();
+    }
   }
 
   private priorityWeight(p: ResourcePriority): number {
@@ -239,7 +295,7 @@ class ResourceLoader implements IResourceLoader {
   }
 
   dispose(): void {
-    this.pendingQueue.length = 0;
+    this.pendingQueue.clear();
     this.activeCount = 0;
   }
 }

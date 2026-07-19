@@ -336,6 +336,7 @@ function inBodyStartTag(ctx: TreeBuilderContext, token: Token): void {
     case 'noscript': {
       ctx.insertHTMLElement(token);
       ctx.originalInsertionMode = ctx.insertionMode;
+      ctx.pendingRawText = '';
       ctx.setMode(Im.TEXT);
       return;
     }
@@ -401,6 +402,7 @@ function inBodyStartTag(ctx: TreeBuilderContext, token: Token): void {
       ctx.reconstructActiveFormattingElements();
       ctx.insertHTMLElement(token);
       ctx.originalInsertionMode = ctx.insertionMode;
+      ctx.pendingRawText = '';
       ctx.setMode(Im.TEXT);
       return;
     }

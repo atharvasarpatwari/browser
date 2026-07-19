@@ -33,12 +33,14 @@ export function handleInHead(ctx: TreeBuilderContext, token: Token): void {
           } else {
             ctx.insertHTMLElement(token);
             ctx.originalInsertionMode = ctx.insertionMode;
+            ctx.pendingRawText = '';
             ctx.setMode(Im.TEXT);
           }
           return;
         case 'script':
           ctx.insertHTMLElement(token);
           ctx.originalInsertionMode = ctx.insertionMode;
+          ctx.pendingRawText = '';
           ctx.setMode(Im.TEXT);
           ctx.discoverResources(token);
           return;

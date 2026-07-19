@@ -461,6 +461,12 @@ class TreeBuilder implements TreeBuilderContext {
       catch { return href; }
     };
 
+    const getFetchPriority = (): 'high' | 'low' | 'auto' | undefined => {
+      const v = attrs.get('fetchpriority')?.toLowerCase();
+      if (v === 'high' || v === 'low') return v;
+      return undefined;
+    };
+
     const inHead = this.openElements.array.some(el => el.tagName === 'head');
     let res: DiscoveredResource | null = null;
 
@@ -470,11 +476,37 @@ class TreeBuilder implements TreeBuilderContext {
         const href = attrs.get('href');
         if (!href) return;
         const kind = LINK_REL_MAP.get(rel) ?? 'other';
-        res = {
-          url: resolve(href), kind,
-          blocking: rel === 'stylesheet' && inHead,
-          deferred: false, sourceTag: 'link',
-        };
+
+        if (rel === 'preload') {
+          const as = (attrs.get('as') ?? '').toLowerCase();
+          const asKind = as === 'script' ? 'script' : as === 'style' ? 'stylesheet' : as === 'image' ? 'image' : as === 'font' ? 'font' : as === 'fetch' ? 'other' : 'other';
+          res = {
+            url: resolve(href), kind: asKind,
+            blocking: false, deferred: false,
+            sourceTag: 'link', fetchPriority: getFetchPriority(),
+          };
+          // Also mark as preload type
+          res = { ...res, kind: 'preload' };
+        } else if (rel === 'prefetch') {
+          res = {
+            url: resolve(href), kind: 'prefetch',
+            blocking: false, deferred: true,
+            sourceTag: 'link', fetchPriority: getFetchPriority(),
+          };
+        } else if (rel === 'preconnect') {
+          res = {
+            url: resolve(href), kind: 'preconnect',
+            blocking: false, deferred: false,
+            sourceTag: 'link', fetchPriority: getFetchPriority(),
+          };
+        } else {
+          res = {
+            url: resolve(href), kind,
+            blocking: rel === 'stylesheet' && inHead,
+            deferred: false, sourceTag: 'link',
+            fetchPriority: getFetchPriority(),
+          };
+        }
         break;
       }
       case 'script': {
@@ -484,26 +516,39 @@ class TreeBuilder implements TreeBuilderContext {
           url: resolve(src), kind: 'script',
           blocking: !attrs.has('defer') && !attrs.has('async') && inHead,
           deferred: attrs.has('defer') || attrs.has('async'),
-          sourceTag: 'script',
+          sourceTag: 'script', fetchPriority: getFetchPriority(),
         };
         break;
       }
       case 'img': {
         const src = attrs.get('src') ?? attrs.get('data-src');
         if (!src) return;
-        res = { url: resolve(src), kind: 'image', blocking: false, deferred: false, sourceTag: 'img' };
+        const loading = attrs.get('loading')?.toLowerCase();
+        res = {
+          url: resolve(src), kind: 'image',
+          blocking: false, deferred: loading === 'lazy',
+          sourceTag: 'img', fetchPriority: getFetchPriority(),
+        };
         break;
       }
       case 'video': case 'audio': {
         const src = attrs.get('src');
         if (!src) return;
-        res = { url: resolve(src), kind: 'media', blocking: false, deferred: true, sourceTag: tag };
+        res = {
+          url: resolve(src), kind: 'media',
+          blocking: false, deferred: true,
+          sourceTag: tag, fetchPriority: getFetchPriority(),
+        };
         break;
       }
       case 'iframe': {
         const src = attrs.get('src');
         if (!src) return;
-        res = { url: resolve(src), kind: 'document', blocking: false, deferred: true, sourceTag: 'iframe' };
+        res = {
+          url: resolve(src), kind: 'document',
+          blocking: false, deferred: true,
+          sourceTag: 'iframe', fetchPriority: getFetchPriority(),
+        };
         break;
       }
     }

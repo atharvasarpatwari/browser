@@ -9,6 +9,8 @@ interface DomNode {
   readonly nodeType: DomNodeType;
   readonly parent: DomNode | null;
   readonly children: DomNode[];
+  _dirtyLayout: boolean;
+  _dirtyPaint: boolean;
 }
 
 interface DomElement extends DomNode {
@@ -17,6 +19,13 @@ interface DomElement extends DomNode {
   readonly attributes: ReadonlyMap<string, string>;
   computedStyle: ReadonlyMap<string, string> | null;
   layoutBox: LayoutBox | null;
+  /** Decoded image data (populated after lazy load completes). */
+  imageData: ImageData | null;
+  /** Natural dimensions of the image (populated after load). */
+  naturalWidth: number;
+  naturalHeight: number;
+  /** Lazy loading state. */
+  loadingState: 'none' | 'lazy' | 'loading' | 'loaded' | 'error';
 }
 
 interface DomTextNode extends DomNode {
@@ -96,6 +105,11 @@ interface IDomTree extends IDisposable {
   setLayoutBox(element: DomElement, box: LayoutBox): void;
   getMutations(): readonly DomMutation[];
   clearMutations(): void;
+  processMutations(): void;
+  markDirty(node: DomNode, kind: 'layout' | 'paint'): void;
+  markSubtreeDirty(node: DomNode, kind: 'layout' | 'paint'): void;
+  clearDirty(node: DomNode, kind: 'layout' | 'paint'): void;
+  clearSubtreeDirty(node: DomNode, kind: 'layout' | 'paint'): void;
   getDocument(): DomDocument | null;
 }
 
@@ -164,6 +178,12 @@ class DomTree implements IDomTree {
     if (idx !== -1) parent.children.splice(idx, 1);
     (child as { parent: DomNode | null }).parent = null;
     this.nodeIndex.delete(child.domId);
+    if (child.nodeType === 'element') {
+      const id = (child as DomElement).attributes.get('id');
+      if (id && this.idIndex.get(id) === child) {
+        this.idIndex.delete(id);
+      }
+    }
     this.mutations.push({ type: 'nodeRemoved', targetDomId: parent.domId, data: { childId: child.domId } });
   }
 
@@ -210,6 +230,70 @@ class DomTree implements IDomTree {
 
   clearMutations(): void {
     this.mutations.length = 0;
+  }
+
+  processMutations(): void {
+    for (const mut of this.mutations) {
+      const el = this.nodeIndex.get(mut.targetDomId);
+      if (el) {
+        this.markDirty(el, 'layout');
+      }
+    }
+    this.mutations.length = 0;
+  }
+
+  markDirty(node: DomNode, kind: 'layout' | 'paint'): void {
+    if (kind === 'layout') {
+      if (node._dirtyLayout) return;
+      node._dirtyLayout = true;
+      node._dirtyPaint = true;
+      let p = node.parent;
+      while (p) {
+        if (p._dirtyLayout) break;
+        p._dirtyLayout = true;
+        p._dirtyPaint = true;
+        p = p.parent;
+      }
+    } else {
+      if (node._dirtyPaint) return;
+      node._dirtyPaint = true;
+      let p = node.parent;
+      while (p) {
+        if (p._dirtyPaint) break;
+        p._dirtyPaint = true;
+        p = p.parent;
+      }
+    }
+  }
+
+  markSubtreeDirty(node: DomNode, kind: 'layout' | 'paint'): void {
+    const stack: DomNode[] = [node];
+    while (stack.length > 0) {
+      const n = stack.pop()!;
+      if (kind === 'layout') {
+        n._dirtyLayout = true;
+        n._dirtyPaint = true;
+      } else {
+        n._dirtyPaint = true;
+      }
+      for (const c of n.children) stack.push(c);
+    }
+    this.markDirty(node, kind);
+  }
+
+  clearDirty(node: DomNode, kind: 'layout' | 'paint'): void {
+    if (kind === 'layout') node._dirtyLayout = false;
+    else node._dirtyPaint = false;
+  }
+
+  clearSubtreeDirty(node: DomNode, kind: 'layout' | 'paint'): void {
+    const stack: DomNode[] = [node];
+    while (stack.length > 0) {
+      const n = stack.pop()!;
+      if (kind === 'layout') n._dirtyLayout = false;
+      else n._dirtyPaint = false;
+      for (const c of n.children) stack.push(c);
+    }
   }
 
   getDocument(): DomDocument | null {
@@ -262,6 +346,10 @@ class DomTree implements IDomTree {
   private convertNode(node: HtmlNode, parent: DomNode | null): DomNode | null {
     if (node.nodeType === 'element' as NodeType) {
       const el = node as HtmlElement;
+      const loadingAttr = el.attributes.get('loading');
+      const loadingState: DomElement['loadingState'] =
+        loadingAttr === 'lazy' ? 'lazy' : 'none';
+
       const domEl: DomElement = {
         domId: nextDomNodeId(),
         nodeType: 'element',
@@ -271,11 +359,30 @@ class DomTree implements IDomTree {
         children: [],
         computedStyle: null,
         layoutBox: null,
+        imageData: null,
+        naturalWidth: 0,
+        naturalHeight: 0,
+        loadingState,
+        _dirtyLayout: true,
+        _dirtyPaint: true,
       };
 
       for (const child of el.children) {
         const converted = this.convertNode(child, domEl);
         if (converted) domEl.children.push(converted);
+      }
+
+      if (el.rawContent && domEl.children.length === 0) {
+        const textNode: DomTextNode = {
+          domId: nextDomNodeId(),
+          nodeType: 'text',
+          parent: domEl,
+          children: [],
+          text: el.rawContent,
+          _dirtyLayout: true,
+          _dirtyPaint: true,
+        };
+        domEl.children.push(textNode);
       }
 
       const id = el.attributes.get('id');
@@ -292,6 +399,8 @@ class DomTree implements IDomTree {
         parent,
         children: [],
         text: textNode.text,
+        _dirtyLayout: true,
+        _dirtyPaint: true,
       };
       return result;
     }
