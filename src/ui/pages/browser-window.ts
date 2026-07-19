@@ -11,6 +11,7 @@ import type { IAdBlocker } from '../../browser/security/ad-blocker';
 import type { IUrlParser } from '../../browser/navigation/url-parser';
 import type { IContentRenderer } from '../components/content-renderer/content-renderer';
 import type { SearchResult } from '../components/content-renderer/content-renderer';
+import type { INavigationBridge } from '../components/navigation-bridge';
 
 import { TabManager } from '../../browser/tabs/tab-manager';
 import { AddressBar } from '../components/address-bar/address-bar';
@@ -27,6 +28,8 @@ import { DesktopLayout } from '../layout/desktop-layout';
 import { TrackerBlocker } from '../../browser/security/tracker-blocker';
 import { AdBlocker } from '../../browser/security/ad-blocker';
 import { UrlParser } from '../../browser/navigation/url-parser';
+import { NavigationController } from '../../browser/navigation/navigation-controller';
+import { NavigationBridge } from '../components/navigation-bridge';
 import { ContentRenderer } from '../components/content-renderer/content-renderer';
 import { SettingsPage } from './settings-page';
 import type { ISettingsPage } from './settings-page';
@@ -86,6 +89,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private contentNavigateHandler: ((e: Event) => void) | null = null;
   private activeSettingsPage: ISettingsPage | null = null;
   private settingsService: ISettingsService | null = null;
+  private navigationBridge: INavigationBridge | null = null;
 
   constructor(config?: Partial<BrowserWindowPageConfig>) {
     this.config = { ...DEFAULT_PAGE_CONFIG, ...config };
@@ -117,26 +121,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (areas.toolbar) {
       this.toolbarView = new ToolbarView(this.toolbar);
       this.toolbarView.attach(areas.toolbar);
-      this.toolbarView.setEventHandler((e) => {
-        switch (e.kind) {
-          case 'back': this.goBack(); break;
-          case 'forward': this.goForward(); break;
-          case 'reload': this.reload(); break;
-          case 'stop': this.stop(); break;
-          case 'shieldToggle':
-            this.trackerBlocker?.setEnabled(e.enabled);
-            this.adBlocker?.setEnabled(e.enabled);
-            this.statusBar?.setStatus(e.enabled ? 'Shield enabled' : 'Shield disabled');
-            break;
-          case 'bookmarkAdd':
-            if (this.tabManager?.activeTab) {
-              const tab = this.tabManager.activeTab;
-              this.bookmarkBar?.addBookmark(tab.title || tab.url, tab.url);
-              this.syncBookmarkBar();
-            }
-            break;
-        }
-      });
     }
 
     this.tabStrip = new TabStrip(this.tabManager);
@@ -147,7 +131,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         switch (e.kind) {
           case 'tabSelected':
             this.tabManager?.activateTab(e.tabId);
-            this.syncToolbar();
+            this.navigationBridge?.syncFromActiveTab();
             break;
           case 'tabClosed':
             this.tabManager?.removeTab(e.tabId);
@@ -170,17 +154,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
       const addressSlot = areas.toolbar.querySelector('.address-bar-slot');
       if (addressSlot) {
         this.addressBarView.attach(addressSlot as HTMLElement);
-        this.addressBarView.setEventHandler((e) => {
-          if (e.kind === 'navigate' && 'url' in e) {
-            void this.navigate(e.url);
-          } else if (e.kind === 'search' && 'query' in e) {
-            void this.navigate(e.query);
-          } else if (e.kind === 'reload') {
-            this.reload();
-          } else if (e.kind === 'stop') {
-            this.stop();
-          }
-        });
       }
     }
 
@@ -210,6 +183,38 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.tabManager.on('tabRemoved', () => this.syncAll());
     this.tabManager.on('tabActivated', () => this.syncAll());
 
+    // Create NavigationController and NavigationBridge.
+    const navController = new NavigationController(this.parser);
+    this.navigationBridge = new NavigationBridge(
+      navController,
+      this.tabManager,
+      this.addressBar,
+      this.toolbar,
+      this.statusBar,
+    );
+
+    // Wire toolbar events through the bridge (shield + bookmark remain local).
+    this.toolbar.on('shieldToggle', (e) => {
+      this.trackerBlocker?.setEnabled(e.enabled);
+      this.adBlocker?.setEnabled(e.enabled);
+      this.statusBar?.setStatus(e.enabled ? 'Shield enabled' : 'Shield disabled');
+    });
+    this.toolbar.on('bookmarkAdd', () => {
+      if (this.tabManager?.activeTab) {
+        const tab = this.tabManager.activeTab;
+        this.bookmarkBar?.addBookmark(tab.title || tab.url, tab.url);
+        this.syncBookmarkBar();
+      }
+    });
+
+    // Wire address bar keyboard shortcuts.
+    this.addressBarView?.setNavigationCallbacks({
+      onBack: () => this.goBack(),
+      onForward: () => this.goForward(),
+      onReload: () => this.reload(),
+      onStop: () => this.stop(),
+    });
+
     this.tabManager.createTab();
 
     if (areas.content) {
@@ -233,6 +238,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   async unmount(): Promise<void> {
     this.cleanupSettingsPage();
+    this.navigationBridge?.dispose();
     this.addressBarView?.dispose();
     this.tabStripView?.dispose();
     this.bookmarkBarView?.dispose();
@@ -249,6 +255,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (this.container) {
       this.container.innerHTML = '';
     }
+    this.navigationBridge = null;
     this.addressBarView = null;
     this.tabStripView = null;
     this.bookmarkBarView = null;
@@ -265,6 +272,23 @@ class BrowserWindowPage implements IBrowserWindowPage {
   }
 
   async navigate(url: string): Promise<void> {
+    if (this.navigationBridge) {
+      await this.navigationBridge.navigate(url);
+      // Re-render content for the navigated URL.
+      const currentUrl = this.navigationBridge.currentUrl;
+      if (currentUrl) {
+        try {
+          await this.renderUrlContent(currentUrl);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.contentRenderer?.renderError('Navigation Failed', message, currentUrl);
+        }
+      }
+      this.syncAll();
+      return;
+    }
+
+    // Fallback: direct navigation without bridge.
     if (!this.container || !this.tabManager) return;
     const tab = this.tabManager.activeTab;
     if (!tab) return;
@@ -627,37 +651,31 @@ class BrowserWindowPage implements IBrowserWindowPage {
   }
 
   reload(): void {
-    if (!this.tabManager) return;
-    const tab = this.tabManager.activeTab;
-    if (tab) {
-      this.toolbar?.setLoading(true);
-      this.statusBar?.setStatus('Reloading...');
-      setTimeout(() => {
-        this.toolbar?.setLoading(false);
-        this.statusBar?.setStatus('Done');
-      }, 300);
-    }
+    this.navigationBridge?.reload();
   }
 
   goBack(): void {
-    this.statusBar?.setStatus('Going back...');
+    this.navigationBridge?.goBack();
   }
 
   goForward(): void {
-    this.statusBar?.setStatus('Going forward...');
+    this.navigationBridge?.goForward();
   }
 
   stop(): void {
-    this.toolbar?.setLoading(false);
-    this.statusBar?.setStatus('Stopped');
+    this.navigationBridge?.stop();
   }
 
   private syncToolbar(): void {
-    if (!this.tabManager) return;
-    const tab = this.tabManager.activeTab;
-    if (tab) {
-      this.toolbar?.setCanGoBack(tab.canGoBack());
-      this.toolbar?.setCanGoForward(tab.canGoForward());
+    if (this.navigationBridge) {
+      this.toolbar?.setCanGoBack(this.navigationBridge.canGoBack);
+      this.toolbar?.setCanGoForward(this.navigationBridge.canGoForward);
+    } else if (this.tabManager) {
+      const tab = this.tabManager.activeTab;
+      if (tab) {
+        this.toolbar?.setCanGoBack(tab.canGoBack());
+        this.toolbar?.setCanGoForward(tab.canGoForward());
+      }
     }
   }
 

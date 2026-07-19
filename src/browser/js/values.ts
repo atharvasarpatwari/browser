@@ -610,11 +610,26 @@ export function setGlobalCaller(caller: JSFunctionCaller | null): void {
 export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]): JSValue {
   // Fast path: native functions can be called directly
   if (fn.isNative && fn.nativeFn) {
-    return fn.nativeFn(thisArg, args);
+    try {
+      return fn.nativeFn(thisArg, args);
+    } catch (err) {
+      if (err instanceof JSError) throw err;
+      throw new JSError(err instanceof Error ? err.message : String(err));
+    }
   }
   // Non-native: delegate to the interpreter
   if (_globalCaller) {
     return _globalCaller.callFunction(fn, thisArg, args);
   }
   throw new Error('No JS interpreter registered — cannot call non-native function');
+}
+
+// ── JSError ──────────────────────────────────────────────────────────────────
+
+export class JSError extends Error {
+  value: JSValue;
+  constructor(value: JSValue) {
+    super(toString(value));
+    this.value = value;
+  }
 }

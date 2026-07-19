@@ -432,5 +432,6 @@ function makeEntry(url: string, type: NavigationType) {
     scrollX: 0,
     scrollY: 0,
     parsedUrl: new UrlParser().parse(url),
+    state: null,
   };
 }

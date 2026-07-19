@@ -25,7 +25,7 @@ import type { INavigationController } from '../browser/navigation/navigation-con
 import { Router } from '../browser/navigation/router';
 import type { IRouter } from '../browser/navigation/router';
 import { BrowserEngine } from '../browser/engine/browser-engine';
-import type { IBrowserEngine, IPageLoader, IPageRenderer, PageLoadResult } from '../browser/engine/browser-engine';
+import type { IBrowserEngine } from '../browser/engine/browser-engine';
 
 // Tab management
 import { TabManager } from '../browser/tabs/tab-manager';
@@ -79,31 +79,22 @@ import { AdBlocker } from '../browser/security/ad-blocker';
 import type { IAdBlocker } from '../browser/security/ad-blocker';
 import { ThirdPartySecurityManager, extractOrigin } from '../browser/security/third-party-security';
 import type { IThirdPartySecurityManager } from '../browser/security/third-party-security';
+import { createCspEnforcement, type CspEnforcement } from '../browser/security/csp-enforcement';
+import { HtmlSanitizer } from '../browser/security/html-sanitizer';
 
 // Rendering
 import { DomTree } from '../browser/rendering/dom-tree';
-import type { IDomTree, DomDocument, DomNode, DomElement } from '../browser/rendering/dom-tree';
+import type { IDomTree } from '../browser/rendering/dom-tree';
 import { CssParser } from '../browser/rendering/css-parser';
-import type { ICssParser, CssRule } from '../browser/rendering/css-parser';
+import type { ICssParser } from '../browser/rendering/css-parser';
 import { LayoutEngine } from '../browser/rendering/layout-engine';
 import type { ILayoutEngine } from '../browser/rendering/layout-engine';
 import { PaintEngine } from '../browser/rendering/paint-engine';
 import type { IPaintEngine } from '../browser/rendering/paint-engine';
 import { HtmlParser } from '../browser/rendering/html-parser';
 
-// Lazy loading
-import { LazyLoader } from '../browser/rendering/lazy-loader';
-import { ReflowRepaintController } from '../browser/rendering/reflow-repaint-controller';
-
-// JS engine (for inline script execution)
-import { runJS } from '../browser/js/index';
-import { EventLoop as JsEventLoop } from '../browser/js/event-loop';
-
-// CSS5 cascade (directly for tree-level style computation)
-import { computeComputedStyles } from '../browser/rendering/css5/cascade';
-import type { StyleableElement } from '../browser/rendering/css5/cascade';
-import type { CssStylesheet as Css5Stylesheet, CssRule as Css5Rule, CssStyleRule } from '../browser/rendering/css5/types';
-
+// PageLoader and PageRenderer
+import { PageLoader, PageRenderer } from '../browser/engine/page-renderer';
 
 // Storage
 import { InMemorySessionsStore } from '../browser/storage/sessions-store';
@@ -422,6 +413,13 @@ class ApplicationBootstrap {
       ServiceLifetime.Singleton,
     );
 
+    // 6b. CSP enforcement (8 modules wired together)
+    c.register<CspEnforcement>(
+      'CspEnforcement' as any,
+      () => createCspEnforcement(),
+      ServiceLifetime.Singleton,
+    );
+
     // 7. Rendering pipeline
     c.register<IDomTree>(Tokens.DomTree, () => new DomTree(), ServiceLifetime.Singleton);
     c.register<ICssParser>(Tokens.CssParser, () => new CssParser(), ServiceLifetime.Singleton);
@@ -623,10 +621,14 @@ class ApplicationBootstrap {
     const historyService = this.container.resolve<IHistoryService>(Tokens.HistoryService);
     historyService.connectController(navController);
 
+    // Wire CSP navigation guard into controller
+    const cspEnforcement = this.container.resolve<CspEnforcement>('CspEnforcement' as any);
+    navController.addGuard(cspEnforcement.navigationGuard);
+
     // Plug the networking layer into the browser engine as the page loader
     const engine = this.container.resolve<IBrowserEngine>(Tokens.BrowserEngine);
     const resourceLoader = this.container.resolve<IResourceLoader>(Tokens.ResourceLoader);
-    engine.setPageLoader(this.createPageLoader(resourceLoader));
+    engine.setPageLoader(new PageLoader(resourceLoader));
 
     // Add ad blocking middleware
     const adBlocker = this.container.resolve<IAdBlocker>(Tokens.AdBlocker);
@@ -663,325 +665,26 @@ class ApplicationBootstrap {
     });
 
     // Plug the rendering pipeline as the page renderer
-    engine.setPageRenderer(this.createPageRenderer());
+    const pageRenderer = new PageRenderer({
+      htmlParser: new HtmlParser(),
+      domTree: this.container.resolve<IDomTree>(Tokens.DomTree),
+      cssParser: this.container.resolve<ICssParser>(Tokens.CssParser),
+      layoutEngine: this.container.resolve<ILayoutEngine>(Tokens.LayoutEngine),
+      paintEngine: this.container.resolve<IPaintEngine>(Tokens.PaintEngine),
+      resourceLoader,
+      prioritizer: new ResourcePrioritizer(),
+      controller: this.container.resolve<INavigationController>(Tokens.NavigationController),
+      sanitizer: new HtmlSanitizer(),
+      scriptEnforcer: cspEnforcement.scriptEnforcer,
+      resourceEnforcer: cspEnforcement.resourceEnforcer,
+    });
+    engine.setPageRenderer(pageRenderer);
 
     this.log('Browser UI mounted');
 
     // Wire SettingsService → BrowserWindowPage so nova://settings gets persistence
     const settingsService = this.container.resolve<ISettingsService>(Tokens.SettingsService);
     page.setSettingsService(settingsService);
-  }
-
-  /**
-   * Adapter bridging IResourceLoader → IPageLoader so the browser engine
-   * can use our networking subsystem to fetch documents.
-   */
-  private createPageLoader(loader: IResourceLoader): IPageLoader {
-    return {
-      load: async (url: string, signal: AbortSignal): Promise<PageLoadResult> => {
-        const result = await loader.loadResource(url, 'document', { signal });
-        return {
-          url: result.url,
-          statusCode: result.statusCode,
-          contentType: result.contentType,
-          body: result.body,
-          headers: result.headers,
-          loadedAt: result.loadedAt,
-        };
-      },
-    };
-  }
-
-  /**
-   * Composes the rendering pipeline (HTML parser → DOM tree → CSS → layout → paint)
-   * into an IPageRenderer implementation.
-   */
-  private createPageRenderer(): IPageRenderer {
-    const htmlParser = new HtmlParser();
-    const domTree = this.container.resolve<IDomTree>(Tokens.DomTree);
-    const cssParser = this.container.resolve<ICssParser>(Tokens.CssParser);
-    const layoutEngine = this.container.resolve<ILayoutEngine>(Tokens.LayoutEngine);
-    const paintEngine = this.container.resolve<IPaintEngine>(Tokens.PaintEngine);
-    const resourceLoader = this.container.resolve<IResourceLoader>(Tokens.ResourceLoader);
-    const prioritizer = new ResourcePrioritizer();
-
-    return {
-      render: async (result: PageLoadResult): Promise<void> => {
-        const parseResult = htmlParser.parse(result.body, result.url);
-        const htmlDoc = parseResult.document;
-
-        // Feed discovered resources to the prioritizer for batch loading
-        if (parseResult.resources.length > 0) {
-          prioritizer.submitBatch(parseResult.resources);
-        }
-
-        // Convert the parsed HTML into our internal DOM tree representation
-        const doc = domTree.buildFromHtml(htmlDoc);
-
-        // Extract and compute CSS styles
-        const rules = cssParser.extractStylesFromDocument(htmlDoc);
-        this.applyComputedStyles(domTree, cssParser, rules);
-
-        // Execute scripts: inline synchronously, external fetched via ResourceLoader
-        await this.executeAllScripts(domTree, doc, resourceLoader, result.url);
-        this.applyComputedStyles(domTree, cssParser, rules);
-
-        // Run layout
-        layoutEngine.layout(doc, domTree);
-
-        // Lazy load images/iframes via IntersectionObserver
-        const lazyLoader = new LazyLoader();
-        lazyLoader.init(doc, domTree);
-        lazyLoader.scanForLazyElements(doc);
-        lazyLoader.setViewport(1920, 1080);
-
-        // Paint
-        paintEngine.paint(doc);
-      },
-    };
-  }
-
-  /**
-   * Walks the DOM tree, builds a StyleableElement mirror for CSS5 selector
-   * matching, and applies computed styles to every element so the layout /
-   * paint engines can consume them via node.computedStyle.
-   */
-  private applyComputedStyles(
-    domTree: IDomTree,
-    cssParser: ICssParser,
-    rules: readonly CssRule[],
-  ): void {
-    const doc = domTree.getDocument();
-    if (!doc) return;
-
-    // Build a CSS5 stylesheet from legacy CssRule[] (reparse selectors once).
-    const stylesheet = this.buildCss5Stylesheet(cssParser, rules);
-
-    // Pass 1: Build StyleableElement tree mirroring the DOM tree.
-    const rootStyleables = this.buildStyleableTree(doc.children, null);
-
-    // Pass 2: Compute and apply styles top-down.
-    this.applyStylesRecursive(domTree, doc.children, rootStyleables, stylesheet, null);
-  }
-
-  /**
-   * Executes all scripts found in the DOM tree — both inline and external.
-   *
-   * Per the WHATWG spec:
-   *   1. Blocking scripts (no defer/async): execute synchronously in document
-   *      order, pausing HTML parsing. External scripts are fetched first.
-   *   2. defer scripts: execute after DOM parsing completes, in document order.
-   *   3. async scripts: execute as soon as they finish downloading, regardless
-   *      of DOM state.
-   *
-   * This implementation:
-   *   - Executes inline scripts synchronously (already in DOM)
-   *   - Fetches external scripts via ResourceLoader and executes them
-   *   - Collects defer scripts and runs them after all blocking scripts
-   *   - Fires async scripts immediately after fetch (best-effort)
-   */
-  private async executeAllScripts(
-    domTree: IDomTree,
-    doc: DomDocument,
-    resourceLoader: IResourceLoader,
-    baseUrl: string,
-  ): Promise<void> {
-    const scripts = domTree.getElementsByTagName('script');
-    if (scripts.length === 0) return;
-
-    const eventLoop = new JsEventLoop();
-
-    const blockingScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
-    const deferScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
-    const asyncScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
-
-    // Categorize scripts
-    for (const script of scripts) {
-      const hasSrc = script.attributes.has('src');
-      const isDefer = script.attributes.has('defer');
-      const isAsync = script.attributes.has('async');
-
-      if (hasSrc) {
-        const src = script.attributes.get('src') ?? '';
-        const fullUrl = this.resolveUrl(src, baseUrl);
-
-        try {
-          const source = await resourceLoader.loadScript(fullUrl);
-
-          if (isAsync) {
-            asyncScripts.push({ source, el: script });
-          } else if (isDefer) {
-            deferScripts.push({ source, el: script });
-          } else {
-            blockingScripts.push({ source, el: script });
-          }
-        } catch (err) {
-          console.error(
-            `[ScriptEngine] Failed to fetch external script: ${fullUrl}`,
-            err instanceof Error ? err.message : err,
-          );
-        }
-      } else {
-        // Inline script — extract text content
-        let source = '';
-        for (const child of script.children) {
-          if (child.nodeType === 'text') {
-            source += (child as unknown as { text: string }).text;
-          }
-        }
-        source = source.trim();
-        if (source === '') continue;
-
-        // Inline scripts without defer/async are blocking by default
-        blockingScripts.push({ source, el: script });
-      }
-    }
-
-    // 1. Execute blocking scripts in document order
-    for (const { source } of blockingScripts) {
-      const result = runJS(source, { document: doc, domTree, eventLoop });
-      if (result.error) {
-        console.error(
-          `[ScriptEngine] Error executing blocking script: ${result.error.message}`,
-        );
-      }
-    }
-
-    // 2. Execute defer scripts in document order (after DOM is parsed)
-    for (const { source } of deferScripts) {
-      const result = runJS(source, { document: doc, domTree, eventLoop });
-      if (result.error) {
-        console.error(
-          `[ScriptEngine] Error executing defer script: ${result.error.message}`,
-        );
-      }
-    }
-
-    // 3. Fire async scripts (best-effort — they may already be downloaded)
-    for (const { source, el } of asyncScripts) {
-      // Fire and forget — async scripts don't block rendering
-      runJS(source, { document: doc, domTree, eventLoop });
-      void el; // used only for categorization
-    }
-  }
-
-  /**
-   * Simple URL resolution — resolves a relative URL against a base.
-   */
-  private resolveUrl(relative: string, base: string): string {
-    if (relative.startsWith('http://') || relative.startsWith('https://') || relative.startsWith('//')) {
-      return relative;
-    }
-    try {
-      return new URL(relative, base).href;
-    } catch {
-      return relative;
-    }
-  }
-
-  /**
-   * Converts legacy CssRule[] (string selectors) into a CssStylesheet
-   * that the CSS5 cascade engine can consume.
-   */
-  private buildCss5Stylesheet(cssParser: ICssParser, rules: readonly CssRule[]): Css5Stylesheet {
-    const css5Rules: Css5Rule[] = [];
-    const parser = (cssParser as CssParser).getCss5Parser();
-
-    let order = 0;
-    for (const rule of rules) {
-      if (rule.selector === '__external__') continue;
-
-      const selector = parser.parseSelector(rule.selector);
-      if (!selector) continue;
-
-      const styleRule: CssStyleRule = {
-        type: 'style',
-        selectors: [selector],
-        declarations: Array.from(rule.declarations.entries()).map(([prop, value]) => ({
-          property: prop,
-          value,
-          important: false,
-        })),
-        specificity: { id: rule.specificity.id, a: rule.specificity.class, b: rule.specificity.tag },
-        sourceOrder: order++,
-        sourceUrl: rule.sourceUrl,
-      };
-      css5Rules.push(styleRule);
-    }
-
-    return { rules: css5Rules, url: null };
-  }
-
-  /**
-   * Builds a StyleableElement tree mirroring the DOM tree.
-   * Construction is bottom-up: children are built first, then the parent
-   * is created with correct child/parent pointers.
-   */
-  private buildStyleableTree(
-    domNodes: readonly DomNode[],
-    parentStyleable: StyleableElement | null,
-  ): StyleableElement[] {
-    const result: StyleableElement[] = [];
-
-    for (const node of domNodes) {
-      if (node.nodeType !== 'element') continue;
-      const el = node as DomElement;
-
-      // Build children first (bottom-up construction).
-      const childStyleables = this.buildStyleableTree(el.children, null);
-
-      const styleable: StyleableElement = {
-        tagName: el.tagName,
-        attributes: el.attributes,
-        parent: parentStyleable,
-        children: childStyleables,
-      };
-
-      // Fix children's parent pointers to point to this node.
-      for (const child of childStyleables) {
-        child.parent = styleable;
-      }
-
-      result.push(styleable);
-    }
-
-    return result;
-  }
-
-  /**
-   * Recursively computes and applies CSS styles to every element in the DOM tree.
-   * Walks top-down so parent computed styles can be passed for inheritance.
-   */
-  private applyStylesRecursive(
-    domTree: IDomTree,
-    domNodes: readonly DomNode[],
-    styleables: readonly StyleableElement[],
-    stylesheet: Css5Stylesheet,
-    parentComputed: Map<string, string> | null,
-  ): void {
-    let i = 0;
-    for (const node of domNodes) {
-      if (node.nodeType !== 'element') continue;
-      const el = node as DomElement;
-      const styleable = styleables[i++];
-
-      const computed = computeComputedStyles(
-        styleable,
-        stylesheet,
-        undefined,
-        parentComputed ?? undefined,
-      );
-      domTree.setComputedStyle(el, computed);
-
-      // Recurse into children with this element's computed styles as parent.
-      this.applyStylesRecursive(
-        domTree,
-        el.children,
-        styleable.children,
-        stylesheet,
-        computed,
-      );
-    }
   }
 
   // ── Diagnostics ───────────────────────────────────────────────────────────

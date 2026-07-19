@@ -397,23 +397,21 @@ describe('ThirdPartySecurityManager', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('PermissionManager', () => {
-  it('should cap requests at 5000', async () => {
-    const mgr = new PermissionManager();
+  it('should cap requests at maxEntries', async () => {
+    const mgr = new PermissionManager({ maxEntries: 5000 });
     for (let i = 0; i < 6000; i++) {
       await mgr.request(`https://origin${i}.com`, 'midi');
     }
-    const requests = await mgr.getAllRequests();
-    expect(requests.length).toBeLessThanOrEqual(5000);
+    expect(mgr.size).toBeLessThanOrEqual(5000);
   });
 
   it('should keep most recent requests after cap', async () => {
-    const mgr = new PermissionManager();
+    const mgr = new PermissionManager({ maxEntries: 5000 });
     for (let i = 0; i < 5005; i++) {
       await mgr.request(`https://origin${i}.com`, 'midi');
     }
-    const requests = await mgr.getAllRequests();
-    expect(requests.length).toBe(5000);
-    expect(requests[requests.length - 1].origin).toBe('https://origin5004.com');
+    expect(mgr.size).toBe(5000);
+    expect(mgr.isGranted('https://origin5004.com', 'midi')).toBe(true);
   });
 });
 

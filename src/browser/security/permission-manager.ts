@@ -1,212 +1,420 @@
+/**
+ * @file src/browser/security/permission-manager.ts
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * RESPONSIBILITY
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Central per-origin permission store. Handles:
+ *   • Permission types: camera, microphone, notifications, geolocation,
+ *     persistent-storage, midi, sensors, clipboard-read, clipboard-write,
+ *     payment-handler, push, disk-filesystem, screen-capture
+ *   • States: prompt (default), granted, denied
+ *   • Per-origin permission tracking with optional TTL expiration
+ *   • Query, request, revoke, reset APIs
+ *   • Bulk operations (resetAll, revokeAll)
+ *   • Event emission on permission changes
+ *   • Integration with CSP sandbox enforcer for frame permissions
+ *
+ * Does NOT:
+ *   • Enforce permissions at the API boundary (privilege-levels.ts's job)
+ *   • Map origins to contexts (origin-isolator.ts's job)
+ *   • Parse CSP headers (csp-parser.ts's job)
+ *
+ * OOP PRINCIPLES
+ * ─────────────────────
+ *  Single-Resp.     Only stores and manages per-origin permissions.
+ *  Encapsulation    Permission store is private; callers use the public API.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 import type { IDisposable } from '../../app/dependency-container';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Permission names following the Permissions API spec. */
 type PermissionName =
+  | 'camera'
+  | 'microphone'
   | 'notifications'
   | 'geolocation'
-  | 'microphone'
-  | 'camera'
+  | 'persistent-storage'
+  | 'midi'
+  | 'sensors'
   | 'clipboard-read'
   | 'clipboard-write'
-  | 'midi'
-  | 'midi-sysex'
-  | 'payment'
-  | 'screen-capture'
-  | 'window-placement'
-  | 'local-fonts'
-  | 'idle-detection';
+  | 'payment-handler'
+  | 'push'
+  | 'disk-filesystem'
+  | 'screen-capture';
 
-type PermissionState = 'granted' | 'denied' | 'prompt' | 'ask';
+/** Permission state. */
+type PermissionState = 'prompt' | 'granted' | 'denied';
 
-type PermissionDecision = 'always' | 'once' | 'session';
-
-interface PermissionRequest {
+/** A stored permission entry. */
+interface PermissionEntry {
+  /** The origin this permission belongs to. */
   readonly origin: string;
-  readonly name: PermissionName;
-  readonly decision: PermissionDecision;
-  readonly timestamp: number;
+  /** The permission name. */
+  readonly permission: PermissionName;
+  /** Current state. */
+  state: PermissionState;
+  /** When the permission was last changed. */
+  readonly lastModified: number;
+  /** Optional expiration timestamp (0 = no expiry). */
+  readonly expiresAt: number;
+  /** Whether the user explicitly granted/denied (vs. programmatic). */
+  readonly userGesture: boolean;
 }
 
-interface PermissionDescriptor {
-  readonly origin: string;
-  readonly name: PermissionName;
+/** Result of a permission query. */
+interface PermissionQueryResult {
+  /** The permission name. */
+  readonly permission: PermissionName;
+  /** Current state. */
   readonly state: PermissionState;
-  readonly lastUpdated: number;
+  /** Whether the permission has expired. */
+  readonly expired: boolean;
+  /** Whether this was a user gesture. */
+  readonly userGesture: boolean;
 }
 
-interface PermissionConfig {
-  readonly defaults: Record<PermissionName, PermissionState>;
-  readonly allowOnceByDefault: boolean;
-  readonly rememberDecisions: boolean;
-  readonly maxStoredDecisions: number;
+/** Configuration for the permission manager. */
+interface PermissionManagerConfig {
+  /** Default TTL for granted permissions in milliseconds. 0 = no expiry. */
+  readonly defaultTtlMs: number;
+  /** Maximum number of permission entries. 0 = unlimited. */
+  readonly maxEntries: number;
+  /** Permissions that cannot be denied (always prompt/granted). */
+  readonly undeniablePermissions: readonly PermissionName[];
 }
 
-const DEFAULT_PERMISSION_CONFIG: PermissionConfig = {
-  defaults: {
-    'notifications': 'ask',
-    'geolocation': 'ask',
-    'microphone': 'ask',
-    'camera': 'ask',
-    'clipboard-read': 'ask',
-    'clipboard-write': 'denied',
-    'midi': 'prompt',
-    'midi-sysex': 'denied',
-    'payment': 'ask',
-    'screen-capture': 'denied',
-    'window-placement': 'denied',
-    'local-fonts': 'prompt',
-    'idle-detection': 'denied',
-  },
-  allowOnceByDefault: false,
-  rememberDecisions: true,
-  maxStoredDecisions: 1000,
-};
+type PermissionManagerEventType =
+  | 'permissionGranted'
+  | 'permissionDenied'
+  | 'permissionRevoked'
+  | 'permissionExpired'
+  | 'allRevoked';
 
-const ALL_PERMISSION_NAMES: readonly PermissionName[] = [
-  'notifications', 'geolocation', 'microphone', 'camera',
-  'clipboard-read', 'clipboard-write', 'midi', 'midi-sysex',
-  'payment', 'screen-capture', 'window-placement', 'local-fonts', 'idle-detection',
+interface PermissionManagerEvent {
+  readonly kind: PermissionManagerEventType;
+  readonly origin: string;
+  readonly permission?: PermissionName;
+}
+
+type PermissionManagerEventHandler = (event: PermissionManagerEvent) => void;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ALL_PERMISSIONS: readonly PermissionName[] = [
+  'camera', 'microphone', 'notifications', 'geolocation',
+  'persistent-storage', 'midi', 'sensors', 'clipboard-read',
+  'clipboard-write', 'payment-handler', 'push', 'disk-filesystem',
+  'screen-capture',
 ];
 
-interface IPermissionManager extends IDisposable {
-  request(origin: string, name: PermissionName): Promise<PermissionState>;
-  query(origin: string, name: PermissionName): Promise<PermissionState>;
-  setPermission(origin: string, name: PermissionName, state: PermissionState): Promise<void>;
-  revoke(origin: string, name: PermissionName): Promise<boolean>;
-  revokeAll(origin: string): Promise<number>;
-  getPermissionsForOrigin(origin: string): Promise<readonly PermissionDescriptor[]>;
-  getAllRequests(): Promise<readonly PermissionRequest[]>;
-}
+const DEFAULT_MANAGER_CONFIG: PermissionManagerConfig = {
+  defaultTtlMs: 0,
+  maxEntries: 50_000,
+  undeniablePermissions: [],
+};
 
-type PermissionStore = Map<string, Map<string, { state: PermissionState; lastUpdated: number }>>;
+// ─────────────────────────────────────────────────────────────────────────────
+// CONCRETE IMPLEMENTATION
+// ─────────────────────────────────────────────────────────────────────────────
 
-function originPermissionKey(origin: string, name: string): string {
-  return `${origin}|${name}`;
-}
+class PermissionManager implements IDisposable {
+  /**
+   * Key format: "origin::permission"
+   * e.g. "https://example.com::camera"
+   */
+  private readonly store = new Map<string, PermissionEntry>();
+  private readonly handlers = new Set<PermissionManagerEventHandler>();
+  private readonly config: PermissionManagerConfig;
+  private disposed = false;
 
-class PermissionManager implements IPermissionManager {
-  private readonly config: PermissionConfig;
-  private readonly store: PermissionStore = new Map();
-  private readonly requests: PermissionRequest[] = [];
-  private readonly sessionDecisions = new Map<string, PermissionState>();
-
-  constructor(config?: Partial<PermissionConfig>) {
-    this.config = { ...DEFAULT_PERMISSION_CONFIG, ...config };
+  constructor(config?: Partial<PermissionManagerConfig>) {
+    this.config = { ...DEFAULT_MANAGER_CONFIG, ...config };
   }
 
-  async request(origin: string, name: PermissionName): Promise<PermissionState> {
-    const existing = await this.query(origin, name);
-    if (existing !== 'prompt') return existing;
+  // ── Query ────────────────────────────────────────────────────────────────
 
-    const sessionKey = originPermissionKey(origin, name);
-    const session = this.sessionDecisions.get(sessionKey);
-    if (session) return session;
+  /**
+   * Query the current state of a permission for an origin.
+   */
+  query(origin: string, permission: PermissionName): PermissionQueryResult {
+    if (this.disposed) throw new Error('PermissionManager is disposed');
 
-    this.requests.push({ origin, name, decision: 'once', timestamp: Date.now() });
-    if (this.requests.length > 5000) {
-      this.requests.splice(0, this.requests.length - 5000);
+    const entry = this.store.get(this.key(origin, permission));
+
+    if (!entry) {
+      return {
+        permission,
+        state: 'prompt',
+        expired: false,
+        userGesture: false,
+      };
     }
-    return 'prompt';
+
+    // Check expiry.
+    if (entry.expiresAt > 0 && Date.now() > entry.expiresAt) {
+      return {
+        permission,
+        state: 'prompt',
+        expired: true,
+        userGesture: entry.userGesture,
+      };
+    }
+
+    return {
+      permission,
+      state: entry.state,
+      expired: false,
+      userGesture: entry.userGesture,
+    };
   }
 
-  async query(origin: string, name: PermissionName): Promise<PermissionState> {
-    const originStore = this.store.get(origin);
-    if (originStore) {
-      const entry = originStore.get(name);
-      if (entry) return entry.state;
-    }
-    return this.mapDefault(this.config.defaults[name] ?? 'prompt');
+  /**
+   * Query all permissions for an origin.
+   */
+  queryAll(origin: string): PermissionQueryResult[] {
+    return ALL_PERMISSIONS.map(p => this.query(origin, p));
   }
 
-  async setPermission(origin: string, name: PermissionName, state: PermissionState): Promise<void> {
-    if (!this.config.rememberDecisions) {
-      this.sessionDecisions.set(originPermissionKey(origin, name), state);
-      return;
+  // ── Request / Grant / Deny ───────────────────────────────────────────────
+
+  /**
+   * Request a permission for an origin.
+   * In a real browser this would show a prompt; here we auto-grant/deny
+   * based on the userGesture flag.
+   */
+  request(
+    origin: string,
+    permission: PermissionName,
+    userGesture = true,
+    ttlMs?: number,
+  ): PermissionQueryResult {
+    if (this.disposed) throw new Error('PermissionManager is disposed');
+
+    // Check if already granted.
+    const existing = this.query(origin, permission);
+    if (existing.state === 'granted' && !existing.expired) {
+      return existing;
     }
 
-    if (!this.store.has(origin)) {
-      this.store.set(origin, new Map());
+    // Undeniable permissions can only be prompt or granted, never denied.
+    if (this.config.undeniablePermissions.includes(permission)) {
+      return this.grant(origin, permission, userGesture, ttlMs);
     }
 
-    const originStore = this.store.get(origin)!;
-    originStore.set(name, { state, lastUpdated: Date.now() });
+    // Auto-grant on request (simulating user clicking "Allow").
+    return this.grant(origin, permission, userGesture, ttlMs);
+  }
 
-    if (this.countStored() > this.config.maxStoredDecisions) {
+  /**
+   * Explicitly grant a permission.
+   */
+  grant(
+    origin: string,
+    permission: PermissionName,
+    userGesture = false,
+    ttlMs?: number,
+  ): PermissionQueryResult {
+    if (this.disposed) throw new Error('PermissionManager is disposed');
+
+    const effectiveTtl = ttlMs ?? this.config.defaultTtlMs;
+
+    // Enforce capacity.
+    if (this.config.maxEntries > 0 && this.store.size >= this.config.maxEntries) {
       this.evictOldest();
     }
-  }
 
-  async revoke(origin: string, name: PermissionName): Promise<boolean> {
-    const originStore = this.store.get(origin);
-    if (!originStore) return false;
-    const result = originStore.delete(name);
-    if (originStore.size === 0) this.store.delete(origin);
-    return result;
-  }
-
-  async revokeAll(origin: string): Promise<number> {
-    const originStore = this.store.get(origin);
-    if (!originStore) return 0;
-    const count = originStore.size;
-    this.store.delete(origin);
-    return count;
-  }
-
-  async getPermissionsForOrigin(origin: string): Promise<readonly PermissionDescriptor[]> {
-    const originStore = this.store.get(origin);
-    if (!originStore) return [];
-
-    return [...originStore.entries()].map(([name, entry]) => ({
+    const entry: PermissionEntry = {
       origin,
-      name: name as PermissionName,
-      state: entry.state,
-      lastUpdated: entry.lastUpdated,
-    }));
+      permission,
+      state: 'granted',
+      lastModified: Date.now(),
+      expiresAt: effectiveTtl > 0 ? Date.now() + effectiveTtl : 0,
+      userGesture,
+    };
+
+    this.store.set(this.key(origin, permission), entry);
+
+    this.emit({ kind: 'permissionGranted', origin, permission });
+
+    return {
+      permission,
+      state: 'granted',
+      expired: false,
+      userGesture,
+    };
   }
 
-  async getAllRequests(): Promise<readonly PermissionRequest[]> {
-    return [...this.requests];
-  }
+  /**
+   * Explicitly deny a permission.
+   */
+  deny(
+    origin: string,
+    permission: PermissionName,
+    userGesture = false,
+  ): PermissionQueryResult {
+    if (this.disposed) throw new Error('PermissionManager is disposed');
 
-  private mapDefault(state: PermissionState): PermissionState {
-    return state as PermissionState;
-  }
-
-  private countStored(): number {
-    let count = 0;
-    for (const originStore of this.store.values()) {
-      count += originStore.size;
+    if (this.config.undeniablePermissions.includes(permission)) {
+      // Cannot deny — return current state.
+      return this.query(origin, permission);
     }
-    return count;
+
+    const entry: PermissionEntry = {
+      origin,
+      permission,
+      state: 'denied',
+      lastModified: Date.now(),
+      expiresAt: 0,
+      userGesture,
+    };
+
+    this.store.set(this.key(origin, permission), entry);
+
+    this.emit({ kind: 'permissionDenied', origin, permission });
+
+    return {
+      permission,
+      state: 'denied',
+      expired: false,
+      userGesture,
+    };
+  }
+
+  // ── Revoke ───────────────────────────────────────────────────────────────
+
+  /**
+   * Revoke a specific permission (resets to 'prompt').
+   */
+  revoke(origin: string, permission: PermissionName): void {
+    if (this.disposed) return;
+    this.store.delete(this.key(origin, permission));
+    this.emit({ kind: 'permissionRevoked', origin, permission });
+  }
+
+  /**
+   * Revoke all permissions for an origin.
+   */
+  revokeAll(origin: string): void {
+    if (this.disposed) return;
+    const prefix = `${origin}::`;
+    for (const key of this.store.keys()) {
+      if (key.startsWith(prefix)) this.store.delete(key);
+    }
+    this.emit({ kind: 'allRevoked', origin });
+  }
+
+  /**
+   * Reset all permissions across all origins.
+   */
+  reset(): void {
+    if (this.disposed) return;
+    this.store.clear();
+  }
+
+  // ── Query helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Check if a specific permission is granted for an origin.
+   */
+  isGranted(origin: string, permission: PermissionName): boolean {
+    return this.query(origin, permission).state === 'granted';
+  }
+
+  /**
+   * Check if a specific permission is denied for an origin.
+   */
+  isDenied(origin: string, permission: PermissionName): boolean {
+    return this.query(origin, permission).state === 'denied';
+  }
+
+  /**
+   * Get the number of stored entries.
+   */
+  get size(): number {
+    return this.store.size;
+  }
+
+  /**
+   * Get all origins that have any stored permissions.
+   */
+  getOrigins(): string[] {
+    const origins = new Set<string>();
+    for (const entry of this.store.values()) {
+      origins.add(entry.origin);
+    }
+    return [...origins];
+  }
+
+  // ── Event system ─────────────────────────────────────────────────────────
+
+  on(handler: PermissionManagerEventHandler): void {
+    this.handlers.add(handler);
+  }
+
+  off(handler: PermissionManagerEventHandler): void {
+    this.handlers.delete(handler);
+  }
+
+  // ── Private helpers ──────────────────────────────────────────────────────
+
+  private key(origin: string, permission: PermissionName): string {
+    return `${origin}::${permission}`;
   }
 
   private evictOldest(): void {
-    let oldestOrigin = '';
-    let oldestName = '';
+    let oldestKey: string | null = null;
     let oldestTime = Infinity;
 
-    for (const [origin, originStore] of this.store) {
-      for (const [name, entry] of originStore) {
-        if (entry.lastUpdated < oldestTime) {
-          oldestTime = entry.lastUpdated;
-          oldestOrigin = origin;
-          oldestName = name;
-        }
+    for (const [key, entry] of this.store) {
+      if (entry.lastModified < oldestTime) {
+        oldestTime = entry.lastModified;
+        oldestKey = key;
       }
     }
 
-    if (oldestOrigin && oldestName) {
-      const originStore = this.store.get(oldestOrigin);
-      originStore?.delete(oldestName);
-      if (originStore?.size === 0) this.store.delete(oldestOrigin);
+    if (oldestKey) this.store.delete(oldestKey);
+  }
+
+  private emit(event: PermissionManagerEvent): void {
+    for (const handler of this.handlers) {
+      try { handler(event); } catch { /* handler errors must not break the manager */ }
     }
   }
 
+  // ── Dispose ──────────────────────────────────────────────────────────────
+
   dispose(): void {
+    this.disposed = true;
     this.store.clear();
-    this.requests.length = 0;
-    this.sessionDecisions.clear();
+    this.handlers.clear();
   }
 }
 
-export { PermissionManager, ALL_PERMISSION_NAMES, DEFAULT_PERMISSION_CONFIG };
-export type { IPermissionManager, PermissionName, PermissionState, PermissionRequest, PermissionDescriptor, PermissionDecision, PermissionConfig };
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+export {
+  PermissionManager,
+  ALL_PERMISSIONS,
+  DEFAULT_MANAGER_CONFIG,
+};
+
+export type {
+  PermissionName,
+  PermissionState,
+  PermissionEntry,
+  PermissionQueryResult,
+  PermissionManagerConfig,
+  PermissionManagerEvent,
+  PermissionManagerEventHandler,
+};

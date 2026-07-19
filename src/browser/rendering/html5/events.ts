@@ -56,12 +56,20 @@ export class Event {
     return this._defaultPrevented;
   }
 
+  get canceled(): boolean {
+    return this._cancelled;
+  }
+
   get cancelled(): boolean {
     return this._cancelled;
   }
 
   get cancelBubble(): boolean {
     return this._stopPropagation;
+  }
+
+  set cancelBubble(value: boolean) {
+    if (value) this.stopPropagation();
   }
 
   get isPropagationStopped(): boolean {
@@ -386,15 +394,15 @@ export function dispatchEvent(node: HtmlNode, event: Event): boolean {
   }
 
   // ─── CAPTURE PHASE ────────────────────────────────────────────────────
-  // Walk from root (last ancestor) down to parent of target
-  if (event.bubbles) {
-    event._setPhase(CAPTURING_PHASE);
-    for (let i = ancestors.length - 1; i >= 0; i--) {
-      const ancestor = ancestors[i];
-      event._setCurrentTarget(ancestor);
-      if (invokeListeners(ancestor, event, true)) break;
-      if (event._stopPropagationFlag()) break;
-    }
+  // Walk from root (last ancestor) down to parent of target.
+  // Per WHATWG DOM Living Standard, capture phase runs for ALL events
+  // regardless of whether they bubble.
+  event._setPhase(CAPTURING_PHASE);
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const ancestor = ancestors[i];
+    event._setCurrentTarget(ancestor);
+    if (invokeListeners(ancestor, event, true)) break;
+    if (event._stopPropagationFlag()) break;
   }
 
   // ─── TARGET PHASE ─────────────────────────────────────────────────────

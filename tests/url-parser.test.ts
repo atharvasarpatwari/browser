@@ -203,11 +203,8 @@ describe('UrlParser', () => {
       expect(result.isSecure).toBe(false);
     });
 
-    it('should parse data: URIs', () => {
-      const result = parser.parse('data:text/html,<h1>Hello</h1>');
-      expect(result.protocol).toBe('data:');
-      expect(result.isSecure).toBe(true);
-      expect(result.isSpecialPage).toBe(true);
+    it('should throw for data: URIs (now blocked)', () => {
+      expect(() => parser.parse('data:text/html,<h1>Hello</h1>')).toThrow();
     });
 
     it('should parse blob: URLs', () => {
@@ -373,8 +370,8 @@ describe('UrlParser', () => {
       expect(parser.isBlockedProtocol('wss://example.com')).toBe(false);
     });
 
-    it('should return false for data: (no longer blocked)', () => {
-      expect(parser.isBlockedProtocol('data:text/html,test')).toBe(false);
+    it('should return true for data: (now blocked)', () => {
+      expect(parser.isBlockedProtocol('data:text/html,test')).toBe(true);
     });
 
     it('should return false for blob: (no longer blocked)', () => {
@@ -444,8 +441,8 @@ describe('UrlParser', () => {
       expect(BLOCKED_PROTOCOLS.has('wss:')).toBe(false);
     });
 
-    it('should not contain data:', () => {
-      expect(BLOCKED_PROTOCOLS.has('data:')).toBe(false);
+    it('should contain data:', () => {
+      expect(BLOCKED_PROTOCOLS.has('data:')).toBe(true);
     });
 
     it('should not contain blob:', () => {

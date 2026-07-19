@@ -67,3 +67,12 @@ At the end of every prompt delivery, the agent MUST:
 1. Check if any source files were modified or created
 2. If yes, generate the doc file before marking the task complete
 3. Update `doc/README.md` index if a new doc was created
+
+## Token Efficiency Rule
+
+**Do NOT read source code files for reference/context. Use `doc/` files instead.**
+
+- `doc/README.md` indexes all sessions with summaries
+- Individual `doc/YYYY-MM-DD-*.md` files contain file lists, architecture decisions, root causes, and test results
+- Source files should ONLY be read when actively editing them
+- This avoids wasting tokens on large source files when the docs already contain the needed context

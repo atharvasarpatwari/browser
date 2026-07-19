@@ -1608,7 +1608,7 @@ function computeCompoundSpecificity(sel: CssCompoundSelector): CssSpecificity {
 export function compareSpecificity(a: CssSpecificity, b: CssSpecificity): number {
   if (a.id !== b.id) return b.id - a.id;
   if (a.a !== b.a) return b.a - a.a;
-  return b.b - b.b; // source order breaks ties
+  return b.b - a.b; // source order breaks ties
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

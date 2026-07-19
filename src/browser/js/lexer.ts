@@ -9,19 +9,41 @@ export class Lexer {
   private pos = 0;
   private line = 1;
   private column = 1;
+  private lastTokenType: TokenType = TokenType.EOF;
 
   constructor(source: string) {
     this.source = source;
   }
 
+  private templateDepth = 0;
+
   tokenize(): Token[] {
     const tokens: Token[] = [];
     while (this.pos < this.source.length) {
       const tok = this.nextToken();
+
+      if (tok.type === TokenType.TemplateHead) {
+        this.templateDepth++;
+        tokens.push(tok);
+        this.lastTokenType = tok.type;
+        continue;
+      }
+
+      if (this.templateDepth > 0 && tok.type === TokenType.RBrace) {
+        const seg = this.readTemplatePart(tok.line, tok.column);
+        tokens.push(seg);
+        if (seg.type === TokenType.TemplateTail) {
+          this.templateDepth--;
+        }
+        this.lastTokenType = seg.type;
+        continue;
+      }
+
       if (tok.type === TokenType.Whitespace || tok.type === TokenType.Comment) {
         continue;
       }
       tokens.push(tok);
+      this.lastTokenType = tok.type;
       if (tok.type === TokenType.EOF) break;
     }
     if (tokens.length === 0 || tokens[tokens.length - 1]!.type !== TokenType.EOF) {
@@ -72,7 +94,11 @@ export class Lexer {
         this.advance(2);
         return this.makeToken(TokenType.SlashAssign, '/=', startLine, startCol);
       }
-      // Division or regex handled by context — for now treat as Slash
+      // Context-aware: after expression-ending tokens, `/` is division.
+      // After operators/keywords/punctuation, `/` starts a regex literal.
+      if (this.isRegexContext()) {
+        return this.readRegex(startLine, startCol);
+      }
       this.advance();
       return this.makeToken(TokenType.Slash, '/', startLine, startCol);
     }
@@ -255,14 +281,60 @@ export class Lexer {
   private readTemplate(line: number, col: number): Token {
     this.advance(); // opening backtick
     const start = this.pos;
-    while (this.pos < this.source.length && this.source[this.pos] !== '`') {
-      if (this.source[this.pos] === '\\') this.advance();
-      if (this.source[this.pos] === '\n') { this.line++; this.column = 1; }
+    while (this.pos < this.source.length) {
+      const ch = this.source[this.pos]!;
+      if (ch === '`') {
+        const value = this.source.slice(start, this.pos);
+        this.advance(); // closing backtick
+        return this.makeToken(TokenType.TemplateEnd, value, line, col);
+      }
+      if (ch === '$' && this.peek(1) === '{') {
+        const value = this.source.slice(start, this.pos);
+        this.advance(); // skip ${
+        this.advance();
+        return this.makeToken(TokenType.TemplateHead, value, line, col);
+      }
+      if (ch === '\\') {
+        this.advance();
+        if (this.pos < this.source.length) {
+          if (this.source[this.pos] === '\n') { this.line++; this.column = 1; }
+          this.advance();
+        }
+        continue;
+      }
+      if (ch === '\n') { this.line++; this.column = 1; }
       this.advance();
     }
-    const value = this.source.slice(start, this.pos);
-    if (this.pos < this.source.length) this.advance(); // closing backtick
-    return this.makeToken(TokenType.String, value, line, col);
+    return this.makeToken(TokenType.TemplateEnd, this.source.slice(start, this.pos), line, col);
+  }
+
+  readTemplatePart(line: number, col: number): Token {
+    const start = this.pos;
+    while (this.pos < this.source.length) {
+      const ch = this.source[this.pos]!;
+      if (ch === '`') {
+        const value = this.source.slice(start, this.pos);
+        this.advance(); // closing backtick
+        return this.makeToken(TokenType.TemplateTail, value, line, col);
+      }
+      if (ch === '$' && this.peek(1) === '{') {
+        const value = this.source.slice(start, this.pos);
+        this.advance(); // skip ${
+        this.advance();
+        return this.makeToken(TokenType.TemplateMiddle, value, line, col);
+      }
+      if (ch === '\\') {
+        this.advance();
+        if (this.pos < this.source.length) {
+          if (this.source[this.pos] === '\n') { this.line++; this.column = 1; }
+          this.advance();
+        }
+        continue;
+      }
+      if (ch === '\n') { this.line++; this.column = 1; }
+      this.advance();
+    }
+    return this.makeToken(TokenType.TemplateTail, this.source.slice(start, this.pos), line, col);
   }
 
   private readIdentifier(line: number, col: number): Token {
@@ -318,6 +390,138 @@ export class Lexer {
         break;
       }
     }
+  }
+
+  private isRegexContext(): boolean {
+    // After these tokens, `/` starts a regex literal
+    switch (this.lastTokenType) {
+      case TokenType.EOF:
+      case TokenType.Plus:
+      case TokenType.Minus:
+      case TokenType.Star:
+      case TokenType.Slash:
+      case TokenType.Percent:
+      case TokenType.StarStar:
+      case TokenType.Ampersand:
+      case TokenType.Pipe:
+      case TokenType.Caret:
+      case TokenType.Tilde:
+      case TokenType.Bang:
+      case TokenType.Equal:
+      case TokenType.EqualEqual:
+      case TokenType.EqualEqualEqual:
+      case TokenType.BangEqual:
+      case TokenType.BangEqualEqual:
+      case TokenType.Less:
+      case TokenType.Greater:
+      case TokenType.LessEqual:
+      case TokenType.GreaterEqual:
+      case TokenType.LessLess:
+      case TokenType.GreaterGreater:
+      case TokenType.GreaterGreaterGreater:
+      case TokenType.AmpersandAmpersand:
+      case TokenType.PipePipe:
+      case TokenType.PlusAssign:
+      case TokenType.MinusAssign:
+      case TokenType.StarAssign:
+      case TokenType.SlashAssign:
+      case TokenType.PercentAssign:
+      case TokenType.AmpersandAssign:
+      case TokenType.PipeAssign:
+      case TokenType.CaretAssign:
+      case TokenType.LessLessAssign:
+      case TokenType.GreaterGreaterAssign:
+      case TokenType.GreaterGreaterGreaterAssign:
+      case TokenType.Question:
+      case TokenType.Colon:
+      case TokenType.Comma:
+      case TokenType.LParen:
+      case TokenType.LBrace:
+      case TokenType.LBracket:
+      case TokenType.Semicolon:
+      case TokenType.Return:
+      case TokenType.If:
+      case TokenType.Else:
+      case TokenType.While:
+      case TokenType.Do:
+      case TokenType.For:
+      case TokenType.Switch:
+      case TokenType.Case:
+      case TokenType.Default:
+      case TokenType.Throw:
+      case TokenType.New:
+      case TokenType.Delete:
+      case TokenType.Typeof:
+      case TokenType.Instanceof:
+      case TokenType.Void:
+      case TokenType.In:
+      case TokenType.Arrow:
+      case TokenType.Var:
+      case TokenType.Let:
+      case TokenType.Const:
+      case TokenType.Function:
+      case TokenType.Class:
+      case TokenType.Extends:
+      case TokenType.Yield:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private readRegex(line: number, col: number): Token {
+    this.advance(); // consume opening /
+    let pattern = '';
+    let inCharClass = false;
+
+    while (this.pos < this.source.length) {
+      const ch = this.source[this.pos]!;
+
+      if (ch === '\n') {
+        // Regex cannot contain unescaped newlines — treat as end of regex
+        break;
+      }
+
+      if (ch === '\\') {
+        // Escape sequence — consume both the backslash and next char
+        pattern += ch;
+        this.advance();
+        if (this.pos < this.source.length) {
+          pattern += this.source[this.pos]!;
+          this.advance();
+        }
+        continue;
+      }
+
+      if (ch === '[') {
+        inCharClass = true;
+      } else if (ch === ']') {
+        inCharClass = false;
+      }
+
+      if (ch === '/' && !inCharClass) {
+        this.advance(); // consume closing /
+        break;
+      }
+
+      pattern += ch;
+      this.advance();
+    }
+
+    // Read flags (g, i, m, s, u, y, d)
+    let flags = '';
+    while (this.pos < this.source.length) {
+      const ch = this.source[this.pos]!;
+      if (ch === 'g' || ch === 'i' || ch === 'm' || ch === 's' || ch === 'u' || ch === 'y' || ch === 'd') {
+        flags += ch;
+        this.advance();
+      } else {
+        break;
+      }
+    }
+
+    const value = `/${pattern}/${flags}`;
+    return this.makeToken(TokenType.RegExp, value, line, col);
   }
 
   private advance(count = 1): void {

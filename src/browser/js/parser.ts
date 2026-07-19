@@ -1,16 +1,23 @@
 import { TokenType, type Token } from './tokens';
 import type * as AST from './ast';
+import type { Lexer } from './lexer';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PARSER — Pratt parser for expressions, recursive descent for statements
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class Parser {
-  private tokens: Token[];
+  private tokens: Token[] = [];
   private pos = 0;
+  private lexer?: Lexer;
+  private templateDepth = 0;
 
-  constructor(tokens: Token[]) {
-    this.tokens = tokens;
+  constructor(tokens: Token[], lexer?: Lexer) {
+    if (lexer) {
+      this.lexer = lexer;
+    } else {
+      this.tokens = tokens;
+    }
   }
 
   parse(): AST.Program {
@@ -83,6 +90,13 @@ export class Parser {
       case TokenType.String:
         this.advance();
         return { type: 'Literal', value: tok.value, raw: `"${tok.value}"`, loc: { line: tok.line, column: tok.column } };
+
+      case TokenType.TemplateEnd:
+        this.advance();
+        return { type: 'TemplateLiteral', quasis: [{ type: 'TemplateElement', value: tok.value, tail: true }], expressions: [], loc: { line: tok.line, column: tok.column } };
+
+      case TokenType.TemplateHead:
+        return this.parseTemplateLiteral(tok);
 
       case TokenType.True:
         this.advance();
@@ -268,6 +282,47 @@ export class Parser {
     return { type: 'UpdateExpression', operator: tok.value, argument: arg, prefix: true, loc: { line: tok.line, column: tok.column } };
   }
 
+  private parseTemplateLiteral(headToken: Token): AST.TemplateLiteral {
+    const quasis: AST.TemplateElement[] = [];
+    const expressions: AST.Expression[] = [];
+
+    quasis.push({ type: 'TemplateElement', value: headToken.value, tail: false });
+    this.advance(); // consume TemplateHead
+
+    while (true) {
+      expressions.push(this.parseExpression());
+
+      // Consume the closing } of ${}
+      if (this.is(TokenType.RBrace)) {
+        this.advance();
+      }
+
+      if (this.lexer) {
+        const seg = this.lexer.readTemplatePart(headToken.line, headToken.column);
+        if (seg.type === TokenType.TemplateMiddle) {
+          quasis.push({ type: 'TemplateElement', value: seg.value, tail: false });
+        } else if (seg.type === TokenType.TemplateTail) {
+          quasis.push({ type: 'TemplateElement', value: seg.value, tail: true });
+          break;
+        }
+      } else {
+        const next = this.peek();
+        if (next.type === TokenType.TemplateMiddle) {
+          this.advance();
+          quasis.push({ type: 'TemplateElement', value: next.value, tail: false });
+        } else if (next.type === TokenType.TemplateTail) {
+          this.advance();
+          quasis.push({ type: 'TemplateElement', value: next.value, tail: true });
+          break;
+        } else {
+          break;
+        }
+      }
+    }
+
+    return { type: 'TemplateLiteral', quasis, expressions, loc: headToken.loc };
+  }
+
   private parseNewExpression(): AST.NewExpression {
     const tok = this.peek();
     this.advance();
@@ -390,19 +445,20 @@ export class Parser {
   }
 
   private parseParenExpression(): AST.Expression {
+    const openTok = this.peek();
     this.advance(); // (
+    // Handle () => ... (empty arrow params)
+    if (this.is(TokenType.RParen) && this.peek(1).type === TokenType.Arrow) {
+      this.advance(); // )
+      return this.parseArrowFunctionFromParams({ type: 'SequenceExpression', expressions: [], loc: { line: openTok.line, column: openTok.column } });
+    }
     const expr = this.parseExpression();
     this.expect(TokenType.RParen);
+    // Arrow function: (params) => body
+    if (this.is(TokenType.Arrow) && this.isValidArrowParams(expr)) {
+      return this.parseArrowFunctionFromParams(expr);
+    }
     return expr;
-  }
-
-  private parseTemplateLiteral(): AST.TemplateLiteral {
-    const tok = this.peek();
-    this.advance();
-    const quasis: AST.TemplateElement[] = [];
-    const expressions: AST.Expression[] = [];
-    quasis.push({ type: 'TemplateElement', value: tok.value, tail: true });
-    return { type: 'TemplateLiteral', quasis, expressions, loc: { line: tok.line, column: tok.column } };
   }
 
   // ── Statement parsing ─────────────────────────────────────────────────────
@@ -465,7 +521,7 @@ export class Parser {
       let init: AST.Expression | null = null;
       if (this.is(TokenType.Equal)) {
         this.advance();
-        init = this.parseExpression();
+        init = this.parseExpression(2);
       }
       declarations.push({ type: 'VariableDeclarator', id, init });
     } while (this.is(TokenType.Comma) && (this.advance(), true));
@@ -730,7 +786,7 @@ export class Parser {
       let init: AST.Expression | null = null;
       if (this.is(TokenType.Equal)) {
         this.advance();
-        init = this.parseExpression();
+        init = this.parseExpression(2);
       }
       const decl: AST.VariableDeclaration = { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init }], kind: kind as 'var' | 'let' | 'const' };
       this.expect(TokenType.Semicolon);
@@ -897,7 +953,19 @@ export class Parser {
 
   // ── Token navigation ──────────────────────────────────────────────────────
 
+  private ensureToken(): void {
+    if (this.lexer && this.pos >= this.tokens.length) {
+      this.tokens.push(this.lexer.nextToken());
+    }
+  }
+
   private peek(offset = 0): Token {
+    if (this.lexer) {
+      while (this.pos + offset >= this.tokens.length) {
+        this.tokens.push(this.lexer.nextToken());
+      }
+      return this.tokens[this.pos + offset] ?? { type: TokenType.EOF, value: '', line: 0, column: 0 };
+    }
     return this.tokens[this.pos + offset] ?? { type: TokenType.EOF, value: '', line: 0, column: 0 };
   }
 

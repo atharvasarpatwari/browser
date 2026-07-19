@@ -1,6 +1,7 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { HtmlDocument, HtmlElement, HtmlNode } from './html-parser';
 import { NodeType } from './html-parser';
+import { querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll, type SelectableElement } from './css5/selector';
 
 type DomNodeType = 'document' | 'element' | 'text' | 'comment';
 
@@ -118,16 +119,67 @@ function nextDomNodeId(): string {
   return `dom-${(++_domNodeSeq).toString(36)}`;
 }
 
+/**
+ * Wraps a DomElement to satisfy the SelectableElement interface
+ * expected by the CSS5 selector engine. Filters out non-element
+ * children (text, comment nodes) and caches instances via WeakMap.
+ */
+class SelectableDomNode implements SelectableElement {
+  readonly tagName: string;
+  readonly attributes: ReadonlyMap<string, string>;
+
+  private readonly _element: DomElement;
+  private readonly _domTree: DomTree;
+  private _parent: SelectableElement | null = undefined as unknown as SelectableElement | null;
+  private _children: SelectableElement[] = undefined as unknown as SelectableElement[];
+  private _resolved = false;
+
+  constructor(element: DomElement, domTree: DomTree) {
+    this._element = element;
+    this._domTree = domTree;
+    this.tagName = element.tagName;
+    this.attributes = element.attributes;
+  }
+
+  get parent(): SelectableElement | null {
+    if (!this._resolved) this._resolve();
+    return this._parent;
+  }
+
+  get children(): readonly SelectableElement[] {
+    if (!this._resolved) this._resolve();
+    return this._children;
+  }
+
+  /** Return the original DomElement this adapter wraps. */
+  get domElement(): DomElement {
+    return this._element;
+  }
+
+  private _resolve(): void {
+    this._resolved = true;
+    const p = this._element.parent;
+    this._parent = (p != null && p.nodeType === 'element')
+      ? this._domTree.toSelectable(p as DomElement)
+      : null;
+    this._children = this._element.children
+      .filter((c): c is DomElement => c.nodeType === 'element')
+      .map(c => this._domTree.toSelectable(c as DomElement));
+  }
+}
+
 class DomTree implements IDomTree {
   private document: DomDocument | null = null;
   private readonly nodeIndex = new Map<string, DomNode>();
   private readonly mutations: DomMutation[] = [];
   private readonly idIndex = new Map<string, DomElement>();
+  private selectableCache = new WeakMap<DomElement, SelectableDomNode>();
 
   buildFromHtml(htmlDoc: HtmlDocument): DomDocument {
     this.nodeIndex.clear();
     this.idIndex.clear();
     this.mutations.length = 0;
+    this.selectableCache = new WeakMap();
 
     const doc = this.convertDocument(htmlDoc);
     this.document = doc;
@@ -150,12 +202,31 @@ class DomTree implements IDomTree {
     );
   }
 
-  querySelector(_selector: string): DomElement | null {
-    return null;
+  querySelector(selector: string): DomElement | null {
+    const root = this.document?.bodyElement ?? this.document?.htmlElement;
+    if (!root) return null;
+    const selectable = this.toSelectable(root);
+    const result = css5QuerySelector(selectable, selector);
+    return result instanceof SelectableDomNode ? result.domElement : null;
   }
 
-  querySelectorAll(_selector: string): readonly DomElement[] {
-    return [];
+  querySelectorAll(selector: string): readonly DomElement[] {
+    const root = this.document?.bodyElement ?? this.document?.htmlElement;
+    if (!root) return [];
+    const selectable = this.toSelectable(root);
+    const results = css5QuerySelectorAll(selectable, selector);
+    return results
+      .map(r => r instanceof SelectableDomNode ? r.domElement : null)
+      .filter((e): e is DomElement => e !== null);
+  }
+
+  toSelectable(element: DomElement): SelectableDomNode {
+    let cached = this.selectableCache.get(element);
+    if (!cached) {
+      cached = new SelectableDomNode(element, this);
+      this.selectableCache.set(element, cached);
+    }
+    return cached;
   }
 
   insertBefore(parent: DomElement, newChild: DomNode, referenceChild: DomNode | null): void {
@@ -420,6 +491,7 @@ class DomTree implements IDomTree {
     this.nodeIndex.clear();
     this.idIndex.clear();
     this.mutations.length = 0;
+    this.selectableCache = new WeakMap();
   }
 }
 

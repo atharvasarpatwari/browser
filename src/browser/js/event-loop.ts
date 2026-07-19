@@ -1,5 +1,5 @@
-import type { JSFunction, JSValue } from './values';
-import { createNativeFunction, Environment, createObject, toNumber, toString, callJSFunction } from './values';
+import type { JSFunction, JSValue, JSFunctionCaller } from './values';
+import { createNativeFunction, Environment, createObject, toNumber, toString, callJSFunction, setGlobalCaller } from './values';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EVENT LOOP — setTimeout, setInterval, requestAnimationFrame stub
@@ -19,8 +19,15 @@ export class EventLoop {
   private tasks: Task[] = [];
   private timers: Map<number, Task> = new Map();
   private rafCallbacks: Array<{ id: number; cb: () => void }> = [];
+  private microtaskQueue: Array<() => void> = [];
   private nextRafId = 1;
   private running = false;
+  private _interpreter: JSFunctionCaller | null = null;
+
+  /** Store interpreter reference so microtasks can call JS functions after run() returns. */
+  setInterpreter(interpreter: JSFunctionCaller | null): void {
+    this._interpreter = interpreter;
+  }
 
   schedule(fn: () => void, delay: number, recurring: boolean = false): number {
     const id = this.nextTaskId++;
@@ -43,12 +50,29 @@ export class EventLoop {
   }
 
   enqueueMicrotask(fn: () => void): void {
-    // Run microtasks immediately (Promise.then-like behavior)
+    this.microtaskQueue.push(fn);
+  }
+
+  /** Drain the microtask queue. Returns the number of microtasks executed. */
+  drainMicrotasks(): number {
+    let count = 0;
+    // Ensure interpreter context is available for microtask callbacks that call JS functions
+    const hadCaller = this._interpreter;
+    if (hadCaller) setGlobalCaller(hadCaller);
     try {
-      fn();
-    } catch {
-      // swallow
+      while (this.microtaskQueue.length > 0) {
+        const fn = this.microtaskQueue.shift()!;
+        try {
+          fn();
+        } catch (e) {
+          // swallow — microtask errors don't crash the engine
+        }
+        count++;
+      }
+    } finally {
+      if (hadCaller) setGlobalCaller(null);
     }
+    return count;
   }
 
   requestAnimationFrame(cb: (timestamp: number) => void): number {
@@ -73,6 +97,7 @@ export class EventLoop {
       } catch {
         // swallow timer callback errors
       }
+      this.drainMicrotasks();
       if (task.recurring && task.interval !== undefined) {
         task.scheduledAt = now;
         this.tasks.push(task);
@@ -91,6 +116,7 @@ export class EventLoop {
           // swallow
         }
       }
+      this.drainMicrotasks();
     }
 
     return this.tasks.length > 0 || this.rafCallbacks.length > 0;
@@ -118,6 +144,7 @@ export class EventLoop {
   }
 
   get pendingCount(): number { return this.tasks.length; }
+  get microtaskCount(): number { return this.microtaskQueue.length; }
   get running_(): boolean { return this.running; }
 
   /** Release all pending tasks, timers, and animation frame callbacks. */
@@ -125,6 +152,7 @@ export class EventLoop {
     this.tasks.length = 0;
     this.timers.clear();
     this.rafCallbacks.length = 0;
+    this.microtaskQueue.length = 0;
     this.running = false;
   }
 

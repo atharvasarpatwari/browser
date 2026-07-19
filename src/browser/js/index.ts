@@ -1,19 +1,27 @@
 import type { DomDocument } from '../rendering/dom-tree';
 import type { IDomTree, DomElement } from '../rendering/dom-tree';
+import type { INavigationController } from '../navigation/navigation-controller';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
 import { createDocumentBinding } from './dom-bindings';
+import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers } from './event-loop';
 import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction } from './values';
 import type { JSValue, JSObject } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
+import {
+  createHeadersClass, createResponseClass, createRequestClass,
+  createAbortControllerClass, createFetchFn,
+} from './fetch-api';
+import type { CspResourceEnforcer } from '../security/csp-resource-enforcer';
 
 export { Lexer } from './lexer';
 export { Parser } from './parser';
 export { Interpreter } from './interpreter';
 export { EventLoop, bindTimers } from './event-loop';
 export { createDocumentBinding, createEventObject } from './dom-bindings';
+export { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 export {
   type JSValue, type JSObject, type JSFunction,
   createObject, createArray, createNativeFunction,
@@ -33,6 +41,14 @@ export interface RunJSOptions {
   eventLoop?: EventLoop;
   /** Optional pre-created global environment (created if not provided). */
   globalEnv?: Environment;
+  /** Optional NavigationController for history/location bindings. */
+  controller?: INavigationController;
+  /** Optional platform fetch override. */
+  platformFetch?: (url: string | Request, init?: Record<string, unknown>) => Promise<globalThis.Response>;
+  /** Optional CSP resource enforcer for fetch() connect-src checks. */
+  resourceEnforcer?: CspResourceEnforcer;
+  /** Optional page origin for CSP enforcement. */
+  pageOrigin?: string;
 }
 
 export interface RunJSResult {
@@ -51,20 +67,19 @@ export interface RunJSResult {
  * It lexes, parses, and executes the source with full DOM bindings.
  */
 export function runJS(source: string, options: RunJSOptions): RunJSResult {
-  const { document: doc, domTree, eventLoop = new EventLoop(), globalEnv } = options;
+  const { document: doc, domTree, eventLoop = new EventLoop(), globalEnv, controller, platformFetch, resourceEnforcer, pageOrigin } = options;
 
   try {
-    // 1. Lex
+    // 1. Lex (lazy — parser pulls tokens on demand for template interpolation support)
     const lexer = new Lexer(source);
-    const tokens = lexer.tokenize();
 
     // 2. Parse
-    const parser = new Parser(tokens);
+    const parser = new Parser([], lexer);
     const program = parser.parse();
 
     // 3. Execute
-    const env = globalEnv ?? createGlobalEnv(doc, domTree, eventLoop);
-    const interpreter = new Interpreter(env);
+    const env = globalEnv ?? createGlobalEnv(doc, domTree, eventLoop, controller, platformFetch, resourceEnforcer, pageOrigin);
+    const interpreter = new Interpreter(env, eventLoop);
     const value = interpreter.run(program);
 
     return { value, eventLoop };
@@ -81,6 +96,10 @@ export function createGlobalEnv(
   doc: DomDocument,
   domTree: IDomTree,
   eventLoop: EventLoop,
+  controller?: INavigationController,
+  platformFetch?: (url: string | Request, init?: Record<string, unknown>) => Promise<globalThis.Response>,
+  resourceEnforcer?: CspResourceEnforcer,
+  pageOrigin?: string,
 ): Environment {
   const env = new Environment(null);
 
@@ -267,8 +286,38 @@ export function createGlobalEnv(
   const windowObj = createObject(null);
   env.setLocal('window', windowObj);
 
+  // Wire window-level event listeners (addEventListener/removeEventListener/dispatchEvent)
+  bindWindowEvents(windowObj);
+
+  // Wire History API and Location if a controller is provided.
+  if (controller) {
+    const historyObj = createHistoryBinding(controller, windowObj);
+    windowObj.properties.set('history', {
+      value: historyObj, writable: false, enumerable: true, configurable: false,
+    });
+
+    const locationObj = createLocationBinding(controller, windowObj);
+    windowObj.properties.set('location', {
+      value: locationObj, writable: true, enumerable: true, configurable: false,
+    });
+
+    // Also expose as globals (matches browser behavior).
+    env.setLocal('history', historyObj);
+    env.setLocal('location', locationObj);
+
+    // Wire popstate / hashchange events from NavigationController → window.
+    wireHistoryEvents(controller, windowObj);
+  }
+
   // Bind timers
   bindTimers(env, eventLoop);
+
+  // Fetch API
+  env.setLocal('Headers', createHeadersClass(eventLoop));
+  env.setLocal('Response', createResponseClass(eventLoop));
+  env.setLocal('Request', createRequestClass(eventLoop));
+  env.setLocal('AbortController', createAbortControllerClass(eventLoop));
+  env.setLocal('fetch', createFetchFn(eventLoop, platformFetch, resourceEnforcer, pageOrigin));
 
   // IntersectionObserver constructor
   env.setLocal('IntersectionObserver', createNativeFunction('IntersectionObserver', (_this, args) => {

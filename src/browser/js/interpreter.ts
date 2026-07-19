@@ -6,8 +6,10 @@ import {
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal,
-  setGlobalCaller, callJSFunction,
+  setGlobalCaller, callJSFunction, JSError,
 } from './values';
+import { createPromiseConstructor } from './promise';
+import type { EventLoop } from './event-loop';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERPRETER — Tree-walking evaluator
@@ -15,21 +17,48 @@ import {
 
 export class Interpreter {
   private globalEnv: Environment;
+  private eventLoop?: EventLoop;
   private output: string[] = [];
   private static readonly MAX_OUTPUT = 1000;
+  private static readonly DEFAULT_MAX_EXECUTION_MS = 5000;
+  private static readonly OPS_BETWEEN_CHECKS = 1000;
   private nextTimerId = 1;
   /** Pending timer callbacks keyed by ID for O(1) removal */
   private timers = new Map<number, { fn: () => void; delay: number; recurring: boolean }>();
+  private executionStartTime = 0;
+  private maxExecutionMs = Interpreter.DEFAULT_MAX_EXECUTION_MS;
+  private opCount = 0;
 
-  constructor(globalEnv?: Environment) {
+  constructor(globalEnv?: Environment, eventLoop?: EventLoop) {
+    this.eventLoop = eventLoop;
+    if (this.eventLoop) {
+      this.eventLoop.setInterpreter(this);
+    }
     this.globalEnv = globalEnv ?? this.createGlobalEnv();
   }
 
+  setMaxExecutionMs(ms: number): void {
+    this.maxExecutionMs = ms;
+  }
+
+  private checkTimeout(): void {
+    this.opCount++;
+    if (this.opCount % Interpreter.OPS_BETWEEN_CHECKS !== 0) return;
+    const elapsed = Date.now() - this.executionStartTime;
+    if (elapsed > this.maxExecutionMs) {
+      throw new JSError(`Script execution timed out after ${this.maxExecutionMs}ms`, 'TimeoutError');
+    }
+  }
+
   run(program: AST.Program): JSValue {
+    this.executionStartTime = Date.now();
+    this.opCount = 0;
     setGlobalCaller(this);
     try {
       const result = this.execBlock(program.body, this.globalEnv);
       if (isThrowSignal(result)) throw new JSError(result.value);
+      // Drain microtasks after program execution
+      this.eventLoop?.drainMicrotasks();
       return result;
     } finally {
       setGlobalCaller(null);
@@ -39,7 +68,12 @@ export class Interpreter {
   /** Called by callJSFunction in values.ts when non-native JS functions need invocation. */
   callFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]): JSValue {
     if (fn.isNative && fn.nativeFn) {
-      return fn.nativeFn(thisArg, args);
+      try {
+        return fn.nativeFn(thisArg, args);
+      } catch (err) {
+        if (err instanceof JSError) throw err;
+        throw new JSError(err instanceof Error ? err.message : String(err));
+      }
     }
     const callEnv = new Environment(fn.closure);
     callEnv.markFunctionScope();
@@ -73,6 +107,7 @@ export class Interpreter {
   // ── Statement execution ──────────────────────────────────────────────────
 
   private exec(stmt: AST.Statement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
+    this.checkTimeout();
     switch (stmt.type) {
       case 'BlockStatement': return this.execBlock(stmt.body, env);
       case 'ExpressionStatement': return this.evalExpr(stmt.expression, env);
@@ -113,7 +148,8 @@ export class Interpreter {
   }
 
   private execVarDecl(stmt: AST.VariableDeclaration, env: Environment): void {
-    for (const decl of stmt.declarations) {
+    for (let i = 0; i < stmt.declarations.length; i++) {
+      const decl = stmt.declarations[i];
       const value = decl.init ? this.evalExpr(decl.init, env) : undefined;
       this.destructPattern(decl.id, value, env, stmt.kind);
     }
@@ -459,16 +495,28 @@ export class Interpreter {
       case 'FunctionExpression': return this.evalFunctionExpr(expr, env);
       case 'ArrowFunctionExpression': return this.evalArrowFunction(expr, env);
       case 'SequenceExpression': return this.evalSequence(expr, env);
+      case 'TemplateLiteral': return this.evalTemplateLiteral(expr, env);
       default: return undefined;
     }
   }
 
   private evalLiteral(expr: AST.Literal): JSValue {
     if (expr.value && typeof expr.value === 'object' && 'type' in expr.value) {
-      // RegExp literal
       return expr.raw;
     }
     return expr.value as JSValue;
+  }
+
+  private evalTemplateLiteral(expr: AST.TemplateLiteral, env: Environment): JSValue {
+    let result = '';
+    for (let i = 0; i < expr.quasis.length; i++) {
+      result += expr.quasis[i]!.value;
+      if (i < expr.expressions.length) {
+        const val = this.evalExpr(expr.expressions[i]!, env);
+        result += val === undefined ? 'undefined' : val === null ? 'null' : String(val);
+      }
+    }
+    return result;
   }
 
   private evalIdentifier(expr: AST.Identifier, env: Environment): JSValue {
@@ -657,7 +705,24 @@ export class Interpreter {
   }
 
   private evalCall(expr: AST.CallExpression, env: Environment): JSValue {
-    const callee = this.evalExpr(expr.callee, env);
+    // Evaluate callee and cache the member object to avoid double-evaluation
+    // When callee is a.b(), we need both the function (a.b) and `this` (a),
+    // but evaluating the member expression gives us the function, while we need
+    // to separately get `this`. We avoid re-evaluating by caching.
+    let thisObj: JSValue = undefined;
+    let callee: JSValue;
+    if (expr.callee.type === 'MemberExpression') {
+      thisObj = this.evalExpr(expr.callee.object, env);
+      if (thisObj === undefined || thisObj === null) {
+        if (expr.callee.optional) return undefined;
+        throw new TypeError(`Cannot read properties of ${thisObj}`);
+      }
+      const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+      callee = this.getPropertyValue(thisObj, key);
+    } else {
+      callee = this.evalExpr(expr.callee, env);
+    }
+
     const args: JSValue[] = [];
     for (const a of expr.arguments) {
       if (a.type === 'SpreadElement') {
@@ -681,10 +746,12 @@ export class Interpreter {
     if (typeof callee === 'object' && callee !== null) {
       const fn = callee as JSFunction;
       if (fn.type === 'closure' && fn.isNative && fn.nativeFn) {
-        const thisObj = expr.callee.type === 'MemberExpression'
-          ? this.evalExpr(expr.callee.object, env)
-          : this.globalEnv.get('this') ?? createObject(null);
-        return fn.nativeFn(thisObj, args);
+        try {
+          return fn.nativeFn(thisObj, args);
+        } catch (err) {
+          if (err instanceof JSError) throw err;
+          throw new JSError(err instanceof Error ? err.message : String(err));
+        }
       }
       if (fn.type === 'closure' && !fn.isNative) {
         const callEnv = new Environment(fn.closure);
@@ -693,10 +760,8 @@ export class Interpreter {
         fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
         if (fn.isArrow) {
           callEnv.setLocal('this', fn.closure.get('this') ?? createObject(null));
-        } else if (expr.callee.type === 'MemberExpression') {
-          callEnv.setLocal('this', this.evalExpr(expr.callee.object, env));
         } else {
-          callEnv.setLocal('this', env.get('this') ?? createObject(null));
+          callEnv.setLocal('this', thisObj);
         }
         const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
         let result: JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal;
@@ -714,6 +779,11 @@ export class Interpreter {
       if (typeof callFn === 'object' && callFn !== null && (callFn as JSFunction).type === 'closure') {
         return this.evalCall({ type: 'CallExpression', callee: callFn as unknown as AST.Expression, arguments: [expr.callee, ...expr.arguments], optional: false }, env);
       }
+    }
+
+    // Callable JSObject with nativeFn (e.g., Promise constructor)
+    if (typeof callee === 'object' && callee !== null && 'callable' in callee && (callee as JSObject).callable && (callee as JSObject).nativeFn) {
+      return (callee as JSObject).nativeFn!(thisObj, args);
     }
 
     if (typeof callee === 'function') {
@@ -781,6 +851,13 @@ export class Interpreter {
       const instance = createObject(null);
       const result = callJSFunction(fn, instance, args);
       return (typeof result === 'object' && result !== null) ? result : instance;
+    }
+
+    // Callable JSObject with nativeFn (e.g., new Promise(...))
+    if (typeof ctor === 'object' && ctor !== null && 'callable' in ctor && (ctor as JSObject).callable && (ctor as JSObject).nativeFn) {
+      const obj = ctor as JSObject;
+      const result = obj.nativeFn!(createObject(null), args);
+      return (typeof result === 'object' && result !== null) ? result : createObject(null);
     }
 
     // Function constructor (JSFunction closure)
@@ -873,6 +950,89 @@ export class Interpreter {
           return protoDesc.value;
         }
         proto = proto.prototype;
+      }
+    }
+    return undefined;
+  }
+
+  private getPropertyValue(obj: JSValue, key: string): JSValue {
+    if (typeof obj === 'string') {
+      const strMethods: Record<string, NativeFunction> = {
+        length: (_t, _a) => (obj as string).length,
+        toUpperCase: (_t, _a) => (obj as string).toUpperCase(),
+        toLowerCase: (_t, _a) => (obj as string).toLowerCase(),
+        charAt: (_t, a) => (obj as string).charAt(toNumber(a[0])),
+        charCodeAt: (_t, a) => (obj as string).charCodeAt(toNumber(a[0])),
+        indexOf: (_t, a) => (obj as string).indexOf(toString(a[0])),
+        lastIndexOf: (_t, a) => (obj as string).lastIndexOf(toString(a[0])),
+        slice: (_t, a) => (obj as string).slice(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
+        substring: (_t, a) => (obj as string).substring(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
+        substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
+        split: (_t, a) => {
+          const sep = a[0] !== undefined ? toString(a[0]) : undefined;
+          const parts = sep !== undefined ? (obj as string).split(sep) : [obj as string];
+          return createArray(parts.map(p => p as unknown as JSValue));
+        },
+        replace: (_t, a) => (obj as string).replace(toString(a[0]), toString(a[1] ?? '')),
+        trim: (_t, _a) => (obj as string).trim(),
+        trimStart: (_t, _a) => (obj as string).trimStart(),
+        trimEnd: (_t, _a) => (obj as string).trimEnd(),
+        includes: (_t, a) => (obj as string).includes(toString(a[0])),
+        startsWith: (_t, a) => (obj as string).startsWith(toString(a[0])),
+        endsWith: (_t, a) => (obj as string).endsWith(toString(a[0])),
+        repeat: (_t, a) => (obj as string).repeat(toNumber(a[0])),
+        concat: (_t, a) => (obj as string).concat(a.map(toString).join('')),
+        padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
+        padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
+        match: (_t, a) => {
+          const m = (obj as string).match(new RegExp(toString(a[0])));
+          return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
+        },
+        valueOf: (_t, _a) => obj,
+        toString: (_t, _a) => obj,
+      };
+      if (key === 'length') return (obj as string).length;
+      const idx = parseInt(key, 10);
+      if (!isNaN(idx)) return (obj as string)[idx] ?? undefined;
+      if (key in strMethods) return createNativeFunction(key, strMethods[key]);
+      return undefined;
+    }
+    if (typeof obj === 'number') {
+      const numMethods: Record<string, NativeFunction> = {
+        toString: (_t, _a) => obj.toString(),
+        valueOf: (_t, _a) => obj,
+        toFixed: (_t, a) => (obj as number).toFixed(toNumber(a[0])),
+        toPrecision: (_t, a) => (obj as number).toPrecision(toNumber(a[0])),
+        toExponential: (_t, a) => (obj as number).toExponential(toNumber(a[0])),
+      };
+      if (key in numMethods) return createNativeFunction(key, numMethods[key]);
+      return undefined;
+    }
+    if (typeof obj === 'boolean') {
+      const boolMethods: Record<string, NativeFunction> = {
+        toString: (_t, _a) => obj.toString(),
+        valueOf: (_t, _a) => obj,
+      };
+      if (key in boolMethods) return createNativeFunction(key, boolMethods[key]);
+      return undefined;
+    }
+    if (typeof obj === 'object' && obj !== null) {
+      const o = obj as JSObject;
+      const desc = o.properties.get(key);
+      if (desc) {
+        if (desc.getter) return callJSFunction(desc.getter, obj, []);
+        return desc.value;
+      }
+      if (o.prototype) {
+        let proto: JSObject | null = o.prototype;
+        while (proto) {
+          const protoDesc = proto.properties.get(key);
+          if (protoDesc) {
+            if (protoDesc.getter) return callJSFunction(protoDesc.getter, obj, []);
+            return protoDesc.value;
+          }
+          proto = proto.prototype;
+        }
       }
     }
     return undefined;
@@ -1052,6 +1212,13 @@ export class Interpreter {
     env.setLocal('RangeError', createNativeFunction('RangeError', (_this, args) => toString(args[0])));
     env.setLocal('SyntaxError', createNativeFunction('SyntaxError', (_this, args) => toString(args[0])));
 
+    // Promise (with microtask integration via EventLoop)
+    const promiseEnv = env;
+    env.setLocal('Promise', createPromiseConstructor(this.eventLoop ?? {
+      enqueueMicrotask: (fn: () => void) => { try { fn(); } catch { /* swallow */ } },
+      drainMicrotasks: () => 0,
+    } as any));
+
     env.setLocal('setTimeout', createNativeFunction('setTimeout', (_this, args) => {
       const fn = args[0];
       const delay = toNumber(args[1]) || 0;
@@ -1116,15 +1283,4 @@ export class Interpreter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// JS ERROR
-// ─────────────────────────────────────────────────────────────────────────────
-
-class JSError extends Error {
-  value: JSValue;
-  constructor(value: JSValue) {
-    super(toString(value));
-    this.value = value;
-  }
-}
-
 export { JSError };

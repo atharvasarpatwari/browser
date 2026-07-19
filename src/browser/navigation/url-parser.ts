@@ -354,6 +354,7 @@ const ALLOWED_PROTOCOLS = new Set<string>([
 const BLOCKED_PROTOCOLS = new Set<string>([
   'javascript:',
   'vbscript:',
+  'data:',
 ]);
 
 /**

@@ -117,6 +117,11 @@ export enum TokenType {
   Debugger,
   With,
 
+  // Template literal parts
+  TemplateHead,      // opening `...${  (raw value before first ${)
+  TemplateMiddle,    // }...${  (raw value between } and next ${)
+  TemplateTail,      // }...`  (raw value after last } until closing `)
+  TemplateEnd,       // ...`  (raw value when no ${ in template)
   // Special
   EOF,
   Newline,

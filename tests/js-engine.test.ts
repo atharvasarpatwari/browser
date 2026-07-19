@@ -7,6 +7,8 @@ import { Environment, createObject, createNativeFunction, type JSValue, type JSO
 import { EventLoop, bindTimers } from '../src/browser/js/event-loop';
 import { createDocumentBinding, wrapElement, createEventObject } from '../src/browser/js/dom-bindings';
 import { runJS, createGlobalEnv } from '../src/browser/js/index';
+import { HtmlParser } from '../src/browser/rendering/html-parser';
+import { DomTree } from '../src/browser/rendering/dom-tree';
 
 function evalJS(source: string, env?: Environment): JSValue {
   const tokens = new Lexer(source).tokenize();
@@ -84,20 +86,68 @@ describe('Lexer', () => {
   });
 
   it('should tokenize operators', () => {
-    const tokens = new Lexer('+ - * / % ** ++ -- === !==').tokenize();
+    const tokens = new Lexer('+ - * % ** ++ -- === !==').tokenize();
     const meaningful = tokens.filter(t =>
       t.type !== TokenType.Whitespace && t.type !== TokenType.Newline && t.type !== TokenType.EOF
     );
     expect(meaningful[0].type).toBe(TokenType.Plus);
     expect(meaningful[1].type).toBe(TokenType.Minus);
     expect(meaningful[2].type).toBe(TokenType.Star);
-    expect(meaningful[3].type).toBe(TokenType.Slash);
-    expect(meaningful[4].type).toBe(TokenType.Percent);
-    expect(meaningful[5].type).toBe(TokenType.StarStar);
-    expect(meaningful[6].type).toBe(TokenType.PlusPlus);
-    expect(meaningful[7].type).toBe(TokenType.MinusMinus);
-    expect(meaningful[8].type).toBe(TokenType.EqualEqualEqual);
-    expect(meaningful[9].type).toBe(TokenType.BangEqualEqual);
+    expect(meaningful[3].type).toBe(TokenType.Percent);
+    expect(meaningful[4].type).toBe(TokenType.StarStar);
+    expect(meaningful[5].type).toBe(TokenType.PlusPlus);
+    expect(meaningful[6].type).toBe(TokenType.MinusMinus);
+    expect(meaningful[7].type).toBe(TokenType.EqualEqualEqual);
+    expect(meaningful[8].type).toBe(TokenType.BangEqualEqual);
+  });
+
+  it('should tokenize slash as division after expression tokens', () => {
+    const tokens = new Lexer('x / y').tokenize();
+    const meaningful = tokens.filter(t =>
+      t.type !== TokenType.Whitespace && t.type !== TokenType.Newline && t.type !== TokenType.EOF
+    );
+    expect(meaningful[0].type).toBe(TokenType.Identifier);
+    expect(meaningful[1].type).toBe(TokenType.Slash);
+    expect(meaningful[2].type).toBe(TokenType.Identifier);
+  });
+
+  it('should tokenize regex literals', () => {
+    const tokens = new Lexer('/abc/gi').tokenize();
+    const meaningful = tokens.filter(t =>
+      t.type !== TokenType.Whitespace && t.type !== TokenType.Newline && t.type !== TokenType.EOF
+    );
+    expect(meaningful[0].type).toBe(TokenType.RegExp);
+    expect(meaningful[0].value).toBe('/abc/gi');
+  });
+
+  it('should tokenize regex after keyword', () => {
+    const tokens = new Lexer('return /test/').tokenize();
+    const meaningful = tokens.filter(t =>
+      t.type !== TokenType.Whitespace && t.type !== TokenType.Newline && t.type !== TokenType.EOF
+    );
+    expect(meaningful[0].type).toBe(TokenType.Return);
+    expect(meaningful[1].type).toBe(TokenType.RegExp);
+    expect(meaningful[1].value).toBe('/test/');
+  });
+
+  it('should tokenize regex after assignment', () => {
+    const tokens = new Lexer('x = /pattern/g').tokenize();
+    const meaningful = tokens.filter(t =>
+      t.type !== TokenType.Whitespace && t.type !== TokenType.Newline && t.type !== TokenType.EOF
+    );
+    expect(meaningful[0].type).toBe(TokenType.Identifier);
+    expect(meaningful[1].type).toBe(TokenType.Equal);
+    expect(meaningful[2].type).toBe(TokenType.RegExp);
+    expect(meaningful[2].value).toBe('/pattern/g');
+  });
+
+  it('should tokenize regex with character class', () => {
+    const tokens = new Lexer('/[a-z]+/').tokenize();
+    const meaningful = tokens.filter(t =>
+      t.type !== TokenType.Whitespace && t.type !== TokenType.Newline && t.type !== TokenType.EOF
+    );
+    expect(meaningful[0].type).toBe(TokenType.RegExp);
+    expect(meaningful[0].value).toBe('/[a-z]+/');
   });
 
   it('should tokenize semicolons', () => {
@@ -106,6 +156,90 @@ describe('Lexer', () => {
       t.type !== TokenType.Whitespace && t.type !== TokenType.Newline && t.type !== TokenType.EOF
     );
     expect(meaningful[0].type).toBe(TokenType.Semicolon);
+  });
+});
+
+describe('Lexer - Template Literals', () => {
+  it('should tokenize simple template literal (no expressions)', () => {
+    const tokens = new Lexer('`hello world`').tokenize();
+    const meaningful = tokens.filter(t => t.type !== TokenType.Whitespace && t.type !== TokenType.EOF);
+    expect(meaningful[0].type).toBe(TokenType.TemplateEnd);
+    expect(meaningful[0].value).toBe('hello world');
+  });
+
+  it('should tokenize template literal with one expression', () => {
+    const tokens = new Lexer('`hello ${name}`').tokenize();
+    const meaningful = tokens.filter(t => t.type !== TokenType.Whitespace && t.type !== TokenType.EOF);
+    expect(meaningful[0].type).toBe(TokenType.TemplateHead);
+    expect(meaningful[0].value).toBe('hello ');
+    expect(meaningful[1].type).toBe(TokenType.Identifier);
+    expect(meaningful[1].value).toBe('name');
+    expect(meaningful[2].type).toBe(TokenType.TemplateTail);
+    expect(meaningful[2].value).toBe('');
+  });
+
+  it('should tokenize template literal with multiple expressions', () => {
+    const tokens = new Lexer('`${a} and ${b}`').tokenize();
+    const meaningful = tokens.filter(t => t.type !== TokenType.Whitespace && t.type !== TokenType.EOF);
+    expect(meaningful[0].type).toBe(TokenType.TemplateHead);
+    expect(meaningful[0].value).toBe('');
+    expect(meaningful[1].type).toBe(TokenType.Identifier);
+    expect(meaningful[1].value).toBe('a');
+    expect(meaningful[2].type).toBe(TokenType.TemplateMiddle);
+    expect(meaningful[2].value).toBe(' and ');
+    expect(meaningful[3].type).toBe(TokenType.Identifier);
+    expect(meaningful[3].value).toBe('b');
+    expect(meaningful[4].type).toBe(TokenType.TemplateTail);
+    expect(meaningful[4].value).toBe('');
+  });
+});
+
+describe('Parser - Template Literals', () => {
+  it('should parse simple template literal', () => {
+    const lexer = new Lexer('`hello`');
+    const parser = new Parser([], lexer);
+    const program = parser.parse();
+    expect(program.body.length).toBe(1);
+    const expr = (program.body[0] as any).expression;
+    expect(expr.type).toBe('TemplateLiteral');
+    expect(expr.quasis.length).toBe(1);
+    expect(expr.quasis[0].value).toBe('hello');
+    expect(expr.expressions.length).toBe(0);
+  });
+
+  it('should parse template literal with expression', () => {
+    const lexer = new Lexer('`hello ${name}`');
+    const parser = new Parser([], lexer);
+    const program = parser.parse();
+    const expr = (program.body[0] as any).expression;
+    expect(expr.type).toBe('TemplateLiteral');
+    expect(expr.quasis.length).toBe(2);
+    expect(expr.quasis[0].value).toBe('hello ');
+    expect(expr.quasis[1].value).toBe('');
+    expect(expr.expressions.length).toBe(1);
+    expect(expr.expressions[0].type).toBe('Identifier');
+    expect(expr.expressions[0].name).toBe('name');
+  });
+
+  it('should parse template literal with multiple expressions', () => {
+    const lexer = new Lexer('`${a} and ${b}`');
+    const parser = new Parser([], lexer);
+    const program = parser.parse();
+    const expr = (program.body[0] as any).expression;
+    expect(expr.quasis.length).toBe(3);
+    expect(expr.quasis[0].value).toBe('');
+    expect(expr.quasis[1].value).toBe(' and ');
+    expect(expr.quasis[2].value).toBe('');
+    expect(expr.expressions.length).toBe(2);
+  });
+
+  it('should parse template with complex expressions', () => {
+    const lexer = new Lexer('`${a + b}`');
+    const parser = new Parser([], lexer);
+    const program = parser.parse();
+    const expr = (program.body[0] as any).expression;
+    expect(expr.expressions[0].type).toBe('BinaryExpression');
+    expect(expr.expressions[0].operator).toBe('+');
   });
 });
 
@@ -731,6 +865,41 @@ describe('runJS', () => {
     expect(result.error).toBeUndefined();
     expect(typeof result.value).toBe('number');
   });
+
+  it('should evaluate simple template literal', () => {
+    const doc = makeMinimalDoc();
+    const result = runJS('`hello world`', { document: doc, domTree: makeMinimalDomTree(doc) as any });
+    expect(result.value).toBe('hello world');
+    expect(result.error).toBeUndefined();
+  });
+
+  it('should evaluate template literal with expression', () => {
+    const doc = makeMinimalDoc();
+    const result = runJS('var name = "Nova"; `hello ${name}`', { document: doc, domTree: makeMinimalDomTree(doc) as any });
+    expect(result.value).toBe('hello Nova');
+    expect(result.error).toBeUndefined();
+  });
+
+  it('should evaluate template literal with arithmetic', () => {
+    const doc = makeMinimalDoc();
+    const result = runJS('`2 + 3 = ${2 + 3}`', { document: doc, domTree: makeMinimalDomTree(doc) as any });
+    expect(result.value).toBe('2 + 3 = 5');
+    expect(result.error).toBeUndefined();
+  });
+
+  it('should evaluate template literal with multiple expressions', () => {
+    const doc = makeMinimalDoc();
+    const result = runJS('var a = "A"; var b = "B"; `${a} and ${b}`', { document: doc, domTree: makeMinimalDomTree(doc) as any });
+    expect(result.value).toBe('A and B');
+    expect(result.error).toBeUndefined();
+  });
+
+  it('should evaluate empty template literal', () => {
+    const doc = makeMinimalDoc();
+    const result = runJS('``', { document: doc, domTree: makeMinimalDomTree(doc) as any });
+    expect(result.value).toBe('');
+    expect(result.error).toBeUndefined();
+  });
 });
 
 describe('callJSFunction', () => {
@@ -762,5 +931,153 @@ describe('createEventObject', () => {
     expect(evt.properties.get('target')?.value).toBe(target);
     expect(evt.properties.get('preventDefault')).toBeTruthy();
     expect(evt.properties.get('stopPropagation')).toBeTruthy();
+  });
+
+  it('should include bubbles and cancelable options', () => {
+    const target = createObject(null);
+    const evt = createEventObject('click', target, { bubbles: true, cancelable: true });
+    expect(evt.properties.get('bubbles')?.value).toBe(true);
+    expect(evt.properties.get('cancelable')?.value).toBe(true);
+  });
+});
+
+describe('Event Propagation via JS Engine', () => {
+
+  function setupDom(html: string) {
+    const parser = new HtmlParser();
+    const tree = new DomTree();
+    const result = parser.parse(html);
+    const doc = tree.buildFromHtml(result.document);
+    return { doc, tree };
+  }
+
+  function runWithDom(source: string, html: string) {
+    const { doc, tree } = setupDom(html);
+    const r = runJS(source, { document: doc, domTree: tree });
+    if (r.error) console.log('JS ERROR:', r.error.message);
+    return r;
+  }
+
+  it('should fire addEventListener callback on dispatchEvent', () => {
+    const r = runWithDom(`
+      var result = [];
+      var p = document.querySelector('p');
+      p.addEventListener('click', function(e) { result.push('clicked'); });
+      var evt = document.createEvent('click');
+      p.dispatchEvent(evt);
+      result.length;
+    `, '<html><body><p>Hello</p></body></html>');
+    expect(r.value).toBe(1);
+  });
+
+  it('should fire listeners in order', () => {
+    const r = runWithDom(`
+      var result = [];
+      var p = document.querySelector('p');
+      p.addEventListener('click', function(e) { result.push('a'); });
+      p.addEventListener('click', function(e) { result.push('b'); });
+      var evt = document.createEvent('click');
+      p.dispatchEvent(evt);
+      result.join(',');
+    `, '<html><body><p>Hello</p></body></html>');
+    expect(r.value).toBe('a,b');
+  });
+
+  it('should support removeEventListener', () => {
+    const r = runWithDom(`
+      var result = [];
+      var p = document.querySelector('p');
+      function handler(e) { result.push('clicked'); }
+      p.addEventListener('click', handler);
+      p.removeEventListener('click', handler);
+      var evt = document.createEvent('click');
+      p.dispatchEvent(evt);
+      result.length;
+    `, '<html><body><p>Hello</p></body></html>');
+    expect(r.value).toBe(0);
+  });
+
+  it('should propagate to parent (bubble phase)', () => {
+    const r = runWithDom(`
+      var result = [];
+      var p = document.querySelector('p');
+      var div = document.querySelector('div');
+      div.addEventListener('click', function(e) { result.push('div'); });
+      p.addEventListener('click', function(e) { result.push('p'); });
+      var evt = document.createEvent('click', true);
+      p.dispatchEvent(evt);
+      result.join(',');
+    `, '<html><body><div><p>Click me</p></div></body></html>');
+    expect(r.value).toBe('p,div');
+  });
+
+  it('should support capture phase (parents fire before target)', () => {
+    const r = runWithDom(`
+      var result = [];
+      var p = document.querySelector('p');
+      var div = document.querySelector('div');
+      var body = document.querySelector('body');
+      body.addEventListener('click', function(e) { result.push('body-capture'); }, true);
+      div.addEventListener('click', function(e) { result.push('div-capture'); }, true);
+      p.addEventListener('click', function(e) { result.push('p'); });
+      var evt = document.createEvent('click', true);
+      p.dispatchEvent(evt);
+      result.join(',');
+    `, '<html><body><div><p>Click</p></div></body></html>');
+    expect(r.value).toBe('body-capture,div-capture,p');
+  });
+
+  it('should support full capture-target-bubble cycle', () => {
+    const r = runWithDom(`
+      var result = [];
+      var p = document.querySelector('p');
+      var div = document.querySelector('div');
+      div.addEventListener('click', function(e) { result.push('div-capture'); }, true);
+      div.addEventListener('click', function(e) { result.push('div-bubble'); });
+      p.addEventListener('click', function(e) { result.push('p'); });
+      var evt = document.createEvent('click', true);
+      p.dispatchEvent(evt);
+      result.join(',');
+    `, '<html><body><div><p>Click</p></div></body></html>');
+    expect(r.value).toBe('div-capture,p,div-bubble');
+  });
+
+  it('should stop propagation on stopPropagation()', () => {
+    const r = runWithDom(`
+      var result = [];
+      var p = document.querySelector('p');
+      var div = document.querySelector('div');
+      p.addEventListener('click', function(e) { result.push('p'); e.stopPropagation(); });
+      div.addEventListener('click', function(e) { result.push('div'); });
+      var evt = document.createEvent('click', true);
+      p.dispatchEvent(evt);
+      result.join(',');
+    `, '<html><body><div><p>Click</p></div></body></html>');
+    expect(r.value).toBe('p');
+  });
+
+  it('should support preventDefault()', () => {
+    const r = runWithDom(`
+      var p = document.querySelector('p');
+      p.addEventListener('click', function(e) { e.preventDefault(); });
+      var evt = document.createEvent('click', true, true);
+      var result = p.dispatchEvent(evt);
+      result;
+    `, '<html><body><p>Click</p></body></html>');
+    expect(r.value).toBe(false);
+  });
+
+  it('should set target and currentTarget on event', () => {
+    const r = runWithDom(`
+      var result = '';
+      var p = document.querySelector('p');
+      p.addEventListener('click', function(e) {
+        result = e.eventPhase + ':' + (e.currentTarget === e.target);
+      });
+      var evt = document.createEvent('click');
+      p.dispatchEvent(evt);
+      result;
+    `, '<html><body><p>Click</p></body></html>');
+    expect(r.value).toBe('2:true');
   });
 });

@@ -1,12 +1,30 @@
 # Nova Browser — Documentation Index
 
+## Plans
+
+| Date | File | Summary |
+|------|------|---------|
+| 2026-07-19 | [fetch-api-xhr-plan.md](fetch-api-xhr-plan.md) | Implementation plan for Fetch API (`fetch()`, `Headers`, `Response`, `Request`, `AbortController`) and `XMLHttpRequest` in the JS engine. 6 files to create/modify, ~1,265 lines. |
+
 ## Change Logs
 
 | Date | File | Summary |
 |------|------|---------|
+| 2026-07-19 | [crash-recovery-isolation-tests.md](2026-07-19-crash-recovery-isolation-tests.md) | Integration tests for crash recovery and site isolation — 105 tests across TabProcessManager, LifecycleManager, ErrorBoundary, ScriptGuard, ProcessGuard, CrashReporter, multi-tab isolation. Full suite: 87 files / 3837 tests. |
+| 2026-07-19 | [fetch-api-implementation.md](2026-07-19-fetch-api-implementation.md) | Fetch API implementation — Headers, Response, Request, AbortController, fetch(). EventLoop `_globalCaller` fix for microtask reactions. JSError wrapping for native throws. 36 new tests; 86 files / 3732 tests. |
+| 2026-07-19 | [promise-microtask-fixes.md](2026-07-19-promise-microtask-fixes.md) | Promise chain + Promise.all() bug fixes — parser comma-precedence bug (`parseExpression(2)`), missing array `length` update in all/allSettled accumulators. 31/31 promise tests pass. Full suite: 84 files / 3577 tests. |
+| 2026-07-19 | [history-api-location-bindings.md](2026-07-19-history-api-location-bindings.md) | History API + Location bindings — window.history (pushState/replaceState/back/forward/go/state/length), window.location (href/hash/search/pathname/origin), popstate/hashchange events, go(delta), state serialization. 65 new tests; 83 files / 3546 tests. |
+| 2026-07-19 | [spec-adherence-phase1-complete.md](2026-07-19-spec-adherence-phase1-complete.md) | Phase 1 complete — querySelector wiring, JS event propagation (capture/bubble), HTML parser unknown element fix. 3481 tests all pass. |
+| 2026-07-19 | [spec-adherence-phase1.md](2026-07-19-spec-adherence-phase1.md) | Phase 1 spec fixes — capture phase, CSS specificity, regex lexing, template literal interpolation, PermissionManager test fix. 3456 tests all pass. |
+| 2026-07-19 | [site-isolation.md](2026-07-19-site-isolation.md) | Site isolation tests — 142 tests across all 5 modules (OriginIsolator, CrossOriginGuard, PermissionManager, ResourceQuotaManager, PrivilegeLevels). Fixed PrivilegeLevels Map iteration bug. Full suite: 82 files / 3437 tests. |
+| 2026-07-19 | [spec-adherence-audit.md](2026-07-19-spec-adherence-audit.md) | WHATWG/W3C spec adherence audit — 4 parallel audits (HTML parser ~90%, CSS5 ~55%, JS engine ~55%, DOM/Events/Navigation ~65%). 32 gaps identified, prioritized into 4 phases. 6 critical fixes, 10 high-impact features, 9 completeness items, 7 polish items. |
+| 2026-07-19 | [page-loader-renderer.md](2026-07-19-page-loader-renderer.md) | PageLoader & PageRenderer extraction — Standalone classes implementing IPageLoader and IPageRenderer interfaces. 36 new tests; full suite 80 files / 3295 tests. |
+| 2026-07-19 | [content-security-policy.md](2026-07-19-content-security-policy.md) | CSP engine — 8 modules (parser, evaluator, reporter, policy-store, navigation-guard, resource-enforcer, script-enforcer, sandbox-enforcer), 179 tests, 6 root cause fixes. Full suite: 79 files / 3261 tests. |
 | 2026-07-18 | [application-bootstrap-wiring.md](2026-07-18-application-bootstrap-wiring.md) | Application bootstrap wiring — 11 DI tokens, Firewall integration (networking-setup.ts), TabProcessManager startup wiring, external script fetching pipeline (blocking/defer/async). 14 new tests. |
 | 2026-07-19 | [settings-integration.md](2026-07-19-settings-integration.md) | Settings persistence — SettingsStore (Map + localStorage), SettingsService (DI + change broadcasting), SettingsPage wired into BrowserWindowPage, 39 new tests. |
 | 2026-07-19 | [devtools.md](2026-07-19-devtools.md) | Developer Tools — Console (logging, formatting, duplicate collapsing), Network Monitor (timing phases, firewall decisions, HAR export), DOM Inspector (CSS selector-lite, tree walking), DevTools facade. 99 tests. |
+| 2026-07-19 | [bookmarks-history-ui.md](2026-07-19-bookmarks-history-ui.md) | Bookmarks/History UI module — Vitest test conversion from custom mini-framework. 48 tests across BookmarksService, HistoryService, renderBookmarksPanel, renderHistoryPage, renderBookmarkStarButton, injectStyles. |
+| 2026-07-19 | [navigation-bridge.md](2026-07-19-navigation-bridge.md) | NavigationBridge orchestration — re-entrancy guard, blocked-protocol detection, search query detection fix, AddressBar keyboard shortcuts, BrowserWindowPage wiring. 29 tests; full suite 78 files / 3082 tests. |
 | 2026-07-18 | [ip-protocol.md](2026-07-18-ip-protocol.md) | IP protocol layer + IP adapter + Tab-Process adapter. ip-protocol.ts (IPv4/IPv6, CIDR, PNA, DNS, Happy Eyeballs, ConnectionPool — 100 tests), ip-adapter.ts (createIPSystemResolver, PNAEnforcingHttpClient — 23 tests), tab-process-adapter.ts (TabContextManager ↔ ProcessManager bridge — 18 tests). |
 | 2026-07-18 | [ipc-design.md](2026-07-18-ipc-design.md) | IPC system — message protocol, serializer, transport, channel, service-proxy, process-manager. 6 modules, 64 tests. Fixed 19 test failures (toJSON trap, undefined deletion, _connected, ESM import). |
 | 2026-07-18 | [crash-recovery-isolation.md](2026-07-18-crash-recovery-isolation.md) | Crash recovery/isolation — per-tab TabContext, ScriptGuard, ErrorBoundary, ProcessGuard, CrashReporter, LifecycleManager enhancements. 88 tests. |
@@ -38,6 +56,18 @@
 | Document | Status | Description |
 |----------|--------|-------------|
 | [resource-prioritization.md](2026-07-18-resource-prioritization.md) | Completed | PriorityQueue, BandwidthEstimator, ResourcePrioritizer, cache wiring — 69 tests |
+
+## Analytics
+
+| File | Description |
+|------|-------------|
+| [analytics.html](analytics.html) | Interactive documentation analytics dashboard — glassmorphism dark theme, 10 charts, searchable doc table, spec compliance gauges |
+
+## Project Tracker
+
+| File | Description |
+|------|-------------|
+| [TODO.md](../TODO.md) | Prioritized backlog — high/medium/low items with file references |
 
 ## Conventions
 

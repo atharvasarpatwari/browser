@@ -14,6 +14,57 @@ import {
 // We pass IDomTree into the bindings so all DOM operations go through it.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Shared event infrastructure ─────────────────────────────────────────────
+
+interface DomListenerEntry {
+  type: string;
+  fn: JSFunction;
+  capture: boolean;
+  once: boolean;
+  thisArg: JSValue;
+}
+
+const domListenerMap = new WeakMap<DomNode, DomListenerEntry[]>();
+
+function getDomListeners(node: DomNode): DomListenerEntry[] {
+  let list = domListenerMap.get(node);
+  if (!list) {
+    list = [];
+    domListenerMap.set(node, list);
+  }
+  return list;
+}
+
+function invokeDomListeners(
+  node: DomNode,
+  eventType: string,
+  event: JSObject,
+  isCapture: boolean,
+): boolean {
+  const entries = getDomListeners(node);
+  let stopped = false;
+  for (const entry of entries) {
+    if (entry.type !== eventType || entry.capture !== isCapture) continue;
+    if ((event as any).__stopImmediate) break;
+    try {
+      const wrapper = entry.thisArg && typeof entry.thisArg === 'object' && '__domNode' in entry.thisArg
+        ? entry.thisArg
+        : event.properties.get('currentTarget')?.value ?? event.properties.get('target')?.value;
+      callJSFunction(entry.fn, wrapper ?? null, [event]);
+    } catch { /* swallow handler errors */ }
+    if (entry.once) entry.__marked = true;
+    if ((event as any).__stopPropagation) { stopped = true; break; }
+  }
+  return stopped;
+}
+
+function cleanupDomOnceListeners(node: DomNode): void {
+  const entries = getDomListeners(node);
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].__marked) entries.splice(i, 1);
+  }
+}
+
 /** Create a lightweight DomElement (for document.createElement). */
 function makeElement(tagName: string, parent: DomNode | null): DomElement {
   return {
@@ -113,6 +164,17 @@ export function createDocumentBinding(
     writable: true, enumerable: true, configurable: true,
   });
 
+  // createEvent — creates an event object for dispatchEvent
+  docObj.properties.set('createEvent', {
+    value: createNativeFunction('createEvent', (_this, args) => {
+      const type = toString(args[0] ?? 'event');
+      const bubbles = args.length > 1 ? toBoolean(args[1]) : false;
+      const cancelable = args.length > 2 ? toBoolean(args[2]) : false;
+      return createEventObject(type, null, { bubbles, cancelable });
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
   // body
   docObj.properties.set('body', {
     value: doc.bodyElement ? wrapElement(doc.bodyElement, domTree) : null,
@@ -132,15 +194,65 @@ export function createDocumentBinding(
     writable: false, enumerable: true, configurable: false,
   });
 
-  // addEventListener (document-level — store in closure for dispatchEvent)
-  const docListeners = new Map<string, Array<{ fn: JSFunction; thisArg: JSValue }>>();
+  // addEventListener (document-level — shared infrastructure)
   docObj.properties.set('addEventListener', {
     value: createNativeFunction('addEventListener', (_this, args) => {
-      const event = toString(args[0]);
+      const type = toString(args[0]);
       const fn = args[1] as JSFunction;
-      if (!docListeners.has(event)) docListeners.set(event, []);
-      docListeners.get(event)!.push({ fn, thisArg: _this });
+      const entries = getDomListeners(doc);
+      const dup = entries.find(e => e.type === type && e.fn === fn && !e.capture);
+      if (!dup) entries.push({ type, fn, capture: false, once: false, thisArg: _this });
       return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // dispatchEvent (document-level — three-phase dispatch)
+  docObj.properties.set('dispatchEvent', {
+    value: createNativeFunction('dispatchEvent', (_this, args) => {
+      const evt = args[0] as JSObject;
+      if (!evt || typeof evt !== 'object') return true;
+      const eventType = toString(evt.properties.get('type')?.value ?? '');
+      if (!eventType) return true;
+
+      (evt as any).__stopPropagation = false;
+      (evt as any).__stopImmediate = false;
+      (evt as any).__defaultPrevented = false;
+
+      const ancestors: DomNode[] = [];
+      let cur: DomNode | null = doc.bodyElement;
+      while (cur) {
+        ancestors.push(cur);
+        cur = cur.parent;
+      }
+
+      const wrappedDoc = docObj;
+      evt.properties.set('eventPhase', { value: 1, writable: true, enumerable: true, configurable: false });
+      evt.properties.set('currentTarget', { value: wrappedDoc, writable: true, enumerable: true, configurable: false });
+
+      // Capture phase (root → target)
+      for (let i = ancestors.length - 1; i >= 0; i--) {
+        const ancestor = ancestors[i];
+        const wrapped = wrapElement(ancestor as DomElement, domTree);
+        evt.properties.set('currentTarget', { value: wrapped, writable: true, enumerable: true, configurable: false });
+        if (invokeDomListeners(ancestor, eventType, evt, true)) break;
+        if ((evt as any).__stopPropagation) break;
+      }
+
+      // Target phase (document itself)
+      if (!(evt as any).__stopPropagation) {
+        evt.properties.set('eventPhase', { value: 2, writable: true, enumerable: true, configurable: false });
+        evt.properties.set('currentTarget', { value: wrappedDoc, writable: true, enumerable: true, configurable: false });
+        invokeDomListeners(doc, eventType, evt, false);
+      }
+
+      // Cleanup
+      evt.properties.set('currentTarget', { value: null, writable: true, enumerable: true, configurable: false });
+      evt.properties.set('eventPhase', { value: 0, writable: true, enumerable: true, configurable: false });
+      cleanupDomOnceListeners(doc);
+      for (const ancestor of ancestors) cleanupDomOnceListeners(ancestor);
+
+      return !(evt as any).__defaultPrevented;
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -351,14 +463,23 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     writable: true, enumerable: true, configurable: true,
   });
 
-  // addEventListener
-  const listeners = new Map<string, Array<{ fn: JSFunction; thisArg: JSValue }>>();
+  // addEventListener (with capture/once support)
   obj.properties.set('addEventListener', {
     value: createNativeFunction('addEventListener', (_this, args) => {
-      const event = toString(args[0]);
+      const type = toString(args[0]);
       const fn = args[1] as JSFunction;
-      if (!listeners.has(event)) listeners.set(event, []);
-      listeners.get(event)!.push({ fn, thisArg: _this });
+      const opts = args[2];
+      const capture = typeof opts === 'boolean' ? opts
+        : (opts && typeof opts === 'object' && 'value' in opts) ? false
+        : (opts && typeof opts === 'object' && typeof opts === 'object')
+          ? toBoolean((opts as any).properties?.get('capture')?.value ?? false)
+          : false;
+      const once = (opts && typeof opts === 'object' && typeof opts === 'object' && 'properties' in opts)
+        ? toBoolean((opts as any).properties?.get('once')?.value ?? false)
+        : false;
+      const entries = getDomListeners(el);
+      const dup = entries.find(e => e.type === type && e.fn === fn && e.capture === capture);
+      if (!dup) entries.push({ type, fn, capture, once, thisArg: _this });
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -367,36 +488,83 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
   // removeEventListener
   obj.properties.set('removeEventListener', {
     value: createNativeFunction('removeEventListener', (_this, args) => {
-      const event = toString(args[0]);
+      const type = toString(args[0]);
       const fn = args[1] as JSFunction;
-      const arr = listeners.get(event);
-      if (arr) {
-        const idx = arr.findIndex(l => l.fn === fn);
-        if (idx !== -1) arr.splice(idx, 1);
-      }
+      const opts = args[2];
+      const capture = typeof opts === 'boolean' ? opts : false;
+      const entries = getDomListeners(el);
+      const idx = entries.findIndex(e => e.type === type && e.fn === fn && e.capture === capture);
+      if (idx !== -1) entries.splice(idx, 1);
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
   });
 
-  // dispatchEvent
+  // dispatchEvent — three-phase: capture → target → bubble
   obj.properties.set('dispatchEvent', {
     value: createNativeFunction('dispatchEvent', (_this, args) => {
       const evt = args[0] as JSObject;
-      const eventType = typeof evt === 'object' && evt !== null
-        ? toString(evt.properties.get('type')?.value)
-        : 'unknown';
-      const arr = listeners.get(eventType);
-      if (arr) {
-        for (const l of arr) {
-          try {
-            callJSFunction(l.fn, l.thisArg, [evt]);
-          } catch {
-            // swallow event handler errors
-          }
+      if (!evt || typeof evt !== 'object') return true;
+      const eventType = toString(evt.properties.get('type')?.value ?? '');
+      if (!eventType) return true;
+
+      // Initialize propagation state
+      (evt as any).__stopPropagation = false;
+      (evt as any).__stopImmediate = false;
+      (evt as any).__defaultPrevented = false;
+
+      // Build ancestor chain (elements only, no text or document nodes)
+      const ancestors: DomNode[] = [];
+      let cur: DomNode | null = el.parent;
+      while (cur) {
+        if (cur.nodeType === 'element') ancestors.push(cur);
+        cur = cur.parent;
+      }
+
+      const bubbles = evt.properties.get('bubbles')?.value === true;
+
+      // Set target
+      const wrappedTarget = wrapElement(el, domTree);
+      evt.properties.set('target', { value: wrappedTarget, writable: false, enumerable: true, configurable: false });
+
+      // ── CAPTURE PHASE: root → parent-of-target ──
+      evt.properties.set('eventPhase', { value: 1, writable: true, enumerable: true, configurable: false });
+      for (let i = ancestors.length - 1; i >= 0; i--) {
+        const ancestor = ancestors[i];
+        const wrapped = wrapElement(ancestor as DomElement, domTree);
+        evt.properties.set('currentTarget', { value: wrapped, writable: true, enumerable: true, configurable: false });
+        if (invokeDomListeners(ancestor, eventType, evt, true)) break;
+        if ((evt as any).__stopPropagation) break;
+      }
+
+      // ── TARGET PHASE ──
+      if (!(evt as any).__stopPropagation) {
+        evt.properties.set('eventPhase', { value: 2, writable: true, enumerable: true, configurable: false });
+        evt.properties.set('currentTarget', { value: wrappedTarget, writable: true, enumerable: true, configurable: false });
+        invokeDomListeners(el, eventType, evt, false);
+        if (!(evt as any).__stopPropagation) {
+          invokeDomListeners(el, eventType, evt, true);
         }
       }
-      return true;
+
+      // ── BUBBLE PHASE: parent-of-target → root ──
+      if (bubbles && !(evt as any).__stopPropagation) {
+        evt.properties.set('eventPhase', { value: 3, writable: true, enumerable: true, configurable: false });
+        for (const ancestor of ancestors) {
+          const wrapped = wrapElement(ancestor as DomElement, domTree);
+          evt.properties.set('currentTarget', { value: wrapped, writable: true, enumerable: true, configurable: false });
+          if (invokeDomListeners(ancestor, eventType, evt, false)) break;
+          if ((evt as any).__stopPropagation) break;
+        }
+      }
+
+      // Cleanup
+      evt.properties.set('currentTarget', { value: null, writable: true, enumerable: true, configurable: false });
+      evt.properties.set('eventPhase', { value: 0, writable: true, enumerable: true, configurable: false });
+      cleanupDomOnceListeners(el);
+      for (const ancestor of ancestors) cleanupDomOnceListeners(ancestor);
+
+      return !(evt as any).__defaultPrevented;
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -552,17 +720,36 @@ function deepClone(el: DomElement): DomElement {
   return clone;
 }
 
-export function createEventObject(type: string, target: JSValue): JSObject {
+export function createEventObject(type: string, target: JSValue, options?: { bubbles?: boolean; cancelable?: boolean }): JSObject {
   const evt = createObject(null);
   evt.properties.set('type', { value: type, writable: false, enumerable: true, configurable: false });
   evt.properties.set('target', { value: target, writable: false, enumerable: true, configurable: false });
-  evt.properties.set('currentTarget', { value: target, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('currentTarget', { value: target, writable: true, enumerable: true, configurable: false });
+  evt.properties.set('eventPhase', { value: 0, writable: true, enumerable: true, configurable: false });
+  evt.properties.set('bubbles', { value: options?.bubbles ?? false, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('cancelable', { value: options?.cancelable ?? false, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('defaultPrevented', { value: false, writable: true, enumerable: true, configurable: false });
   evt.properties.set('preventDefault', {
-    value: createNativeFunction('preventDefault', () => undefined),
+    value: createNativeFunction('preventDefault', (_this, _args) => {
+      (evt as any).__defaultPrevented = true;
+      evt.properties.set('defaultPrevented', { value: true, writable: true, enumerable: true, configurable: false });
+      return undefined;
+    }),
     writable: true, enumerable: true, configurable: true,
   });
   evt.properties.set('stopPropagation', {
-    value: createNativeFunction('stopPropagation', () => undefined),
+    value: createNativeFunction('stopPropagation', (_this, _args) => {
+      (evt as any).__stopPropagation = true;
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  evt.properties.set('stopImmediatePropagation', {
+    value: createNativeFunction('stopImmediatePropagation', (_this, _args) => {
+      (evt as any).__stopPropagation = true;
+      (evt as any).__stopImmediate = true;
+      return undefined;
+    }),
     writable: true, enumerable: true, configurable: true,
   });
   return evt;

@@ -432,7 +432,9 @@ function inBodyStartTag(ctx: TreeBuilderContext, token: Token): void {
     }
   }
 
-  ctx.parseError(token);
+  // Any other start tag: reconstruct active formatting elements, insert HTML element
+  ctx.reconstructActiveFormattingElements();
+  ctx.insertHTMLElement(token);
 }
 
 // ── In-body: end tags ────────────────────────────────────────────────────

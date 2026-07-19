@@ -1,0 +1,5 @@
+{
+  "main": "scripts/webapi_binding.js",
+  "output": "dist/webapi_binding.blob",
+  "disableExperimentalSEAWarning": true
+}

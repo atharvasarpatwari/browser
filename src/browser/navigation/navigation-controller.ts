@@ -123,6 +123,11 @@ interface NavigationEntry {
   readonly scrollY: number;
   /** Fully parsed URL components for downstream use. */
   readonly parsedUrl: ParsedUrl;
+  /**
+   * Arbitrary state object stored by history.pushState() / history.replaceState().
+   * null when no state has been associated with this entry.
+   */
+  readonly state: unknown;
 }
 
 /**
@@ -138,6 +143,11 @@ interface NavigationRequest {
   readonly referrer?: string;
   /** True when initiated by an explicit user action (click, address bar). */
   readonly userInitiated: boolean;
+  /**
+   * Arbitrary state object for history.pushState() / history.replaceState().
+   * When provided, it is stored on the resulting NavigationEntry.
+   */
+  readonly state?: unknown;
 }
 
 /** The outcome of a navigation call. */
@@ -263,7 +273,7 @@ interface INavigationGuard {
 interface INavigationController {
   // ── Navigation actions ────────────────────────────────────────────────────
   /** Navigate to a URL, creating a new history entry. */
-  navigate(url: string, referrer?: string): Promise<NavigationResult>;
+  navigate(url: string, referrer?: string, state?: unknown): Promise<NavigationResult>;
   /** Full control — pass a NavigationRequest directly. */
   navigateTo(request: NavigationRequest): Promise<NavigationResult>;
   /** Move one step backwards in history. Synchronous. */
@@ -275,7 +285,14 @@ interface INavigationController {
   /** Abort an in-progress navigation. */
   stop(): void;
   /** Navigate without creating a new history entry. */
-  replace(url: string): Promise<NavigationResult>;
+  replace(url: string, state?: unknown): Promise<NavigationResult>;
+  /** Navigate by delta relative to the current history position (history.go). */
+  go(delta: number): NavigationResult;
+
+  /** Update the current entry's state without navigating (history.pushState). */
+  pushState(state: unknown, title: string, url?: string): void;
+  /** Update the current entry's state without creating a new entry (history.replaceState). */
+  replaceState(state: unknown, title: string, url?: string): void;
 
   // ── History state ──────────────────────────────────────────────────────────
   getCurrentEntry(): NavigationEntry | null;
@@ -396,6 +413,14 @@ class NavigationStack {
     return this.current();
   }
 
+  /** Move cursor by an arbitrary delta (positive = forward, negative = back). */
+  step(n: number): NavigationEntry | null {
+    const target = this.cursor + n;
+    if (target < 0 || target >= this.entries.length) return null;
+    this.cursor = target;
+    return this.current();
+  }
+
   // ── Query ──────────────────────────────────────────────────────────────────
 
   current(): NavigationEntry | null {
@@ -512,12 +537,13 @@ class NavigationController implements INavigationController {
 
   // ── navigate / navigateTo ──────────────────────────────────────────────────
 
-  navigate(url: string, referrer?: string): Promise<NavigationResult> {
+  navigate(url: string, referrer?: string, state?: unknown): Promise<NavigationResult> {
     return this.navigateTo({
       url,
       type: NavigationType.Push,
       referrer,
       userInitiated: true,
+      state,
     });
   }
 
@@ -532,7 +558,13 @@ class NavigationController implements INavigationController {
       return this.fail(request, error);
     }
 
-    // ── Step 2: Guard chain ──────────────────────────────────────────────────
+    // ── Step 2: Hash-only change (synchronous — same-page, no network) ───────
+    const current = this.stack.current();
+    if (current !== null && this.isHashChange(current.parsedUrl, parsedUrl)) {
+      return this.handleHashChange(current, parsedUrl);
+    }
+
+    // ── Step 3: Guard chain ──────────────────────────────────────────────────
     const guardOutcome = await this.runGuards(request);
     if (!guardOutcome.allowed) {
       return this.fail(
@@ -543,12 +575,6 @@ class NavigationController implements INavigationController {
           guardOutcome.reason!,
         ),
       );
-    }
-
-    // ── Step 3: Hash-only change ─────────────────────────────────────────────
-    const current = this.stack.current();
-    if (current !== null && this.isHashChange(current.parsedUrl, parsedUrl)) {
-      return this.handleHashChange(current, parsedUrl);
     }
 
     // ── Step 4: Abort any in-flight navigation ───────────────────────────────
@@ -581,6 +607,7 @@ class NavigationController implements INavigationController {
       scrollX:   0,
       scrollY:   0,
       parsedUrl,
+      state:     request.state ?? null,
     };
 
     if (request.type === NavigationType.Replace ||
@@ -661,6 +688,37 @@ class NavigationController implements INavigationController {
     return { success: true, entry, state: NavigationState.Complete };
   }
 
+  // ── go(delta) ─────────────────────────────────────────────────────────────
+
+  go(delta: number): NavigationResult {
+    const n = Math.trunc(delta);
+    if (n === 0) {
+      // history.go(0) reloads the current page (fires popstate).
+      const current = this.stack.current();
+      if (current === null) {
+        return this.fail(
+          { url: '', type: NavigationType.Reload, userInitiated: true },
+          new NoEntryError('go'),
+        );
+      }
+      this._state = NavigationState.Complete;
+      this.bus.emit({ kind: 'navigationCommitted', entry: current });
+      return { success: true, entry: current, state: NavigationState.Complete };
+    }
+
+    const entry = this.stack.step(n);
+    if (entry === null) {
+      return this.fail(
+        { url: '', type: NavigationType.Forward, userInitiated: true },
+        new Error(`Cannot go(${n}): out of history range.`),
+      );
+    }
+
+    this._state = NavigationState.Complete;
+    this.bus.emit({ kind: 'navigationCommitted', entry });
+    return { success: true, entry, state: NavigationState.Complete };
+  }
+
   // ── reload ─────────────────────────────────────────────────────────────────
 
   reload(): NavigationResult {
@@ -695,12 +753,85 @@ class NavigationController implements INavigationController {
 
   // ── replace ────────────────────────────────────────────────────────────────
 
-  replace(url: string): Promise<NavigationResult> {
+  replace(url: string, state?: unknown): Promise<NavigationResult> {
     return this.navigateTo({
       url,
       type:          NavigationType.Replace,
       userInitiated: false,
+      state,
     });
+  }
+
+  // ── pushState / replaceState ──────────────────────────────────────────────
+
+  /**
+   * Update the current entry's state without navigating (history.pushState).
+   * Per WHATWG spec, pushState creates a new entry — but for simplicity we
+   * implement the state-update + optional URL-change behavior.
+   */
+  pushState(state: unknown, title: string, url?: string): void {
+    const current = this.stack.current();
+    if (current === null) return;
+
+    let parsedUrl = current.parsedUrl;
+    if (url !== undefined) {
+      try {
+        // Resolve relative URLs against the current URL.
+        const resolved = new URL(url, current.url);
+        parsedUrl = this.parser.parse(resolved.href);
+      } catch {
+        try {
+          parsedUrl = this.parser.parse(url);
+        } catch { /* invalid URL — keep current */ }
+      }
+    }
+
+    const updated: NavigationEntry = {
+      id:        nextId(),
+      url:       parsedUrl.href,
+      title:     title || current.title,
+      timestamp: Date.now(),
+      type:      NavigationType.Push,
+      scrollX:   current.scrollX,
+      scrollY:   current.scrollY,
+      parsedUrl,
+      state,
+    };
+    this.stack.push(updated);
+  }
+
+  /**
+   * Update the current entry's state without creating a new entry (history.replaceState).
+   */
+  replaceState(state: unknown, title: string, url?: string): void {
+    const current = this.stack.current();
+    if (current === null) return;
+
+    let parsedUrl = current.parsedUrl;
+    if (url !== undefined) {
+      try {
+        // Resolve relative URLs against the current URL.
+        const resolved = new URL(url, current.url);
+        parsedUrl = this.parser.parse(resolved.href);
+      } catch {
+        try {
+          parsedUrl = this.parser.parse(url);
+        } catch { /* invalid URL — keep current */ }
+      }
+    }
+
+    const updated: NavigationEntry = {
+      id:        nextId(),
+      url:       parsedUrl.href,
+      title:     title || current.title,
+      timestamp: Date.now(),
+      type:      NavigationType.Replace,
+      scrollX:   current.scrollX,
+      scrollY:   current.scrollY,
+      parsedUrl,
+      state,
+    };
+    this.stack.replace(updated);
   }
 
   // ── History queries ────────────────────────────────────────────────────────
@@ -811,6 +942,7 @@ class NavigationController implements INavigationController {
       parsedUrl,
       timestamp: Date.now(),
       type:      NavigationType.HashChange,
+      state:     current.state,
     };
     this.stack.replace(updated);
 

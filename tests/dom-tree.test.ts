@@ -228,4 +228,124 @@ describe('DomTree', () => {
     expect(parent.children).toHaveLength(2);
     expect(parent.children[parent.children.length - 1]).toBe(newNode);
   });
+
+  // ── querySelector / querySelectorAll ─────────────────────────────────────
+
+  describe('querySelector', () => {
+    it('should find element by tag name', () => {
+      const parseResult = parser.parse('<html><body><div><p>Hello</p></div></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const p = tree.querySelector('p');
+      expect(p).not.toBeNull();
+      expect(p!.tagName).toBe('p');
+    });
+
+    it('should find element by ID', () => {
+      const parseResult = parser.parse('<html><body><div id="target">Found</div></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const el = tree.querySelector('#target');
+      expect(el).not.toBeNull();
+      expect(el!.tagName).toBe('div');
+    });
+
+    it('should find element by class', () => {
+      const parseResult = parser.parse('<html><body><span class="highlight">Text</span></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const el = tree.querySelector('.highlight');
+      expect(el).not.toBeNull();
+      expect(el!.tagName).toBe('span');
+    });
+
+    it('should find first matching element in document order', () => {
+      const parseResult = parser.parse('<html><body><p>First</p><p>Second</p></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const p = tree.querySelector('p');
+      expect(p).not.toBeNull();
+      const text = p!.children.find(c => c.nodeType === 'text') as any;
+      expect(text.text).toBe('First');
+    });
+
+    it('should find nested element with descendant combinator', () => {
+      const parseResult = parser.parse('<html><body><div><span class="deep">Nested</span></div></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const el = tree.querySelector('div .deep');
+      expect(el).not.toBeNull();
+      expect(el!.tagName).toBe('span');
+    });
+
+    it('should find element with child combinator', () => {
+      const parseResult = parser.parse('<html><body><div><p>Direct child</p></div></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const el = tree.querySelector('div > p');
+      expect(el).not.toBeNull();
+      expect(el!.tagName).toBe('p');
+    });
+
+    it('should not match non-existent elements', () => {
+      const parseResult = parser.parse('<html><body><div>Content</div></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      expect(tree.querySelector('table')).toBeNull();
+    });
+
+    it('should return null for empty document', () => {
+      const parseResult = parser.parse('<html><head></head><body></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      expect(tree.querySelector('div')).toBeNull();
+    });
+
+    it('should find element with attribute selector', () => {
+      const parseResult = parser.parse('<html><body><a href="https://example.com">Link</a></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const el = tree.querySelector('a[href]');
+      expect(el).not.toBeNull();
+      expect(el!.tagName).toBe('a');
+    });
+
+    it('should find element with attribute value selector', () => {
+      const parseResult = parser.parse('<html><body><a href="https://example.com">Link</a></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const el = tree.querySelector('[href="https://example.com"]');
+      expect(el).not.toBeNull();
+      expect(el!.tagName).toBe('a');
+    });
+  });
+
+  describe('querySelectorAll', () => {
+    it('should find all matching elements', () => {
+      const parseResult = parser.parse('<html><body><p>1</p><p>2</p><p>3</p></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const all = tree.querySelectorAll('p');
+      expect(all).toHaveLength(3);
+    });
+
+    it('should return empty array for no matches', () => {
+      const parseResult = parser.parse('<html><body><div>Content</div></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const all = tree.querySelectorAll('table');
+      expect(all).toHaveLength(0);
+    });
+
+    it('should find elements by class across subtree', () => {
+      const parseResult = parser.parse('<html><body><div><span class="x">A</span></div><span class="x">B</span></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const all = tree.querySelectorAll('.x');
+      expect(all).toHaveLength(2);
+    });
+
+    it('should find elements with descendant combinator', () => {
+      const parseResult = parser.parse('<html><body><div><span>Deep</span></div><span>Shallow</span></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const all = tree.querySelectorAll('div span');
+      expect(all).toHaveLength(1);
+      expect(all[0].tagName).toBe('span');
+    });
+
+    it('should find elements with multiple class selectors', () => {
+      const parseResult = parser.parse('<html><body><div class="a b">AB</div><div class="a">A</div><div class="b">B</div></body></html>');
+      tree.buildFromHtml(parseResult.document);
+      const all = tree.querySelectorAll('.a.b');
+      expect(all).toHaveLength(1);
+      expect(all[0].tagName).toBe('div');
+    });
+  });
 });
