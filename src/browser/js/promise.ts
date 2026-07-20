@@ -30,6 +30,13 @@ export function isPromiseObject(val: JSValue): boolean {
   return promiseStates.has(val as JSObject);
 }
 
+export function wrapAsyncResult(value: JSValue, eventLoop: EventLoop): JSValue {
+  if (isPromiseObject(value)) return value;
+  const p = createPromiseObj(eventLoop);
+  fulfillPromise(p, value);
+  return p;
+}
+
 function getState(p: JSObject): PromiseState {
   return promiseStates.get(p)!;
 }

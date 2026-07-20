@@ -32,6 +32,33 @@ export class Parser {
   // ── Expression parsing (Pratt) ───────────────────────────────────────────
 
   private parseExpression(minPrec = 0): AST.Expression {
+    // Handle async arrow: async (x) => expr or async x => expr
+    if (this.is(TokenType.Async) && this.peek(1).type !== TokenType.Function) {
+      const tok = this.peek();
+      this.advance(); // consume 'async'
+      const params: AST.Identifier[] = [];
+      if (this.is(TokenType.LParen)) {
+        this.advance();
+        while (!this.is(TokenType.RParen) && !this.is(TokenType.EOF)) {
+          if (this.is(TokenType.Comma)) { this.advance(); continue; }
+          params.push({ type: 'Identifier', name: this.peek().value });
+          this.advance();
+        }
+        this.expect(TokenType.RParen);
+      } else if (this.is(TokenType.Identifier)) {
+        params.push({ type: 'Identifier', name: this.peek().value });
+        this.advance();
+      }
+      this.expect(TokenType.Arrow);
+      let body: AST.BlockStatement | AST.Expression;
+      if (this.is(TokenType.LBrace)) {
+        body = this.parseBlock();
+      } else {
+        body = this.parseAssignExpr();
+      }
+      return { type: 'ArrowFunctionExpression', params, body, async: true, expression: !(body.type === 'BlockStatement'), loc: { line: tok.line, column: tok.column } };
+    }
+
     let left = this.parsePrefix();
 
     // Arrow function: (x) => expr or x => expr
@@ -161,10 +188,38 @@ export class Parser {
       case TokenType.Backtick:
         return this.parseTemplateLiteral();
 
+      case TokenType.Yield:
+        return this.parseYieldExpression(false);
+
+      case TokenType.Await:
+        return this.parseAwaitExpression();
+
       default:
         this.advance();
         return { type: 'Literal', value: undefined, raw: tok.value, loc: { line: tok.line, column: tok.column } };
     }
+  }
+
+  private parseAwaitExpression(): AST.AwaitExpression {
+    const tok = this.peek();
+    this.advance();
+    const argument = this.parseExpression(14);
+    return { type: 'AwaitExpression', argument, loc: { line: tok.line, column: tok.column } };
+  }
+
+  private parseYieldExpression(delegate: boolean): AST.YieldExpression {
+    const tok = this.peek();
+    this.advance();
+    let isDelegate = delegate;
+    if (this.is(TokenType.Generator)) {
+      this.advance();
+      isDelegate = true;
+    }
+    let argument: AST.Expression | null = null;
+    if (!this.is(TokenType.Semicolon) && !this.is(TokenType.RBrace) && !this.is(TokenType.EOF)) {
+      argument = this.parseExpression(2);
+    }
+    return { type: 'YieldExpression', argument, delegate: isDelegate, loc: { line: tok.line, column: tok.column } };
   }
 
   private parseInfix(left: AST.Expression, prec: number): AST.Expression {
@@ -200,6 +255,7 @@ export class Parser {
       // Logical operators
       case TokenType.AmpersandAmpersand:
       case TokenType.PipePipe:
+      case TokenType.QuestionQuestion:
         this.advance();
         const logRight = this.parseExpression(prec);
         return { type: 'LogicalExpression', operator: tok.value, left, right: logRight, loc: { line: tok.line, column: tok.column } };
@@ -218,6 +274,7 @@ export class Parser {
       case TokenType.LessLessAssign:
       case TokenType.GreaterGreaterAssign:
       case TokenType.GreaterGreaterGreaterAssign:
+      case TokenType.QuestionQuestionAssign:
         this.advance();
         const assignRight = this.parseExpression(prec - 1);
         return { type: 'AssignmentExpression', operator: tok.value, left, right: assignRight, loc: { line: tok.line, column: tok.column } };
@@ -235,6 +292,26 @@ export class Parser {
         const prop: AST.Identifier = { type: 'Identifier', name: propTok.value, loc: { line: propTok.line, column: propTok.column } };
         this.advance();
         return { type: 'MemberExpression', object: left, property: prop, computed: false, optional: false, loc: { line: tok.line, column: tok.column } };
+
+      // Optional chaining
+      case TokenType.QuestionDot:
+        this.advance();
+        if (this.is(TokenType.LBracket)) {
+          this.advance();
+          const optComputed = this.parseExpression();
+          this.expect(TokenType.RBracket);
+          return { type: 'MemberExpression', object: left, property: optComputed, computed: true, optional: true, loc: { line: tok.line, column: tok.column } };
+        }
+        if (this.is(TokenType.LParen)) {
+          this.advance();
+          const optArgs = this.parseArguments();
+          this.expect(TokenType.RParen);
+          return { type: 'CallExpression', callee: left, arguments: optArgs, optional: true, loc: { line: tok.line, column: tok.column } };
+        }
+        const optPropTok = this.peek();
+        const optProp: AST.Identifier = { type: 'Identifier', name: optPropTok.value, loc: { line: optPropTok.line, column: optPropTok.column } };
+        this.advance();
+        return { type: 'MemberExpression', object: left, property: optProp, computed: false, optional: true, loc: { line: tok.line, column: tok.column } };
 
       case TokenType.LBracket:
         this.advance();
@@ -271,14 +348,14 @@ export class Parser {
   private parseUnaryExpression(): AST.UnaryExpression {
     const tok = this.peek();
     this.advance();
-    const arg = this.parseExpression(13);
+    const arg = this.parseExpression(14);
     return { type: 'UnaryExpression', operator: tok.value, argument: arg, prefix: true, loc: { line: tok.line, column: tok.column } };
   }
 
   private parsePrefixUpdate(): AST.UpdateExpression {
     const tok = this.peek();
     this.advance();
-    const arg = this.parseExpression(15);
+    const arg = this.parseExpression(16);
     return { type: 'UpdateExpression', operator: tok.value, argument: arg, prefix: true, loc: { line: tok.line, column: tok.column } };
   }
 
@@ -326,7 +403,7 @@ export class Parser {
   private parseNewExpression(): AST.NewExpression {
     const tok = this.peek();
     this.advance();
-    const callee = this.parseExpression(17);
+    const callee = this.parseExpression(18);
     let args: AST.Expression[] = [];
     if (this.is(TokenType.LParen)) {
       this.advance();
@@ -431,7 +508,11 @@ export class Parser {
 
   private parseFunctionExpression(): AST.FunctionExpression {
     const tok = this.peek();
-    this.advance();
+    let async = false;
+    if (this.is(TokenType.Async)) { this.advance(); async = true; }
+    this.expect(TokenType.Function);
+    let generator = false;
+    if (this.is(TokenType.Generator)) { this.advance(); generator = true; }
     let id: AST.Identifier | null = null;
     if (this.is(TokenType.Identifier)) {
       id = { type: 'Identifier', name: this.peek().value };
@@ -441,7 +522,7 @@ export class Parser {
     const params = this.parseParams();
     this.expect(TokenType.RParen);
     const body = this.parseBlock();
-    return { type: 'FunctionExpression', id, params, body, async: false, generator: false, loc: { line: tok.line, column: tok.column } };
+    return { type: 'FunctionExpression', id, params, body, async, generator, loc: { line: tok.line, column: tok.column } };
   }
 
   private parseParenExpression(): AST.Expression {
@@ -473,6 +554,11 @@ export class Parser {
       case TokenType.Let:
       case TokenType.Const: return this.parseVariableDeclaration();
       case TokenType.Function: return this.parseFunctionDeclaration();
+      case TokenType.Async:
+        if (this.peek(1).type === TokenType.Function) {
+          return this.parseFunctionDeclaration(true);
+        }
+        return this.parseExpressionStatement();
       case TokenType.Class: return this.parseClassDeclaration();
       case TokenType.Return: return this.parseReturnStatement();
       case TokenType.If: return this.parseIfStatement();
@@ -488,6 +574,9 @@ export class Parser {
         this.advance();
         return { type: 'DebuggerStatement', loc: { line: tok.line, column: tok.column } };
       default:
+        if (tok.type === TokenType.Identifier && this.peek(1).type === TokenType.Colon) {
+          return this.parseLabeledStatement();
+        }
         return this.parseExpressionStatement();
     }
   }
@@ -640,16 +729,20 @@ export class Parser {
     return id;
   }
 
-  private parseFunctionDeclaration(): AST.FunctionDeclaration {
+  private parseFunctionDeclaration(isAsync = false): AST.FunctionDeclaration {
     const tok = this.peek();
-    this.advance();
+    let async = isAsync;
+    if (this.is(TokenType.Async)) { this.advance(); async = true; }
+    this.expect(TokenType.Function);
+    let generator = false;
+    if (this.is(TokenType.Generator)) { this.advance(); generator = true; }
     const id: AST.Identifier = { type: 'Identifier', name: this.peek().value };
     this.advance();
     this.expect(TokenType.LParen);
     const params = this.parseParams();
     this.expect(TokenType.RParen);
     const body = this.parseBlock();
-    return { type: 'FunctionDeclaration', id, params, body, async: false, generator: false, loc: { line: tok.line, column: tok.column } };
+    return { type: 'FunctionDeclaration', id, params, body, async, generator, loc: { line: tok.line, column: tok.column } };
   }
 
   private parseClassDeclaration(): AST.ClassDeclaration {
@@ -926,6 +1019,15 @@ export class Parser {
     return { type: 'ContinueStatement', label, loc: { line: tok.line, column: tok.column } };
   }
 
+  private parseLabeledStatement(): AST.LabeledStatement {
+    const tok = this.peek();
+    const label: AST.Identifier = { type: 'Identifier', name: tok.value, loc: { line: tok.line, column: tok.column } };
+    this.advance();
+    this.expect(TokenType.Colon);
+    const body = this.parseStatement();
+    return { type: 'LabeledStatement', label, body: body as AST.Statement, loc: { line: tok.line, column: tok.column } };
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   private parseParams(): (AST.Identifier | AST.RestElement | AST.AssignmentPattern)[] {
@@ -1004,45 +1106,48 @@ export class Parser {
       case TokenType.CaretAssign:
       case TokenType.LessLessAssign:
       case TokenType.GreaterGreaterAssign:
-      case TokenType.GreaterGreaterGreaterAssign: return 2;
+      case TokenType.GreaterGreaterGreaterAssign:
+      case TokenType.QuestionQuestionAssign: return 2;
 
       case TokenType.Question: return 3;
-      case TokenType.PipePipe: return 4;
-      case TokenType.AmpersandAmpersand: return 5;
-      case TokenType.Pipe: return 6;
-      case TokenType.Caret: return 7;
-      case TokenType.Ampersand: return 8;
+      case TokenType.QuestionQuestion: return 4;
+      case TokenType.PipePipe: return 5;
+      case TokenType.AmpersandAmpersand: return 6;
+      case TokenType.Pipe: return 7;
+      case TokenType.Caret: return 8;
+      case TokenType.Ampersand: return 9;
       case TokenType.EqualEqual:
       case TokenType.BangEqual:
       case TokenType.EqualEqualEqual:
-      case TokenType.BangEqualEqual: return 9;
+      case TokenType.BangEqualEqual: return 10;
 
       case TokenType.Less:
       case TokenType.Greater:
       case TokenType.LessEqual:
       case TokenType.GreaterEqual:
       case TokenType.Instanceof:
-      case TokenType.In: return 10;
+      case TokenType.In: return 11;
 
       case TokenType.LessLess:
       case TokenType.GreaterGreater:
-      case TokenType.GreaterGreaterGreater: return 11;
+      case TokenType.GreaterGreaterGreater: return 12;
 
       case TokenType.Plus:
-      case TokenType.Minus: return 12;
+      case TokenType.Minus: return 13;
 
       case TokenType.Star:
       case TokenType.Slash:
-      case TokenType.Percent: return 13;
+      case TokenType.Percent: return 14;
 
-      case TokenType.StarStar: return 14;
+      case TokenType.StarStar: return 15;
 
       case TokenType.PlusPlus:
-      case TokenType.MinusMinus: return 15;
+      case TokenType.MinusMinus: return 16;
 
       case TokenType.Dot:
+      case TokenType.QuestionDot:
       case TokenType.LBracket:
-      case TokenType.LParen: return 16;
+      case TokenType.LParen: return 17;
 
       default: return 0;
     }

@@ -128,7 +128,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 7. Lazy load images/iframes via IntersectionObserver
     const lazyLoader = new LazyLoader();
-    lazyLoader.init(doc, domTree);
+    lazyLoader.init(doc, domTree, resourceLoader, result.url);
     lazyLoader.scanForLazyElements(doc);
     lazyLoader.setViewport(1920, 1080); // Default viewport
 

@@ -15,6 +15,8 @@ interface ResourceLoadResult {
   readonly statusCode: number;
   readonly contentType: string;
   readonly body: string;
+  /** Binary body for image/font/media content types. Null for text responses. */
+  readonly bodyBinary: Uint8Array | null;
   readonly headers: ReadonlyMap<string, string>;
   readonly loadedAt: number;
   readonly durationMs: number;
@@ -89,6 +91,7 @@ class ResourceLoader implements IResourceLoader {
           statusCode: cached.statusCode,
           contentType: cached.contentType,
           body: cached.body,
+          bodyBinary: null,
           headers: cached.headers,
           loadedAt: Date.now(),
           durationMs: 0,
@@ -114,6 +117,7 @@ class ResourceLoader implements IResourceLoader {
           statusCode: 0,
           contentType: '',
           body: '',
+          bodyBinary: null,
           headers: new Map(),
           loadedAt: Date.now(),
           durationMs: Date.now() - start,
@@ -177,6 +181,7 @@ class ResourceLoader implements IResourceLoader {
         statusCode: res.statusCode,
         contentType: parsed.mimeType.full || 'application/octet-stream',
         body: res.body,
+        bodyBinary: res.bodyBinary,
         headers: res.headers,
         loadedAt: Date.now(),
         durationMs,
@@ -191,6 +196,7 @@ class ResourceLoader implements IResourceLoader {
         statusCode: 0,
         contentType: '',
         body: '',
+        bodyBinary: null,
         headers: new Map(),
         loadedAt: Date.now(),
         durationMs: Date.now() - start,

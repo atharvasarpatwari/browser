@@ -41,6 +41,7 @@ export interface JSFunction {
   body: unknown; // AST.BlockStatement | AST.Expression
   closure: Environment;
   async: boolean;
+  generator: boolean;
   isArrow: boolean;
   isNative: boolean;
   nativeFn?: NativeFunction;
@@ -564,6 +565,7 @@ export function createFunction(
   closure: Environment,
   async = false,
   isArrow = false,
+  generator = false,
 ): JSFunction {
   return {
     type: 'closure',
@@ -572,6 +574,7 @@ export function createFunction(
     body,
     closure,
     async,
+    generator,
     isArrow,
     isNative: false,
   };
@@ -585,6 +588,7 @@ export function createNativeFunction(name: string, fn: NativeFunction): JSFuncti
     body: null,
     closure: new Environment(),
     async: false,
+    generator: false,
     isArrow: false,
     isNative: true,
     nativeFn: fn,

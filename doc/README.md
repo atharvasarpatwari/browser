@@ -4,12 +4,18 @@
 
 | Date | File | Summary |
 |------|------|---------|
+| 2026-07-19 | [gpu-acceleration-plan.md](gpu-acceleration-plan.md) | GPU acceleration using WebGPU (Dawn bindings) for rasterizer + compositing. Target 60+ FPS at full HD. 10 files to create, 5 files to modify. |
 | 2026-07-19 | [fetch-api-xhr-plan.md](fetch-api-xhr-plan.md) | Implementation plan for Fetch API (`fetch()`, `Headers`, `Response`, `Request`, `AbortController`) and `XMLHttpRequest` in the JS engine. 6 files to create/modify, ~1,265 lines. |
 
 ## Change Logs
 
 | Date | File | Summary |
 |------|------|---------|
+| 2026-07-20 | [2026-07-20-js-engine-critical-gaps.md](2026-07-20-js-engine-critical-gaps.md) | JS engine critical gaps — optional chaining (`?.`), nullish coalescing (`??`/`??=`), labeled statements with `break`, `eval()`, async/await, generators (`yield`/`yield*`). Fixed class instantiation regression and labeled break propagation. 24 new tests, 158 total. |
+| 2026-07-20 | [2026-07-20-image-decoding.md](2026-07-20-image-decoding.md) | Image decoding — PNG & JPEG support via pngjs/jpeg-js. Binary data network path, ImageDecoder class, lazy loader integration with real fetch→decode pipeline. 20 new tests. |
+| 2026-07-20 | [2026-07-20-gpu-acceleration-phase3.md](2026-07-20-gpu-acceleration-phase3.md) | GPU acceleration Phase 3 — async rasterize with real GPU readback, resize support, pre-existing bug fixes. 68 tests pass. |
+| 2026-07-20 | [2026-07-20-gpu-acceleration-phase2.md](2026-07-20-gpu-acceleration-phase2.md) | GPU acceleration Phase 2 — drawImage/fillText compute shaders, double-buffered readback, PaintEngine integration, full command support. 61 tests pass. |
+| 2026-07-20 | [2026-07-20-gpu-acceleration-phase1.md](2026-07-20-gpu-acceleration-phase1.md) | GPU acceleration Phase 1 — WebGPU infrastructure (device manager, buffer pool, shader modules, compute ops, GPU rasterizer with software fallback). 8 new files, 3 modified, 44 tests. |
 | 2026-07-19 | [crash-recovery-isolation-tests.md](2026-07-19-crash-recovery-isolation-tests.md) | Integration tests for crash recovery and site isolation — 105 tests across TabProcessManager, LifecycleManager, ErrorBoundary, ScriptGuard, ProcessGuard, CrashReporter, multi-tab isolation. Full suite: 87 files / 3837 tests. |
 | 2026-07-19 | [fetch-api-implementation.md](2026-07-19-fetch-api-implementation.md) | Fetch API implementation — Headers, Response, Request, AbortController, fetch(). EventLoop `_globalCaller` fix for microtask reactions. JSError wrapping for native throws. 36 new tests; 86 files / 3732 tests. |
 | 2026-07-19 | [promise-microtask-fixes.md](2026-07-19-promise-microtask-fixes.md) | Promise chain + Promise.all() bug fixes — parser comma-precedence bug (`parseExpression(2)`), missing array `length` update in all/allSettled accumulators. 31/31 promise tests pass. Full suite: 84 files / 3577 tests. |

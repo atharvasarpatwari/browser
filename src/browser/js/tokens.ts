@@ -58,6 +58,9 @@ export enum TokenType {
   LessLessAssign,
   GreaterGreaterAssign,
   GreaterGreaterGreaterAssign,
+  QuestionDot,
+  QuestionQuestion,
+  QuestionQuestionAssign,
   Question,
   Colon,
   Ellipsis,
@@ -116,6 +119,10 @@ export enum TokenType {
   Set,
   Debugger,
   With,
+  Generator,
+  Await,
+  Async,
+  Yield,
 
   // Template literal parts
   TemplateHead,      // opening `...${  (raw value before first ${)
@@ -189,6 +196,9 @@ export function tokenTypeName(tt: TokenType): string {
     case TokenType.LessLessAssign: return '<<=';
     case TokenType.GreaterGreaterAssign: return '>>=';
     case TokenType.GreaterGreaterGreaterAssign: return '>>>=';
+    case TokenType.QuestionDot: return '?.';
+    case TokenType.QuestionQuestion: return '??';
+    case TokenType.QuestionQuestionAssign: return '??=';
     case TokenType.Question: return '?';
     case TokenType.Colon: return ':';
     case TokenType.Ellipsis: return '...';
@@ -243,6 +253,10 @@ export function tokenTypeName(tt: TokenType): string {
     case TokenType.Set: return 'set';
     case TokenType.Debugger: return 'debugger';
     case TokenType.With: return 'with';
+    case TokenType.Generator: return '*';
+    case TokenType.Await: return 'await';
+    case TokenType.Async: return 'async';
+    case TokenType.Yield: return 'yield';
     case TokenType.EOF: return 'EOF';
     case TokenType.Newline: return 'Newline';
     case TokenType.Whitespace: return 'Whitespace';
@@ -297,6 +311,9 @@ const KEYWORDS: Record<string, TokenType> = {
   'set': TokenType.Set,
   'debugger': TokenType.Debugger,
   'with': TokenType.With,
+  'await': TokenType.Await,
+  'async': TokenType.Async,
+  'yield': TokenType.Yield,
 };
 
 export function lookupKeyword(value: string): TokenType {

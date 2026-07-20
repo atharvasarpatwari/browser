@@ -9,6 +9,7 @@ import {
   type PaintCmd,
 } from './formatting/stacking';
 import { Rasterizer } from './rasterizer';
+import { GpuRasterizer } from './gpu/gpu-rasterizer';
 
 type PaintCommandType =
   | 'clearRect' | 'fillRect' | 'strokeRect'
@@ -59,6 +60,7 @@ interface PaintConfig {
   readonly devicePixelRatio: number;
   readonly backgroundColor: string;
   readonly showDebugBorders: boolean;
+  readonly hardwareAcceleration: boolean;
 }
 
 const DEFAULT_PAINT_CONFIG: PaintConfig = {
@@ -67,6 +69,7 @@ const DEFAULT_PAINT_CONFIG: PaintConfig = {
   devicePixelRatio: 1,
   backgroundColor: '#ffffff',
   showDebugBorders: false,
+  hardwareAcceleration: false,
 };
 
 interface IPaintEngine extends IDisposable {
@@ -76,6 +79,7 @@ interface IPaintEngine extends IDisposable {
   getLayerById(id: string): PaintLayer | null;
   compositeFrame(): PaintCommand[];
   rasterize(): ImageData;
+  rasterizeAsync(): Promise<ImageData>;
   resize(width: number, height: number): void;
   getConfig(): PaintConfig;
   updateConfig(config: Partial<PaintConfig>): void;
@@ -94,9 +98,11 @@ class PaintEngine implements IPaintEngine {
   private readonly eventListeners = new Map<PaintEventType, Set<(e: PaintEventUnion) => void>>();
   private stackingTree: StackingContext | null = null;
   private readonly elementCommands = new Map<DomElement, PaintCommand[]>();
+  private rasterizer: Rasterizer | GpuRasterizer;
 
   constructor(config?: Partial<PaintConfig>) {
     this.config = { ...DEFAULT_PAINT_CONFIG, ...config };
+    this.rasterizer = this.createRasterizer();
   }
 
   paint(document: DomDocument, config?: Partial<PaintConfig>): void {
@@ -224,7 +230,7 @@ class PaintEngine implements IPaintEngine {
       const ctxCommands = renderStackingContext(this.stackingTree, (el) => {
         return this.getElementPaintCommands(el);
       });
-      allCommands.push(...ctxCommands);
+      allCommands.push(...(ctxCommands as PaintCommand[]));
     } else {
       // Fallback: flat sort (shouldn't happen but safe)
       const sortedLayers = [...this.layers].sort((a, b) => a.zIndex - b.zIndex);
@@ -246,16 +252,17 @@ class PaintEngine implements IPaintEngine {
 
   rasterize(): ImageData {
     const commands = this.compositeFrame();
-    const rasterizer = new Rasterizer({
-      width: this.config.width,
-      height: this.config.height,
-      backgroundColor: 'transparent',
-    });
-    return rasterizer.rasterize(commands);
+    return this.rasterizer.rasterize(commands);
+  }
+
+  async rasterizeAsync(): Promise<ImageData> {
+    const commands = this.compositeFrame();
+    return this.rasterizer.rasterizeAsync(commands);
   }
 
   resize(width: number, height: number): void {
     this.config = { ...this.config, width, height };
+    this.rasterizer = this.createRasterizer();
   }
 
   getConfig(): PaintConfig {
@@ -264,6 +271,26 @@ class PaintEngine implements IPaintEngine {
 
   updateConfig(config: Partial<PaintConfig>): void {
     this.config = { ...this.config, ...config };
+    if ('hardwareAcceleration' in config || 'width' in config || 'height' in config) {
+      this.rasterizer = this.createRasterizer();
+    }
+  }
+
+  private createRasterizer(): Rasterizer | GpuRasterizer {
+    if (this.config.hardwareAcceleration) {
+      return new GpuRasterizer({
+        width: this.config.width,
+        height: this.config.height,
+        devicePixelRatio: this.config.devicePixelRatio,
+        backgroundColor: this.config.backgroundColor,
+      });
+    }
+    return new Rasterizer({
+      width: this.config.width,
+      height: this.config.height,
+      devicePixelRatio: this.config.devicePixelRatio,
+      backgroundColor: this.config.backgroundColor,
+    });
   }
 
   on(type: PaintEventType, handler: (event: PaintEventUnion) => void): void {
@@ -500,6 +527,9 @@ class PaintEngine implements IPaintEngine {
     this.elementCommands.clear();
     this.stackingTree = null;
     this.eventListeners.clear();
+    if ('dispose' in this.rasterizer) {
+      (this.rasterizer as GpuRasterizer).dispose();
+    }
   }
 }
 

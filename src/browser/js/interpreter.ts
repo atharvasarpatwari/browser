@@ -8,8 +8,10 @@ import {
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal,
   setGlobalCaller, callJSFunction, JSError,
 } from './values';
-import { createPromiseConstructor } from './promise';
+import { createPromiseConstructor, wrapAsyncResult } from './promise';
 import type { EventLoop } from './event-loop';
+import { Lexer } from './lexer';
+import { Parser } from './parser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERPRETER — Tree-walking evaluator
@@ -69,7 +71,9 @@ export class Interpreter {
   callFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]): JSValue {
     if (fn.isNative && fn.nativeFn) {
       try {
-        return fn.nativeFn(thisArg, args);
+        const result = fn.nativeFn(thisArg, args);
+        if (fn.async && this.eventLoop) return wrapAsyncResult(result, this.eventLoop);
+        return result;
       } catch (err) {
         if (err instanceof JSError) throw err;
         throw new JSError(err instanceof Error ? err.message : String(err));
@@ -87,8 +91,12 @@ export class Interpreter {
     } else {
       result = this.evalExpr(bodyNode as AST.Expression, callEnv);
     }
-    if (isReturnSignal(result)) return result.value;
+    if (isReturnSignal(result)) {
+      if (fn.async && this.eventLoop) return wrapAsyncResult(result.value, this.eventLoop);
+      return result.value;
+    }
     if (isThrowSignal(result)) throw new JSError(result.value);
+    if (fn.async && this.eventLoop) return wrapAsyncResult(undefined, this.eventLoop);
     return undefined;
   }
 
@@ -128,6 +136,11 @@ export class Interpreter {
       case 'ContinueStatement': return { type: 'continue', label: stmt.label?.name } as ContinueSignal;
       case 'EmptyStatement': return undefined;
       case 'DebuggerStatement': return undefined;
+      case 'LabeledStatement': {
+        const result = this.exec(stmt.body, env);
+        if (isBreakSignal(result) && result.label === stmt.label.name) return undefined;
+        return result;
+      }
       default: return undefined;
     }
   }
@@ -212,7 +225,7 @@ export class Interpreter {
   }
 
   private execFuncDecl(stmt: AST.FunctionDeclaration, env: Environment): void {
-    const fn = createFunction(stmt.id.name, stmt.params.map(p => (p as AST.Identifier).name), stmt.body, env, stmt.async);
+    const fn = createFunction(stmt.id.name, stmt.params.map(p => (p as AST.Identifier).name), stmt.body, env, stmt.async, false, stmt.generator);
     env.declare(stmt.id.name, fn, 'var');
   }
 
@@ -229,7 +242,7 @@ export class Interpreter {
 
     // Set up prototype with constructor
     classProto.properties.set('constructor', {
-      value: { type: 'closure', name: className, params: [], body: { type: 'BlockStatement', body: [] }, closure: env, async: false, isArrow: false, isNative: false } as JSFunction,
+      value: { type: 'closure', name: className, params: [], body: { type: 'BlockStatement', body: [] }, closure: env, async: false, generator: false, isArrow: false, isNative: false } as JSFunction,
       writable: true, enumerable: false, configurable: true,
     });
 
@@ -301,7 +314,8 @@ export class Interpreter {
   private execWhile(stmt: AST.WhileStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     while (toBoolean(this.evalExpr(stmt.test, env))) {
       const result = this.exec(stmt.body, env);
-      if (isBreakSignal(result)) return undefined;
+      if (isBreakSignal(result) && !result.label) return undefined;
+      if (isBreakSignal(result) && result.label) return result;
       if (isContinueSignal(result)) continue;
       if (isReturnSignal(result) || isThrowSignal(result)) return result;
     }
@@ -311,7 +325,8 @@ export class Interpreter {
   private execDoWhile(stmt: AST.DoWhileStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     do {
       const result = this.exec(stmt.body, env);
-      if (isBreakSignal(result)) return undefined;
+      if (isBreakSignal(result) && !result.label) return undefined;
+      if (isBreakSignal(result) && result.label) return result;
       if (isContinueSignal(result)) continue;
       if (isReturnSignal(result) || isThrowSignal(result)) return result;
     } while (toBoolean(this.evalExpr(stmt.test, env)));
@@ -330,7 +345,8 @@ export class Interpreter {
     while (true) {
       if (stmt.test && !toBoolean(this.evalExpr(stmt.test, loopEnv))) break;
       const result = this.exec(stmt.body, loopEnv);
-      if (isBreakSignal(result)) return undefined;
+      if (isBreakSignal(result) && !result.label) return undefined;
+      if (isBreakSignal(result) && result.label) return result;
       if (isContinueSignal(result)) { /* fall through to update */ }
       else if (isReturnSignal(result) || isThrowSignal(result)) return result;
       if (stmt.update) this.evalExpr(stmt.update, loopEnv);
@@ -352,7 +368,8 @@ export class Interpreter {
     for (const key of keys) {
       loopEnv.set(varName, key);
       const result = this.exec(stmt.body, loopEnv);
-      if (isBreakSignal(result)) return undefined;
+      if (isBreakSignal(result) && !result.label) return undefined;
+      if (isBreakSignal(result) && result.label) return result;
       if (isContinueSignal(result)) continue;
       if (isReturnSignal(result) || isThrowSignal(result)) return result;
     }
@@ -375,7 +392,8 @@ export class Interpreter {
       const val = arr.properties.get(String(i))?.value;
       loopEnv.set(varName, val);
       const result = this.exec(stmt.body, loopEnv);
-      if (isBreakSignal(result)) return undefined;
+      if (isBreakSignal(result) && !result.label) return undefined;
+      if (isBreakSignal(result) && result.label) return result;
       if (isContinueSignal(result)) continue;
       if (isReturnSignal(result) || isThrowSignal(result)) return result;
     }
@@ -398,7 +416,8 @@ export class Interpreter {
         if (c.test) matched = true;
         for (const s of c.consequent) {
           const result = this.exec(s, env);
-          if (isBreakSignal(result)) return undefined;
+          if (isBreakSignal(result) && !result.label) return undefined;
+          if (isBreakSignal(result) && result.label) return result;
           if (isContinueSignal(result) || isReturnSignal(result) || isThrowSignal(result)) return result;
         }
       }
@@ -496,6 +515,8 @@ export class Interpreter {
       case 'ArrowFunctionExpression': return this.evalArrowFunction(expr, env);
       case 'SequenceExpression': return this.evalSequence(expr, env);
       case 'TemplateLiteral': return this.evalTemplateLiteral(expr, env);
+      case 'AwaitExpression': return this.evalAwait(expr, env);
+      case 'YieldExpression': return this.evalYield(expr, env);
       default: return undefined;
     }
   }
@@ -638,6 +659,7 @@ export class Interpreter {
         case '<<=': newVal = toNumber(current) << toNumber(right); break;
         case '>>=': newVal = toNumber(current) >> toNumber(right); break;
         case '>>>=': newVal = toNumber(current) >>> toNumber(right); break;
+        case '??=': newVal = (current !== null && current !== undefined) ? current : right; break;
         default: newVal = right;
       }
       env.set(name, newVal);
@@ -687,6 +709,7 @@ export class Interpreter {
         case '<<=': newVal = toNumber(current) << toNumber(right); break;
         case '>>=': newVal = toNumber(current) >> toNumber(right); break;
         case '>>>=': newVal = toNumber(current) >>> toNumber(right); break;
+        case '??=': newVal = (current !== null && current !== undefined) ? current : right; break;
         default: newVal = right;
       }
       obj.properties.has(key) && obj.properties.get(key)!.setter
@@ -747,7 +770,9 @@ export class Interpreter {
       const fn = callee as JSFunction;
       if (fn.type === 'closure' && fn.isNative && fn.nativeFn) {
         try {
-          return fn.nativeFn(thisObj, args);
+          const result = fn.nativeFn(thisObj, args);
+          if (fn.async && this.eventLoop) return wrapAsyncResult(result, this.eventLoop);
+          return result;
         } catch (err) {
           if (err instanceof JSError) throw err;
           throw new JSError(err instanceof Error ? err.message : String(err));
@@ -770,8 +795,12 @@ export class Interpreter {
         } else {
           result = this.evalExpr(bodyNode as AST.Expression, callEnv);
         }
-        if (isReturnSignal(result)) return result.value;
+        if (isReturnSignal(result)) {
+          if (fn.async && this.eventLoop) return wrapAsyncResult(result.value, this.eventLoop);
+          return result.value;
+        }
         if (isThrowSignal(result)) throw new JSError(result.value);
+        if (fn.async && this.eventLoop) return wrapAsyncResult(result, this.eventLoop);
         return result;
       }
       // Object-as-function
@@ -1069,7 +1098,7 @@ export class Interpreter {
   }
 
   private evalFunctionExpr(expr: AST.FunctionExpression, env: Environment): JSValue {
-    return createFunction(expr.id?.name ?? 'anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async);
+    return createFunction(expr.id?.name ?? 'anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, false, expr.generator);
   }
 
   private evalArrowFunction(expr: AST.ArrowFunctionExpression, env: Environment): JSValue {
@@ -1082,6 +1111,16 @@ export class Interpreter {
       result = this.evalExpr(e, env);
     }
     return result!;
+  }
+
+  private evalAwait(expr: AST.AwaitExpression, env: Environment): JSValue {
+    const val = this.evalExpr(expr.argument, env);
+    return val;
+  }
+
+  private evalYield(expr: AST.YieldExpression, env: Environment): JSValue {
+    const val = expr.argument ? this.evalExpr(expr.argument, env) : undefined;
+    return val;
   }
 
   // ── Global environment setup ─────────────────────────────────────────────
@@ -1276,6 +1315,18 @@ export class Interpreter {
       const id = toNumber(args[0]);
       this.timers.delete(id);
       return undefined;
+    }));
+
+    // eval()
+    const self = this;
+    env.setLocal('eval', createNativeFunction('eval', (_this, args) => {
+      const code = toString(args[0]);
+      const lexer = new Lexer(code);
+      const parser = new Parser([], lexer);
+      const program = parser.parse();
+      const interp = new Interpreter(env, self.eventLoop);
+      interp.setMaxExecutionMs(self.maxExecutionMs);
+      return interp.run(program);
     }));
 
     return env;

@@ -37,7 +37,9 @@ export type Expression =
   | RestElement
   | AssignmentPattern
   | PropertyDefinition
-  | SuperExpression;
+  | SuperExpression
+  | AwaitExpression
+  | YieldExpression;
 
 export interface Identifier {
   type: 'Identifier';
@@ -65,6 +67,19 @@ export interface ThisExpression {
 
 export interface SuperExpression {
   type: 'SuperExpression';
+  loc?: SourceLocation;
+}
+
+export interface AwaitExpression {
+  type: 'AwaitExpression';
+  argument: Expression;
+  loc?: SourceLocation;
+}
+
+export interface YieldExpression {
+  type: 'YieldExpression';
+  argument: Expression | null;
+  delegate: boolean;
   loc?: SourceLocation;
 }
 

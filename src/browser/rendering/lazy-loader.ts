@@ -1,6 +1,8 @@
 import type { DomElement, DomDocument, IDomTree } from './dom-tree';
 import { IntersectionObserver, type IntersectionObserverEntry } from './intersection-observer';
 import { FrameScheduler } from './frame-scheduler';
+import type { IResourceLoader } from '../netwroking/resource-loader';
+import { ImageDecoder, isSupportedImageType } from '../image/decoder';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -49,6 +51,9 @@ export class LazyLoader {
   private config: Required<LazyLoadConfig>;
   private domTree: IDomTree | null = null;
   private document: DomDocument | null = null;
+  private resourceLoader: IResourceLoader | null = null;
+  private decoder: ImageDecoder | null = null;
+  private baseUrl = '';
   private eventHandlers = new Map<DomElement, Set<LoadEventHandler>>();
   private pendingElements = new Set<DomElement>();
   private disposed = false;
@@ -71,9 +76,14 @@ export class LazyLoader {
    * Sets up the observer but does NOT auto-observe elements.
    * Use scanForLazyElements() to auto-observe, or observe() for individual elements.
    */
-  init(document: DomDocument, domTree: IDomTree): void {
+  init(document: DomDocument, domTree: IDomTree, resourceLoader?: IResourceLoader, baseUrl?: string): void {
     this.document = document;
     this.domTree = domTree;
+    this.resourceLoader = resourceLoader ?? null;
+    this.baseUrl = baseUrl ?? '';
+    if (this.resourceLoader) {
+      this.decoder = new ImageDecoder();
+    }
 
     this.observer = new IntersectionObserver(
       (entries) => this.handleIntersections(entries),
@@ -148,6 +158,8 @@ export class LazyLoader {
     this.scheduler = null;
     this.domTree = null;
     this.document = null;
+    this.resourceLoader = null;
+    this.decoder = null;
   }
 
   // ── Event handling ──────────────────────────────────────────────────
@@ -211,17 +223,80 @@ export class LazyLoader {
     const imgW = w > 0 ? w : (box ? Math.round(box.width) : 100);
     const imgH = h > 0 ? h : (box ? Math.round(box.height) : 100);
 
-    // Generate placeholder or synthetic image data
-    const imageData = this.generateImageData(src, imgW, imgH);
-
-    el.imageData = imageData;
+    // Set placeholder immediately for visual feedback
+    const placeholder = this.generateImageData(src, imgW, imgH);
+    el.imageData = placeholder;
     el.naturalWidth = imgW;
     el.naturalHeight = imgH;
-    el.loadingState = 'loaded';
 
-    el._dirtyPaint = true;
+    // If no resource loader available, use placeholder
+    if (!this.resourceLoader || !this.decoder) {
+      el.loadingState = 'loaded';
+      el._dirtyPaint = true;
+      this.emit({ type: 'load', target: el });
+      return;
+    }
 
-    this.emit({ type: 'load', target: el });
+    // Attempt real image decoding
+    el.loadingState = 'loading';
+    this.loadImageAsync(el, src, imgW, imgH);
+  }
+
+  private async loadImageAsync(el: DomElement, src: string, fallbackW: number, fallbackH: number): Promise<void> {
+    try {
+      const resolvedUrl = this.resolveUrl(src);
+      const result = await this.resourceLoader!.loadImage(resolvedUrl);
+
+      if (result.error || !result.bodyBinary) {
+        // Keep placeholder — mark as loaded
+        el.loadingState = 'loaded';
+        el._dirtyPaint = true;
+        this.emit({ type: 'load', target: el });
+        return;
+      }
+
+      // Decode the binary data
+      if (isSupportedImageType(result.contentType)) {
+        const decoded = this.decoder!.decode(result.bodyBinary, result.contentType);
+        if (decoded) {
+          el.imageData = { data: decoded.data, width: decoded.width, height: decoded.height };
+          el.naturalWidth = decoded.width;
+          el.naturalHeight = decoded.height;
+          el.loadingState = 'loaded';
+          el._dirtyPaint = true;
+          this.emit({ type: 'load', target: el });
+          return;
+        }
+      }
+
+      // Unsupported format or decode failure — keep placeholder
+      el.loadingState = 'loaded';
+      el._dirtyPaint = true;
+      this.emit({ type: 'load', target: el });
+    } catch {
+      // Network or decode error — keep placeholder
+      el.loadingState = 'loaded';
+      el._dirtyPaint = true;
+      this.emit({ type: 'load', target: el });
+    }
+  }
+
+  private resolveUrl(src: string): string {
+    // Already absolute
+    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:')) {
+      return src;
+    }
+
+    // Try to resolve relative to a base URL stored during init
+    if (this.baseUrl) {
+      try {
+        return new URL(src, this.baseUrl).toString();
+      } catch {
+        // fall through
+      }
+    }
+
+    return src;
   }
 
   private loadIframe(_el: DomElement): void {

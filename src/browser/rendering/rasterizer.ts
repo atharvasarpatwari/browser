@@ -46,7 +46,6 @@ const NAMED_COLORS: Record<string, RGBA> = {
   'darkgreen':   { r: 0,   g: 100, b: 0,   a: 1 },
   'darkred':     { r: 139, g: 0,   b: 0,   a: 1 },
   'gold':        { r: 255, g: 215, b: 0,   a: 1 },
-  'gray':        { r: 128, g: 128, b: 128, a: 1 },
   'greenyellow': { r: 173, g: 255, b: 47,  a: 1 },
   'hotpink':     { r: 255, g: 105, b: 180, a: 1 },
   'indianred':   { r: 205, g: 92,  b: 92,  a: 1 },
@@ -57,7 +56,6 @@ const NAMED_COLORS: Record<string, RGBA> = {
   'lightyellow': { r: 255, g: 255, b: 224, a: 1 },
   'magenta':     { r: 255, g: 0,   b: 255, a: 1 },
   'mediumblue':  { r: 0,   g: 0,   b: 205, a: 1 },
-  'orange':      { r: 255, g: 165, b: 0,   a: 1 },
   'pink':        { r: 255, g: 192, b: 203, a: 1 },
   'plum':        { r: 221, g: 160, b: 221, a: 1 },
   'powderblue':  { r: 176, g: 224, b: 230, a: 1 },
@@ -456,6 +454,11 @@ export class Rasterizer {
       this.exec(cmd);
     }
     return this.getImageData();
+  }
+
+  /** Async variant — resolves immediately since software rasterization is synchronous. */
+  async rasterizeAsync(commands: readonly PaintCommand[]): Promise<ImageData> {
+    return this.rasterize(commands);
   }
 
   // ── Command dispatch ─────────────────────────────────────────────

@@ -1081,3 +1081,133 @@ describe('Event Propagation via JS Engine', () => {
     expect(r.value).toBe('2:true');
   });
 });
+
+describe('Interpreter — optional chaining', () => {
+  it('should handle ?.property on null/undefined', () => {
+    expect(evalJS('var a = null; a?.b')).toBe(undefined);
+    expect(evalJS('var a = undefined; a?.b')).toBe(undefined);
+  });
+
+  it('should handle ?.property on defined object', () => {
+    expect(evalJS('var a = { b: 42 }; a?.b')).toBe(42);
+  });
+
+  it('should handle ?.() on null/undefined', () => {
+    expect(evalJS('var a = null; a?.()')).toBe(undefined);
+  });
+
+  it('should handle ?.() on defined function', () => {
+    expect(evalJS('var a = function() { return 5; }; a?.()')).toBe(5);
+  });
+
+  it('should handle ?.[computed] on null/undefined', () => {
+    expect(evalJS('var a = null; a?.["x"]')).toBe(undefined);
+  });
+
+  it('should handle ?.[computed] on defined object', () => {
+    expect(evalJS('var a = { x: 10 }; a?.["x"]')).toBe(10);
+  });
+
+  it('should handle chained optional', () => {
+    expect(evalJS('var a = { b: { c: 7 } }; a?.b?.c')).toBe(7);
+  });
+
+  it('should handle chained optional with null', () => {
+    expect(evalJS('var a = null; a?.b?.c')).toBe(undefined);
+  });
+});
+
+describe('Interpreter — nullish coalescing', () => {
+  it('should return right for null', () => {
+    expect(evalJS('null ?? "fallback"')).toBe('fallback');
+  });
+
+  it('should return right for undefined', () => {
+    expect(evalJS('undefined ?? "fallback"')).toBe('fallback');
+  });
+
+  it('should return left for 0', () => {
+    expect(evalJS('0 ?? "fallback"')).toBe(0);
+  });
+
+  it('should return left for empty string', () => {
+    expect(evalJS('"" ?? "fallback"')).toBe('');
+  });
+
+  it('should return left for false', () => {
+    expect(evalJS('false ?? "fallback"')).toBe(false);
+  });
+
+  it('should return left for defined value', () => {
+    expect(evalJS('"hello" ?? "fallback"')).toBe('hello');
+  });
+
+  it('should chain with ||', () => {
+    expect(evalJS('null ?? "a" || "b"')).toBe('a');
+  });
+
+  it('should handle ??= assignment operator', () => {
+    expect(evalJS('var x = null; x ??= 5; x')).toBe(5);
+  });
+
+  it('should not assign with ??= if value is defined', () => {
+    expect(evalJS('var x = 3; x ??= 5; x')).toBe(3);
+  });
+
+  it('should not assign with ??= for 0', () => {
+    expect(evalJS('var x = 0; x ??= 5; x')).toBe(0);
+  });
+});
+
+describe('Interpreter — labeled statements', () => {
+  it('should execute labeled block', () => {
+    expect(evalJS(`
+      var x = 0;
+      outer: {
+        x = 1;
+        break outer;
+        x = 2;
+      }
+      x;
+    `)).toBe(1);
+  });
+
+  it('should break out of labeled loop', () => {
+    expect(evalJS(`
+      var result = [];
+      outer:
+      for (var i = 0; i < 5; i++) {
+        for (var j = 0; j < 5; j++) {
+          if (j === 2) break outer;
+          result.push(i + ',' + j);
+        }
+      }
+      result.length;
+    `)).toBe(2);
+  });
+
+  it('should execute labeled for-in', () => {
+    expect(evalJS(`
+      var result = [];
+      var obj = { a: 1, b: 2 };
+      for (var k in obj) {
+        result.push(k);
+      }
+      result.join(',');
+    `)).toBe('a,b');
+  });
+});
+
+describe('Interpreter — eval()', () => {
+  it('should evaluate simple expression', () => {
+    expect(evalJS('eval("1 + 2")')).toBe(3);
+  });
+
+  it('should evaluate expression in string', () => {
+    expect(evalJS('eval("3 + 4")')).toBe(7);
+  });
+
+  it('should evaluate variable declaration', () => {
+    expect(evalJS('eval("var x = 42; x")')).toBe(42);
+  });
+});

@@ -103,6 +103,19 @@ export class Lexer {
       return this.makeToken(TokenType.Slash, '/', startLine, startCol);
     }
 
+    // ?. and ?? must be checked before the two-char switch because ? falls through to single-char
+    if (ch === '?') {
+      if (this.peek(1) === '.') {
+        this.advance(2);
+        return this.makeToken(TokenType.QuestionDot, '?.', startLine, startCol);
+      }
+      if (this.peek(1) === '?') {
+        this.advance(2);
+        if (this.peek(0) === '=') { this.advance(); return this.makeToken(TokenType.QuestionQuestionAssign, '??=', startLine, startCol); }
+        return this.makeToken(TokenType.QuestionQuestion, '??', startLine, startCol);
+      }
+    }
+
     // Multi-char operators
     const twoChar = this.source.slice(this.pos, this.pos + 2);
     const threeChar = this.source.slice(this.pos, this.pos + 3);
@@ -433,6 +446,9 @@ export class Lexer {
       case TokenType.GreaterGreaterAssign:
       case TokenType.GreaterGreaterGreaterAssign:
       case TokenType.Question:
+      case TokenType.QuestionDot:
+      case TokenType.QuestionQuestion:
+      case TokenType.QuestionQuestionAssign:
       case TokenType.Colon:
       case TokenType.Comma:
       case TokenType.LParen:
@@ -463,6 +479,9 @@ export class Lexer {
       case TokenType.Class:
       case TokenType.Extends:
       case TokenType.Yield:
+      case TokenType.Await:
+      case TokenType.Async:
+      case TokenType.Generator:
         return true;
       default:
         return false;

@@ -104,6 +104,8 @@ interface HttpResponseSpec {
   readonly statusText: string;
   readonly headers: ReadonlyMap<string, string>;
   readonly body: string;
+  /** Binary body for image/font/media content types. Null for text responses. */
+  readonly bodyBinary: Uint8Array | null;
   readonly redirected: boolean;
   /** Every URL visited before reaching the final one, in order. */
   readonly redirectChain: readonly string[];
@@ -151,7 +153,28 @@ class FetchHttpClient implements IHttpClient {
     const headers = new Map<string, string>();
     res.headers.forEach((value, key) => headers.set(key.toLowerCase(), value));
 
-    const body = await FetchHttpClient.safeReadText(res);
+    // Detect binary content types (images, fonts, media)
+    const contentType = headers.get('content-type') ?? '';
+    const isBinary = contentType.startsWith('image/')
+      || contentType.startsWith('font/')
+      || contentType.startsWith('audio/')
+      || contentType.startsWith('video/');
+
+    let body: string;
+    let bodyBinary: Uint8Array | null = null;
+
+    if (isBinary) {
+      body = '';
+      try {
+        const buffer = await res.arrayBuffer();
+        bodyBinary = new Uint8Array(buffer);
+      } catch {
+        // Redirect responses may not have a body
+        bodyBinary = null;
+      }
+    } else {
+      body = await FetchHttpClient.safeReadText(res);
+    }
 
     return {
       url:           request.url,   // caller (RequestManager) tracks the final URL itself
@@ -159,6 +182,7 @@ class FetchHttpClient implements IHttpClient {
       statusText:    res.statusText,
       headers,
       body,
+      bodyBinary,
       redirected:    false,         // RequestManager sets this after following redirects
       redirectChain: [],
     };
@@ -226,6 +250,7 @@ class WebSocketHttpClient implements IHttpClient {
           statusText:    'WebSocket OK',
           headers,
           body:          messages.join('\n'),
+          bodyBinary:    null,
           redirected:    false,
           redirectChain: [],
         });
@@ -285,6 +310,7 @@ class FtpHttpClient implements IHttpClient {
         statusText:    res.statusText,
         headers,
         body,
+        bodyBinary:    null,
         redirected:    false,
         redirectChain: [],
       };
@@ -299,6 +325,7 @@ class FtpHttpClient implements IHttpClient {
         statusText:    'FTP Not Available',
         headers,
         body:          `<html><body><h1>FTP Not Available</h1><p>FTP connection to "${request.url}" is not supported in this environment.</p></body></html>`,
+        bodyBinary:    null,
         redirected:    false,
         redirectChain: [],
       };
@@ -322,6 +349,7 @@ class SftpHttpClient implements IHttpClient {
       statusText:    'SFTP Not Available',
       headers,
       body:          `<html><body><h1>SFTP Not Available</h1><p>SFTP connection to "${request.url}" requires an SSH client. Use an external SFTP application.</p></body></html>`,
+      bodyBinary:    null,
       redirected:    false,
       redirectChain: [],
     };
