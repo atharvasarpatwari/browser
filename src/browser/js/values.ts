@@ -1,3 +1,5 @@
+import type { BytecodeFunction } from './bytecode';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ENVIRONMENT (Scope Chain)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,7 +40,7 @@ export interface JSFunction {
   type: 'closure';
   name: string;
   params: string[];
-  body: unknown; // AST.BlockStatement | AST.Expression
+  body: unknown; // AST.BlockStatement | AST.Expression | BytecodeFunction
   closure: Environment;
   async: boolean;
   generator: boolean;
@@ -46,6 +48,8 @@ export interface JSFunction {
   isNative: boolean;
   nativeFn?: NativeFunction;
   thisValue?: JSObject;
+  /** If true, body is a BytecodeFunction and should be executed by the VM */
+  isBytecode?: boolean;
 }
 
 export type NativeFunction = (thisArg: JSValue, args: JSValue[]) => JSValue;
@@ -566,6 +570,7 @@ export function createFunction(
   async = false,
   isArrow = false,
   generator = false,
+  isBytecode = false,
 ): JSFunction {
   return {
     type: 'closure',
@@ -577,6 +582,7 @@ export function createFunction(
     generator,
     isArrow,
     isNative: false,
+    isBytecode,
   };
 }
 

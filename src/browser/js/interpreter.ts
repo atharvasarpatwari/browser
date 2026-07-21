@@ -12,6 +12,9 @@ import { createPromiseConstructor, wrapAsyncResult } from './promise';
 import type { EventLoop } from './event-loop';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
+import type { BytecodeFunction } from './bytecode';
+import { BytecodeVM } from './vm';
+import { BytecodeCompiler } from './bytecode-compiler';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERPRETER — Tree-walking evaluator
@@ -30,6 +33,10 @@ export class Interpreter {
   private executionStartTime = 0;
   private maxExecutionMs = Interpreter.DEFAULT_MAX_EXECUTION_MS;
   private opCount = 0;
+  /** If true, compile and execute programs through the bytecode VM */
+  private useVM = false;
+  /** The bytecode compiler instance (shared across calls) */
+  private compiler: BytecodeCompiler | null = null;
 
   constructor(globalEnv?: Environment, eventLoop?: EventLoop) {
     this.eventLoop = eventLoop;
@@ -37,6 +44,19 @@ export class Interpreter {
       this.eventLoop.setInterpreter(this);
     }
     this.globalEnv = globalEnv ?? this.createGlobalEnv();
+  }
+
+  /** Enable or disable bytecode VM mode */
+  setUseVM(enabled: boolean): void {
+    this.useVM = enabled;
+    if (enabled) {
+      this.compiler = new BytecodeCompiler();
+    }
+  }
+
+  /** Check if VM mode is enabled */
+  isVMEnabled(): boolean {
+    return this.useVM;
   }
 
   setMaxExecutionMs(ms: number): void {
@@ -57,6 +77,24 @@ export class Interpreter {
     this.opCount = 0;
     setGlobalCaller(this);
     try {
+      // If VM mode is enabled, try compiling and running through bytecode VM
+      if (this.useVM && this.compiler) {
+        try {
+          const bytecodeFn = this.compiler.compile(program);
+          const vm = new BytecodeVM(this.globalEnv);
+          vm.setMaxExecutionMs(this.maxExecutionMs);
+          // Bridge: VM calls interpreter for AST-body functions
+          vm.setCallInterpreter((fn, thisArg, args) => this.callFunction(fn, thisArg, args));
+          const result = vm.run(bytecodeFn);
+          if (!result.ok) {
+            throw new JSError(result.error);
+          }
+          this.eventLoop?.drainMicrotasks();
+          return result.value;
+        } catch {
+          // If VM fails, fall back to tree-walking interpreter
+        }
+      }
       const result = this.execBlock(program.body, this.globalEnv);
       if (isThrowSignal(result)) throw new JSError(result.value);
       // Drain microtasks after program execution
@@ -78,6 +116,19 @@ export class Interpreter {
         if (err instanceof JSError) throw err;
         throw new JSError(err instanceof Error ? err.message : String(err));
       }
+    }
+    // Bytecode function — use VM if enabled
+    if (fn.isBytecode && fn.body && typeof fn.body === 'object' && 'bytecode' in fn.body) {
+      const bytecodeFn = fn.body as BytecodeFunction;
+      const vm = new BytecodeVM(fn.closure);
+      vm.setMaxExecutionMs(this.maxExecutionMs);
+      vm.setCallInterpreter((innerFn, innerThisArg, innerArgs) => this.callFunction(innerFn, innerThisArg, innerArgs));
+      const result = vm.run(bytecodeFn, thisArg);
+      if (!result.ok) {
+        throw new JSError(result.error);
+      }
+      if (fn.async && this.eventLoop) return wrapAsyncResult(result.value, this.eventLoop);
+      return result.value;
     }
     const callEnv = new Environment(fn.closure);
     callEnv.markFunctionScope();

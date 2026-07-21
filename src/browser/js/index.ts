@@ -27,6 +27,9 @@ export {
   createObject, createArray, createNativeFunction,
   Environment,
 } from './values';
+export { BytecodeCompiler } from './bytecode-compiler';
+export { BytecodeVM } from './vm';
+export { type BytecodeFunction, type BytecodeProgram, OP } from './bytecode';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC API

@@ -7,7 +7,10 @@ interface ContentRenderOptions {
 
 interface IContentRenderer extends IDisposable {
   attach(container: HTMLElement): void;
+  setBrandName(name: string): void;
+  setLinkHoverHandler(handler: (url: string | null) => void): void;
   renderHtml(html: string, options?: ContentRenderOptions): void;
+  renderFromImageData(imageData: ImageData): void;
   renderSearchResults(query: string, searchUrl: string, results: readonly SearchResult[]): void;
   renderError(title: string, message: string, url?: string): void;
   renderLoading(url: string): void;
@@ -23,9 +26,19 @@ interface SearchResult {
 
 class ContentRenderer implements IContentRenderer {
   private container: HTMLElement | null = null;
+  private _brandName = 'Nova Browser';
+  private _linkHoverHandler: ((url: string | null) => void) | null = null;
 
   attach(container: HTMLElement): void {
     this.container = container;
+  }
+
+  setBrandName(name: string): void {
+    this._brandName = name;
+  }
+
+  setLinkHoverHandler(handler: (url: string | null) => void): void {
+    this._linkHoverHandler = handler;
   }
 
   renderHtml(html: string, options?: ContentRenderOptions): void {
@@ -47,6 +60,23 @@ class ContentRenderer implements IContentRenderer {
     if (options?.title) {
       doc.title = options.title;
     }
+
+    this.wireLinkHoverTracking(doc);
+  }
+
+  renderFromImageData(imageData: ImageData): void {
+    if (!this.container) return;
+    this.container.innerHTML = '';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = imageData.width;
+    canvas.height = imageData.height;
+    canvas.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#fff;display:block;';
+    this.container.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.putImageData(imageData, 0, 0);
   }
 
   renderSearchResults(query: string, searchUrl: string, results: readonly SearchResult[]): void {
@@ -105,7 +135,7 @@ class ContentRenderer implements IContentRenderer {
     // Powered by line
     const footer = document.createElement('div');
     footer.style.cssText = 'text-align:center;padding:16px 0;color:#9aa0a6;font-size:12px;border-top:1px solid #ebebeb;margin-top:16px;';
-    footer.innerHTML = `Search powered by <a href="${this.escapeHtml(searchUrl)}" style="color:#1a0dab;text-decoration:none;">Nova Browser</a>`;
+    footer.innerHTML = `Search powered by <a href="${this.escapeHtml(searchUrl)}" style="color:#1a0dab;text-decoration:none;">${this.escapeHtml(this._brandName)}</a>`;
     wrapper.appendChild(footer);
 
     this.container.appendChild(wrapper);
@@ -174,7 +204,7 @@ class ContentRenderer implements IContentRenderer {
     const wrapper = document.createElement('div');
     wrapper.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:50px 20px;position:relative;overflow:hidden;';
     wrapper.innerHTML = `
-      <div style="font-family:system-ui,-apple-system,sans-serif;font-size:42px;font-weight:700;letter-spacing:-.03em;margin-bottom:2px;background:linear-gradient(135deg,#f0eee6 0%,#9bb5ff 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">No<span>va</span></div>
+      <div style="font-family:system-ui,-apple-system,sans-serif;font-size:42px;font-weight:700;letter-spacing:-.03em;margin-bottom:2px;background:linear-gradient(135deg,#f0eee6 0%,#9bb5ff 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">${this.escapeHtml(this._brandName)}</div>
       <div style="font-size:13px;color:#9aa0a6;margin-bottom:30px;letter-spacing:.3px;">Private &amp; secure browsing</div>
       <div style="display:flex;align-items:center;width:100%;max-width:440px;background:rgba(255,255,255,0.8);border:1px solid #dfe1e5;border-radius:24px;padding:0 12px;margin-bottom:18px;backdrop-filter:blur(12px);">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" stroke-width="2" style="margin-right:8px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -182,6 +212,22 @@ class ContentRenderer implements IContentRenderer {
       </div>
     `;
     this.container.appendChild(wrapper);
+  }
+
+  private wireLinkHoverTracking(doc: Document): void {
+    if (!this._linkHoverHandler) return;
+    doc.addEventListener('mouseover', (e: Event) => {
+      const target = (e.target as HTMLElement)?.closest('a[href]');
+      if (target) {
+        this._linkHoverHandler?.(target.getAttribute('href'));
+      }
+    });
+    doc.addEventListener('mouseout', (e: Event) => {
+      const target = (e.target as HTMLElement)?.closest('a[href]');
+      if (target) {
+        this._linkHoverHandler?.(null);
+      }
+    });
   }
 
   clear(): void {

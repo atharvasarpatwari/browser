@@ -6,6 +6,7 @@ interface StatusBarViewConfig {
   readonly showShieldButton: boolean;
   readonly showProtocol: boolean;
   readonly showZoom: boolean;
+  readonly brandName?: string;
 }
 
 const DEFAULT_VIEW_CONFIG: StatusBarViewConfig = {
@@ -102,7 +103,7 @@ class StatusBarView implements IStatusBarView {
 
     this.blockedEl = document.createElement('span');
     this.blockedEl.className = 'status-blocked';
-    this.blockedEl.title = 'Requests blocked by Nova Shield';
+    this.blockedEl.title = `Requests blocked by ${this.config.brandName ?? 'Nova'} Shield`;
     this.blockedEl.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer;color:#4a8a4a;transition:all var(--t-fast);';
     this.blockedCountEl = document.createElement('span');
     this.blockedCountEl.className = 'sb-count';
@@ -120,7 +121,7 @@ class StatusBarView implements IStatusBarView {
     if (this.config.showShieldButton) {
       this.shieldBtn = document.createElement('button');
       this.shieldBtn.className = 'addr-btn';
-      this.shieldBtn.title = 'Nova Shield — click to toggle';
+      this.shieldBtn.title = `${this.config.brandName ?? 'Nova'} Shield — click to toggle`;
       this.shieldBtn.textContent = '🛡️';
       this.shieldBtn.style.cssText = 'border:none;background:none;color:var(--text-tertiary);font-size:14px;cursor:pointer;padding:3px 5px;border-radius:var(--radius-sm);transition:all var(--t-fast);line-height:1;';
       this.shieldBtn.addEventListener('click', () => {
@@ -140,9 +141,35 @@ class StatusBarView implements IStatusBarView {
     rightGroup.appendChild(this.secureEl);
 
     if (this.config.showZoom) {
+      const zoomGroup = document.createElement('span');
+      zoomGroup.style.cssText = 'display:flex;align-items:center;gap:2px;';
+
+      const zoomOut = document.createElement('button');
+      zoomOut.textContent = '−';
+      zoomOut.title = 'Zoom out';
+      zoomOut.style.cssText = 'border:none;background:none;color:var(--text-tertiary);font-size:13px;cursor:pointer;padding:1px 4px;border-radius:3px;line-height:1;';
+      zoomOut.addEventListener('click', () => {
+        const current = this.model.state.zoom;
+        if (current > 50) this.dispatchEvent({ kind: 'zoomChanged', zoom: current - 10 });
+      });
+
       this.zoomEl = document.createElement('span');
       this.zoomEl.textContent = `${this.model.state.zoom}%`;
-      rightGroup.appendChild(this.zoomEl);
+      this.zoomEl.style.cssText = 'min-width:36px;text-align:center;cursor:default;font-size:12px;';
+
+      const zoomIn = document.createElement('button');
+      zoomIn.textContent = '+';
+      zoomIn.title = 'Zoom in';
+      zoomIn.style.cssText = 'border:none;background:none;color:var(--text-tertiary);font-size:13px;cursor:pointer;padding:1px 4px;border-radius:3px;line-height:1;';
+      zoomIn.addEventListener('click', () => {
+        const current = this.model.state.zoom;
+        if (current < 200) this.dispatchEvent({ kind: 'zoomChanged', zoom: current + 10 });
+      });
+
+      zoomGroup.appendChild(zoomOut);
+      zoomGroup.appendChild(this.zoomEl);
+      zoomGroup.appendChild(zoomIn);
+      rightGroup.appendChild(zoomGroup);
     }
 
     this.container.appendChild(rightGroup);

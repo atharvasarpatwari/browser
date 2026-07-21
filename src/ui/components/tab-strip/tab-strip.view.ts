@@ -200,7 +200,7 @@ class TabStripView implements ITabStripView {
   }
 
   private updateTabElement(el: HTMLElement, tab: { id: string; title: string; favicon: string | null; loading: boolean; pinned: boolean; active: boolean }): void {
-    el.className = `tab${tab.active ? ' active' : ''}`;
+    el.className = `tab${tab.active ? ' active' : ''}${tab.pinned ? ' pinned' : ''}`;
 
     if (tab.active) {
       el.style.background = 'var(--bg-surface)';
@@ -212,13 +212,29 @@ class TabStripView implements ITabStripView {
       el.style.borderColor = 'var(--border-subtle)';
     }
 
+    if (tab.pinned) {
+      el.style.width = '36px';
+      el.style.minWidth = '36px';
+      el.style.maxWidth = '36px';
+      el.style.justifyContent = 'center';
+      el.style.padding = '4px 0';
+      el.title = tab.title || tab.favicon || '';
+    } else {
+      el.style.width = '';
+      el.style.minWidth = '';
+      el.style.maxWidth = '';
+      el.style.justifyContent = '';
+      el.style.padding = '';
+      el.title = '';
+    }
+
     el.innerHTML = '';
 
     if (tab.favicon) {
       const faviconEl = document.createElement('span');
       faviconEl.className = 'tab-favicon';
       faviconEl.textContent = tab.favicon;
-      faviconEl.style.cssText = 'font-size:12px;flex-shrink:0;';
+      faviconEl.style.cssText = `font-size:12px;flex-shrink:0;${tab.pinned ? '' : 'margin-right:6px;'}`;
       el.appendChild(faviconEl);
     }
 
@@ -233,14 +249,18 @@ class TabStripView implements ITabStripView {
     const titleSpan = document.createElement('span');
     titleSpan.className = 'tab-title';
     titleSpan.textContent = tab.title;
-    titleSpan.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;';
+    titleSpan.style.cssText = tab.pinned
+      ? 'display:none;'
+      : 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;';
     el.appendChild(titleSpan);
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'tab-close';
     closeBtn.textContent = '×';
     closeBtn.title = 'Close tab';
-    closeBtn.style.cssText = 'border:none;background:none;color:var(--text-tertiary);cursor:pointer;padding:1px 4px;border-radius:var(--radius-sm);font-size:10px;line-height:1;transition:all var(--t-fast);flex-shrink:0;';
+    closeBtn.style.cssText = tab.pinned
+      ? 'display:none;'
+      : 'border:none;background:none;color:var(--text-tertiary);cursor:pointer;padding:1px 4px;border-radius:var(--radius-sm);font-size:10px;line-height:1;transition:all var(--t-fast);flex-shrink:0;';
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.dispatchEvent({ kind: 'tabClosed', tabId: tab.id });

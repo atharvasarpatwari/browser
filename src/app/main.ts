@@ -105,6 +105,8 @@ import { SettingsStore } from '../browser/storage/settings-store';
 import type { ISettingsStore } from '../browser/storage/settings-store';
 import { SettingsService } from '../browser/storage/settings-service';
 import type { ISettingsService } from '../browser/storage/settings-service';
+import { BrowserName } from '../browser/config/browser-name';
+import type { IBrowserName } from '../browser/config/browser-name';
 
 // Platform
 import { RuntimeAdapter } from '../platform/shared/runtime-adapter';
@@ -182,6 +184,8 @@ const Tokens = Object.freeze({
   // Settings
   SettingsStore: Symbol('SettingsStore'),
   SettingsService: Symbol('SettingsService'),
+  // Browser identity
+  BrowserName: Symbol('BrowserName'),
 } as const);
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -205,6 +209,7 @@ class ConfigLoader {
       maxTabs: this.integer('MAX_TABS', DEFAULT_CONFIG.maxTabs),
       homePage: this.string('HOME_PAGE', DEFAULT_CONFIG.homePage),
       userAgent: this.string('USER_AGENT', DEFAULT_CONFIG.userAgent),
+      browserName: this.string('BROWSER_NAME', DEFAULT_CONFIG.browserName),
     };
   }
 
@@ -449,6 +454,11 @@ class ApplicationBootstrap {
       (ctx) => new SettingsService(ctx.resolve<ISettingsStore>(Tokens.SettingsStore)),
       ServiceLifetime.Singleton,
     );
+    c.register<IBrowserName>(
+      Tokens.BrowserName,
+      () => new BrowserName(),
+      ServiceLifetime.Singleton,
+    );
 
     // 10. Platform adapters
     c.register<IRuntimeAdapter>(
@@ -682,9 +692,27 @@ class ApplicationBootstrap {
 
     this.log('Browser UI mounted');
 
+    // Wire DI services into BrowserWindowPage
+    const paintEngine = this.container.resolve<IPaintEngine>(Tokens.PaintEngine);
+    const downloadManager = this.container.resolve<IDownloadManager>(Tokens.DownloadManager);
+    const bookmarkService = this.container.resolve<IBookmarkService>(Tokens.BookmarkService);
+    const historyServiceInstance = this.container.resolve<IHistoryService>(Tokens.HistoryService);
+
+    page.setBrowserEngine(engine);
+    page.setNavigationController(navController);
+    page.setPaintEngine(paintEngine);
+    page.setDownloadManager(downloadManager);
+    page.setBookmarkService(bookmarkService);
+    page.setHistoryService(historyServiceInstance);
+
     // Wire SettingsService → BrowserWindowPage so nova://settings gets persistence
     const settingsService = this.container.resolve<ISettingsService>(Tokens.SettingsService);
     page.setSettingsService(settingsService);
+
+    // Initialize BrowserName from settings
+    const browserName = this.container.resolve<IBrowserName>(Tokens.BrowserName);
+    browserName.init(settingsService);
+    page.setBrowserName(browserName);
   }
 
   // ── Diagnostics ───────────────────────────────────────────────────────────

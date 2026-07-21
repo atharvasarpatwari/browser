@@ -240,43 +240,47 @@ class NavigationBridge implements INavigationBridge {
       this._searchQuery = trimmed;
       const searchUrl = this.config.searchEngineUrl.replace('%s', encodeURIComponent(trimmed));
 
-      this.addressBar.setValue(trimmed);
-      this.addressBar.setLoading(true);
-      this.toolbar.setLoading(true);
-      this._setLoading(true);
-      this._currentUrl = searchUrl;
+      // Navigate to the search URL through the controller so the engine pipeline loads it.
+      const result = await this.nav.navigate(searchUrl);
 
-      if (this.config.updateStatusBar) {
-        this.statusBar?.setStatus(`Searching: ${trimmed}`);
-        this.statusBar?.setUrl(searchUrl);
-        this.statusBar?.setProtocol('HTTPS');
-        this.statusBar?.setSecure(true);
+      if (result.success && result.entry) {
+        this.addressBar.setValue(trimmed);
+        this.addressBar.setLoading(true);
+        this.toolbar.setLoading(true);
+        this._setLoading(true);
+        this._currentUrl = result.entry.url;
+
+        if (this.config.updateStatusBar) {
+          this.statusBar?.setStatus(`Searching: ${trimmed}`);
+          this.statusBar?.setUrl(result.entry.url);
+          this._updateSecureState(result.entry.url);
+        }
+
+        this.bus.emit({ kind: 'searchSubmitted', query: trimmed });
+
+        const tab = this.tabs.activeTab;
+        if (tab) {
+          tab.setUrl(result.entry.url);
+          tab.setTitle(`${trimmed} - Search`);
+          tab.setLoading(true);
+        }
+      } else {
+        const error = result.error ?? new Error('Search navigation failed');
+        this.addressBar.setValue(trimmed);
+
+        if (this.config.updateStatusBar) {
+          this.statusBar?.setStatus(`Failed: ${error.message}`);
+        }
+
+        this.bus.emit({ kind: 'navigationFailed', url: searchUrl, error });
       }
-
-      this.bus.emit({ kind: 'searchSubmitted', query: trimmed });
-
-      // Update the active tab.
-      const tab = this.tabs.activeTab;
-      if (tab) {
-        tab.setUrl(searchUrl);
-        tab.setTitle(`${trimmed} - Search`);
-        tab.setLoading(true);
-      }
-
-      // Simulate search completion after a short delay.
-      await new Promise(r => setTimeout(r, 100));
 
       this.addressBar.setLoading(false);
       this.toolbar.setLoading(false);
       this._setLoading(false);
-
-      if (tab) {
-        tab.setLoading(false);
-      }
-
-      this.bus.emit({ kind: 'urlNavigated', url: searchUrl });
       this._searchMode = false;
       this._searchQuery = '';
+      this._navigating = false;
       return;
     }
 
@@ -404,17 +408,6 @@ class NavigationBridge implements INavigationBridge {
     }
 
     this.nav.reload();
-
-    // Simulate reload completion.
-    setTimeout(() => {
-      this.addressBar.setLoading(false);
-      this.toolbar.setLoading(false);
-      this._setLoading(false);
-      if (tab) tab.setLoading(false);
-      if (this.config.updateStatusBar) {
-        this.statusBar?.setStatus('Done');
-      }
-    }, 150);
   }
 
   stop(): void {
@@ -493,10 +486,10 @@ class NavigationBridge implements INavigationBridge {
       if (this._navigating) return;
       switch (e.kind) {
         case 'navigate':
-          void this.navigate(e.url);
+          void this.navigate((e as { readonly url: string }).url);
           break;
         case 'search':
-          void this.navigate(e.query);
+          void this.navigate((e as { readonly query: string }).query);
           break;
         case 'reload':
           this.reload();

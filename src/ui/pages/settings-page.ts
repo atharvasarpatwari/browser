@@ -64,6 +64,7 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
   {
     id: 'appearance', title: 'Appearance', icon: '🎨',
     settings: [
+      { key: 'browserName', label: 'Browser name', description: 'Custom name displayed in window title, new tab, and search footer', type: 'text', defaultValue: 'Nova Browser' },
       { key: 'theme', label: 'Theme', description: 'Browser color theme', type: 'select', defaultValue: 'system', options: [{ label: 'System', value: 'system' }, { label: 'Light', value: 'light' }, { label: 'Dark', value: 'dark' }] },
       { key: 'fontSize', label: 'Font size', description: 'Default page font size', type: 'range', defaultValue: 16, min: 10, max: 32, step: 1 },
       { key: 'zoomLevel', label: 'Zoom level', description: 'Default page zoom', type: 'select', defaultValue: '100', options: [{ label: '75%', value: '75' }, { label: '100%', value: '100' }, { label: '125%', value: '125' }, { label: '150%', value: '150' }] },

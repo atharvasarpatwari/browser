@@ -6,6 +6,7 @@ interface ToolbarViewConfig {
   readonly showTrafficLights: boolean;
   readonly showShieldButton: boolean;
   readonly showBookmarkButton: boolean;
+  readonly brandName?: string;
 }
 
 const DEFAULT_VIEW_CONFIG: ToolbarViewConfig = {
@@ -127,7 +128,7 @@ class ToolbarView implements IToolbarView {
     }
 
     if (this.config.showShieldButton) {
-      this.shieldBtn = this.createIconBtn('🛡️', 'Nova Shield');
+      this.shieldBtn = this.createIconBtn('🛡️', `${this.config.brandName ?? 'Nova'} Shield`);
       this.shieldBtn.style.color = this.model.state.shieldEnabled ? 'var(--text-success)' : 'var(--text-tertiary)';
       this.shieldBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'shieldToggle', enabled: !this.model.state.shieldEnabled }));
       this.container.appendChild(this.shieldBtn);

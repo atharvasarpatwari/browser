@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nova Browser - Compatibility Test Page</title>
+  <style>
+    :root {
+      --gap: 16px;
+      --border-default: #ddd;
+      --border-active: #0066cc;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      min-height: 100dvh;
+      font-family: system-ui, -apple-system, sans-serif;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--gap);
+    }
+
+    .card {
+      background: white;
+      border: 2px solid var(--border-default);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .card:has(input:checked) {
+      border-color: var(--border-active);
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    input[type="checkbox"] {
+      margin-right: 8px;
+    }
+
+    input[type="date"] {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+    button {
+      padding: 8px 16px;
+      background: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0052a3;
+    }
+
+    #status {
+      margin-top: 16px;
+      padding: 12px;
+      background: #e8f5e9;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+
+    #observerTarget {
+      width: 100%;
+      height: 100px;
+      background: linear-gradient(to bottom, transparent, #0066cc20);
+      margin-top: 16px;
+      border-radius: 4px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="grid">
+    <div class="card">
+      <label>
+        <input type="checkbox" id="check1">
+        Card 1
+      </label>
+      <p>First card with checkbox.</p>
+    </div>
+
+    <div class="card">
+      <label>
+        <input type="checkbox" id="check2">
+        Card 2
+      </label>
+      <p>Second card with checkbox.</p>
+    </div>
+
+    <div class="card">
+      <label>
+        Date:
+        <input type="date" id="datepick">
+      </label>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="observerBtn">Trigger Observer</button>
+    <button id="clipboardBtn">Copy to Clipboard</button>
+  </div>
+
+  <div id="observerTarget">Scroll target for IntersectionObserver</div>
+  <div id="status">Status: waiting</div>
+
+  <script>
+    document.getElementById('observerBtn').addEventListener('click', () => {
+      const target = document.getElementById('observerTarget');
+      const status = document.getElementById('status');
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            status.textContent = 'Status: target is visible';
+          } else {
+            status.textContent = 'Status: target is hidden';
+          }
+        });
+      }, { threshold: 0.1 });
+
+      observer.observe(target);
+      target.scrollIntoView({ behavior: 'smooth' });
+    });
+
+    document.getElementById('clipboardBtn').addEventListener('click', async () => {
+      const status = document.getElementById('status');
+      try {
+        await navigator.clipboard.writeText('Hello from Nova Browser!');
+        status.textContent = 'Status: copied to clipboard';
+      } catch (err) {
+        status.textContent = 'Status: clipboard failed';
+      }
+    });
+  </script>
+</body>
+</html>

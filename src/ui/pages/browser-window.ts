@@ -10,8 +10,13 @@ import type { ITrackerBlocker } from '../../browser/security/tracker-blocker';
 import type { IAdBlocker } from '../../browser/security/ad-blocker';
 import type { IUrlParser } from '../../browser/navigation/url-parser';
 import type { IContentRenderer } from '../components/content-renderer/content-renderer';
-import type { SearchResult } from '../components/content-renderer/content-renderer';
 import type { INavigationBridge } from '../components/navigation-bridge';
+import type { IBrowserEngine } from '../../browser/engine/browser-engine';
+import type { INavigationController } from '../../browser/navigation/navigation-controller';
+import type { IPaintEngine } from '../../browser/rendering/paint-engine';
+import type { IDownloadManager } from '../../browser/downloads/download-manager';
+import type { IBookmarkService } from '../../browser/bookmarks/bookmark-services';
+import type { IHistoryService } from '../../browser/history/history-service';
 
 import { TabManager } from '../../browser/tabs/tab-manager';
 import { AddressBar } from '../components/address-bar/address-bar';
@@ -31,9 +36,13 @@ import { UrlParser } from '../../browser/navigation/url-parser';
 import { NavigationController } from '../../browser/navigation/navigation-controller';
 import { NavigationBridge } from '../components/navigation-bridge';
 import { ContentRenderer } from '../components/content-renderer/content-renderer';
+import { NavigationFetcher } from '../components/navigation-fetcher';
+import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
 import { SettingsPage } from './settings-page';
+import { DownloadsPage } from './downloads-page';
 import type { ISettingsPage } from './settings-page';
 import type { ISettingsService } from '../../browser/storage/settings-service';
+import type { IBrowserName } from '../../browser/config/browser-name';
 
 interface BrowserWindowPageConfig {
   readonly containerId: string;
@@ -61,6 +70,14 @@ interface IBrowserWindowPage extends IDisposable {
   goBack(): void;
   goForward(): void;
   stop(): void;
+  setSettingsService(service: ISettingsService): void;
+  setBrowserEngine(engine: IBrowserEngine): void;
+  setNavigationController(controller: INavigationController): void;
+  setPaintEngine(engine: IPaintEngine): void;
+  setDownloadManager(manager: IDownloadManager): void;
+  setBookmarkService(service: IBookmarkService): void;
+  setHistoryService(service: IHistoryService): void;
+  setBrowserName(name: IBrowserName): void;
 }
 
 class BrowserWindowPage implements IBrowserWindowPage {
@@ -88,8 +105,24 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private currentUrl = '';
   private contentNavigateHandler: ((e: Event) => void) | null = null;
   private activeSettingsPage: ISettingsPage | null = null;
+  private activeDownloadsPage: DownloadsPage | null = null;
+  private activeContentPanel: HTMLElement | null = null;
   private settingsService: ISettingsService | null = null;
   private navigationBridge: INavigationBridge | null = null;
+  private navigationFetcher: NavigationFetcher | null = null;
+
+  // DI-injected services
+  private browserEngine: IBrowserEngine | null = null;
+  private navController: INavigationController | null = null;
+  private paintEngine: IPaintEngine | null = null;
+  private downloadManager: IDownloadManager | null = null;
+  private bookmarkService: IBookmarkService | null = null;
+  private historyService: IHistoryService | null = null;
+  private browserName: IBrowserName | null = null;
+  private downloadsEventHandler: ((event: { kind: string }) => void) | null = null;
+  private historyEventHandler: ((event: { kind: string }) => void) | null = null;
+  private bookmarkEventHandler: ((event: { kind: string }) => void) | null = null;
+  private contextMenu: ContextMenu | null = null;
 
   constructor(config?: Partial<BrowserWindowPageConfig>) {
     this.config = { ...DEFAULT_PAGE_CONFIG, ...config };
@@ -144,6 +177,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
             this.tabManager?.createTab();
             this.syncAll();
             break;
+          case 'contextMenu':
+            this.showTabContextMenu(e.tabId, e.x, e.y);
+            break;
         }
       });
     }
@@ -175,6 +211,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.statusBarView.setEventHandler((e) => {
         if (e.kind === 'shieldClicked') {
           this.toolbar?.toggleShield();
+        } else if (e.kind === 'zoomChanged') {
+          this.statusBar?.setZoom(e.zoom);
         }
       });
     }
@@ -183,8 +221,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.tabManager.on('tabRemoved', () => this.syncAll());
     this.tabManager.on('tabActivated', () => this.syncAll());
 
-    // Create NavigationController and NavigationBridge.
-    const navController = new NavigationController(this.parser);
+    // Use DI-provided NavigationController if available, otherwise create one.
+    const navController = this.navController ?? new NavigationController(this.parser);
     this.navigationBridge = new NavigationBridge(
       navController,
       this.tabManager,
@@ -193,11 +231,23 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.statusBar,
     );
 
+    // Wire NavigationFetcher to bridge engine events → content renderer.
+    if (this.browserEngine && this.paintEngine) {
+      this.navigationFetcher = new NavigationFetcher(
+        this.browserEngine,
+        this.contentRenderer!,
+        this.paintEngine,
+        navController,
+      );
+      this.navigationFetcher.start();
+    }
+
     // Wire toolbar events through the bridge (shield + bookmark remain local).
     this.toolbar.on('shieldToggle', (e) => {
-      this.trackerBlocker?.setEnabled(e.enabled);
-      this.adBlocker?.setEnabled(e.enabled);
-      this.statusBar?.setStatus(e.enabled ? 'Shield enabled' : 'Shield disabled');
+      const enabled = (e as { readonly kind: 'shieldToggle'; readonly enabled: boolean }).enabled;
+      this.trackerBlocker?.setEnabled(enabled);
+      this.adBlocker?.setEnabled(enabled);
+      this.statusBar?.setStatus(enabled ? 'Shield enabled' : 'Shield disabled');
     });
     this.toolbar.on('bookmarkAdd', () => {
       if (this.tabManager?.activeTab) {
@@ -221,6 +271,15 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.contentArea = areas.content;
       this.contentRenderer = new ContentRenderer();
       this.contentRenderer.attach(areas.content);
+      if (this.browserName) {
+        this.contentRenderer.setBrandName(this.browserName.name);
+        this.browserName.onNameChanged((name) => {
+          this.contentRenderer?.setBrandName(name);
+        });
+      }
+      this.contentRenderer.setLinkHoverHandler((url) => {
+        this.statusBar?.setHoverUrl(url ?? '');
+      });
       this.contentRenderer.renderNewTab();
 
       // Listen for navigation events from rendered content (e.g. search result links).
@@ -237,7 +296,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
   }
 
   async unmount(): Promise<void> {
+    this.navigationFetcher?.dispose();
     this.cleanupSettingsPage();
+    this.cleanupDownloadsPage();
+    this.cleanupContentPanel();
     this.navigationBridge?.dispose();
     this.addressBarView?.dispose();
     this.tabStripView?.dispose();
@@ -255,6 +317,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (this.container) {
       this.container.innerHTML = '';
     }
+    this.navigationFetcher = null;
     this.navigationBridge = null;
     this.addressBarView = null;
     this.tabStripView = null;
@@ -274,149 +337,31 @@ class BrowserWindowPage implements IBrowserWindowPage {
   async navigate(url: string): Promise<void> {
     if (this.navigationBridge) {
       await this.navigationBridge.navigate(url);
-      // Re-render content for the navigated URL.
       const currentUrl = this.navigationBridge.currentUrl;
       if (currentUrl) {
-        try {
-          await this.renderUrlContent(currentUrl);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          this.contentRenderer?.renderError('Navigation Failed', message, currentUrl);
-        }
+        this.handleContentForUrl(currentUrl);
       }
       this.syncAll();
       return;
     }
-
-    // Fallback: direct navigation without bridge.
-    if (!this.container || !this.tabManager) return;
-    const tab = this.tabManager.activeTab;
-    if (!tab) return;
-
-    this.currentUrl = url;
-    this.toolbar?.setLoading(true);
-    this.statusBar?.setStatus(`Loading ${url}...`);
-    this.statusBar?.setUrl(url);
-    tab.setLoading(true);
-
-    // Show loading state in content area.
-    this.contentRenderer?.renderLoading(url);
-
-    // ── Search query detection ────────────────────────────────────────────
-    if (this.parser.isSearchQuery(url)) {
-      const searchUrl = this.parser.buildSearchUrl(url);
-      const results = this.generateSearchResults(url);
-
-      this.addressBar?.setValue(url);
-      this.addressBar?.setLoading(false);
-
-      const protocol = 'HTTPS';
-      this.statusBar?.setProtocol(protocol);
-      this.statusBar?.setSecure(true);
-      this.statusBar?.setUrl(searchUrl);
-
-      tab.setUrl(searchUrl);
-      tab.setTitle(`${url} - Nova Search`);
-
-      // Simulate brief network delay for realism.
-      await new Promise(r => setTimeout(r, 150));
-
-      this.contentRenderer?.renderSearchResults(url, searchUrl, results);
-
-      this.toolbar?.setLoading(false);
-      this.toolbar?.setCanGoBack(tab.canGoBack());
-      this.toolbar?.setCanGoForward(tab.canGoForward());
-      this.statusBar?.setStatus('Done');
-      this.syncAll();
-      return;
-    }
-
-    // ── URL navigation ────────────────────────────────────────────────────
-    let normalizedUrl = url;
-    try {
-      normalizedUrl = this.parser.normalize(url);
-    } catch {
-      // If normalize fails, try with https:// prefix.
-      if (!url.startsWith('http')) normalizedUrl = `https://${url}`;
-    }
-
-    this.addressBar?.setValue(url);
-
-    // Determine protocol and security from the URL.
-    let protocol = 'HTTPS';
-    let isSecure = true;
-    try {
-      const urlObj = new URL(normalizedUrl);
-      protocol = this.getProtocolLabel(urlObj.protocol);
-      isSecure = this.isSecureProtocol(urlObj.protocol);
-    } catch {
-      protocol = 'HTTPS';
-      isSecure = true;
-    }
-
-    this.statusBar?.setProtocol(protocol);
-    this.statusBar?.setSecure(isSecure);
-
-    tab.setUrl(normalizedUrl);
-
-    try {
-      const parsed = this.parser.parse(url);
-      tab.setTitle(parsed.hostname || url);
-    } catch {
-      tab.setTitle(url);
-    }
-
-    // ── Render content based on URL type ──────────────────────────────────
-    try {
-      await this.renderUrlContent(normalizedUrl);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.contentRenderer?.renderError('Navigation Failed', message, normalizedUrl);
-    }
-
-    this.toolbar?.setLoading(false);
-    this.toolbar?.setCanGoBack(tab.canGoBack());
-    this.toolbar?.setCanGoForward(tab.canGoForward());
-    this.statusBar?.setStatus('Done');
-    this.syncAll();
   }
 
   /**
-   * Render content based on the URL's protocol and type.
+   * Route content rendering based on URL scheme.
+   * HTTP/HTTPS go through the BrowserEngine pipeline.
+   * Internal pages (nova://, about:) are rendered directly.
    */
-  private async renderUrlContent(url: string): Promise<void> {
+  private handleContentForUrl(url: string): void {
     try {
       const parsed = this.parser.parse(url);
 
-      // Special pages: about:blank, nova://, etc.
+      // Special pages
       if (parsed.isSpecialPage) {
-        if (parsed.normalized === 'about:blank') {
-          this.contentRenderer?.clear();
-        } else if (parsed.normalized === 'nova://settings' || parsed.normalized === 'about:settings') {
-          this.cleanupSettingsPage();
-          const container = document.createElement('div');
-          container.style.cssText = 'width:100%;height:100%;';
-          this.contentArea?.appendChild(container);
-          this.activeSettingsPage = new SettingsPage();
-          this.activeSettingsPage.mount(container);
-          if (this.settingsService) {
-            this.settingsService.init(this.activeSettingsPage);
-          }
-        } else {
-          this.contentRenderer?.renderHtml(
-            `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
-              <div style="text-align:center;color:#5f6368;">
-                <h2 style="margin:0 0 8px;">Nova Browser</h2>
-                <p style="margin:0;">${parsed.normalized}</p>
-              </div>
-            </body></html>`,
-            { title: parsed.normalized },
-          );
-        }
+        this.renderSpecialPage(parsed.normalized, url);
         return;
       }
 
-      // Data URLs: render directly.
+      // Data URLs
       if (parsed.protocol === 'data:') {
         this.contentRenderer?.renderHtml(
           `<html><body style="margin:0;"><iframe src="${url}" style="width:100%;height:100vh;border:none;"></iframe></body></html>`,
@@ -425,7 +370,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         return;
       }
 
-      // File URLs: show file info.
+      // File URLs
       if (parsed.protocol === 'file:') {
         this.contentRenderer?.renderHtml(
           `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
@@ -440,23 +385,25 @@ class BrowserWindowPage implements IBrowserWindowPage {
         return;
       }
 
-      // HTTP/HTTPS: render a page with the URL info.
+      // HTTP/HTTPS: content is rendered by the engine pipeline via NavigationFetcher.
+      // If the engine is not available, show a fallback.
       if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-        this.contentRenderer?.renderHtml(
-          `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
-            <div style="text-align:center;color:#5f6368;">
-              <div style="font-size:48px;margin-bottom:16px;">🌐</div>
-              <h2 style="margin:0 0 8px;">${parsed.hostname}</h2>
-              <p style="margin:0 0 16px;word-break:break-all;max-width:500px;">${url}</p>
-              <p style="margin:0;font-size:12px;color:#9aa0a6;">Page loaded via Nova Browser</p>
-            </div>
-          </body></html>`,
-          { title: parsed.hostname || url },
-        );
+        if (!this.browserEngine) {
+          this.contentRenderer?.renderHtml(
+            `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
+              <div style="text-align:center;color:#5f6368;">
+                <h2 style="margin:0 0 8px;">${parsed.hostname}</h2>
+                <p style="margin:0;word-break:break-all;max-width:500px;">${url}</p>
+                <p style="margin:0;font-size:12px;color:#9aa0a6;">Engine not connected</p>
+              </div>
+            </body></html>`,
+            { title: parsed.hostname || url },
+          );
+        }
         return;
       }
 
-      // All other protocols: show protocol info.
+      // Other protocols
       this.contentRenderer?.renderHtml(
         `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
           <div style="text-align:center;color:#5f6368;">
@@ -477,69 +424,326 @@ class BrowserWindowPage implements IBrowserWindowPage {
   }
 
   /**
-   * Generate search result entries for a given query.
+   * Render internal pages (nova://, about:).
    */
-  private generateSearchResults(query: string): readonly SearchResult[] {
-    const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 0);
-    const results: SearchResult[] = [];
+  private renderSpecialPage(page: string, url: string): void {
+    this.cleanupContentPanel();
 
-    results.push({
-      title: query,
-      url: `https://duckduckgo.com/?q=${encodeURIComponent(query)}`,
-      snippet: `Search for "${query}" on DuckDuckGo — the privacy-focused search engine that doesn't track you.`,
+    switch (page) {
+      case 'about:blank':
+        this.contentRenderer?.clear();
+        break;
+
+      case 'nova://settings':
+      case 'about:settings':
+        this.renderSettingsPanel();
+        break;
+
+      case 'nova://downloads':
+        this.renderDownloadsPanel();
+        break;
+
+      case 'nova://history':
+        this.renderHistoryPanel();
+        break;
+
+      case 'nova://bookmarks':
+        this.renderBookmarksPanel();
+        break;
+
+      default:
+        this.contentRenderer?.renderHtml(
+          `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
+            <div style="text-align:center;color:#5f6368;">
+              <h2 style="margin:0 0 8px;">${this.browserName?.name ?? 'Nova Browser'}</h2>
+              <p style="margin:0;">${page}</p>
+            </div>
+          </body></html>`,
+          { title: page },
+        );
+        break;
+    }
+  }
+
+  private renderSettingsPanel(): void {
+    if (!this.contentArea) return;
+    this.cleanupContentPanel();
+    const container = document.createElement('div');
+    container.style.cssText = 'width:100%;height:100%;';
+    this.contentArea.appendChild(container);
+    this.activeContentPanel = container;
+    this.activeSettingsPage = new SettingsPage();
+    this.activeSettingsPage.mount(container);
+    if (this.settingsService) {
+      this.settingsService.init(this.activeSettingsPage);
+    }
+  }
+
+  private renderDownloadsPanel(): void {
+    if (!this.contentArea) return;
+    this.cleanupContentPanel();
+    const container = document.createElement('div');
+    container.style.cssText = 'width:100%;height:100%;';
+    this.contentArea.appendChild(container);
+    this.activeContentPanel = container;
+    this.activeDownloadsPage = new DownloadsPage();
+
+    const items = this.downloadManager?.items ?? [];
+    this.activeDownloadsPage.mount(container, items);
+
+    if (this.downloadManager) {
+      this.downloadsEventHandler = (event: { kind: string }) => {
+        if (this.activeDownloadsPage && this.downloadManager) {
+          this.activeDownloadsPage.updateItems(this.downloadManager.items);
+        }
+      };
+      this.downloadManager.on('downloadCreated', this.downloadsEventHandler);
+      this.downloadManager.on('downloadProgress', this.downloadsEventHandler);
+      this.downloadManager.on('downloadCompleted', this.downloadsEventHandler);
+      this.downloadManager.on('downloadFailed', this.downloadsEventHandler);
+      this.downloadManager.on('downloadCancelled', this.downloadsEventHandler);
+      this.downloadManager.on('downloadPaused', this.downloadsEventHandler);
+    }
+
+    this.activeDownloadsPage.on('downloadAction', async (event) => {
+      if (!this.downloadManager || !event.downloadId) return;
+      switch (event.action) {
+        case 'pause': await this.downloadManager.pause(event.downloadId); break;
+        case 'resume': await this.downloadManager.resume(event.downloadId); break;
+        case 'cancel': await this.downloadManager.cancel(event.downloadId); break;
+        case 'remove': await this.downloadManager.remove(event.downloadId); break;
+        case 'openFile': break;
+        case 'showInFolder': break;
+      }
     });
+  }
 
-    if (words.length <= 4) {
-      results.push({
-        title: `${query} — Wikipedia`,
-        url: `https://en.wikipedia.org/wiki/${encodeURIComponent(query.replace(/\s+/g, '_'))}`,
-        snippet: `Wikipedia article about ${query}. Read about the history, concepts, and related topics.`,
-      });
-    }
+  private renderHistoryPanel(): void {
+    if (!this.contentArea) return;
+    this.cleanupContentPanel();
+    const container = document.createElement('div');
+    container.style.cssText = 'width:100%;height:100%;overflow-y:auto;font-family:system-ui,-apple-system,sans-serif;';
+    this.contentArea.appendChild(container);
+    this.activeContentPanel = container;
 
-    const programmingTerms = ['javascript', 'python', 'typescript', 'html', 'css', 'react', 'node', 'api', 'database', 'sql', 'git', 'docker', 'algorithm', 'function', 'class', 'array', 'string', 'loop', 'variable', 'error', 'debug', 'test', 'deploy', 'server', 'client'];
-    if (words.some(w => programmingTerms.includes(w))) {
-      results.push({
-        title: `${query} — Stack Overflow`,
-        url: `https://stackoverflow.com/search?q=${encodeURIComponent(query)}`,
-        snippet: `Questions and answers about ${query} on Stack Overflow, the largest developer community.`,
-      });
-    }
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:20px 24px 12px;position:sticky;top:0;background:#fff;z-index:1;border-bottom:1px solid #e8eaed;';
 
-    const newsTerms = ['news', 'today', 'latest', 'recent', 'breaking', 'update', 'report'];
-    if (words.some(w => newsTerms.includes(w))) {
-      results.push({
-        title: `${query} — Latest News`,
-        url: `https://news.google.com/search?q=${encodeURIComponent(query)}`,
-        snippet: `Get the latest news and updates about ${query} from sources around the world.`,
-      });
-    }
+    const title = document.createElement('h1');
+    title.textContent = 'History';
+    title.style.cssText = 'margin:0;font-size:20px;color:#202124;';
+    header.appendChild(title);
 
-    const tutorialTerms = ['how', 'tutorial', 'guide', 'learn', 'example', 'setup', 'install', 'create', 'build', 'make'];
-    if (words.some(w => tutorialTerms.includes(w))) {
-      results.push({
-        title: `${query} — Tutorial`,
-        url: `https://www.google.com/search?q=${encodeURIComponent(query + ' tutorial')}`,
-        snippet: `Step-by-step tutorial and guide for ${query}. Learn with examples and best practices.`,
-      });
-    }
+    const searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.placeholder = 'Search history';
+    searchInput.style.cssText = 'padding:8px 12px;border:1px solid #dfe1e5;border-radius:8px;font-size:14px;width:280px;outline:none;';
+    header.appendChild(searchInput);
 
-    const shopTerms = ['buy', 'price', 'cheap', 'best', 'review', 'compare', 'deal'];
-    if (words.some(w => shopTerms.includes(w))) {
-      results.push({
-        title: `${query} — Reviews & Prices`,
-        url: `https://www.google.com/search?q=${encodeURIComponent(query + ' reviews')}`,
-        snippet: `Compare prices, read reviews, and find the best deals for ${query}.`,
-      });
-    }
+    container.appendChild(header);
 
-    results.push({
-      title: `${query} — Documentation`,
-      url: `https://developer.mozilla.org/search?q=${encodeURIComponent(query)}`,
-      snippet: `Official documentation and reference materials for ${query}.`,
-    });
+    const listContainer = document.createElement('div');
+    listContainer.style.cssText = 'padding:0 24px;';
+    container.appendChild(listContainer);
 
-    return results;
+    const renderList = async () => {
+      if (!this.historyService) return;
+      const query = searchInput.value.trim();
+      let entries;
+      if (query) {
+        const result = await this.historyService.query({ query, maxResults: 200 });
+        entries = result.entries;
+      } else {
+        entries = await this.historyService.getRecent(200);
+      }
+      listContainer.innerHTML = '';
+      if (entries.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'text-align:center;padding:60px 20px;color:#9aa0a6;';
+        empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px;">🕐</div><p>No history entries yet</p>';
+        listContainer.appendChild(empty);
+        return;
+      }
+      for (const entry of entries) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid #f1f3f4;cursor:pointer;gap:12px;';
+        row.addEventListener('mouseenter', () => { row.style.background = '#f8f9fa'; });
+        row.addEventListener('mouseleave', () => { row.style.background = ''; });
+
+        const favicon = document.createElement('div');
+        favicon.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#e8eaed;flex-shrink:0;';
+        row.appendChild(favicon);
+
+        const info = document.createElement('div');
+        info.style.cssText = 'flex:1;min-width:0;';
+
+        const titleEl = document.createElement('div');
+        titleEl.style.cssText = 'font-size:14px;color:#202124;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        titleEl.textContent = entry.title || entry.url;
+        info.appendChild(titleEl);
+
+        const urlEl = document.createElement('div');
+        urlEl.style.cssText = 'font-size:12px;color:#5f6368;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        urlEl.textContent = entry.url;
+        info.appendChild(urlEl);
+
+        row.appendChild(info);
+
+        const time = document.createElement('div');
+        time.style.cssText = 'font-size:12px;color:#9aa0a6;flex-shrink:0;white-space:nowrap;';
+        time.textContent = new Date(entry.lastVisitTime).toLocaleString();
+        row.appendChild(time);
+
+        row.addEventListener('click', () => {
+          void this.navigate(entry.url);
+        });
+
+        listContainer.appendChild(row);
+      }
+    };
+
+    void renderList();
+    searchInput.addEventListener('input', () => void renderList());
+  }
+
+  private renderBookmarksPanel(): void {
+    if (!this.contentArea) return;
+    this.cleanupContentPanel();
+    const container = document.createElement('div');
+    container.style.cssText = 'width:100%;height:100%;overflow-y:auto;font-family:system-ui,-apple-system,sans-serif;';
+    this.contentArea.appendChild(container);
+    this.activeContentPanel = container;
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:20px 24px 12px;position:sticky;top:0;background:#fff;z-index:1;border-bottom:1px solid #e8eaed;';
+
+    const title = document.createElement('h1');
+    title.textContent = 'Bookmarks';
+    title.style.cssText = 'margin:0;font-size:20px;color:#202124;';
+    header.appendChild(title);
+
+    const searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.placeholder = 'Search bookmarks';
+    searchInput.style.cssText = 'padding:8px 12px;border:1px solid #dfe1e5;border-radius:8px;font-size:14px;width:280px;outline:none;';
+    header.appendChild(searchInput);
+
+    container.appendChild(header);
+
+    const listContainer = document.createElement('div');
+    listContainer.style.cssText = 'padding:0 24px;';
+    container.appendChild(listContainer);
+
+    const renderList = async () => {
+      if (!this.bookmarkService) return;
+      const query = searchInput.value.trim();
+      let entries;
+      if (query) {
+        entries = await this.bookmarkService.search(query);
+      } else {
+        entries = await this.bookmarkService.getChildren(null);
+      }
+      listContainer.innerHTML = '';
+      if (entries.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'text-align:center;padding:60px 20px;color:#9aa0a6;';
+        empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px;">⭐</div><p>No bookmarks yet</p><p style="font-size:13px;">Add bookmarks by clicking the star icon in the address bar</p>';
+        listContainer.appendChild(empty);
+        return;
+      }
+      for (const entry of entries) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid #f1f3f4;cursor:pointer;gap:12px;';
+        row.addEventListener('mouseenter', () => { row.style.background = '#f8f9fa'; });
+        row.addEventListener('mouseleave', () => { row.style.background = ''; });
+
+        const icon = document.createElement('div');
+        icon.style.cssText = 'font-size:16px;width:20px;text-align:center;flex-shrink:0;';
+        icon.textContent = entry.url ? '⭐' : '📁';
+        row.appendChild(icon);
+
+        const info = document.createElement('div');
+        info.style.cssText = 'flex:1;min-width:0;';
+
+        const titleEl = document.createElement('div');
+        titleEl.style.cssText = 'font-size:14px;color:#202124;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        titleEl.textContent = entry.title;
+        info.appendChild(titleEl);
+
+        if (entry.url) {
+          const urlEl = document.createElement('div');
+          urlEl.style.cssText = 'font-size:12px;color:#5f6368;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          urlEl.textContent = entry.url;
+          info.appendChild(urlEl);
+        }
+
+        row.appendChild(info);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.textContent = '×';
+        removeBtn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:18px;color:#9aa0a6;padding:4px;opacity:0;transition:opacity 0.15s;';
+        removeBtn.addEventListener('mouseenter', () => { removeBtn.style.opacity = '1'; });
+        removeBtn.addEventListener('mouseleave', () => { removeBtn.style.opacity = '0'; });
+        row.addEventListener('mouseenter', () => { removeBtn.style.opacity = '0.6'; });
+        row.addEventListener('mouseleave', () => { removeBtn.style.opacity = '0'; });
+        removeBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (entry.id) await this.bookmarkService?.removeBookmark(entry.id);
+          void renderList();
+        });
+        row.appendChild(removeBtn);
+
+        if (entry.url) {
+          row.addEventListener('click', () => {
+            void this.navigate(entry.url!);
+          });
+        }
+
+        listContainer.appendChild(row);
+      }
+    };
+
+    void renderList();
+    searchInput.addEventListener('input', () => void renderList());
+  }
+
+  private showTabContextMenu(tabId: string, x: number, y: number): void {
+    if (!this.contextMenu) this.contextMenu = new ContextMenu();
+
+    const tab = this.tabManager?.getTab(tabId);
+    if (!tab) return;
+
+    const items: ContextMenuItem[] = [
+      { label: 'New Tab', icon: '＋', action: () => { this.tabManager?.createTab(); this.syncAll(); } },
+      { separator: true },
+      { label: tab.pinned ? 'Unpin Tab' : 'Pin Tab', icon: tab.pinned ? '🔓' : '📌', action: () => {
+        this.tabManager?.setTabPinned(tabId, !tab.pinned);
+        this.syncAll();
+      }},
+      { label: 'Reload', icon: '↻', action: () => { this.tabManager?.activateTab(tabId); this.reload(); } },
+      { label: 'Duplicate', icon: '⧉', action: () => {
+        const newTab = this.tabManager?.createTab();
+        if (newTab && tab.url) {
+          void this.navigationBridge?.navigate(tab.url);
+        }
+      }},
+      { separator: true },
+      { label: 'Close Tab', icon: '✕', action: () => {
+        this.tabManager?.removeTab(tabId);
+        if (this.tabManager && this.tabManager.count === 0) this.tabManager.createTab();
+        this.syncAll();
+      }},
+      { label: 'Close Other Tabs', icon: '', action: () => {
+        const tabs = this.tabManager?.tabs ?? [];
+        for (const t of tabs) {
+          if (t.id !== tabId) this.tabManager?.removeTab(t.id);
+        }
+        if (this.tabManager && this.tabManager.count === 0) this.tabManager.createTab();
+        this.syncAll();
+      }},
+    ];
+
+    this.contextMenu.show(x, y, items);
   }
 
   /**
@@ -698,10 +902,68 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.settingsService = service;
   }
 
+  setBrowserEngine(engine: IBrowserEngine): void {
+    this.browserEngine = engine;
+  }
+
+  setNavigationController(controller: INavigationController): void {
+    this.navController = controller;
+  }
+
+  setPaintEngine(engine: IPaintEngine): void {
+    this.paintEngine = engine;
+  }
+
+  setDownloadManager(manager: IDownloadManager): void {
+    this.downloadManager = manager;
+  }
+
+  setBookmarkService(service: IBookmarkService): void {
+    this.bookmarkService = service;
+  }
+
+  setHistoryService(service: IHistoryService): void {
+    this.historyService = service;
+  }
+
+  setBrowserName(name: IBrowserName): void {
+    this.browserName = name;
+    // Update document title whenever the name changes
+    name.onNameChanged((newName) => {
+      document.title = newName;
+    });
+    document.title = name.name;
+  }
+
   private cleanupSettingsPage(): void {
     if (this.activeSettingsPage) {
       this.activeSettingsPage.dispose();
       this.activeSettingsPage = null;
+    }
+  }
+
+  private cleanupDownloadsPage(): void {
+    if (this.downloadsEventHandler && this.downloadManager) {
+      this.downloadManager.off('downloadCreated', this.downloadsEventHandler);
+      this.downloadManager.off('downloadProgress', this.downloadsEventHandler);
+      this.downloadManager.off('downloadCompleted', this.downloadsEventHandler);
+      this.downloadManager.off('downloadFailed', this.downloadsEventHandler);
+      this.downloadManager.off('downloadCancelled', this.downloadsEventHandler);
+      this.downloadManager.off('downloadPaused', this.downloadsEventHandler);
+      this.downloadsEventHandler = null;
+    }
+    if (this.activeDownloadsPage) {
+      this.activeDownloadsPage.unmount();
+      this.activeDownloadsPage = null;
+    }
+  }
+
+  private cleanupContentPanel(): void {
+    this.cleanupSettingsPage();
+    this.cleanupDownloadsPage();
+    if (this.activeContentPanel) {
+      this.activeContentPanel.remove();
+      this.activeContentPanel = null;
     }
   }
 

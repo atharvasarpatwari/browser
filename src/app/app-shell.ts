@@ -38,6 +38,8 @@ interface AppConfig {
   readonly homePage: string;
   /** User-Agent string sent with every request. */
   readonly userAgent: string;
+  /** Browser name displayed in title bar, new tab, and branding. */
+  readonly browserName: string;
 }
 
 /** Reasonable defaults used when environment variables are absent. */
@@ -46,7 +48,8 @@ const DEFAULT_CONFIG: AppConfig = {
   debug: false,
   maxTabs: 20,
   homePage: 'about:blank',
-  userAgent: 'CustomBrowser/1.0',
+  userAgent: 'NovaBrowser/1.0',
+  browserName: 'Nova Browser',
 };
 
 // ── Shared-service interface ───────────────────────────────────────────────────
@@ -239,7 +242,7 @@ class AppShell implements IAppShell {
 
     this._window = new BrowserWindow(
       'main',
-      `Browser v${this.config.version}`,
+      `${this.config.browserName} v${this.config.version}`,
     );
     await this._window.open();
     this._window.focus();
