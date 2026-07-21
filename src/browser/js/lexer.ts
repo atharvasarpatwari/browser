@@ -139,7 +139,11 @@ export class Lexer {
       case '||': this.advance(2); return this.makeToken(TokenType.PipePipe, '||', startLine, startCol);
       case '++': this.advance(2); return this.makeToken(TokenType.PlusPlus, '++', startLine, startCol);
       case '--': this.advance(2); return this.makeToken(TokenType.MinusMinus, '--', startLine, startCol);
-      case '**': this.advance(2); return this.makeToken(TokenType.StarStar, '**', startLine, startCol);
+      case '**': {
+        this.advance(2);
+        if (this.peek(0) === '=') { this.advance(); return this.makeToken(TokenType.StarStarAssign, '**=', startLine, startCol); }
+        return this.makeToken(TokenType.StarStar, '**', startLine, startCol);
+      }
       case '+=': this.advance(2); return this.makeToken(TokenType.PlusAssign, '+=', startLine, startCol);
       case '-=': this.advance(2); return this.makeToken(TokenType.MinusAssign, '-=', startLine, startCol);
       case '*=': this.advance(2); return this.makeToken(TokenType.StarAssign, '*=', startLine, startCol);

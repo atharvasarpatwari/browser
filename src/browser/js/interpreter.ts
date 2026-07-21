@@ -123,7 +123,7 @@ export class Interpreter {
       const vm = new BytecodeVM(fn.closure);
       vm.setMaxExecutionMs(this.maxExecutionMs);
       vm.setCallInterpreter((innerFn, innerThisArg, innerArgs) => this.callFunction(innerFn, innerThisArg, innerArgs));
-      const result = vm.run(bytecodeFn, thisArg);
+      const result = vm.run(bytecodeFn, thisArg, args, fn.upvalues);
       if (!result.ok) {
         throw new JSError(result.error);
       }

@@ -30,6 +30,7 @@ interface LoopContext {
   continueTargets: ContinueTarget[];
   breakTargets: BreakTarget[];
   loopStart: number;
+  continueTarget: number; // for-loops: update offset; while/do-while: loopStart
 }
 
 interface TryContext {
@@ -50,13 +51,40 @@ export class BytecodeCompiler {
   private continueStack: ContinueTarget[] = [];
   private tryStack: TryContext[] = [];
   private hasReturn = false;
+  private isProgram = false;
+  /** Chain of outer scope variable maps for upvalue resolution */
+  private outerScopes: Array<Map<string, { slotIndex: number; isLocal: boolean }>> = [];
+  /** Upvalues captured by this function from outer scopes */
+  private capturedUpvalues: UpvalueInfo[] = [];
 
   // Compile a program (top-level)
   compile(program: AST.Program): BytecodeFunction {
-    // First pass: hoist function declarations
+    this.isProgram = true;
+
+    // Track which declarations we've already hoisted
+    const hoistedFunctions = new Set<string>();
+
+    // First pass: hoist function declarations (with values) and var declarations (as undefined)
     for (const stmt of program.body) {
       if (stmt.type === 'FunctionDeclaration' && stmt.id) {
-        this.declareLocal(stmt.id.name, 'var');
+        // Full function hoisting: compile function body and store in env
+        this.compileFunctionExpr(
+          { type: 'FunctionExpression', id: stmt.id, params: stmt.params, body: stmt.body, async: stmt.async, generator: stmt.generator },
+        );
+        this.builder.emitU16(OP.DEFINE_VAR, this.builder.addConst(stmt.id.name));
+        this.builder.emit(0); // kind: var
+        this.builder.emit(OP.POP);
+        hoistedFunctions.add(stmt.id.name);
+      } else if (stmt.type === 'VariableDeclaration') {
+        // var hoisting: declare as undefined, initializers run in-place
+        for (const decl of stmt.declarations) {
+          if (decl.id.type === 'Identifier') {
+            this.builder.emit(OP.PUSH_UNDEFINED);
+            this.builder.emitU16(OP.DEFINE_VAR, this.builder.addConst(decl.id.name));
+            this.builder.emit(stmt.kind === 'var' ? 0 : stmt.kind === 'let' ? 1 : 2);
+            this.builder.emit(OP.POP);
+          }
+        }
       }
     }
 
@@ -64,6 +92,10 @@ export class BytecodeCompiler {
     for (let i = 0; i < program.body.length; i++) {
       const stmt = program.body[i]!;
       const isLast = i === program.body.length - 1;
+      // Skip function declarations that were already hoisted
+      if (stmt.type === 'FunctionDeclaration' && stmt.id && hoistedFunctions.has(stmt.id.name)) {
+        continue;
+      }
       if (isLast && stmt.type === 'ExpressionStatement') {
         this.compileExpression(stmt.expression);
         // Leave result on stack as program return value
@@ -160,10 +192,11 @@ export class BytecodeCompiler {
     this.builder.emit(OP.POP);
     this.pushLoop(loopStart, exitJump);
     this.compileStatement(stmt.body);
-    this.popLoop(loopStart);
+    this.patchLoopContinues();
     this.builder.emitU16(OP.JMP, loopStart);
     this.builder.patchJump(exitJump);
     this.builder.emit(OP.POP);
+    this.patchLoopBreaks();
   }
 
   private compileDoWhile(stmt: AST.DoWhileStatement): void {
@@ -171,13 +204,14 @@ export class BytecodeCompiler {
     const exitJumpPos = -1;
     this.pushLoop(loopStart, exitJumpPos);
     this.compileStatement(stmt.body);
-    this.popLoop(loopStart);
+    this.patchLoopContinues();
     this.compileExpression(stmt.test);
     const exitJump = this.builder.emitJump(OP.JMP_IF_FALSE);
     this.builder.emit(OP.POP);
     this.builder.emitU16(OP.JMP, loopStart);
     this.builder.patchJump(exitJump);
     this.builder.emit(OP.POP);
+    this.patchLoopBreaks();
   }
 
   private compileFor(stmt: AST.ForStatement): void {
@@ -199,7 +233,12 @@ export class BytecodeCompiler {
     }
     this.pushLoop(loopStart, exitJumpPos);
     this.compileStatement(stmt.body);
-    this.popLoop(loopStart);
+    if (stmt.update) {
+      const updateOffset = this.builder.currentOffset();
+      const ctx = this.loopStack[this.loopStack.length - 1]!;
+      ctx.continueTarget = updateOffset;
+    }
+    this.patchLoopContinues();
     if (stmt.update) {
       this.compileExpression(stmt.update);
       this.builder.emit(OP.POP);
@@ -209,6 +248,7 @@ export class BytecodeCompiler {
       this.builder.patchJump(exitJumpPos);
       this.builder.emit(OP.POP);
     }
+    this.patchLoopBreaks();
     this.popScope();
   }
 
@@ -233,7 +273,6 @@ export class BytecodeCompiler {
     // Push obj
     this.builder.emitU16(OP.LOAD_LOCAL, objSlot);
     // Call Object.keys(obj) — 1 arg
-    this.builder.emit(OP.SWAP);
     this.builder.emitU16(OP.CALL, 1);
     const keysSlot = this.allocateLocal('_fi_keys');
     this.builder.emitU16(OP.STORE_LOCAL, keysSlot);
@@ -270,7 +309,12 @@ export class BytecodeCompiler {
     // Step 6: Body
     this.pushLoop(loopStart, exitJump);
     this.compileStatement(stmt.body);
-    this.popLoop(loopStart);
+
+    // Step 7: idx++ (continue target)
+    const incOffset = this.builder.currentOffset();
+    const ctx = this.loopStack[this.loopStack.length - 1]!;
+    ctx.continueTarget = incOffset;
+    this.patchLoopContinues();
 
     // Step 7: idx++, jump back
     this.builder.emitU16(OP.LOAD_LOCAL, idxSlot);
@@ -283,6 +327,7 @@ export class BytecodeCompiler {
     // Step 8: Exit
     this.builder.patchJump(exitJump);
     this.builder.emit(OP.POP);
+    this.patchLoopBreaks();
 
     this.freeLocal(); // idx
     this.freeLocal(); // keys
@@ -337,7 +382,12 @@ export class BytecodeCompiler {
     // Loop body
     this.pushLoop(loopStart, exitJump);
     this.compileStatement(stmt.body);
-    this.popLoop(loopStart);
+
+    // idx++ (continue target)
+    const incOffset = this.builder.currentOffset();
+    const ctx2 = this.loopStack[this.loopStack.length - 1]!;
+    ctx2.continueTarget = incOffset;
+    this.patchLoopContinues();
 
     // idx++
     this.builder.emitU16(OP.LOAD_LOCAL, idxSlot);
@@ -352,6 +402,7 @@ export class BytecodeCompiler {
     // Exit
     this.builder.patchJump(exitJump);
     this.builder.emit(OP.POP);
+    this.patchLoopBreaks();
 
     this.freeLocal(); // idx
     this.freeLocal(); // iter
@@ -363,41 +414,89 @@ export class BytecodeCompiler {
     const discSlot = this.allocateLocal('_sw_disc');
     this.builder.emitU16(OP.STORE_LOCAL, discSlot);
 
-    const caseJumps: { testOffset: number; bodyStart: number }[] = [];
-    const endJumps: number[] = [];
+    // Phase 1: Emit all case tests (chained). On match, jump to body label.
+    // Each test: LOAD discSlot, <case_value>, SEQ, JMP_IF_FALSE → next_test_or_default_or_end
+    //           JMP → body_offset
+
+    const testStarts: number[] = [];    // offset of each case test
+    const testFalseJumps: number[] = []; // JMP_IF_FALSE patch positions
+    const testMatchJumps: number[] = []; // JMP patch positions
+    let defaultCaseIdx = -1;
 
     for (let i = 0; i < stmt.cases.length; i++) {
       const c = stmt.cases[i]!;
-      if (c.test) {
-        this.builder.emitU16(OP.LOAD_LOCAL, discSlot);
-        this.compileExpression(c.test);
-        this.builder.emit(OP.SEQ);
-        caseJumps.push({ testOffset: this.builder.emitJump(OP.JMP_IF_FALSE), bodyStart: -1 });
-        this.builder.emit(OP.POP);
+      if (!c.test) {
+        defaultCaseIdx = i;
+        continue;
       }
-      caseJumps[i]!.bodyStart = this.builder.currentOffset();
-      for (const s of c.consequent) {
+      testStarts.push(this.builder.currentOffset());
+      this.builder.emitU16(OP.LOAD_LOCAL, discSlot);
+      this.compileExpression(c.test);
+      this.builder.emit(OP.SEQ);
+      testFalseJumps.push(this.builder.emitJump(OP.JMP_IF_FALSE));
+      testMatchJumps.push(this.builder.emitJump(OP.JMP));
+    }
+
+    // After all tests fail: jump to end (or default)
+    const noMatchJump = defaultCaseIdx < 0 ? this.builder.emitJump(OP.JMP) : -1;
+
+    // Phase 2: Patch each test's false jump to point to the next test, default body, or end
+    const caseIndices = stmt.cases
+      .map((c, i) => ({ c, i }))
+      .filter(x => x.c.test)
+      .map(x => x.i);
+
+    for (let j = 0; j < caseIndices.length; j++) {
+      const falseJump = testFalseJumps[j]!;
+      if (j + 1 < caseIndices.length) {
+        // Jump to next test
+        this.builder.patchJumpTo(falseJump, testStarts[j + 1]!);
+      } else {
+        // Last test: jump to default body or end (will patch after we know the offset)
+        // For now, store the position to patch
+      }
+    }
+
+    // Phase 3: Emit default body (if present)
+    if (defaultCaseIdx >= 0) {
+      // Patch the last test's false jump to point here
+      if (testFalseJumps.length > 0) {
+        this.builder.patchJumpTo(testFalseJumps[testFalseJumps.length - 1]!, this.builder.currentOffset());
+      }
+      for (const s of stmt.cases[defaultCaseIdx]!.consequent) {
         this.compileStatement(s);
       }
-      // If this case doesn't fall through, we need a jump to end
-      // (fall-through is the default in switch)
     }
 
-    // Patch all case test jumps to point to next case body (or end)
-    for (let i = 0; i < caseJumps.length; i++) {
-      const cj = caseJumps[i]!;
-      if (i + 1 < caseJumps.length) {
-        this.builder.patchJumpTo(cj.testOffset, caseJumps[i + 1]!.bodyStart);
+    // Phase 4: Emit case bodies (contiguous for fall-through)
+    const caseOffsets: number[] = [];
+    for (const ci of caseIndices) {
+      caseOffsets.push(this.builder.currentOffset());
+      for (const s of stmt.cases[ci]!.consequent) {
+        this.compileStatement(s);
       }
-      // The test jump target goes past the POP to the next case body
-      this.builder.patchJumpTo(cj.testOffset, i + 1 < caseJumps.length ? caseJumps[i + 1]!.bodyStart : this.builder.currentOffset());
     }
 
-    // Patch breaks
-    this.patchBreaks();
+    const endOffset = this.builder.currentOffset();
 
+    // Phase 5: Patch remaining jumps
+    // If no default, patch last test's false jump and noMatchJump to end
+    if (defaultCaseIdx < 0) {
+      if (testFalseJumps.length > 0) {
+        this.builder.patchJumpTo(testFalseJumps[testFalseJumps.length - 1]!, endOffset);
+      }
+      if (noMatchJump >= 0) {
+        this.builder.patchJumpTo(noMatchJump, endOffset);
+      }
+    }
+
+    // Patch all match jumps to body offsets
+    for (let j = 0; j < caseIndices.length; j++) {
+      this.builder.patchJumpTo(testMatchJumps[j]!, caseOffsets[j]!);
+    }
+
+    this.patchBreaks();
     this.freeLocal(); // discSlot
-    this.popScope();
   }
 
   private compileTry(stmt: AST.TryStatement): void {
@@ -443,13 +542,21 @@ export class BytecodeCompiler {
   private compileBreak(stmt: AST.BreakStatement): void {
     const label = stmt.label?.name ?? null;
     const pos = this.builder.emitJump(OP.BREAK);
-    this.breakStack.push({ label, patchPos: pos });
+    if (this.loopStack.length > 0) {
+      this.loopStack[this.loopStack.length - 1]!.breakTargets.push({ label, patchPos: pos });
+    } else {
+      this.breakStack.push({ label, patchPos: pos });
+    }
   }
 
   private compileContinue(stmt: AST.ContinueStatement): void {
     const label = stmt.label?.name ?? null;
     const pos = this.builder.emitJump(OP.CONTINUE);
-    this.continueStack.push({ label, patchPos: pos });
+    if (this.loopStack.length > 0) {
+      this.loopStack[this.loopStack.length - 1]!.continueTargets.push({ label, patchPos: pos });
+    } else {
+      this.continueStack.push({ label, patchPos: pos });
+    }
   }
 
   private compileLabeled(stmt: AST.LabeledStatement): void {
@@ -461,21 +568,34 @@ export class BytecodeCompiler {
   private compileVarDecl(stmt: AST.VariableDeclaration): void {
     for (const decl of stmt.declarations) {
       if (decl.id.type === 'Identifier') {
-        const existing = this.resolveLocal(decl.id.name);
-        if (existing) {
-          if (decl.init) {
-            this.compileExpression(decl.init);
-            this.builder.emitU16(OP.STORE_LOCAL, existing.slot);
-          }
-        } else {
-          this.declareLocal(decl.id.name, stmt.kind);
-          const slot = this.resolveLocal(decl.id.name)!.slot;
+        // At program top level, declare in env so inner functions can access via LOAD_GLOBAL.
+        // var is function-scoped (hoists to global), so always use DEFINE_VAR for var at program level.
+        if (this.isProgram && (stmt.kind === 'var' || this.depth === 0)) {
           if (decl.init) {
             this.compileExpression(decl.init);
           } else {
             this.builder.emit(OP.PUSH_UNDEFINED);
           }
-          this.builder.emitU16(OP.STORE_LOCAL, slot);
+          this.builder.emitU16(OP.DEFINE_VAR, this.builder.addConst(decl.id.name));
+          this.builder.emit(stmt.kind === 'var' ? 0 : stmt.kind === 'let' ? 1 : 2);
+          this.builder.emit(OP.POP);
+        } else {
+          const existing = this.resolveLocal(decl.id.name);
+          if (existing) {
+            if (decl.init) {
+              this.compileExpression(decl.init);
+              this.builder.emitU16(OP.STORE_LOCAL, existing.slot);
+            }
+          } else {
+            this.declareLocal(decl.id.name, stmt.kind);
+            const slot = this.resolveLocal(decl.id.name)!.slot;
+            if (decl.init) {
+              this.compileExpression(decl.init);
+            } else {
+              this.builder.emit(OP.PUSH_UNDEFINED);
+            }
+            this.builder.emitU16(OP.STORE_LOCAL, slot);
+          }
         }
       } else if (decl.id.type === 'AssignmentPattern') {
         // Destructuring with default: var [a, b] = expr
@@ -536,9 +656,16 @@ export class BytecodeCompiler {
     const fn = this.compileFunctionExpr(
       { type: 'FunctionExpression', id: stmt.id, params: stmt.params, body: stmt.body, async: stmt.async, generator: stmt.generator },
     );
-    const slot = this.resolveLocal(stmt.id.name);
-    if (slot) {
-      this.builder.emitU16(OP.STORE_LOCAL, slot.slot);
+    // At program top level, declare in env so inner functions can access via LOAD_GLOBAL
+    if (this.isProgram && this.depth === 0) {
+      this.builder.emitU16(OP.DEFINE_VAR, this.builder.addConst(stmt.id.name));
+      this.builder.emit(0); // kind: var
+      this.builder.emit(OP.POP);
+    } else {
+      const slot = this.resolveLocal(stmt.id.name);
+      if (slot) {
+        this.builder.emitU16(OP.STORE_LOCAL, slot.slot);
+      }
     }
   }
 
@@ -587,6 +714,25 @@ export class BytecodeCompiler {
     const isArrow = expr.type === 'ArrowFunctionExpression';
     const fnCompiler = new BytecodeCompiler();
 
+    // Build outer scope info for the child compiler so it can resolve upvalues.
+    // The child needs to know about this compiler's locals and this compiler's upvalues.
+    const outerMap = new Map<string, { slotIndex: number; isLocal: boolean }>();
+    // Add this compiler's locals (they become "local" upvalues for the child)
+    for (const v of this.locals) {
+      if (!outerMap.has(v.name)) {
+        outerMap.set(v.name, { slotIndex: v.slot, isLocal: true });
+      }
+    }
+    // Add this compiler's upvalues (they become "upvalue" upvalues for the child)
+    for (let i = 0; i < this.capturedUpvalues.length; i++) {
+      const uv = this.capturedUpvalues[i]!;
+      if (!outerMap.has(uv.name)) {
+        outerMap.set(uv.name, { slotIndex: i, isLocal: false });
+      }
+    }
+    // Also add parent outer scopes (for deeply nested closures)
+    fnCompiler.outerScopes = [...this.outerScopes, outerMap];
+
     // Count params (including defaults/rest)
     let paramCount = 0;
     for (const p of expr.params) {
@@ -605,8 +751,8 @@ export class BytecodeCompiler {
       if (p.type === 'Identifier') {
         fnCompiler.declareLocal(p.name, 'var');
         // Initialize param slot
-        fnCompiler.builder.emitU16(OP.LOAD_ARGUMENTS);
-        fnCompiler.builder.emit(OP.PUSH_CONST, fnCompiler.builder.addConst(slotIdx));
+        fnCompiler.builder.emit(OP.LOAD_ARGUMENTS);
+        fnCompiler.builder.emitU16(OP.PUSH_CONST, fnCompiler.builder.addConst(slotIdx));
         fnCompiler.builder.emit(OP.COMPUTED_GET);
         fnCompiler.builder.emitU16(OP.STORE_LOCAL, fnCompiler.resolveLocal(p.name)!.slot);
         fnCompiler.builder.emit(OP.POP);
@@ -638,11 +784,10 @@ export class BytecodeCompiler {
     }
 
     const fnName = expr.type === 'FunctionExpression' ? (expr.id?.name ?? 'anonymous') : 'arrow';
-    const upvalues: UpvalueInfo[] = [];
     const fnObj = fnCompiler.builder.build(
       paramCount, fnCompiler.nextSlot, fnName,
       isArrow, expr.async ?? false, expr.generator ?? false,
-      upvalues,
+      fnCompiler.capturedUpvalues,
     );
 
     // Push the compiled function as a constant
@@ -718,11 +863,21 @@ export class BytecodeCompiler {
   }
 
   private compileIdentifier(expr: AST.Identifier): void {
-    const local = this.resolveLocal(expr.name);
-    if (local) {
-      this.builder.emitU16(OP.LOAD_LOCAL, local.slot);
-    } else {
+    // At program top level, always use LOAD_GLOBAL (vars live in env, not locals)
+    if (this.isProgram && this.depth === 0) {
       this.builder.emitU16(OP.LOAD_GLOBAL, this.builder.addConst(expr.name));
+    } else {
+      const local = this.resolveLocal(expr.name);
+      if (local) {
+        this.builder.emitU16(OP.LOAD_LOCAL, local.slot);
+      } else {
+        const uvIdx = this.resolveUpvalue(expr.name);
+        if (uvIdx >= 0) {
+          this.builder.emitU16(OP.LOAD_UPVALUE, uvIdx);
+        } else {
+          this.builder.emitU16(OP.LOAD_GLOBAL, this.builder.addConst(expr.name));
+        }
+      }
     }
   }
 
@@ -787,18 +942,24 @@ export class BytecodeCompiler {
         this.builder.emit(expr.operator === '++' ? OP.PUSH_ONE : OP.PUSH_NEG_ONE);
         this.builder.emit(OP.ADD);
         this.builder.emitU16(OP.STORE_LOCAL, local.slot);
-        this.builder.emit(OP.POP); // pop the stored value
-        if (expr.prefix) {
-          // top is already new value
-        }
-        // For postfix, old value is below the new value on stack (saved by DUP)
+        if (!expr.prefix) this.builder.emit(OP.POP); // pop the stored value, keep old
       } else {
-        this.builder.emitU16(OP.LOAD_GLOBAL, this.builder.addConst(name));
-        if (!expr.prefix) this.builder.emit(OP.DUP);
-        this.builder.emit(expr.operator === '++' ? OP.PUSH_ONE : OP.PUSH_NEG_ONE);
-        this.builder.emit(OP.ADD);
-        this.builder.emitU16(OP.STORE_GLOBAL, this.builder.addConst(name));
-        this.builder.emit(OP.POP);
+        const upvalue = this.resolveUpvalue(name);
+        if (upvalue >= 0) {
+          this.builder.emitU16(OP.LOAD_UPVALUE, upvalue);
+          if (!expr.prefix) this.builder.emit(OP.DUP);
+          this.builder.emit(expr.operator === '++' ? OP.PUSH_ONE : OP.PUSH_NEG_ONE);
+          this.builder.emit(OP.ADD);
+          this.builder.emitU16(OP.STORE_UPVALUE, upvalue);
+          if (!expr.prefix) this.builder.emit(OP.POP);
+        } else {
+          this.builder.emitU16(OP.LOAD_GLOBAL, this.builder.addConst(name));
+          if (!expr.prefix) this.builder.emit(OP.DUP);
+          this.builder.emit(expr.operator === '++' ? OP.PUSH_ONE : OP.PUSH_NEG_ONE);
+          this.builder.emit(OP.ADD);
+          this.builder.emitU16(OP.STORE_GLOBAL, this.builder.addConst(name));
+          if (!expr.prefix) this.builder.emit(OP.POP);
+        }
       }
     }
   }
@@ -872,34 +1033,72 @@ export class BytecodeCompiler {
   }
 
   private compileAssignment(expr: AST.AssignmentExpression): void {
-    this.compileExpression(expr.right);
-
     if (expr.left.type === 'MemberExpression') {
       const member = expr.left;
+      // Push obj, key first, then val on top: [obj, key, val]
       this.compileExpression(member.object);
       if (member.computed) {
         this.compileExpression(member.property);
       } else {
         this.builder.emitU16(OP.PUSH_CONST, this.builder.addConst((member.property as AST.Identifier).name));
       }
-      // Stack: value, obj, key
+      this.compileExpression(expr.right);
+      // Stack: obj, key, val — matches PROP_SET/COMPUTED_SET expectations
       if (expr.operator === '=') {
-        // Just store
         if (member.computed) {
           this.builder.emit(OP.COMPUTED_SET);
         } else {
           this.builder.emit(OP.PROP_SET);
         }
       } else {
-        // Compound: obj.key op= value → get old, compute, set
+        // Compound: need old value first
+        // Currently stack: obj, key, val
+        // Duplicate obj+key, get old value, swap with val, compute, set
+        this.builder.emit(OP.DUP);
+        this.builder.emit(OP.DUP);
+        // stack: obj, key, val, obj, key
         if (member.computed) {
-          this.builder.emit(OP.COMPUTED_GET); // get old
-          this.builder.emit(OP.SWAP); // old, new
+          this.builder.emit(OP.COMPUTED_GET); // stack: obj, key, val, oldVal
         } else {
           this.builder.emit(OP.PROP_GET_NAME);
-          this.builder.emit(OP.SWAP);
         }
-        // TODO: compound assignment on members
+        this.builder.emit(OP.SWAP); // stack: obj, key, oldVal, val
+        switch (expr.operator) {
+          case '+=': this.builder.emit(OP.ADD); break;
+          case '-=': this.builder.emit(OP.SUB); break;
+          case '*=': this.builder.emit(OP.MUL); break;
+          case '/=': this.builder.emit(OP.DIV); break;
+          case '%=': this.builder.emit(OP.MOD); break;
+          case '**=': this.builder.emit(OP.POW); break;
+          case '&=': this.builder.emit(OP.BITAND); break;
+          case '|=': this.builder.emit(OP.BITOR); break;
+          case '^=': this.builder.emit(OP.BITXOR); break;
+          case '<<=': this.builder.emit(OP.SHL); break;
+          case '>>=': this.builder.emit(OP.SHR); break;
+          case '>>>=': this.builder.emit(OP.USHR); break;
+          case '??=': {
+            const skipJump = this.builder.emitJump(OP.JMP_IF_NULLISH);
+            this.builder.emit(OP.SWAP);
+            this.builder.emit(OP.POP);
+            this.builder.patchJump(skipJump);
+            break;
+          }
+          case '||=': {
+            const skipJump = this.builder.emitJump(OP.JMP_IF_TRUE);
+            this.builder.emit(OP.SWAP);
+            this.builder.emit(OP.POP);
+            this.builder.patchJump(skipJump);
+            break;
+          }
+          case '&&=': {
+            const skipJump = this.builder.emitJump(OP.JMP_IF_FALSE);
+            this.builder.emit(OP.SWAP);
+            this.builder.emit(OP.POP);
+            this.builder.patchJump(skipJump);
+            break;
+          }
+        }
+        // stack: obj, key, newVal
         if (member.computed) {
           this.builder.emit(OP.COMPUTED_SET);
         } else {
@@ -908,11 +1107,18 @@ export class BytecodeCompiler {
       }
     } else {
       const name = (expr.left as AST.Identifier).name;
-      const local = this.resolveLocal(name);
+      this.compileExpression(expr.right);
+
+      // At program top level, always use STORE_GLOBAL
+      const atProgramLevel = this.isProgram && this.depth === 0;
+      const local = atProgramLevel ? null : this.resolveLocal(name);
+      const uvIdx = local ? -1 : (atProgramLevel ? -1 : this.resolveUpvalue(name));
 
       if (expr.operator === '=') {
         if (local) {
           this.builder.emitU16(OP.STORE_LOCAL, local.slot);
+        } else if (uvIdx >= 0) {
+          this.builder.emitU16(OP.STORE_UPVALUE, uvIdx);
         } else {
           this.builder.emitU16(OP.STORE_GLOBAL, this.builder.addConst(name));
         }
@@ -920,6 +1126,8 @@ export class BytecodeCompiler {
         // Compound assignment: a op= b → a = a op b
         if (local) {
           this.builder.emitU16(OP.LOAD_LOCAL, local.slot);
+        } else if (uvIdx >= 0) {
+          this.builder.emitU16(OP.LOAD_UPVALUE, uvIdx);
         } else {
           this.builder.emitU16(OP.LOAD_GLOBAL, this.builder.addConst(name));
         }
@@ -964,6 +1172,8 @@ export class BytecodeCompiler {
         }
         if (local) {
           this.builder.emitU16(OP.STORE_LOCAL, local.slot);
+        } else if (uvIdx >= 0) {
+          this.builder.emitU16(OP.STORE_UPVALUE, uvIdx);
         } else {
           this.builder.emitU16(OP.STORE_GLOBAL, this.builder.addConst(name));
         }
@@ -1119,12 +1329,12 @@ export class BytecodeCompiler {
   }
 
   private compileTemplateLiteral(expr: AST.TemplateLiteral): void {
-    for (let i = 0; i < expr.quasis.length; i++) {
-      this.builder.emitU16(OP.PUSH_CONST, this.builder.addConst(expr.quasis[i]!.value));
-      if (i < expr.expressions.length) {
-        this.compileExpression(expr.expressions[i]!);
-        this.builder.emit(OP.ADD);
-      }
+    this.builder.emitU16(OP.PUSH_CONST, this.builder.addConst(expr.quasis[0]!.value));
+    for (let i = 0; i < expr.expressions.length; i++) {
+      this.compileExpression(expr.expressions[i]!);
+      this.builder.emit(OP.ADD);
+      this.builder.emitU16(OP.PUSH_CONST, this.builder.addConst(expr.quasis[i + 1]!.value));
+      this.builder.emit(OP.ADD);
     }
   }
 
@@ -1167,17 +1377,43 @@ export class BytecodeCompiler {
     return null;
   }
 
-  private pushLoop(loopStart: number, exitJumpPos: number): void {
-    this.loopStack.push({ loopStart, continueTargets: [], breakTargets: [] });
+  /** Resolve a variable from outer function scopes (upvalues).
+   *  Returns the upvalue index if found, or -1 if not found.
+   *  Also records the captured upvalue in this.capturedUpvalues. */
+  private resolveUpvalue(name: string): number {
+    // Walk outer scopes from nearest to farthest
+    for (let i = this.outerScopes.length - 1; i >= 0; i--) {
+      const entry = this.outerScopes[i]!.get(name);
+      if (entry) {
+        // Check if we already captured this upvalue
+        for (let j = 0; j < this.capturedUpvalues.length; j++) {
+          const existing = this.capturedUpvalues[j]!;
+          if (existing.name === name && existing.isLocal === entry.isLocal && existing.slotIndex === entry.slotIndex) {
+            return j;
+          }
+        }
+        // New upvalue capture
+        const idx = this.capturedUpvalues.length;
+        this.capturedUpvalues.push({ name, slotIndex: entry.slotIndex, isLocal: entry.isLocal });
+        return idx;
+      }
+    }
+    return -1;
   }
 
-  private popLoop(loopStart: number): void {
-    const ctx = this.loopStack.pop()!;
-    // Patch continue targets to jump to loopStart
+  private pushLoop(loopStart: number, exitJumpPos: number, continueTarget?: number): void {
+    this.loopStack.push({ loopStart, continueTargets: [], breakTargets: [], continueTarget: continueTarget ?? loopStart });
+  }
+
+  private patchLoopContinues(): void {
+    const ctx = this.loopStack[this.loopStack.length - 1]!;
     for (const ct of ctx.continueTargets) {
-      this.builder.patchJumpTo(ct.patchPos, loopStart);
+      this.builder.patchJumpTo(ct.patchPos, ctx.continueTarget);
     }
-    // Patch break targets
+  }
+
+  private patchLoopBreaks(): void {
+    const ctx = this.loopStack.pop()!;
     for (const bt of ctx.breakTargets) {
       this.builder.patchJump(bt.patchPos);
     }

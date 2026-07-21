@@ -78,6 +78,8 @@ export const enum OP {
   RETURN           = 0x73,
   CLOSURE          = 0x74,  // idx: u16 (constant pool → BytecodeFunction)
   SPREAD_CALL      = 0x75,  // argc: u16 (last arg is array to spread)
+  LOAD_UPVALUE     = 0x76,  // upvalue_idx: u16
+  STORE_UPVALUE    = 0x77,  // upvalue_idx: u16
 
   // Objects / Arrays
   OBJECT_CREATE    = 0x80,  // count: u16 (number of key-value pairs on stack)

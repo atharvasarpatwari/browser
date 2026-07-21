@@ -50,6 +50,13 @@ export interface JSFunction {
   thisValue?: JSObject;
   /** If true, body is a BytecodeFunction and should be executed by the VM */
   isBytecode?: boolean;
+  /** Captured upvalue references from parent scopes */
+  upvalues?: UpvalueRef[];
+}
+
+/** Shared mutable reference for closure-captured variables */
+export class UpvalueRef {
+  constructor(public value: JSValue) {}
 }
 
 export type NativeFunction = (thisArg: JSValue, args: JSValue[]) => JSValue;
@@ -571,6 +578,7 @@ export function createFunction(
   isArrow = false,
   generator = false,
   isBytecode = false,
+  upvalues?: UpvalueRef[],
 ): JSFunction {
   return {
     type: 'closure',
@@ -583,6 +591,7 @@ export function createFunction(
     isArrow,
     isNative: false,
     isBytecode,
+    upvalues,
   };
 }
 

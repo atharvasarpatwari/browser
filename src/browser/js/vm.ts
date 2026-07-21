@@ -8,7 +8,7 @@ import {
   type JSValue, type JSObject, type JSFunction,
   toBoolean, toNumber, toString, getType, instanceofCheck,
   createObject, createArray, createFunction,
-  Environment, JSError,
+  Environment, JSError, UpvalueRef,
   callJSFunction, isReturnSignal, isThrowSignal,
   type ReturnSignal, type ThrowSignal,
 } from './values';
@@ -24,6 +24,8 @@ interface CallFrame {
   sp: number;       // base of this frame's stack (locals live above this)
   env: Environment;
   thisArg: JSValue;
+  upvalues: UpvalueRef[];  // captured upvalues from parent scopes
+  localUpvalueMap: Map<number, UpvalueRef>;  // tracks captured locals for dedup
 }
 
 // ── VM Result ────────────────────────────────────────────────────────────────
@@ -60,7 +62,7 @@ export class BytecodeVM {
   }
 
   /** Run a bytecode function from top-level */
-  run(fn: BytecodeFunction, thisArg: JSValue = undefined): VMResult {
+  run(fn: BytecodeFunction, thisArg: JSValue = undefined, args: JSValue[] = [], upvalues: UpvalueRef[] = []): VMResult {
     this.executionStartTime = Date.now();
     this.opCount = 0;
     this.stack = [];
@@ -68,7 +70,7 @@ export class BytecodeVM {
     this.sp = 0;
 
     // Create initial call frame
-    this.pushFrame(fn, thisArg, [], this.env);
+    this.pushFrame(fn, thisArg, args, this.env, upvalues);
 
     try {
       const result = this.executeFrame();
@@ -195,6 +197,18 @@ export class BytecodeVM {
           // Push the arguments array stored in locals
           this.stack[this.sp++] = locals[locals.length - 1] ?? createArray([]);
           break;
+        case OP.LOAD_UPVALUE: {
+          const uvIdx = this.readU16(bytecode, frame.pc);
+          frame.pc += 2;
+          this.stack[this.sp++] = frame.upvalues[uvIdx].value;
+          break;
+        }
+        case OP.STORE_UPVALUE: {
+          const uvIdx = this.readU16(bytecode, frame.pc);
+          frame.pc += 2;
+          frame.upvalues[uvIdx].value = this.stack[this.sp - 1];
+          break;
+        }
 
         // ── Arithmetic ────────────────────────────────────────────────────
         case OP.ADD: {
@@ -430,17 +444,29 @@ export class BytecodeVM {
           const val = this.stack[this.sp - 1];
           this.sp = frame.sp; // restore stack to frame base
           this.frames.pop();
-          if (this.frames.length === 0) {
-            return val;
-          }
-          // Push return value onto caller's stack
-          this.stack[this.sp++] = val;
-          return val; // Signal to caller
+          return val;
         }
         case OP.CLOSURE: {
           const idx = this.readU16(bytecode, frame.pc);
           frame.pc += 2;
           const fn = constants[idx] as BytecodeFunction;
+          // Capture upvalues from the current frame
+          const capturedUpvalues: UpvalueRef[] = [];
+          for (const uv of fn.upvalues) {
+            if (uv.isLocal) {
+              // Capture a reference to the parent frame's local.
+              // Reuse existing ref if the same local slot was already captured.
+              let ref = frame.localUpvalueMap.get(uv.slotIndex);
+              if (!ref) {
+                ref = new UpvalueRef(frame.locals[uv.slotIndex]);
+                frame.localUpvalueMap.set(uv.slotIndex, ref);
+              }
+              capturedUpvalues.push(ref);
+            } else {
+              // Capture from an enclosing function's upvalue
+              capturedUpvalues.push(frame.upvalues[uv.slotIndex]);
+            }
+          }
           // Create a JSFunction wrapping the bytecode function
           const jsFn = createFunction(
             fn.name,
@@ -451,6 +477,7 @@ export class BytecodeVM {
             fn.isArrow,
             fn.isGenerator,
             true, // isBytecode
+            capturedUpvalues,
           );
           this.stack[this.sp++] = jsFn;
           break;
@@ -771,9 +798,8 @@ export class BytecodeVM {
     // Bytecode function
     if (jsFn.isBytecode && jsFn.body && typeof jsFn.body === 'object' && 'bytecode' in jsFn.body) {
       const bytecodeFn = jsFn.body as BytecodeFunction;
-      this.pushFrame(bytecodeFn, jsFn.thisValue ?? undefined, args, jsFn.closure);
+      this.pushFrame(bytecodeFn, jsFn.thisValue ?? undefined, args, jsFn.closure, jsFn.upvalues ?? []);
       const result = this.executeFrame();
-      // The frame is already popped by executeFrame's RETURN handler
       this.stack[this.sp++] = result;
       return;
     }
@@ -818,7 +844,7 @@ export class BytecodeVM {
 
     if (jsFn.isBytecode && jsFn.body && typeof jsFn.body === 'object' && 'bytecode' in jsFn.body) {
       const bytecodeFn = jsFn.body as BytecodeFunction;
-      this.pushFrame(bytecodeFn, obj, args, jsFn.closure);
+      this.pushFrame(bytecodeFn, obj, args, jsFn.closure, jsFn.upvalues ?? []);
       const result = this.executeFrame();
       this.stack[this.sp++] = result;
       return;
@@ -863,7 +889,7 @@ export class BytecodeVM {
 
     if (jsCtor.isBytecode && jsCtor.body && typeof jsCtor.body === 'object' && 'bytecode' in jsCtor.body) {
       const bytecodeFn = jsCtor.body as BytecodeFunction;
-      this.pushFrame(bytecodeFn, newObj, args, jsCtor.closure);
+      this.pushFrame(bytecodeFn, newObj, args, jsCtor.closure, jsCtor.upvalues ?? []);
       const result = this.executeFrame();
       // If constructor returns an object, use that; otherwise use newObj
       this.stack[this.sp++] = (typeof result === 'object' && result !== null) ? result : newObj;
@@ -884,6 +910,7 @@ export class BytecodeVM {
     thisArg: JSValue,
     args: JSValue[],
     closure: Environment,
+    upvalues: UpvalueRef[] = [],
   ): void {
     const locals = new Array(fn.localCount).fill(undefined);
 
@@ -908,6 +935,8 @@ export class BytecodeVM {
       sp: this.sp,
       env,
       thisArg,
+      upvalues,
+      localUpvalueMap: new Map(),
     });
   }
 }

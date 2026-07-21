@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { Lexer } from '../src/browser/js/lexer';
 import { Parser } from '../src/browser/js/parser';
 import { Interpreter } from '../src/browser/js/interpreter';
-import { Environment, createObject, createNativeFunction, type JSValue, type JSObject, type JSFunction, callJSFunction, setGlobalCaller } from '../src/browser/js/values';
+import { Environment, createObject, createNativeFunction, createArray, type JSValue, type JSObject, type JSFunction, callJSFunction, setGlobalCaller } from '../src/browser/js/values';
 import { EventLoop, bindTimers } from '../src/browser/js/event-loop';
 import { BytecodeCompiler } from '../src/browser/js/bytecode-compiler';
 import { BytecodeVM } from '../src/browser/js/vm';
@@ -73,38 +73,118 @@ function createTestGlobalEnv(): Environment {
   const jsonObj = createObject(null);
   jsonObj.properties.set('parse', {
     value: createNativeFunction('parse', (_t, a) => {
-      try { return JSON.parse(toStr(a[0])); } catch { return undefined; }
+      try {
+        const raw = JSON.parse(toStr(a[0]));
+        const toJS = (v: unknown): JSValue => {
+          if (v === null || v === undefined) return v as JSValue;
+          if (typeof v === 'boolean' || typeof v === 'number' || typeof v === 'string') return v as JSValue;
+          if (Array.isArray(v)) return createArray(v.map(toJS));
+          if (typeof v === 'object') {
+            const obj = createObject(null);
+            for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+              obj.properties.set(k, { value: toJS(val), writable: true, enumerable: true, configurable: true });
+            }
+            return obj;
+          }
+          return undefined;
+        };
+        return toJS(raw);
+      } catch { return undefined; }
     }),
     writable: true, enumerable: true, configurable: true,
   });
   jsonObj.properties.set('stringify', {
     value: createNativeFunction('stringify', (_t, a) => {
-      const val = a[0];
-      if (val === undefined || typeof val === 'function') return undefined;
-      if (typeof val === 'object' && val !== null) {
-        const obj = val as JSObject;
-        if (obj.type === 'array') {
-          const len = Number(obj.properties.get('length')?.value ?? 0);
-          const elems: string[] = [];
-          for (let i = 0; i < len; i++) {
-            const v = obj.properties.get(String(i))?.value;
-            elems.push(v === undefined ? 'null' : typeof v === 'string' ? `"${v}"` : String(v));
+      const stringifyVal = (v: JSValue): string => {
+        if (v === undefined || typeof v === 'function') return undefined as any;
+        if (v === null) return 'null';
+        if (typeof v === 'string') return `"${v}"`;
+        if (typeof v === 'number') {
+          if (Object.is(v, -0)) return '0';
+          if (isNaN(v) || !isFinite(v)) return 'null';
+          return String(v);
+        }
+        if (typeof v === 'boolean') return String(v);
+        if (typeof v === 'object') {
+          const obj = v as JSObject;
+          if (obj.type === 'array') {
+            const len = Number(obj.properties.get('length')?.value ?? 0);
+            const elems: string[] = [];
+            for (let i = 0; i < len; i++) {
+              const ev = obj.properties.get(String(i))?.value;
+              elems.push(ev === undefined || typeof ev === 'function' ? 'null' : stringifyVal(ev));
+            }
+            return `[${elems.join(',')}]`;
           }
-          return `[${elems.join(',')}]`;
+          const pairs: string[] = [];
+          for (const [k, desc] of obj.properties) {
+            const pv = desc.value;
+            if (pv === undefined || typeof pv === 'function') continue;
+            pairs.push(`"${k}":${stringifyVal(pv)}`);
+          }
+          return `{${pairs.join(',')}}`;
         }
-        const pairs: string[] = [];
-        for (const [k, desc] of obj.properties) {
-          const v = desc.value;
-          if (v === undefined || typeof v === 'function') continue;
-          pairs.push(`"${k}":${typeof v === 'string' ? `"${v}"` : String(v)}`);
-        }
-        return `{${pairs.join(',')}}`;
-      }
-      return String(val);
+        return String(v);
+      };
+      const result = stringifyVal(a[0]);
+      return result === undefined ? undefined : result;
     }),
     writable: true, enumerable: true, configurable: true,
   });
   env.setLocal('JSON', jsonObj);
+
+  // Array constructor
+  env.setLocal('Array', createNativeFunction('Array', (_t, a) => {
+    if (a.length === 0) return createArray([]);
+    if (a.length === 1 && typeof a[0] === 'number') {
+      const len = a[0];
+      const arr = createArray([]);
+      arr.properties.set('length', { value: len, writable: true, enumerable: false, configurable: true });
+      return arr;
+    }
+    return createArray(a);
+  }));
+
+  // Object.keys
+  const objectObj = createObject(null);
+  objectObj.properties.set('keys', {
+    value: createNativeFunction('keys', (_t, a) => {
+      const obj = a[0];
+      if (typeof obj !== 'object' || obj === null) return createArray([]);
+      const o = obj as JSObject;
+      const keys: JSValue[] = [];
+      for (const [k, desc] of o.properties) {
+        if (desc.enumerable) keys.push(k);
+      }
+      return createArray(keys);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  objectObj.properties.set('setPrototypeOf', {
+    value: createNativeFunction('setPrototypeOf', (_t, a) => {
+      const obj = a[0] as JSObject;
+      const proto = a[1] as JSObject;
+      if (typeof obj === 'object' && obj !== null) obj.prototype = proto;
+      return obj;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  objectObj.properties.set('assign', {
+    value: createNativeFunction('assign', (_t, a) => {
+      const target = a[0] as JSObject;
+      for (let i = 1; i < a.length; i++) {
+        const src = a[i] as JSObject;
+        if (typeof src === 'object' && src !== null) {
+          for (const [k, desc] of src.properties) {
+            target.properties.set(k, desc);
+          }
+        }
+      }
+      return target;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  env.setLocal('Object', objectObj);
 
   return env;
 }
@@ -127,6 +207,7 @@ function evalJSWithVM(source: string, env?: Environment): JSValue {
   const vm = new BytecodeVM(globalEnv);
   vm.setMaxExecutionMs(10000);
   const interp = new Interpreter(globalEnv);
+  setGlobalCaller(interp);
   vm.setCallInterpreter((fn, thisArg, args) => interp.callFunction(fn, thisArg, args));
   const result = vm.run(bytecodeFn);
   if (!result.ok) throw new Error(String(result.error));

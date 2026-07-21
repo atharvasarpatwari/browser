@@ -1,17 +1,21 @@
 # Nova Browser — Documentation Index
 
-## Plans
+## Plans & Reports
 
 | Date | File | Summary |
 |------|------|---------|
+| 2026-07-21 | [process-model-design-report.md](process-model-design-report.md) | Process model design report — single-process vs multi-process tradeoffs, readiness assessment, infrastructure inventory, recommended 3-phase path forward. |
 | 2026-07-21 | [jit-compilation-plan.md](jit-compilation-plan.md) | Two-tier JIT compilation — stack-based bytecode VM replacing tree-walking interpreter, plus WASM JIT compiler (V8 TurboFan native code). ~3,500 new lines across 6 new files. |
 | 2026-07-19 | [gpu-acceleration-plan.md](gpu-acceleration-plan.md) | GPU acceleration using WebGPU (Dawn bindings) for rasterizer + compositing. Target 60+ FPS at full HD. 10 files to create, 5 files to modify. |
 | 2026-07-19 | [fetch-api-xhr-plan.md](fetch-api-xhr-plan.md) | Implementation plan for Fetch API (`fetch()`, `Headers`, `Response`, `Request`, `AbortController`) and `XMLHttpRequest` in the JS engine. 6 files to create/modify, ~1,265 lines. |
+| 2026-07-18 | [../docs/browser-building-gap-analysis.md](../docs/browser-building-gap-analysis.md) | Comprehensive gap analysis against 9 phases of browser building — 207 source files, 91 test files, critical gaps: no OS window, no real networking, no persistence. Recommended path: Electron integration. |
+| 2026-07-18 | [../docs/ui-broken-items-fixes.md](../docs/ui-broken-items-fixes.md) | 8 broken UI items fixed — NavigationFetcher boot order, toolbar sync, tab title updates, duplicate DI services, shared NavigationController, settings persistence, mobile layout activation. |
 
 ## Change Logs
 
 | Date | File | Summary |
 |------|------|---------|
+| 2026-07-22 | [2026-07-22-vm-closure-upvalue-fixes.md](2026-07-22-vm-closure-upvalue-fixes.md) | VM closure & upvalue fixes — completed upvalue support: compileUpdate upvalue check, handleCall pass upvalues, compileFunctionExpr outerScopes wiring. 141/141 VM tests pass. |
 | 2026-07-21 | [2026-07-21-customizable-browser-name.md](2026-07-21-customizable-browser-name.md) | Customizable browser name — BrowserName service with settings persistence, wired through window title, new tab, search footer, shield tooltips, special pages. 4062 tests pass. |
 | 2026-07-21 | [2026-07-21-ui-backend-wiring.md](2026-07-21-ui-backend-wiring.md) | UI backend wiring — engine integration, search->DuckDuckGo pipeline, downloads->DownloadManager, bookmarks/history->backend services. Type fixes. 4062 tests pass. |
 | 2026-07-20 | [2026-07-20-js-engine-critical-gaps.md](2026-07-20-js-engine-critical-gaps.md) | JS engine critical gaps — optional chaining (`?.`), nullish coalescing (`??`/`??=`), labeled statements with `break`, `eval()`, async/await, generators (`yield`/`yield*`). Fixed class instantiation regression and labeled break propagation. 24 new tests, 158 total. |
