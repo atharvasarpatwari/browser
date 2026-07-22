@@ -3,7 +3,8 @@ import type { NavigationEntry } from '../navigation/navigation-controller';
 
 type TabEventType =
   | 'titleChanged' | 'urlChanged' | 'loadingStateChanged'
-  | 'faviconChanged' | 'audibleChanged' | 'mutedChanged';
+  | 'faviconChanged' | 'audibleChanged' | 'mutedChanged'
+  | 'pinnedChanged' | 'groupChanged';
 
 interface TabEvent {
   readonly kind: TabEventType;
@@ -40,13 +41,25 @@ interface MutedChangedEvent extends TabEvent {
   readonly muted: boolean;
 }
 
+interface PinnedChangedEvent extends TabEvent {
+  readonly kind: 'pinnedChanged';
+  readonly pinned: boolean;
+}
+
+interface GroupChangedEvent extends TabEvent {
+  readonly kind: 'groupChanged';
+  readonly groupId: string | null;
+}
+
 type TabSessionEvent =
   | TitleChangedEvent
   | UrlChangedEvent
   | LoadingStateChangedEvent
   | FaviconChangedEvent
   | AudibleChangedEvent
-  | MutedChangedEvent;
+  | MutedChangedEvent
+  | PinnedChangedEvent
+  | GroupChangedEvent;
 
 interface ITabSession extends IDisposable {
   readonly id: string;
@@ -210,11 +223,15 @@ class TabSession implements ITabSession {
   }
 
   setPinned(pinned: boolean): void {
+    if (this._pinned === pinned) return;
     this._pinned = pinned;
+    this.bus.emit({ kind: 'pinnedChanged', tabId: this.id, pinned });
   }
 
   setGroupId(groupId: string | null): void {
+    if (this._groupId === groupId) return;
     this._groupId = groupId;
+    this.bus.emit({ kind: 'groupChanged', tabId: this.id, groupId });
   }
 
   pushHistory(entry: NavigationEntry): void {

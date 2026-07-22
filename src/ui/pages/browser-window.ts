@@ -1,6 +1,7 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { ITabManager } from '../../browser/tabs/tab-manager';
 import type { IDesktopLayout } from '../layout/desktop-layout';
+import type { IMobileLayout } from '../layout/mobile-layout';
 import type { IAddressBar } from '../components/address-bar/address-bar';
 import type { ITabStrip } from '../components/tab-strip/tab-strip';
 import type { IBookmarkBar } from '../components/bookmark-bar/bookmark-bar';
@@ -19,6 +20,9 @@ import type { IBookmarkService } from '../../browser/bookmarks/bookmark-services
 import type { IHistoryService } from '../../browser/history/history-service';
 
 import { TabManager } from '../../browser/tabs/tab-manager';
+import { TabSessionBridge } from '../../browser/tabs/tab-session-bridge';
+import { TabPersistenceManager, MemoryStore } from '../../browser/tabs/tab-persistence';
+import { TabContextManager } from '../../browser/engine/tab-context';
 import { AddressBar } from '../components/address-bar/address-bar';
 import { AddressBarView } from '../components/address-bar/address-bar.view';
 import { TabStrip } from '../components/tab-strip/tab-strip';
@@ -30,6 +34,7 @@ import { StatusBarView } from '../components/status-bar/status-bar.view';
 import { Toolbar } from '../components/toolbar/toolbar';
 import { ToolbarView } from '../components/toolbar/toolbar.view';
 import { DesktopLayout } from '../layout/desktop-layout';
+import { MobileLayout } from '../layout/mobile-layout';
 import { TrackerBlocker } from '../../browser/security/tracker-blocker';
 import { AdBlocker } from '../../browser/security/ad-blocker';
 import { UrlParser } from '../../browser/navigation/url-parser';
@@ -77,13 +82,16 @@ interface IBrowserWindowPage extends IDisposable {
   setDownloadManager(manager: IDownloadManager): void;
   setBookmarkService(service: IBookmarkService): void;
   setHistoryService(service: IHistoryService): void;
+  setTrackerBlocker(blocker: ITrackerBlocker): void;
+  setAdBlocker(blocker: IAdBlocker): void;
   setBrowserName(name: IBrowserName): void;
 }
 
 class BrowserWindowPage implements IBrowserWindowPage {
   readonly config: BrowserWindowPageConfig;
   private tabManager: ITabManager | null = null;
-  private layout: IDesktopLayout | null = null;
+  private layout: IDesktopLayout | IMobileLayout | null = null;
+  private layoutType: 'desktop' | 'mobile' = 'desktop';
   private addressBar: IAddressBar | null = null;
   private tabStrip: ITabStrip | null = null;
   private bookmarkBar: IBookmarkBar | null = null;
@@ -119,10 +127,15 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private bookmarkService: IBookmarkService | null = null;
   private historyService: IHistoryService | null = null;
   private browserName: IBrowserName | null = null;
+  private diTrackerBlocker: ITrackerBlocker | null = null;
+  private diAdBlocker: IAdBlocker | null = null;
   private downloadsEventHandler: ((event: { kind: string }) => void) | null = null;
   private historyEventHandler: ((event: { kind: string }) => void) | null = null;
   private bookmarkEventHandler: ((event: { kind: string }) => void) | null = null;
   private contextMenu: ContextMenu | null = null;
+  private tabSessionBridge: TabSessionBridge | null = null;
+  private tabPersistence: TabPersistenceManager | null = null;
+  private contextManager: TabContextManager | null = null;
 
   constructor(config?: Partial<BrowserWindowPageConfig>) {
     this.config = { ...DEFAULT_PAGE_CONFIG, ...config };
@@ -136,85 +149,120 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.container.className = 'browser-window';
     this.container.style.cssText = 'display:flex;flex-direction:column;height:100%;width:100%;overflow:hidden;';
 
-    this.layout = new DesktopLayout({
-      showMenuBar: this.config.showMenuBar,
-      showBookmarkBar: this.config.showBookmarkBar,
-      showStatusBar: true,
-    });
+    // Detect mobile viewport: use MobileLayout when width < 768px
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+    this.layoutType = isMobile ? 'mobile' : 'desktop';
+
+    if (isMobile) {
+      this.layout = new MobileLayout();
+    } else {
+      this.layout = new DesktopLayout({
+        showMenuBar: this.config.showMenuBar,
+        showBookmarkBar: this.config.showBookmarkBar,
+        showStatusBar: true,
+      });
+    }
     this.layout.attach(this.container);
 
-    const areas = this.layout.areas;
-
     this.tabManager = new TabManager();
-
+    this.contextManager = new TabContextManager();
+    this.tabSessionBridge = new TabSessionBridge(this.tabManager, this.contextManager);
+    this.tabPersistence = new TabPersistenceManager(new MemoryStore());
     this.trackerBlocker = new TrackerBlocker();
     this.adBlocker = new AdBlocker();
-
     this.toolbar = new Toolbar();
-    if (areas.toolbar) {
-      this.toolbarView = new ToolbarView(this.toolbar);
-      this.toolbarView.attach(areas.toolbar);
-    }
-
     this.tabStrip = new TabStrip(this.tabManager);
-    if (areas.tabBar) {
-      this.tabStripView = new TabStripView(this.tabStrip);
-      this.tabStripView.attach(areas.tabBar);
-      this.tabStripView.setEventHandler((e) => {
-        switch (e.kind) {
-          case 'tabSelected':
-            this.tabManager?.activateTab(e.tabId);
-            this.navigationBridge?.syncFromActiveTab();
-            break;
-          case 'tabClosed':
-            this.tabManager?.removeTab(e.tabId);
-            if (this.tabManager && this.tabManager.count === 0) {
-              this.tabManager.createTab();
-            }
-            this.syncAll();
-            break;
-          case 'newTabRequested':
-            this.tabManager?.createTab();
-            this.syncAll();
-            break;
-          case 'contextMenu':
-            this.showTabContextMenu(e.tabId, e.x, e.y);
-            break;
-        }
-      });
-    }
-
     this.addressBar = new AddressBar();
-    if (areas.toolbar) {
-      this.addressBarView = new AddressBarView(this.addressBar);
-      const addressSlot = areas.toolbar.querySelector('.address-bar-slot');
-      if (addressSlot) {
-        this.addressBarView.attach(addressSlot as HTMLElement);
-      }
-    }
-
-    this.bookmarkBar = new BookmarkBar();
-    if (areas.bookmarkBar) {
-      this.bookmarkBarView = new BookmarkBarView(this.bookmarkBar);
-      this.bookmarkBarView.attach(areas.bookmarkBar);
-      this.bookmarkBarView.setEventHandler((e) => {
-        if (e.kind === 'bookmarkClicked') {
-          if (e.bookmark.url) void this.navigate(e.bookmark.url);
-        }
-      });
-    }
-
+    this.bookmarkBar = new BookmarkBar(this.bookmarkService ?? undefined);
     this.statusBar = new StatusBar();
-    if (areas.statusBar) {
-      this.statusBarView = new StatusBarView(this.statusBar);
-      this.statusBarView.attach(areas.statusBar);
-      this.statusBarView.setEventHandler((e) => {
-        if (e.kind === 'shieldClicked') {
-          this.toolbar?.toggleShield();
-        } else if (e.kind === 'zoomChanged') {
-          this.statusBar?.setZoom(e.zoom);
+
+    if (isMobile) {
+      const areas = (this.layout as IMobileLayout).areas;
+      // Mobile: attach address bar to mobile header slot, content to content area
+      if (areas.addressBar) {
+        this.addressBarView = new AddressBarView(this.addressBar);
+        this.addressBarView.attach(areas.addressBar);
+      }
+      if (areas.content) {
+        this.contentArea = areas.content;
+      }
+      if (areas.statusBar) {
+        this.statusBarView = new StatusBarView(this.statusBar);
+        this.statusBarView.attach(areas.statusBar);
+      }
+    } else {
+      const areas = (this.layout as IDesktopLayout).areas;
+      if (areas.toolbar) {
+        this.toolbarView = new ToolbarView(this.toolbar);
+        this.toolbarView.attach(areas.toolbar);
+      }
+      if (areas.tabBar) {
+        this.tabStripView = new TabStripView(this.tabStrip);
+        this.tabStripView.attach(areas.tabBar);
+        this.tabStripView.setEventHandler((e) => {
+          switch (e.kind) {
+            case 'tabSelected':
+              this.tabManager?.activateTab(e.tabId);
+              this.navigationBridge?.syncFromActiveTab();
+              break;
+            case 'tabClosed':
+              this.tabManager?.removeTab(e.tabId);
+              if (this.tabManager && this.tabManager.count === 0) {
+    this.tabPersistence.startAutoSave(this.tabManager);
+
+    const saved = this.tabPersistence.restoreTabs();
+    if (saved && saved.tabs.length > 0) {
+      for (const tabState of saved.tabs) {
+        const tab = this.tabManager.createTab(tabState.url, tabState.pinned);
+        if (tabState.title) tab.setTitle(tabState.title);
+        if (tabState.groupId) tab.setGroupId(tabState.groupId);
+      }
+      if (saved.activeTabId && this.tabManager.getTab(saved.activeTabId)) {
+        this.tabManager.activateTab(saved.activeTabId);
+      }
+    } else {
+      this.tabManager.createTab();
+    }
+              }
+              this.syncAll();
+              break;
+            case 'newTabRequested':
+              this.tabManager?.createTab();
+              this.syncAll();
+              break;
+            case 'contextMenu':
+              this.showTabContextMenu(e.tabId, e.x, e.y);
+              break;
+          }
+        });
+      }
+      if (areas.toolbar) {
+        this.addressBarView = new AddressBarView(this.addressBar);
+        const addressSlot = areas.toolbar.querySelector('.address-bar-slot');
+        if (addressSlot) {
+          this.addressBarView.attach(addressSlot as HTMLElement);
         }
-      });
+      }
+      if (areas.bookmarkBar) {
+        this.bookmarkBarView = new BookmarkBarView(this.bookmarkBar);
+        this.bookmarkBarView.attach(areas.bookmarkBar);
+        this.bookmarkBarView.setEventHandler((e) => {
+          if (e.kind === 'bookmarkClicked') {
+            if (e.bookmark.url) void this.navigate(e.bookmark.url);
+          }
+        });
+      }
+      if (areas.statusBar) {
+        this.statusBarView = new StatusBarView(this.statusBar);
+        this.statusBarView.attach(areas.statusBar);
+        this.statusBarView.setEventHandler((e) => {
+          if (e.kind === 'shieldClicked') {
+            this.toolbar?.toggleShield();
+          } else if (e.kind === 'zoomChanged') {
+            this.statusBar?.setZoom(e.zoom);
+          }
+        });
+      }
     }
 
     this.tabManager.on('tabCreated', () => this.syncAll());
@@ -245,8 +293,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
     // Wire toolbar events through the bridge (shield + bookmark remain local).
     this.toolbar.on('shieldToggle', (e) => {
       const enabled = (e as { readonly kind: 'shieldToggle'; readonly enabled: boolean }).enabled;
-      this.trackerBlocker?.setEnabled(enabled);
-      this.adBlocker?.setEnabled(enabled);
+      // Use DI-registered blockers (shared with engine middleware) when available,
+      // fall back to local instances.
+      const tb = this.diTrackerBlocker ?? this.trackerBlocker;
+      const ab = this.diAdBlocker ?? this.adBlocker;
+      tb?.setEnabled(enabled);
+      ab?.setEnabled(enabled);
       this.statusBar?.setStatus(enabled ? 'Shield enabled' : 'Shield disabled');
     });
     this.toolbar.on('bookmarkAdd', () => {
@@ -308,7 +360,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.toolbarView?.dispose();
     this.trackerBlocker?.dispose();
     this.adBlocker?.dispose();
+    this.tabSessionBridge?.dispose();
+    this.tabPersistence?.dispose();
     this.tabManager?.dispose();
+    this.contextManager?.dispose();
     this.contentRenderer?.dispose();
     if (this.contentArea && this.contentNavigateHandler) {
       this.contentArea.removeEventListener('nova-navigate', this.contentNavigateHandler);
@@ -327,6 +382,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.trackerBlocker = null;
     this.adBlocker = null;
     this.tabManager = null;
+    this.tabSessionBridge = null;
+    this.tabPersistence = null;
+    this.contextManager = null;
     this.contentRenderer = null;
     this.contentArea = null;
     this.contentNavigateHandler = null;
@@ -881,6 +939,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.toolbar?.setCanGoForward(tab.canGoForward());
       }
     }
+    if (this.toolbar && this.toolbarView) {
+      this.toolbarView.update(this.toolbar.state);
+    }
   }
 
   private syncBookmarkBar(): void {
@@ -904,6 +965,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setBrowserEngine(engine: IBrowserEngine): void {
     this.browserEngine = engine;
+    this.tryCreateNavigationFetcher();
   }
 
   setNavigationController(controller: INavigationController): void {
@@ -912,6 +974,26 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setPaintEngine(engine: IPaintEngine): void {
     this.paintEngine = engine;
+    this.tryCreateNavigationFetcher();
+  }
+
+  /**
+   * Lazily create the NavigationFetcher once both browserEngine and paintEngine
+   * are available. This fixes the boot-order issue where mount() runs before
+   * DI setters are called.
+   */
+  private tryCreateNavigationFetcher(): void {
+    if (this.navigationFetcher) return;
+    if (!this.browserEngine || !this.paintEngine) return;
+    if (!this.contentRenderer) return;
+    const navController = this.navController ?? new NavigationController(this.parser);
+    this.navigationFetcher = new NavigationFetcher(
+      this.browserEngine,
+      this.contentRenderer,
+      this.paintEngine,
+      navController,
+    );
+    this.navigationFetcher.start();
   }
 
   setDownloadManager(manager: IDownloadManager): void {
@@ -920,10 +1002,20 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setBookmarkService(service: IBookmarkService): void {
     this.bookmarkService = service;
+    // Sync the BookmarkBar model to use the same DI-registered service instance.
+    this.bookmarkBar?.setService(service);
   }
 
   setHistoryService(service: IHistoryService): void {
     this.historyService = service;
+  }
+
+  setTrackerBlocker(blocker: ITrackerBlocker): void {
+    this.diTrackerBlocker = blocker;
+  }
+
+  setAdBlocker(blocker: IAdBlocker): void {
+    this.diAdBlocker = blocker;
   }
 
   setBrowserName(name: IBrowserName): void {

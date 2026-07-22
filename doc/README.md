@@ -10,11 +10,16 @@
 | 2026-07-19 | [fetch-api-xhr-plan.md](fetch-api-xhr-plan.md) | Implementation plan for Fetch API (`fetch()`, `Headers`, `Response`, `Request`, `AbortController`) and `XMLHttpRequest` in the JS engine. 6 files to create/modify, ~1,265 lines. |
 | 2026-07-18 | [../docs/browser-building-gap-analysis.md](../docs/browser-building-gap-analysis.md) | Comprehensive gap analysis against 9 phases of browser building — 207 source files, 91 test files, critical gaps: no OS window, no real networking, no persistence. Recommended path: Electron integration. |
 | 2026-07-18 | [../docs/ui-broken-items-fixes.md](../docs/ui-broken-items-fixes.md) | 8 broken UI items fixed — NavigationFetcher boot order, toolbar sync, tab title updates, duplicate DI services, shared NavigationController, settings persistence, mobile layout activation. |
+| 2026-07-22 | [2026-07-22-vite-dev-server.md](2026-07-22-vite-dev-server.md) | Vite dev server setup — `npm run dev` serves full browser chrome UI at localhost:5173. Fixed Buffer.byteLength in IPC transport, lazy-imported Node-only image decoders, aliased electron for Vite resolution. |
 
 ## Change Logs
 
 | Date | File | Summary |
 |------|------|---------|
+| 2026-07-22 | [2026-07-22-tab-management-overhaul.md](2026-07-22-tab-management-overhaul.md) | Tab management overhaul — TabSession↔TabContext bridge, session persistence (auto-save/restore), event emission gaps fixed, 148 new tests. |
+| 2026-07-22 | [2026-07-22-tab-persistence.md](2026-07-22-tab-persistence.md) | Tab persistence — storage abstraction (localStorage + MemoryStore), orchestrator with auto-save on TabManager events, debounced title/url, staleness check. 189 lines. |
+| 2026-07-22 | [2026-07-22-navigation-bridge-test-suite.md](2026-07-22-navigation-bridge-test-suite.md) | NavigationBridge comprehensive test suite — 25 mock-based tests across construction, navigation, back/forward, tab sync, events, address bar input, dispose. |
+| 2026-07-22 | [2026-07-22-tab-context-tests.md](2026-07-22-tab-context-tests.md) | TabContext & TabContextManager tests — 25 tests covering construction, state machine, crash/recovery, snapshots, events, config, manager CRUD, disposal. |
 | 2026-07-22 | [2026-07-22-garbage-collection.md](2026-07-22-garbage-collection.md) | Garbage collection — two-generation mark-and-sweep (young/old gen), root scanning (VM stack/frames/env chains), weak refs via FinalizationRegistry, finalization. 62 new tests. |
 | 2026-07-22 | [2026-07-22-jit-wasm-codegen.md](2026-07-22-jit-wasm-codegen.md) | JIT compilation Phase 2 — WASM binary encoder (NaN-boxing, 45+ host imports) + tier manager (hot detection, LRU cache, deoptimization). 37 new tests. |
 | 2026-07-22 | [2026-07-22-vm-closure-upvalue-fixes.md](2026-07-22-vm-closure-upvalue-fixes.md) | VM closure & upvalue fixes — completed upvalue support: compileUpdate upvalue check, handleCall pass upvalues, compileFunctionExpr outerScopes wiring. 141/141 VM tests pass. |
