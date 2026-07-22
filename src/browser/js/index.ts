@@ -30,6 +30,8 @@ export {
 export { BytecodeCompiler } from './bytecode-compiler';
 export { BytecodeVM } from './vm';
 export { type BytecodeFunction, type BytecodeProgram, OP } from './bytecode';
+export { WasmCompiler, createHostImports } from './wasm-codegen';
+export { JITManager, TieredExecutor } from './jit';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC API
