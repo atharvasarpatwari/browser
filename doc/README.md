@@ -15,6 +15,7 @@
 
 | Date | File | Summary |
 |------|------|---------|
+| 2026-07-22 | [2026-07-22-garbage-collection.md](2026-07-22-garbage-collection.md) | Garbage collection — two-generation mark-and-sweep (young/old gen), root scanning (VM stack/frames/env chains), weak refs via FinalizationRegistry, finalization. 62 new tests. |
 | 2026-07-22 | [2026-07-22-jit-wasm-codegen.md](2026-07-22-jit-wasm-codegen.md) | JIT compilation Phase 2 — WASM binary encoder (NaN-boxing, 45+ host imports) + tier manager (hot detection, LRU cache, deoptimization). 37 new tests. |
 | 2026-07-22 | [2026-07-22-vm-closure-upvalue-fixes.md](2026-07-22-vm-closure-upvalue-fixes.md) | VM closure & upvalue fixes — completed upvalue support: compileUpdate upvalue check, handleCall pass upvalues, compileFunctionExpr outerScopes wiring. 141/141 VM tests pass. |
 | 2026-07-21 | [2026-07-21-customizable-browser-name.md](2026-07-21-customizable-browser-name.md) | Customizable browser name — BrowserName service with settings persistence, wired through window title, new tab, search footer, shield tooltips, special pages. 4062 tests pass. |

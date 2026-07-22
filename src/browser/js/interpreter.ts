@@ -8,6 +8,7 @@ import {
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal,
   setGlobalCaller, callJSFunction, JSError,
 } from './values';
+import { GarbageCollector, getGC } from './gc';
 import { createPromiseConstructor, wrapAsyncResult } from './promise';
 import type { EventLoop } from './event-loop';
 import { Lexer } from './lexer';
@@ -37,13 +38,22 @@ export class Interpreter {
   private useVM = false;
   /** The bytecode compiler instance (shared across calls) */
   private compiler: BytecodeCompiler | null = null;
+  /** Garbage collector instance */
+  private gc: GarbageCollector;
 
   constructor(globalEnv?: Environment, eventLoop?: EventLoop) {
+    this.gc = getGC();
     this.eventLoop = eventLoop;
     if (this.eventLoop) {
       this.eventLoop.setInterpreter(this);
     }
     this.globalEnv = globalEnv ?? this.createGlobalEnv();
+    this.gc.setGlobalEnv(this.globalEnv);
+  }
+
+  /** Get the GC instance for external use */
+  getGC(): GarbageCollector {
+    return this.gc;
   }
 
   /** Enable or disable bytecode VM mode */
@@ -83,6 +93,7 @@ export class Interpreter {
           const bytecodeFn = this.compiler.compile(program);
           const vm = new BytecodeVM(this.globalEnv);
           vm.setMaxExecutionMs(this.maxExecutionMs);
+          vm.setGCCallback(() => this.gc.collect());
           // Bridge: VM calls interpreter for AST-body functions
           vm.setCallInterpreter((fn, thisArg, args) => this.callFunction(fn, thisArg, args));
           const result = vm.run(bytecodeFn);
@@ -122,6 +133,7 @@ export class Interpreter {
       const bytecodeFn = fn.body as BytecodeFunction;
       const vm = new BytecodeVM(fn.closure);
       vm.setMaxExecutionMs(this.maxExecutionMs);
+      vm.setGCCallback(() => this.gc.collect());
       vm.setCallInterpreter((innerFn, innerThisArg, innerArgs) => this.callFunction(innerFn, innerThisArg, innerArgs));
       const result = vm.run(bytecodeFn, thisArg, args, fn.upvalues);
       if (!result.ok) {

@@ -161,6 +161,16 @@ export class Environment {
   markFunctionScope(): void {
     (this as Record<string, unknown>)['__functionScope'] = true;
   }
+
+  /** Get the parent environment (for GC root scanning) */
+  getParent(): Environment | null {
+    return this.parent;
+  }
+
+  /** Get all bindings (for GC root scanning) */
+  getBindings(): Map<string, { value: JSValue; kind: 'var' | 'let' | 'const' }> {
+    return this.bindings;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -32,6 +32,9 @@ export { BytecodeVM } from './vm';
 export { type BytecodeFunction, type BytecodeProgram, OP } from './bytecode';
 export { WasmCompiler, createHostImports } from './wasm-codegen';
 export { JITManager, TieredExecutor } from './jit';
+export { GarbageCollector, getGC, setGC } from './gc';
+export { Heap, getHeap, setHeap } from './heap';
+export { RootScanner, WeakRefStore } from './roots';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC API

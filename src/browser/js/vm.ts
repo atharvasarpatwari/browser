@@ -15,7 +15,7 @@ import {
 
 // ── Call Frame ───────────────────────────────────────────────────────────────
 
-interface CallFrame {
+export interface CallFrame {
   fn: BytecodeFunction;
   bytecode: Uint8Array;
   constants: JSValue[];
@@ -45,9 +45,14 @@ export class BytecodeVM {
   private maxExecutionMs = 5000;
   private opCount = 0;
   private static readonly OPS_BETWEEN_CHECKS = 1000;
+  /** Ops between GC trigger checks */
+  private static readonly OPS_BETWEEN_GC_CHECKS = 2000;
 
   /** Callback to invoke AST-body functions via the interpreter */
   private callInterpreter: ((fn: JSFunction, thisArg: JSValue, args: JSValue[]) => JSValue) | null = null;
+
+  /** GC collection callback — called at safe points if set */
+  private gcCallback: ((vm: BytecodeVM) => void) | null = null;
 
   constructor(env: Environment) {
     this.env = env;
@@ -60,6 +65,23 @@ export class BytecodeVM {
   setMaxExecutionMs(ms: number): void {
     this.maxExecutionMs = ms;
   }
+
+  /** Set the GC callback invoked at safe points */
+  setGCCallback(cb: ((vm: BytecodeVM) => void) | null): void {
+    this.gcCallback = cb;
+  }
+
+  /** Get the operand stack (for root scanning) */
+  getStack(): JSValue[] { return this.stack; }
+
+  /** Get the stack pointer (for root scanning) */
+  getSP(): number { return this.sp; }
+
+  /** Get the call frames (for root scanning) */
+  getFrames(): CallFrame[] { return this.frames; }
+
+  /** Get the current environment (for root scanning) */
+  getEnv(): Environment { return this.env; }
 
   /** Run a bytecode function from top-level */
   run(fn: BytecodeFunction, thisArg: JSValue = undefined, args: JSValue[] = [], upvalues: UpvalueRef[] = []): VMResult {
@@ -95,6 +117,11 @@ export class BytecodeVM {
         if (elapsed > this.maxExecutionMs) {
           throw new JSError(`Script execution timed out after ${this.maxExecutionMs}ms`);
         }
+      }
+
+      // GC safe point
+      if (this.gcCallback && this.opCount % BytecodeVM.OPS_BETWEEN_GC_CHECKS === 0) {
+        this.gcCallback(this);
       }
 
       const op = bytecode[frame.pc++]!;
