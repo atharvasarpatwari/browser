@@ -13,50 +13,112 @@
   --amber:#fbbf24;--red:#f87171;--pink:#f472b6;--blue:#60a5fa;
   --text:#e2e8f0;--text-dim:#94a3b8;--text-muted:#475569;
   --radius:16px;--radius-sm:10px;
+  --modal-bg:#12122c;
+}
+html[data-theme="light"]{
+  --bg:#f4f6fb;--bg2:#eaedf6;--glass:rgba(15,15,40,0.035);--glass-border:rgba(15,15,40,0.09);
+  --glass-hover:rgba(15,15,40,0.06);--text:#161a2e;--text-dim:#4b5468;--text-muted:#8891a8;
+  --modal-bg:#ffffff;
 }
 html{font-family:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);scroll-behavior:smooth}
-body{min-height:100vh;background:radial-gradient(ellipse at 20% 0%,rgba(0,240,255,0.06) 0%,transparent 50%),radial-gradient(ellipse at 80% 100%,rgba(168,85,247,0.06) 0%,transparent 50%),var(--bg);padding:24px 32px 64px}
+body{min-height:100vh;background:radial-gradient(ellipse at 20% 0%,rgba(0,240,255,0.06) 0%,transparent 50%),radial-gradient(ellipse at 80% 100%,rgba(168,85,247,0.06) 0%,transparent 50%),var(--bg);padding:24px 32px 64px;transition:background .25s,color .25s}
 @keyframes fadeInUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){*{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
 .glass{background:var(--glass);border:1px solid var(--glass-border);border-radius:var(--radius);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);transition:background .2s,transform .2s,box-shadow .2s}
   .glass:hover{background:var(--glass-hover);transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,0.3)}
 
-  header{text-align:center;margin-bottom:40px;animation:fadeInUp .6s ease}
+  header{text-align:center;margin-bottom:20px;animation:fadeInUp .6s ease}
   header h1{font-size:2rem;font-weight:700;background:linear-gradient(135deg,var(--cyan),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:6px}
 header p{color:var(--text-dim);font-size:.95rem;letter-spacing:.5px}
 header .stat-line span{margin:0 12px;font-size:.85rem}
 header .stat-line .num{color:var(--cyan);font-weight:600}
 
-.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:32px}
-.kpi{padding:24px 20px;text-align:center;animation:fadeInUp .6s ease}
+.toolbar{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-bottom:32px;animation:fadeInUp .6s ease}
+.tbtn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:var(--text);padding:9px 16px;border-radius:999px;font-size:.8rem;font-weight:600;letter-spacing:.3px;cursor:pointer;transition:background .2s,border-color .2s,transform .15s}
+.tbtn:hover{background:rgba(0,240,255,0.1);border-color:rgba(0,240,255,0.4);transform:translateY(-1px)}
+.tbtn:active{transform:translateY(0)}
+.tbtn.accent{background:linear-gradient(135deg,rgba(0,240,255,.18),rgba(168,85,247,.18));border-color:rgba(0,240,255,.35)}
+
+.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:16px}
+.kpi{padding:22px 20px;text-align:center;animation:fadeInUp .6s ease;position:relative}
 .kpi .value{font-size:2.2rem;font-weight:800;line-height:1.1;margin-bottom:4px}
-.kpi .label{font-size:.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1.2px;font-weight:500}
+.kpi .label{font-size:.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1.2px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:5px}
+.kpi .info{width:13px;height:13px;border-radius:50%;border:1px solid var(--text-muted);color:var(--text-muted);font-size:.62rem;display:inline-flex;align-items:center;justify-content:center;cursor:help;font-style:normal}
 .kpi.cyan .value{color:var(--cyan)}
 .kpi.purple .value{color:var(--purple)}
 .kpi.green .value{color:var(--green)}
 .kpi.amber .value{color:var(--amber)}
 .kpi.red .value{color:var(--red)}
+.kpi.blue .value{color:var(--blue)}
+.kpi.pink .value{color:var(--pink)}
+
+.kpi-row.secondary{grid-template-columns:repeat(4,1fr);margin-bottom:32px}
+.kpi-row.secondary .kpi{padding:18px 16px}
+.kpi-row.secondary .value{font-size:1.5rem}
+.spark{width:100%;height:28px;display:block;margin-top:6px}
+
+.insights-card{padding:24px 28px;margin-bottom:20px;animation:fadeInUp .6s ease}
+.insights-card h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:14px;font-weight:600}
+.insights-card ul{list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:10px 24px}
+.insights-card li{font-size:.85rem;color:var(--text);padding-left:20px;position:relative;line-height:1.5}
+.insights-card li::before{content:"▸";position:absolute;left:0;color:var(--cyan);font-weight:700}
+.insights-card li b{color:var(--cyan);font-weight:700}
 
 .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}
 .chart-card{padding:24px;animation:fadeInUp .6s ease}
-.chart-card h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:16px;font-weight:600}
+.chart-card .chart-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.chart-card h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);font-weight:600}
 .chart-card canvas{width:100%!important;max-height:320px}
 .chart-card.full{grid-column:1/-1}
+.metric-toggle{display:flex;gap:4px;background:rgba(255,255,255,0.04);border-radius:8px;padding:3px}
+.metric-toggle button{background:transparent;border:none;color:var(--text-dim);font-size:.68rem;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:5px 10px;border-radius:6px;cursor:pointer;transition:background .15s,color .15s}
+.metric-toggle button.active{background:var(--cyan);color:#00141a}
+
+.heat-section{animation:fadeInUp .6s ease;padding:24px 28px;margin-bottom:20px}
+.heat-section h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:16px;font-weight:600}
+.heat-strip{display:flex;gap:10px;flex-wrap:wrap}
+.heat-cell{flex:1;min-width:120px;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--glass-border);cursor:default;transition:transform .15s}
+.heat-cell:hover{transform:translateY(-3px)}
+.heat-cell .hc-date{font-size:.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px}
+.heat-cell .hc-tests{font-size:1.3rem;font-weight:800}
+.heat-cell .hc-docs{font-size:.72rem;color:var(--text-dim);margin-top:2px}
+
+.leader-section{animation:fadeInUp .6s ease;padding:24px 28px;margin-bottom:20px}
+.leader-section h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:16px;font-weight:600}
+.leader-table{width:100%;border-collapse:collapse;font-size:.83rem}
+.leader-table th{text-align:left;padding:9px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border);cursor:pointer;white-space:nowrap}
+.leader-table th:hover{color:var(--cyan)}
+.leader-table td{padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.03)}
+.leader-table tr:hover td{background:rgba(0,240,255,0.03)}
+.leader-bar{height:6px;border-radius:4px;background:rgba(255,255,255,0.06);overflow:hidden;margin-top:4px}
+.leader-bar-fill{height:100%;border-radius:4px}
 
 .table-section{animation:fadeInUp .6s ease;padding:28px;margin-top:20px}
-.table-header{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.table-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
 .table-header input,.table-header select{background:rgba(255,255,255,0.06);border:1px solid var(--glass-border);color:var(--text);padding:10px 14px;border-radius:var(--radius-sm);font-size:.85rem;outline:none;transition:border-color .2s}
 .table-header input:focus,.table-header select:focus{border-color:var(--cyan)}
-.table-header input{flex:1;min-width:200px}
-.table-header select{min-width:140px}
+.table-header input{flex:1;min-width:180px}
+.table-header select,.table-header input[type=date]{min-width:130px}
 .table-header select option{background:#1a1a3a;color:var(--text)}
+.table-header .date-range{display:flex;align-items:center;gap:6px;font-size:.75rem;color:var(--text-dim)}
+.col-dropdown{position:relative}
+.col-menu{display:none;position:absolute;top:calc(100% + 6px);right:0;background:var(--modal-bg);border:1px solid var(--glass-border);border-radius:var(--radius-sm);padding:10px 14px;z-index:20;min-width:170px;box-shadow:0 12px 32px rgba(0,0,0,.4)}
+.col-menu.open{display:block}
+.col-menu label{display:flex;align-items:center;gap:8px;font-size:.8rem;padding:5px 0;color:var(--text);cursor:pointer}
+.meta-row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;font-size:.78rem;color:var(--text-dim)}
+.meta-row b{color:var(--cyan)}
 table{width:100%;border-collapse:collapse;font-size:.85rem}
-thead th{text-align:left;padding:12px 14px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:.7rem;border-bottom:1px solid var(--glass-border);cursor:pointer;user-select:none;white-space:nowrap;transition:color .2s}
+thead th{text-align:left;padding:12px 14px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:.7rem;border-bottom:1px solid var(--glass-border);cursor:pointer;user-select:none;white-space:nowrap;transition:color .2s;position:sticky;top:0;background:var(--bg);z-index:5}
 thead th:hover{color:var(--cyan)}
 thead th .sort-arrow{margin-left:4px;opacity:.4;font-size:.65rem}
 thead th.sorted .sort-arrow{opacity:1;color:var(--cyan)}
-tbody tr{border-bottom:1px solid rgba(255,255,255,0.03);transition:background .15s}
+tbody tr{border-bottom:1px solid rgba(255,255,255,0.03);transition:background .15s;cursor:pointer}
 tbody tr:hover{background:rgba(0,240,255,0.04)}
 tbody td{padding:11px 14px;color:var(--text);white-space:nowrap}
+tbody td.wrap{white-space:normal}
+mark{background:rgba(0,240,255,.35);color:inherit;border-radius:3px;padding:0 1px}
+.empty-row td{text-align:center;padding:36px;color:var(--text-muted)}
 .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.7rem;font-weight:600;letter-spacing:.5px}
 .badge.completed{background:rgba(52,211,153,0.15);color:var(--green)}
 .badge.planned{background:rgba(251,191,36,0.15);color:var(--amber)}
@@ -72,10 +134,39 @@ tbody td{padding:11px 14px;color:var(--text);white-space:nowrap}
 .cat-architecture{background:rgba(148,163,184,0.12);color:var(--text-dim)}
 .cat-plan{background:rgba(251,191,36,0.12);color:var(--amber)}
 
-footer{text-align:center;margin-top:48px;color:var(--text-muted);font-size:.75rem;letter-spacing:.5px}
+.pagination{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:18px;flex-wrap:wrap}
+.pagination button{background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:var(--text);padding:6px 12px;border-radius:8px;font-size:.78rem;cursor:pointer;transition:background .15s}
+.pagination button:hover:not(:disabled){background:rgba(0,240,255,0.12);border-color:rgba(0,240,255,.4)}
+.pagination button:disabled{opacity:.35;cursor:not-allowed}
+.pagination button.active{background:var(--cyan);color:#00141a;border-color:var(--cyan);font-weight:700}
+.pagination select{background:rgba(255,255,255,0.06);border:1px solid var(--glass-border);color:var(--text);padding:6px 10px;border-radius:8px;font-size:.78rem}
 
-@media(max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}.chart-grid{grid-template-columns:1fr}.kpi-row .kpi:last-child{grid-column:1/-1}}
-@media(max-width:600px){body{padding:16px}.kpi-row{grid-template-columns:1fr}.kpi .value{font-size:1.6rem}header h1{font-size:1.4rem}}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(4,4,14,.65);backdrop-filter:blur(4px);z-index:100;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.open{display:flex}
+.modal{background:var(--modal-bg);border:1px solid var(--glass-border);border-radius:var(--radius);max-width:520px;width:100%;padding:28px;position:relative;animation:fadeInUp .3s ease}
+.modal h2{font-size:1.15rem;margin-bottom:4px;padding-right:30px}
+.modal .modal-file{font-size:.75rem;color:var(--text-muted);margin-bottom:18px;word-break:break-all}
+.modal-close{position:absolute;top:20px;right:20px;background:none;border:none;color:var(--text-dim);font-size:1.3rem;cursor:pointer;line-height:1}
+.modal-close:hover{color:var(--cyan)}
+.modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.modal-stat{background:rgba(255,255,255,0.04);border-radius:var(--radius-sm);padding:12px 14px}
+.modal-stat .ms-label{font-size:.65rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim);margin-bottom:4px}
+.modal-stat .ms-value{font-size:1.25rem;font-weight:700}
+
+.back-to-top{position:fixed;bottom:28px;right:28px;width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--cyan),var(--purple));border:none;color:#050510;font-size:1.1rem;font-weight:700;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .25s,transform .2s;z-index:50;box-shadow:0 6px 20px rgba(0,0,0,.4)}
+.back-to-top.show{opacity:1;pointer-events:auto}
+.back-to-top:hover{transform:translateY(-3px)}
+
+.toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--modal-bg);border:1px solid var(--glass-border);color:var(--text);padding:12px 20px;border-radius:999px;font-size:.82rem;box-shadow:0 8px 24px rgba(0,0,0,.4);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:200}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+footer{text-align:center;margin-top:48px;color:var(--text-muted);font-size:.75rem;letter-spacing:.5px}
+footer .kbd-hint{margin-top:6px;font-size:.7rem}
+kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);border-radius:4px;padding:1px 6px;font-family:inherit;font-size:.68rem}
+
+@media(max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}.kpi-row.secondary{grid-template-columns:repeat(2,1fr)}.chart-grid{grid-template-columns:1fr}.kpi-row .kpi:last-child{grid-column:1/-1}.insights-card ul{grid-template-columns:1fr}}
+@media(max-width:600px){body{padding:16px}.kpi-row{grid-template-columns:1fr}.kpi .value{font-size:1.6rem}header h1{font-size:1.4rem}.modal-grid{grid-template-columns:1fr}}
+@media print{.toolbar,.back-to-top,.table-header,.pagination,.modal-overlay,.metric-toggle{display:none!important}body{padding:0;background:#fff;color:#000}.glass{border:1px solid #ccc;box-shadow:none;backdrop-filter:none;background:#fff}}
 </style>
 </head>
 <body>
@@ -83,23 +174,69 @@ footer{text-align:center;margin-top:48px;color:var(--text-muted);font-size:.75re
 <header>
   <h1>Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num">58</span> Documents</span>
-    <span><span class="num">5</span> Days</span>
-    <span><span class="num">4,354</span> Total Suite Tests</span>
-    <span>Generated <span class="num">2026-07-22</span></span>
+    <span><span class="num">61</span> Documents</span>
+    <span><span class="num">6</span> Days</span>
+    <span><span class="num">4,393</span> Total Suite Tests</span>
+    <span>Generated <span class="num">2026-07-23</span></span>
   </p>
 </header>
 
+<div class="toolbar">
+  <button class="tbtn accent" id="themeToggle">🌗 <span id="themeLabel">Light Mode</span></button>
+  <button class="tbtn" id="exportCsvBtn">⬇ Export CSV</button>
+  <button class="tbtn" id="exportJsonBtn">⬇ Export JSON</button>
+  <button class="tbtn" id="printBtn">🖨 Print Report</button>
+  <button class="tbtn" id="resetFiltersBtn">↺ Reset Filters</button>
+</div>
+
 <div class="kpi-row">
-  <div class="kpi cyan glass"><div class="value">59</div><div class="label">Total Documents</div></div>
-  <div class="kpi purple glass"><div class="value">3,967</div><div class="label">Tests Added</div></div>
-  <div class="kpi red glass"><div class="value">84</div><div class="label">Root Causes Fixed</div></div>
-  <div class="kpi green glass"><div class="value">151</div><div class="label">Files Touched</div></div>
-  <div class="kpi amber glass"><div class="value">~72%</div><div class="label">Avg Spec Compliance</div></div>
+  <div class="kpi cyan glass"><div class="value" id="kpiDocs">59</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi purple glass"><div class="value" id="kpiTests">3,967</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
+  <div class="kpi red glass"><div class="value" id="kpiRootCauses">84</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><div class="value" id="kpiFiles">151</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi amber glass"><div class="value" id="kpiCompliance">~72%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
+</div>
+
+<div class="kpi-row secondary">
+  <div class="kpi blue glass">
+    <div class="value" id="kpiAvgTests">—</div>
+    <div class="label">Avg Tests / Session <span class="info" title="Total tests added divided by number of sessions that added at least one test.">i</span></div>
+    <svg class="spark" id="sparkAvg"></svg>
+  </div>
+  <div class="kpi pink glass">
+    <div class="value" id="kpiBusiest">—</div>
+    <div class="label">Busiest Day <span class="info" title="The date with the highest number of documents logged.">i</span></div>
+    <svg class="spark" id="sparkBusy"></svg>
+  </div>
+  <div class="kpi green glass">
+    <div class="value" id="kpiCompletion">—</div>
+    <div class="label">Completion Rate <span class="info" title="Share of documents marked Completed vs Planned.">i</span></div>
+    <svg class="spark" id="sparkComp"></svg>
+  </div>
+  <div class="kpi cyan glass">
+    <div class="value" id="kpiCreated">—</div>
+    <div class="label">Files Created <span class="info" title="Total brand-new files created across all sessions (subset of Files Touched).">i</span></div>
+    <svg class="spark" id="sparkCreated"></svg>
+  </div>
+</div>
+
+<div class="insights-card glass">
+  <h3>Auto-Generated Insights</h3>
+  <ul id="insightsList"></ul>
 </div>
 
 <div class="chart-grid">
-  <div class="chart-card glass"><h3>Tests Added Per Session</h3><canvas id="testsPerSession"></canvas></div>
+  <div class="chart-card glass">
+    <div class="chart-head">
+      <h3>Sessions By Metric</h3>
+      <div class="metric-toggle" id="metricToggle">
+        <button data-metric="tests" class="active">Tests</button>
+        <button data-metric="files">Files</button>
+        <button data-metric="rootCauses">Root Causes</button>
+      </div>
+    </div>
+    <canvas id="testsPerSession"></canvas>
+  </div>
   <div class="chart-card glass"><h3>Category Distribution</h3><canvas id="categoryDist"></canvas></div>
   <div class="chart-card glass"><h3>Cumulative Test Growth</h3><canvas id="cumulativeGrowth"></canvas></div>
   <div class="chart-card glass"><h3>Docs Per Date</h3><canvas id="docsPerDate"></canvas></div>
@@ -109,14 +246,49 @@ footer{text-align:center;margin-top:48px;color:var(--text-muted);font-size:.75re
   <div class="chart-card glass" style="max-width:360px;margin:0 auto"><h3>Status Breakdown</h3><canvas id="statusPie"></canvas></div>
 </div>
 
+<div class="heat-section glass">
+  <h3>Daily Activity Heat Strip</h3>
+  <div class="heat-strip" id="heatStrip"></div>
+</div>
+
+<div class="leader-section glass">
+  <h3>Category Leaderboard</h3>
+  <div style="overflow-x:auto">
+    <table class="leader-table" id="leaderTable">
+      <thead><tr>
+        <th data-lcol="category">Category</th>
+        <th data-lcol="docs" data-type="num">Docs</th>
+        <th data-lcol="tests" data-type="num">Total Tests</th>
+        <th data-lcol="avg" data-type="num">Avg Tests/Doc</th>
+        <th data-lcol="rootCauses" data-type="num">Root Causes</th>
+        <th data-lcol="files" data-type="num">Files Touched</th>
+        <th>Share</th>
+      </tr></thead>
+      <tbody id="leaderBody"></tbody>
+    </table>
+  </div>
+</div>
+
 <div class="table-section glass">
   <div class="table-header">
-    <input type="text" id="searchInput" placeholder="Search documents...">
+    <input type="text" id="searchInput" placeholder="Search documents... ( / to focus )">
     <select id="categoryFilter"><option value="">All Categories</option></select>
     <select id="statusFilter"><option value="">All Statuses</option><option value="Completed">Completed</option><option value="Planned">Planned</option></select>
+    <div class="date-range">
+      <span>From</span><input type="date" id="dateFrom">
+      <span>To</span><input type="date" id="dateTo">
+    </div>
+    <div class="col-dropdown">
+      <button class="tbtn" id="colDropdownBtn">⚙ Columns</button>
+      <div class="col-menu" id="colMenu"></div>
+    </div>
   </div>
-  <div style="overflow-x:auto">
-    <table>
+  <div class="meta-row">
+    <span>Showing <b id="metaShowing">0</b> of <b id="metaTotal">0</b> documents</span>
+    <span id="metaTests"></span>
+  </div>
+  <div style="overflow-x:auto;max-height:560px">
+    <table id="mainTable">
       <thead><tr>
         <th data-col="date">Date <span class="sort-arrow">▲</span></th>
         <th data-col="title">Document <span class="sort-arrow">▲</span></th>
@@ -130,9 +302,26 @@ footer{text-align:center;margin-top:48px;color:var(--text-muted);font-size:.75re
       <tbody id="docTableBody"></tbody>
     </table>
   </div>
+  <div class="pagination" id="pagination"></div>
 </div>
 
-<footer>Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-07-22 (refreshed)</footer>
+<footer>
+  Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-07-22 (refreshed)
+  <div class="kbd-hint">Press <kbd>/</kbd> to search · <kbd>Esc</kbd> to clear · click a row for details</div>
+</footer>
+
+<button class="back-to-top" id="backToTop" title="Back to top">↑</button>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <button class="modal-close" id="modalClose">✕</button>
+    <h2 id="modalTitle"></h2>
+    <div class="modal-file" id="modalFile"></div>
+    <div class="modal-grid" id="modalGrid"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
 
 <script>
 const DOCS=[
@@ -200,9 +389,28 @@ const DOCS=[
 ];
 
 const CAT_COLORS={CSS:'#60a5fa',HTML5:'#f472b6',JavaScript:'#fbbf24',Layout:'#34d399',Rendering:'#a855f7',Security:'#f87171','IPC/Networking':'#00f0ff',UI:'#f472b6',Architecture:'#94a3b8',Plan:'#fbbf24'};
-const CAT_SHORT={CSS:'CSS',HTML5:'HTML5',JavaScript:'JS',Layout:'Layout',Rendering:'Render',Security:'Security','IPC/Networking':'IPC',UI:'UI',Architecture:'Arch',Plan:'Plan'};
 const CAT_CLASS={CSS:'cat-css',HTML5:'cat-html5',JavaScript:'cat-javascript',Layout:'cat-layout',Rendering:'cat-rendering',Security:'cat-security','IPC/Networking':'cat-ipc',UI:'cat-ui',Architecture:'cat-architecture',Plan:'cat-plan'};
 
+/* ---------- theme ---------- */
+const html=document.documentElement;
+document.getElementById('themeToggle').addEventListener('click',()=>{
+  const isLight=html.getAttribute('data-theme')==='light';
+  html.setAttribute('data-theme',isLight?'dark':'light');
+  document.getElementById('themeLabel').textContent=isLight?'Light Mode':'Dark Mode';
+  refreshChartTheme();
+  showToast(isLight?'Switched to dark mode':'Switched to light mode');
+});
+
+/* ---------- toast ---------- */
+let toastTimer=null;
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.classList.remove('show'),2200);
+}
+
+/* ---------- Chart.js global defaults ---------- */
 Chart.defaults.color='#94a3b8';
 Chart.defaults.borderColor='rgba(255,255,255,0.06)';
 Chart.defaults.font.family='Inter,system-ui,sans-serif';
@@ -215,64 +423,359 @@ Chart.defaults.plugins.tooltip.borderWidth=1;
 Chart.defaults.plugins.tooltip.cornerRadius=8;
 Chart.defaults.plugins.tooltip.padding=10;
 
-const testsData=DOCS.filter(d=>d.tests>0).sort((a,b)=>b.tests-a.tests);
-new Chart(document.getElementById('testsPerSession'),{type:'bar',data:{labels:testsData.map(d=>d.title.length>24?d.title.slice(0,22)+'…':d.title),datasets:[{label:'Tests Added',data:testsData.map(d=>d.tests),backgroundColor:testsData.map(d=>CAT_COLORS[d.category]+'cc'),borderRadius:6,borderSkipped:false}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>v>=1000?(v/1000)+'K':v}},y:{grid:{display:false},ticks:{font:{size:10}}}}}});
+const truncate=(s,n)=>s.length>n?s.slice(0,n-2)+'…':s;
 
+/* ---------- Sessions By Metric (toggleable) ---------- */
+const METRIC_LABEL={tests:'Tests Added',files:'Files Touched',rootCauses:'Root Causes'};
+function metricValue(d,m){return m==='files'?d.filesModified+d.filesCreated:d[m]}
+let currentMetric='tests';
+let sessionsChart=null;
+function buildSessionsChart(metric){
+  const data=DOCS.filter(d=>metricValue(d,metric)>0).sort((a,b)=>metricValue(b,metric)-metricValue(a,metric)).slice(0,20);
+  const cfg={type:'bar',data:{labels:data.map(d=>truncate(d.title,24)),datasets:[{label:METRIC_LABEL[metric],data:data.map(d=>metricValue(d,metric)),backgroundColor:data.map(d=>CAT_COLORS[d.category]+'cc'),borderRadius:6,borderSkipped:false}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>v>=1000?(v/1000)+'K':v}},y:{grid:{display:false},ticks:{font:{size:10}}}}}};
+  if(sessionsChart){sessionsChart.destroy()}
+  sessionsChart=new Chart(document.getElementById('testsPerSession'),cfg);
+}
+buildSessionsChart(currentMetric);
+document.getElementById('metricToggle').addEventListener('click',e=>{
+  const btn=e.target.closest('button');if(!btn)return;
+  currentMetric=btn.dataset.metric;
+  document.querySelectorAll('#metricToggle button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  buildSessionsChart(currentMetric);
+});
+
+/* ---------- Category Distribution ---------- */
 const cats={};DOCS.forEach(d=>{cats[d.category]=(cats[d.category]||0)+1});
 const catKeys=Object.keys(cats).sort((a,b)=>cats[b]-cats[a]);
 new Chart(document.getElementById('categoryDist'),{type:'doughnut',data:{labels:catKeys,datasets:[{data:catKeys.map(k=>cats[k]),backgroundColor:catKeys.map(k=>CAT_COLORS[k]+'dd'),borderWidth:0,hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'right',labels:{padding:14}}}}});
 
+/* ---------- Cumulative Growth ---------- */
 const sorted=[...DOCS].sort((a,b)=>a.date.localeCompare(b.date)||a.title.localeCompare(b.title));
-let cum=0;const cumData=sorted.map(d=>{cum+=d.tests;return{x:d.title.length>20?d.title.slice(0,18)+'…':d.title,y:cum}});
+let cum=0;const cumData=sorted.map(d=>{cum+=d.tests;return{x:truncate(d.title,20),y:cum}});
 new Chart(document.getElementById('cumulativeGrowth'),{type:'line',data:{labels:cumData.map(d=>d.x),datasets:[{label:'Cumulative Tests',data:cumData.map(d=>d.y),borderColor:'#00f0ff',backgroundColor:'rgba(0,240,255,0.08)',fill:true,tension:.3,pointRadius:2,pointHoverRadius:5,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{display:false},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>v>=1000?(v/1000)+'K':v}}}}});
 
+/* ---------- Docs Per Date ---------- */
 const dateCounts={};DOCS.forEach(d=>{dateCounts[d.date]=(dateCounts[d.date]||0)+1});
 const dateKeys=Object.keys(dateCounts).sort();
 new Chart(document.getElementById('docsPerDate'),{type:'bar',data:{labels:dateKeys.map(d=>{const p=d.split('-');return p[1]+'/'+p[2]}),datasets:[{label:'Documents',data:dateKeys.map(k=>dateCounts[k]),backgroundColor:['#00f0ffcc','#a855f7cc'],borderRadius:8,borderSkipped:false,barPercentage:.5}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:5}}}}});
 
+/* ---------- Root Causes ---------- */
 const rcData=DOCS.filter(d=>d.rootCauses>0).sort((a,b)=>b.rootCauses-a.rootCauses);
-new Chart(document.getElementById('rootCauses'),{type:'bar',data:{labels:rcData.map(d=>d.title.length>28?d.title.slice(0,26)+'…':d.title),datasets:[{label:'Root Causes',data:rcData.map(d=>d.rootCauses),backgroundColor:'rgba(248,113,113,0.7)',borderRadius:6,borderSkipped:false}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:2}},y:{grid:{display:false},ticks:{font:{size:10}}}}}});
+new Chart(document.getElementById('rootCauses'),{type:'bar',data:{labels:rcData.map(d=>truncate(d.title,28)),datasets:[{label:'Root Causes',data:rcData.map(d=>d.rootCauses),backgroundColor:'rgba(248,113,113,0.7)',borderRadius:6,borderSkipped:false}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:2}},y:{grid:{display:false},ticks:{font:{size:10}}}}}});
 
+/* ---------- Spec Compliance ---------- */
 new Chart(document.getElementById('specCompliance'),{type:'bar',data:{labels:['HTML5 Tree Builder','CSS5 Engine','JavaScript Engine','DOM/Events/Nav'],datasets:[{label:'Compliance %',data:[92,62,78,78],backgroundColor:['rgba(52,211,153,0.7)','rgba(96,165,250,0.7)','rgba(251,191,36,0.7)','rgba(244,114,182,0.7)'],borderRadius:6,borderSkipped:false,barPercentage:.6}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{max:100,grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}});
 
+/* ---------- Files Modified vs Created ---------- */
 const fData=DOCS.filter(d=>d.filesModified+d.filesCreated>0).sort((a,b)=>(b.filesModified+b.filesCreated)-(a.filesModified+a.filesCreated)).slice(0,15);
-new Chart(document.getElementById('filesChart'),{type:'bar',data:{labels:fData.map(d=>d.title.length>22?d.title.slice(0,20)+'…':d.title),datasets:[{label:'Modified',data:fData.map(d=>d.filesModified),backgroundColor:'rgba(96,165,250,0.65)',borderRadius:4,borderSkipped:false},{label:'Created',data:fData.map(d=>d.filesCreated),backgroundColor:'rgba(168,85,247,0.65)',borderRadius:4,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{grid:{display:false},ticks:{font:{size:9},maxRotation:45}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:2}}}}});
+new Chart(document.getElementById('filesChart'),{type:'bar',data:{labels:fData.map(d=>truncate(d.title,22)),datasets:[{label:'Modified',data:fData.map(d=>d.filesModified),backgroundColor:'rgba(96,165,250,0.65)',borderRadius:4,borderSkipped:false},{label:'Created',data:fData.map(d=>d.filesCreated),backgroundColor:'rgba(168,85,247,0.65)',borderRadius:4,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{grid:{display:false},ticks:{font:{size:9},maxRotation:45}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:2}}}}});
 
+/* ---------- Status Pie ---------- */
 const statusCounts={Completed:0,Planned:0};DOCS.forEach(d=>statusCounts[d.status]=(statusCounts[d.status]||0)+1);
 new Chart(document.getElementById('statusPie'),{type:'pie',data:{labels:Object.keys(statusCounts),datasets:[{data:Object.values(statusCounts),backgroundColor:['rgba(52,211,153,0.75)','rgba(251,191,36,0.75)'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}});
 
+function refreshChartTheme(){
+  const light=html.getAttribute('data-theme')==='light';
+  Chart.defaults.color=light?'#4b5468':'#94a3b8';
+  Chart.defaults.borderColor=light?'rgba(15,15,40,0.08)':'rgba(255,255,255,0.06)';
+  [sessionsChart].forEach(c=>c&&c.update());
+  Object.values(Chart.instances).forEach(c=>c.update());
+}
+
+/* ---------- secondary KPIs + sparklines ---------- */
+function drawSpark(id,values,color){
+  const svg=document.getElementById(id);
+  const w=140,h=28,max=Math.max(...values,1),min=Math.min(...values,0);
+  const range=(max-min)||1;
+  const pts=values.map((v,i)=>{
+    const x=(i/(values.length-1||1))*w;
+    const y=h-((v-min)/range)*h;
+    return x.toFixed(1)+','+y.toFixed(1);
+  }).join(' ');
+  svg.setAttribute('viewBox',`0 0 ${w} ${h}`);
+  svg.innerHTML=`<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+}
+
+const testedSessions=DOCS.filter(d=>d.tests>0);
+const avgTests=Math.round(testedSessions.reduce((s,d)=>s+d.tests,0)/testedSessions.length);
+document.getElementById('kpiAvgTests').textContent=avgTests.toLocaleString();
+drawSpark('sparkAvg',dateKeys.map(k=>{const ds=DOCS.filter(d=>d.date===k&&d.tests>0);return ds.length?ds.reduce((s,d)=>s+d.tests,0)/ds.length:0}),'#60a5fa');
+
+const busiestDate=dateKeys.reduce((a,b)=>dateCounts[a]>=dateCounts[b]?a:b);
+document.getElementById('kpiBusiest').textContent=busiestDate.slice(5)+' ('+dateCounts[busiestDate]+')';
+drawSpark('sparkBusy',dateKeys.map(k=>dateCounts[k]),'#f472b6');
+
+const completionRate=Math.round((statusCounts.Completed/(DOCS.length))*100);
+document.getElementById('kpiCompletion').textContent=completionRate+'%';
+let runningComplete=0,runningTotal=0;
+drawSpark('sparkComp',dateKeys.map(k=>{const ds=DOCS.filter(d=>d.date===k);runningTotal+=ds.length;runningComplete+=ds.filter(d=>d.status==='Completed').length;return runningTotal?Math.round((runningComplete/runningTotal)*100):0}),'#34d399');
+
+const totalCreated=DOCS.reduce((s,d)=>s+d.filesCreated,0);
+document.getElementById('kpiCreated').textContent=totalCreated.toLocaleString();
+drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.filesCreated,0)),'#00f0ff');
+
+/* ---------- Insights ---------- */
+(function buildInsights(){
+  const list=document.getElementById('insightsList');
+  const topCatByTests=catKeys.map(k=>({k,t:DOCS.filter(d=>d.category===k).reduce((s,d)=>s+d.tests,0)})).sort((a,b)=>b.t-a.t)[0];
+  const topRootCauseDoc=[...DOCS].sort((a,b)=>b.rootCauses-a.rootCauses)[0];
+  const topTestDoc=[...DOCS].sort((a,b)=>b.tests-a.tests)[0];
+  const plannedCount=DOCS.filter(d=>d.status==='Planned').length;
+  const zeroCoverage=DOCS.filter(d=>d.tests===0&&d.status==='Completed').length;
+  const items=[
+    `<b>${topCatByTests.k}</b> leads all categories with <b>${topCatByTests.t.toLocaleString()}</b> tests contributed.`,
+    `<b>${topTestDoc.title}</b> added the most tests in a single session (<b>${topTestDoc.tests.toLocaleString()}</b>).`,
+    `<b>${topRootCauseDoc.title}</b> resolved the most root causes in one session (<b>${topRootCauseDoc.rootCauses}</b>).`,
+    `<b>${busiestDate}</b> was the busiest day with <b>${dateCounts[busiestDate]}</b> documents logged.`,
+    `<b>${plannedCount}</b> document${plannedCount===1?'':'s'} still ${plannedCount===1?'is':'are'} in the Planned stage, awaiting implementation.`,
+    `<b>${zeroCoverage}</b> completed sessions currently ship with no automated test coverage recorded.`
+  ];
+  list.innerHTML=items.map(t=>`<li>${t}</li>`).join('');
+})();
+
+/* ---------- Daily activity heat strip ---------- */
+(function buildHeat(){
+  const strip=document.getElementById('heatStrip');
+  const maxTests=Math.max(...dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.tests,0)));
+  strip.innerHTML=dateKeys.map(k=>{
+    const docsOnDay=DOCS.filter(d=>d.date===k);
+    const tests=docsOnDay.reduce((s,d)=>s+d.tests,0);
+    const intensity=maxTests?tests/maxTests:0;
+    const bg=`rgba(0,240,255,${(0.06+intensity*0.28).toFixed(3)})`;
+    return `<div class="heat-cell" style="background:${bg}" title="${docsOnDay.length} document(s), ${tests} tests"><div class="hc-date">${k}</div><div class="hc-tests">${tests.toLocaleString()}</div><div class="hc-docs">${docsOnDay.length} doc${docsOnDay.length===1?'':'s'}</div></div>`;
+  }).join('');
+})();
+
+/* ---------- Category leaderboard ---------- */
+let leaderSort={col:'tests',dir:'desc'};
+function buildLeaderRows(){
+  const rows=catKeys.map(k=>{
+    const ds=DOCS.filter(d=>d.category===k);
+    const tests=ds.reduce((s,d)=>s+d.tests,0);
+    const rootCauses=ds.reduce((s,d)=>s+d.rootCauses,0);
+    const files=ds.reduce((s,d)=>s+d.filesModified+d.filesCreated,0);
+    return{category:k,docs:ds.length,tests,avg:Math.round(tests/ds.length),rootCauses,files};
+  });
+  const totalTests=rows.reduce((s,r)=>s+r.tests,0);
+  const col=leaderSort.col,dir=leaderSort.dir==='asc'?1:-1;
+  rows.sort((a,b)=>col==='category'?String(a[col]).localeCompare(String(b[col]))*dir:(a[col]-b[col])*dir);
+  document.getElementById('leaderBody').innerHTML=rows.map(r=>{
+    const pct=totalTests?Math.round((r.tests/totalTests)*100):0;
+    return `<tr><td><span class="cat-tag ${CAT_CLASS[r.category]||''}">${r.category}</span></td><td>${r.docs}</td><td>${r.tests.toLocaleString()}</td><td>${r.avg}</td><td>${r.rootCauses}</td><td>${r.files}</td><td style="min-width:120px"><div class="leader-bar"><div class="leader-bar-fill" style="width:${pct}%;background:${CAT_COLORS[r.category]}"></div></div><span style="font-size:.7rem;color:var(--text-dim)">${pct}%</span></td></tr>`;
+  }).join('');
+}
+buildLeaderRows();
+document.querySelectorAll('#leaderTable th[data-lcol]').forEach(th=>{
+  th.addEventListener('click',()=>{
+    const col=th.dataset.lcol;
+    leaderSort.dir=(leaderSort.col===col&&leaderSort.dir==='desc')?'asc':'desc';
+    leaderSort.col=col;
+    buildLeaderRows();
+  });
+});
+
+/* ---------- Column visibility ---------- */
+const COLS=[
+  {key:'date',label:'Date'},{key:'title',label:'Document'},{key:'category',label:'Category'},
+  {key:'tests',label:'Tests'},{key:'rootCauses',label:'Root Causes'},{key:'filesModified',label:'Files Modified'},
+  {key:'filesCreated',label:'Files Created'},{key:'status',label:'Status'}
+];
+const colVisible={};COLS.forEach(c=>colVisible[c.key]=true);
+const colMenu=document.getElementById('colMenu');
+colMenu.innerHTML=COLS.map(c=>`<label><input type="checkbox" data-colkey="${c.key}" checked> ${c.label}</label>`).join('');
+document.getElementById('colDropdownBtn').addEventListener('click',e=>{e.stopPropagation();colMenu.classList.toggle('open')});
+document.addEventListener('click',()=>colMenu.classList.remove('open'));
+colMenu.addEventListener('click',e=>e.stopPropagation());
+colMenu.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+  cb.addEventListener('change',()=>{
+    colVisible[cb.dataset.colkey]=cb.checked;
+    applyColumnVisibility();
+  });
+});
+function applyColumnVisibility(){
+  const idxMap={};COLS.forEach((c,i)=>idxMap[c.key]=i);
+  document.querySelectorAll('#mainTable thead th').forEach((th,i)=>{
+    th.style.display=colVisible[COLS[i].key]?'':'none';
+  });
+  document.querySelectorAll('#mainTable tbody tr').forEach(tr=>{
+    Array.from(tr.children).forEach((td,i)=>{td.style.display=colVisible[COLS[i].key]?'':'none'});
+  });
+}
+
+/* ---------- Main table: filter, sort, paginate, search-highlight ---------- */
 const tbody=document.getElementById('docTableBody');
 let currentSort={col:'date',dir:'asc'};
-function renderTable(filter,catFilter,statusFilter){
+let currentPage=1,pageSize=15;
+let lastFiltered=[];
+
+function highlightMatch(text,q){
+  if(!q)return text;
+  const idx=text.toLowerCase().indexOf(q.toLowerCase());
+  if(idx===-1)return text;
+  return text.slice(0,idx)+'<mark>'+text.slice(idx,idx+q.length)+'</mark>'+text.slice(idx+q.length);
+}
+
+function getFiltered(){
+  const q=document.getElementById('searchInput').value.trim();
+  const catFilter=document.getElementById('categoryFilter').value;
+  const statusFilter=document.getElementById('statusFilter').value;
+  const from=document.getElementById('dateFrom').value;
+  const to=document.getElementById('dateTo').value;
   let data=[...DOCS];
-  if(filter){const q=filter.toLowerCase();data=data.filter(d=>d.title.toLowerCase().includes(q)||d.file.toLowerCase().includes(q))}
+  if(q){const ql=q.toLowerCase();data=data.filter(d=>d.title.toLowerCase().includes(ql)||d.file.toLowerCase().includes(ql))}
   if(catFilter)data=data.filter(d=>d.category===catFilter);
   if(statusFilter)data=data.filter(d=>d.status===statusFilter);
+  if(from)data=data.filter(d=>d.date>=from);
+  if(to)data=data.filter(d=>d.date<=to);
   const col=currentSort.col;const dir=currentSort.dir==='asc'?1:-1;
   const isNum=['tests','rootCauses','filesModified','filesCreated'].includes(col);
   data.sort((a,b)=>{if(isNum)return(a[col]-b[col])*dir;return String(a[col]).localeCompare(String(b[col]))*dir});
-  tbody.innerHTML=data.map(d=>`<tr><td>${d.date}</td><td>${d.title}</td><td><span class="cat-tag ${CAT_CLASS[d.category]||''}">${d.category}</span></td><td>${d.tests||'—'}</td><td>${d.rootCauses||'—'}</td><td>${d.filesModified||'—'}</td><td>${d.filesCreated||'—'}</td><td><span class="badge ${d.status.toLowerCase()}">${d.status}</span></td></tr>`).join('');
+  return data;
 }
-renderTable('','','');
 
+function renderTable(){
+  const q=document.getElementById('searchInput').value.trim();
+  const data=getFiltered();
+  lastFiltered=data;
+  const totalPages=Math.max(1,Math.ceil(data.length/pageSize));
+  currentPage=Math.min(currentPage,totalPages);
+  const pageData=pageSize>=9999?data:data.slice((currentPage-1)*pageSize,currentPage*pageSize);
+
+  if(pageData.length===0){
+    tbody.innerHTML=`<tr class="empty-row"><td colspan="8">No documents match your filters. Try adjusting search or clearing filters.</td></tr>`;
+  }else{
+    tbody.innerHTML=pageData.map((d,i)=>`<tr data-idx="${DOCS.indexOf(d)}"><td>${d.date}</td><td class="wrap">${highlightMatch(d.title,q)}</td><td><span class="cat-tag ${CAT_CLASS[d.category]||''}">${d.category}</span></td><td>${d.tests||'—'}</td><td>${d.rootCauses||'—'}</td><td>${d.filesModified||'—'}</td><td>${d.filesCreated||'—'}</td><td><span class="badge ${d.status.toLowerCase()}">${d.status}</span></td></tr>`).join('');
+  }
+  applyColumnVisibility();
+
+  document.getElementById('metaShowing').textContent=pageData.length;
+  document.getElementById('metaTotal').textContent=data.length;
+  document.getElementById('metaTests').textContent=data.length?`Σ ${data.reduce((s,d)=>s+d.tests,0).toLocaleString()} tests in view`:'';
+
+  renderPagination(totalPages);
+
+  tbody.querySelectorAll('tr[data-idx]').forEach(tr=>{
+    tr.addEventListener('click',()=>openModal(DOCS[+tr.dataset.idx]));
+  });
+}
+
+function renderPagination(totalPages){
+  const el=document.getElementById('pagination');
+  let html='';
+  html+=`<select id="pageSizeSel"><option value="15">15/page</option><option value="30">30/page</option><option value="9999">All</option></select>`;
+  html+=`<button id="prevPage" ${currentPage<=1?'disabled':''}>‹ Prev</button>`;
+  const maxBtns=5;
+  let start=Math.max(1,currentPage-2),end=Math.min(totalPages,start+maxBtns-1);
+  start=Math.max(1,end-maxBtns+1);
+  for(let p=start;p<=end;p++){
+    html+=`<button data-page="${p}" class="${p===currentPage?'active':''}">${p}</button>`;
+  }
+  html+=`<button id="nextPage" ${currentPage>=totalPages?'disabled':''}>Next ›</button>`;
+  el.innerHTML=html;
+  document.getElementById('pageSizeSel').value=String(pageSize);
+  document.getElementById('pageSizeSel').addEventListener('change',e=>{pageSize=+e.target.value;currentPage=1;renderTable()});
+  document.getElementById('prevPage').addEventListener('click',()=>{currentPage--;renderTable()});
+  document.getElementById('nextPage').addEventListener('click',()=>{currentPage++;renderTable()});
+  el.querySelectorAll('button[data-page]').forEach(b=>b.addEventListener('click',()=>{currentPage=+b.dataset.page;renderTable()}));
+}
+
+/* populate category filter */
 const cats2=[...new Set(DOCS.map(d=>d.category))].sort();
 const catSel=document.getElementById('categoryFilter');
 cats2.forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;catSel.appendChild(o)});
 
-document.getElementById('searchInput').addEventListener('input',e=>renderTable(e.target.value,catSel.value,document.getElementById('statusFilter').value));
-catSel.addEventListener('change',e=>renderTable(document.getElementById('searchInput').value,e.target.value,document.getElementById('statusFilter').value));
-document.getElementById('statusFilter').addEventListener('change',e=>renderTable(document.getElementById('searchInput').value,catSel.value,e.target.value));
+['input','change'].forEach(ev=>{
+  document.getElementById('searchInput').addEventListener(ev,()=>{currentPage=1;renderTable()});
+});
+catSel.addEventListener('change',()=>{currentPage=1;renderTable()});
+document.getElementById('statusFilter').addEventListener('change',()=>{currentPage=1;renderTable()});
+document.getElementById('dateFrom').addEventListener('change',()=>{currentPage=1;renderTable()});
+document.getElementById('dateTo').addEventListener('change',()=>{currentPage=1;renderTable()});
 
-document.querySelectorAll('thead th').forEach(th=>{
+document.getElementById('resetFiltersBtn').addEventListener('click',()=>{
+  document.getElementById('searchInput').value='';
+  catSel.value='';
+  document.getElementById('statusFilter').value='';
+  document.getElementById('dateFrom').value='';
+  document.getElementById('dateTo').value='';
+  currentPage=1;
+  renderTable();
+  showToast('Filters reset');
+});
+
+document.querySelectorAll('#mainTable thead th').forEach(th=>{
   th.addEventListener('click',()=>{
     const col=th.dataset.col;if(!col)return;
     if(currentSort.col===col)currentSort.dir=currentSort.dir==='asc'?'desc':'asc';
     else{currentSort.col=col;currentSort.dir='asc'}
-    document.querySelectorAll('thead th').forEach(t=>t.classList.remove('sorted'));
+    document.querySelectorAll('#mainTable thead th').forEach(t=>t.classList.remove('sorted'));
     th.classList.add('sorted');
     th.querySelector('.sort-arrow').textContent=currentSort.dir==='asc'?'▲':'▼';
-    renderTable(document.getElementById('searchInput').value,catSel.value,document.getElementById('statusFilter').value);
+    renderTable();
   });
+});
+
+renderTable();
+
+/* ---------- Modal ---------- */
+function openModal(d){
+  document.getElementById('modalTitle').textContent=d.title;
+  document.getElementById('modalFile').textContent=d.file;
+  document.getElementById('modalGrid').innerHTML=`
+    <div class="modal-stat"><div class="ms-label">Date</div><div class="ms-value">${d.date}</div></div>
+    <div class="modal-stat"><div class="ms-label">Category</div><div class="ms-value"><span class="cat-tag ${CAT_CLASS[d.category]||''}">${d.category}</span></div></div>
+    <div class="modal-stat"><div class="ms-label">Status</div><div class="ms-value"><span class="badge ${d.status.toLowerCase()}">${d.status}</span></div></div>
+    <div class="modal-stat"><div class="ms-label">Tests Added</div><div class="ms-value">${d.tests.toLocaleString()}</div></div>
+    <div class="modal-stat"><div class="ms-label">Root Causes Fixed</div><div class="ms-value">${d.rootCauses}</div></div>
+    <div class="modal-stat"><div class="ms-label">Files Modified</div><div class="ms-value">${d.filesModified}</div></div>
+    <div class="modal-stat"><div class="ms-label">Files Created</div><div class="ms-value">${d.filesCreated}</div></div>
+    <div class="modal-stat"><div class="ms-label">Total Files Touched</div><div class="ms-value">${d.filesModified+d.filesCreated}</div></div>
+  `;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function closeModal(){document.getElementById('modalOverlay').classList.remove('open')}
+document.getElementById('modalClose').addEventListener('click',closeModal);
+document.getElementById('modalOverlay').addEventListener('click',e=>{if(e.target.id==='modalOverlay')closeModal()});
+
+/* ---------- Export ---------- */
+function downloadBlob(content,filename,type){
+  const blob=new Blob([content],{type});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=filename;document.body.appendChild(a);a.click();
+  document.body.removeChild(a);URL.revokeObjectURL(url);
+}
+document.getElementById('exportCsvBtn').addEventListener('click',()=>{
+  const rows=lastFiltered.length?lastFiltered:DOCS;
+  const header=['Date','Title','Category','Tests','RootCauses','FilesModified','FilesCreated','Status','File'];
+  const csv=[header.join(',')].concat(rows.map(d=>[d.date,`"${d.title.replace(/"/g,'""')}"`,d.category,d.tests,d.rootCauses,d.filesModified,d.filesCreated,d.status,d.file].join(','))).join('\n');
+  downloadBlob(csv,'nova-browser-docs-analytics.csv','text/csv');
+  showToast('CSV exported ('+rows.length+' rows)');
+});
+document.getElementById('exportJsonBtn').addEventListener('click',()=>{
+  const rows=lastFiltered.length?lastFiltered:DOCS;
+  downloadBlob(JSON.stringify(rows,null,2),'nova-browser-docs-analytics.json','application/json');
+  showToast('JSON exported ('+rows.length+' rows)');
+});
+document.getElementById('printBtn').addEventListener('click',()=>window.print());
+
+/* ---------- Back to top ---------- */
+const backBtn=document.getElementById('backToTop');
+window.addEventListener('scroll',()=>{
+  backBtn.classList.toggle('show',window.scrollY>500);
+});
+backBtn.addEventListener('click',()=>window.scrollTo({top:0,behavior:'smooth'}));
+
+/* ---------- Keyboard shortcuts ---------- */
+document.addEventListener('keydown',e=>{
+  const active=document.activeElement;
+  const typing=active&&(active.tagName==='INPUT'||active.tagName==='SELECT'||active.tagName==='TEXTAREA');
+  if(e.key==='/'&&!typing){e.preventDefault();document.getElementById('searchInput').focus()}
+  else if(e.key==='Escape'){
+    if(document.getElementById('modalOverlay').classList.contains('open')){closeModal()}
+    else if(typing&&active.id==='searchInput'){active.value='';currentPage=1;renderTable();active.blur()}
+  }
 });
 </script>
 </body>

@@ -136,28 +136,60 @@ class DnsNotFoundError extends DnsError {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SYSTEM RESOLVER (browser-compatible)
+// SYSTEM RESOLVER (real DNS)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Browser-compatible DNS resolution using the DNS-over-HTTPS approach.
- * In a real browser environment, hostname resolution is handled implicitly
- * by fetch(). This resolver uses a fetch-based approach to resolve hostnames
- * by attempting connections.
+ * Real DNS resolution strategy.
  *
- * In test environments, this can be replaced with a deterministic stub.
+ * - Node.js: Uses `dns.promises.resolve4()` / `resolve6()` for system-level
+ *   DNS resolution, falling back to DNS-over-HTTPS (Cloudflare) if unavailable.
+ * - Browser: Uses DNS-over-HTTPS (Cloudflare 1.1.1.1) since browser JS has no
+ *   native DNS API.
+ * - Test: Inject a deterministic stub via the constructor.
  */
 async function defaultSystemResolver(hostname: string): Promise<readonly string[]> {
-  // In a browser/Deno/Bun runtime, we can use DNS-over-HTTPS or simply
-  // rely on the platform's implicit resolution. Here we use a fetch probe
-  // approach — attempt a HEAD request to determine reachability.
-  //
-  // For production, this would use a real DNS-over-HTTPS provider
-  // (e.g., Cloudflare 1.1.1.1/dns-query, Google dns-query).
-  //
-  // We return the hostname itself as a "resolved" address — the actual
-  // IP resolution happens at the TCP connection level.
-  return [hostname];
+  const addresses: string[] = [];
+
+  // ── Node.js path: use dns.promises ────────────────────────────────────
+  if (typeof process !== 'undefined' && typeof require === 'function') {
+    try {
+      const dns = await import('node:dns').then(m => m.promises);
+      const [v4, v6] = await Promise.allSettled([
+        dns.resolve4(hostname).catch(() => []),
+        dns.resolve6(hostname).catch(() => []),
+      ]);
+      if (v4.status === 'fulfilled') addresses.push(...v4.value);
+      if (v6.status === 'fulfilled') addresses.push(...v6.value);
+      if (addresses.length > 0) return addresses;
+    } catch {
+      // dns module unavailable — fall through to DoH
+    }
+  }
+
+  // ── Browser / fallback path: DNS-over-HTTPS (Cloudflare 1.1.1.1) ──────
+  try {
+    const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=A`;
+    const res = await fetch(url, {
+      headers: { accept: 'application/dns-json' },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (res.ok) {
+      const json = await res.json() as {
+        Answer?: Array<{ data: string; type: number }>;
+      };
+      if (json.Answer) {
+        for (const a of json.Answer) {
+          if (a.type === 1) addresses.push(a.data); // A record
+        }
+      }
+    }
+  } catch {
+    // DoH unavailable — return hostname for implicit resolution
+  }
+
+  // If we got real IPs, return them; otherwise fall back to hostname
+  return addresses.length > 0 ? addresses : [hostname];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

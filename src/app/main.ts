@@ -65,6 +65,7 @@ import type { ICacheManager } from '../browser/netwroking/cache-manager';
 import { ResourcePrioritizer } from '../browser/netwroking/resource-prioritizer';
 import { Firewall, applyBaselineRules } from '../browser/netwroking/firewall';
 import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from '../browser/netwroking/networking-setup';
+import { RawSocketHttpClient } from '../browser/netwroking/raw-socket-http-client';
 
 // Security
 import { CertificateValidator } from '../browser/security/certificate-validator';
@@ -97,9 +98,14 @@ import { HtmlParser } from '../browser/rendering/html-parser';
 import { PageLoader, PageRenderer } from '../browser/engine/page-renderer';
 
 // Storage
-import { InMemorySessionsStore } from '../browser/storage/sessions-store';
+import {
+  PersistentSessionsStore,
+  PersistentCookieStore,
+  PersistentBookmarkStore,
+  PersistentHistoryStore,
+  PersistentTokenStore,
+} from '../browser/storage/persistent-stores';
 import type { ISessionsStore } from '../browser/storage/sessions-store';
-import { InMemoryCookieStore } from '../browser/storage/cookie-store';
 import type { ICookieStore } from '../browser/storage/cookie-store';
 import { SettingsStore } from '../browser/storage/settings-store';
 import type { ISettingsStore } from '../browser/storage/settings-store';
@@ -127,7 +133,6 @@ import type { IBrowserWindowPage } from '../ui/pages/browser-window';
 // Auth
 import { AuthManager } from '../browser/auth/auth-manager';
 import type { IAuthManager } from '../browser/auth/auth-manager';
-import { InMemoryTokenStore } from '../browser/auth/token-store';
 import type { ITokenStore } from '../browser/auth/token-store';
 
 // ── Service tokens ─────────────────────────────────────────────────────────────
@@ -355,12 +360,16 @@ class ApplicationBootstrap {
     // 4. Application services
     c.register<IHistoryService>(
       Tokens.HistoryService,
-      () => new HistoryService(),
+      () => new HistoryService(
+        new PersistentHistoryStore(typeof window !== 'undefined' ? window.localStorage : undefined),
+      ),
       ServiceLifetime.Singleton,
     );
     c.register<IBookmarkService>(
       Tokens.BookmarkService,
-      () => new BookmarkService(),
+      () => new BookmarkService(
+        new PersistentBookmarkStore(typeof window !== 'undefined' ? window.localStorage : undefined),
+      ),
       ServiceLifetime.Singleton,
     );
     c.register<IDownloadManager>(
@@ -372,12 +381,19 @@ class ApplicationBootstrap {
     // 5. Networking & Cache
     c.register<IResourceLoader>(
       Tokens.ResourceLoader,
-      (ctx) => new ResourceLoader(
-        undefined,
-        undefined,
-        undefined,
-        ctx.resolve<ITrackerBlocker>(Tokens.TrackerBlocker),
-      ),
+      (ctx) => {
+        const isNode = typeof process !== 'undefined' && typeof globalThis.fetch === 'undefined';
+        const client = isNode ? new RawSocketHttpClient() : undefined;
+        const cache = ctx.resolve<ICacheManager>(Tokens.CacheManager);
+        const loader = new ResourceLoader(
+          client,
+          undefined,
+          undefined,
+          ctx.resolve<ITrackerBlocker>(Tokens.TrackerBlocker),
+        );
+        loader.setCache(cache);
+        return loader;
+      },
       ServiceLifetime.Singleton,
     );
     c.register<ICacheManager>(
@@ -434,12 +450,12 @@ class ApplicationBootstrap {
     // 9. Storage
     c.register<ISessionsStore>(
       Tokens.SessionsStore,
-      () => new InMemorySessionsStore(),
+      () => new PersistentSessionsStore(typeof window !== 'undefined' ? window.localStorage : undefined),
       ServiceLifetime.Singleton,
     );
     c.register<ICookieStore>(
       Tokens.CookieStore,
-      () => new InMemoryCookieStore(),
+      () => new PersistentCookieStore(typeof window !== 'undefined' ? window.localStorage : undefined),
       ServiceLifetime.Singleton,
     );
 
@@ -497,11 +513,14 @@ class ApplicationBootstrap {
     // 12. Authentication
     c.register<ITokenStore>(
       Tokens.TokenStore,
-      () => new InMemoryTokenStore({
-        maxTokensPerProvider: 10,
-        autoCleanupExpired: true,
-        masterKey: 'nova-browser-default-key',
-      }),
+      () => new PersistentTokenStore(
+        {
+          maxTokensPerProvider: 10,
+          autoCleanupExpired: true,
+          masterKey: 'nova-browser-default-key',
+        },
+        typeof window !== 'undefined' ? window.localStorage : undefined,
+      ),
       ServiceLifetime.Singleton,
     );
     c.register<IAuthManager>(

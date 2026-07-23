@@ -19,6 +19,7 @@
 | Date | File | Summary |
 |------|------|---------|
 | 2026-07-23 | [2026-07-23-websocket-api.md](2026-07-23-websocket-api.md) | WebSocket API — WHATWG-spec class with platform factory, CSP enforcement, event dispatch. 4 runtime bugs fixed, addEventListener/removeEventListener added. 24 tests. Also fixed 11 async image-decoder test failures. |
+| 2026-07-23 | [2026-07-23-real-networking.md](2026-07-23-real-networking.md) | Real TCP/TLS networking — RawSocketHttpClient via net/tls, real DNS resolution (dns.promises + DoH fallback), opt-in real TLS cert chain retrieval. 15 integration tests. 349 total networking tests pass. |
 | 2026-07-23 | [2026-07-23-xhr-implementation.md](2026-07-23-xhr-implementation.md) | XMLHttpRequest implementation — open/send/abort, event lifecycle, response/request headers, EventTarget mixin. 58 tests. Fixed JSFunction invocation and readyState propagation bugs. |
 | 2026-07-23 | [2026-07-23-web-workers.md](2026-07-23-web-workers.md) | Web Workers — isolated background JS execution, bidirectional postMessage/onmessage, structured clone, terminate(), worker environment (no DOM). 59 tests. |
 | 2026-07-22 | [2026-07-22-tab-management-overhaul.md](2026-07-22-tab-management-overhaul.md) | Tab management overhaul — TabSession↔TabContext bridge, session persistence (auto-save/restore), event emission gaps fixed, 148 new tests. |
