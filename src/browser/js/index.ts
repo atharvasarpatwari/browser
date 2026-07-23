@@ -15,6 +15,7 @@ import {
   createAbortControllerClass, createFetchFn,
 } from './fetch-api';
 import { createXMLHttpRequestClass } from './xhr';
+import { createWebSocketClass } from './websocket-api';
 import type { CspResourceEnforcer } from '../security/csp-resource-enforcer';
 
 export { Lexer } from './lexer';
@@ -36,6 +37,7 @@ export { JITManager, TieredExecutor } from './jit';
 export { GarbageCollector, getGC, setGC } from './gc';
 export { Heap, getHeap, setHeap } from './heap';
 export { RootScanner, WeakRefStore } from './roots';
+export { createWebSocketClass, setPlatformWebSocketFactory } from './websocket-api';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC API
@@ -330,6 +332,9 @@ export function createGlobalEnv(
 
   // XMLHttpRequest
   env.setLocal('XMLHttpRequest', createXMLHttpRequestClass(eventLoop));
+
+  // WebSocket
+  env.setLocal('WebSocket', createWebSocketClass(eventLoop, resourceEnforcer, pageOrigin));
 
   // IntersectionObserver constructor
   env.setLocal('IntersectionObserver', createNativeFunction('IntersectionObserver', (_this, args) => {

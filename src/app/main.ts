@@ -446,7 +446,7 @@ class ApplicationBootstrap {
     // 9b. Settings persistence & service
     c.register<ISettingsStore>(
       Tokens.SettingsStore,
-      () => new SettingsStore(),
+      () => new SettingsStore(typeof window !== 'undefined' ? window.localStorage : undefined),
       ServiceLifetime.Singleton,
     );
     c.register<ISettingsService>(
@@ -704,6 +704,10 @@ class ApplicationBootstrap {
     page.setDownloadManager(downloadManager);
     page.setBookmarkService(bookmarkService);
     page.setHistoryService(historyServiceInstance);
+
+    // Wire DI-registered blockers into the page so shield toggle affects engine middleware
+    page.setTrackerBlocker(blocker);
+    page.setAdBlocker(adBlocker);
 
     // Wire SettingsService → BrowserWindowPage so nova://settings gets persistence
     const settingsService = this.container.resolve<ISettingsService>(Tokens.SettingsService);

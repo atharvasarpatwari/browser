@@ -105,6 +105,7 @@ class TabStrip implements ITabStrip {
   private _tabs: TabStripTabData[] = [];
   private _activeTabId: string | null = null;
   private readonly _managerUnsubs: Array<() => void> = [];
+  private _activeTabUnsubs: Array<() => void> = [];
 
   constructor(manager: ITabManager) {
     this.manager = manager;
@@ -136,10 +137,11 @@ class TabStrip implements ITabStrip {
 
   private wireManagerEvents(): void {
     const onCreated = () => { this.syncWithManager(); };
-    const onRemoved = () => { this.syncWithManager(); };
+    const onRemoved = () => { this.syncWithManager(); this.subscribeToActiveTab(); };
     const onActivated = (e: { kind: string; tabId: string }) => {
       if (e.kind === 'tabActivated') this._activeTabId = e.tabId;
       this.syncWithManager();
+      this.subscribeToActiveTab();
     };
     const onMoved = (e: { kind: string; tabId: string; fromIndex: number; toIndex: number }) => {
       if (e.kind === 'tabMoved') {
@@ -166,6 +168,38 @@ class TabStrip implements ITabStrip {
       () => this.manager.off('tabActivated', onActivated),
       () => this.manager.off('tabMoved', onMoved),
       () => this.manager.off('tabPinned', onPinned),
+    );
+
+    this.subscribeToActiveTab();
+  }
+
+  /**
+   * Subscribe to per-tab state changes (title, url, loading, favicon) on the
+   * currently active tab so the tab strip re-renders when the active tab's
+   * title or URL changes without a tab switch.
+   */
+  private subscribeToActiveTab(): void {
+    for (const unsub of this._activeTabUnsubs) unsub();
+    this._activeTabUnsubs.length = 0;
+
+    const tab = this.manager.activeTab;
+    if (!tab) return;
+
+    const onTitleChanged = () => { this.syncWithManager(); };
+    const onUrlChanged = () => { this.syncWithManager(); };
+    const onLoadingChanged = () => { this.syncWithManager(); };
+    const onFaviconChanged = () => { this.syncWithManager(); };
+
+    tab.on('titleChanged', onTitleChanged);
+    tab.on('urlChanged', onUrlChanged);
+    tab.on('loadingStateChanged', onLoadingChanged);
+    tab.on('faviconChanged', onFaviconChanged);
+
+    this._activeTabUnsubs.push(
+      () => tab.off('titleChanged', onTitleChanged),
+      () => tab.off('urlChanged', onUrlChanged),
+      () => tab.off('loadingStateChanged', onLoadingChanged),
+      () => tab.off('faviconChanged', onFaviconChanged),
     );
   }
 
@@ -209,6 +243,8 @@ class TabStrip implements ITabStrip {
   dispose(): void {
     for (const unsub of this._managerUnsubs) unsub();
     this._managerUnsubs.length = 0;
+    for (const unsub of this._activeTabUnsubs) unsub();
+    this._activeTabUnsubs.length = 0;
     this.bus.dispose();
   }
 }

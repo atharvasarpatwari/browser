@@ -5,7 +5,14 @@
   "description": "Nova Browser — A TypeScript browser engine",
   "type": "module",
   "scripts": {
+    "dev": "vite",
     "build": "tsc",
+    "build:web": "vite build",
+    "preview": "vite preview --port 4173",
+    "start": "vite preview --port 4173",
+    "android": "cap android",
+    "build:android": "vite build && cap sync android",
+    "open:android": "cap open android",
     "watch": "tsc --watch",
     "clean": "rimraf dist coverage",
     "typecheck": "tsc --noEmit",
@@ -19,6 +26,9 @@
     "benchmark": "tsx src/benchmark/run.ts"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/cli": "^7.6.8",
+    "@capacitor/core": "^8.4.2",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0",
     "webgpu": "^0.4.0"

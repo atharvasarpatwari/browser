@@ -449,6 +449,13 @@ class NavigationBridge implements INavigationBridge {
       this.statusBar?.setUrl(tab.url);
       this.statusBar?.setStatus(tab.loading ? 'Loading...' : 'Done');
     }
+
+    // Sync the shared NavigationController to the active tab's URL so that
+    // back/forward operate on the correct tab's history going forward.
+    const currentEntry = this.nav.getCurrentEntry();
+    if (tab.url && currentEntry?.url !== tab.url) {
+      this.nav.navigate(tab.url);
+    }
   }
 
   // ── Events ─────────────────────────────────────────────────────────────────

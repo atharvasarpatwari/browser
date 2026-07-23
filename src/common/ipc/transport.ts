@@ -142,8 +142,8 @@ class InProcessTransport implements ITransport {
       throw new Error('Transport not connected');
     }
     if (this._config.maxMessageSize > 0 &&
-        Buffer.byteLength(data) > this._config.maxMessageSize) {
-      throw new Error(`Message size exceeds limit: ${Buffer.byteLength(data)} > ${this._config.maxMessageSize}`);
+        new TextEncoder().encode(data).byteLength > this._config.maxMessageSize) {
+      throw new Error(`Message size exceeds limit: ${new TextEncoder().encode(data).byteLength} > ${this._config.maxMessageSize}`);
     }
     // Deliver to remote's data handlers
     for (const h of this._remote._dataHandlers) {
@@ -246,7 +246,7 @@ class EventEmitterTransport implements ITransport {
   async send(data: TransportData): Promise<void> {
     if (!this._connected) throw new Error('Transport not connected');
     if (this._config.maxMessageSize > 0 &&
-        Buffer.byteLength(data) > this._config.maxMessageSize) {
+        new TextEncoder().encode(data).byteLength > this._config.maxMessageSize) {
       throw new Error(`Message size exceeds limit`);
     }
     this._emitter.send(data);

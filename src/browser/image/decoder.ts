@@ -8,8 +8,8 @@
  * Unknown or unsupported MIME types produce a synthetic fallback (checkerboard).
  */
 
-import { PNG } from 'pngjs';
-import * as jpeg from 'jpeg-js';
+import type { PNG } from 'pngjs';
+import type * as jpeg from 'jpeg-js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -43,7 +43,7 @@ function normalizeMime(mimeType: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface IImageDecoder {
-  decode(buffer: Uint8Array | ArrayBuffer, mimeType: string): DecodedImage | null;
+  decode(buffer: Uint8Array | ArrayBuffer, mimeType: string): DecodedImage | null | Promise<DecodedImage | null>;
 }
 
 export class ImageDecoder implements IImageDecoder {
@@ -54,7 +54,7 @@ export class ImageDecoder implements IImageDecoder {
    * @param mimeType The content type (e.g. "image/png", "image/jpeg").
    * @returns DecodedImage with RGBA data, or null if decoding fails.
    */
-  decode(buffer: Uint8Array | ArrayBuffer, mimeType: string): DecodedImage | null {
+  async decode(buffer: Uint8Array | ArrayBuffer, mimeType: string): Promise<DecodedImage | null> {
     const mime = normalizeMime(mimeType);
 
     if (!SUPPORTED_MIME_TYPES.has(mime)) {
@@ -65,11 +65,11 @@ export class ImageDecoder implements IImageDecoder {
       const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
 
       if (mime === 'image/png') {
-        return this.decodePng(bytes);
+        return await this.decodePng(bytes);
       }
 
       if (mime === 'image/jpeg') {
-        return this.decodeJpeg(bytes);
+        return await this.decodeJpeg(bytes);
       }
 
       return null;
@@ -78,7 +78,9 @@ export class ImageDecoder implements IImageDecoder {
     }
   }
 
-  private decodePng(bytes: Uint8Array): DecodedImage | null {
+  private async decodePng(bytes: Uint8Array): Promise<DecodedImage | null> {
+    // pngjs is Node-only — lazy import to avoid bundling into browser
+    const { PNG } = await import('pngjs');
     // pngjs expects a Node.js Buffer
     const nodeBuffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const png = PNG.sync.read(nodeBuffer);
@@ -90,7 +92,8 @@ export class ImageDecoder implements IImageDecoder {
     };
   }
 
-  private decodeJpeg(bytes: Uint8Array): DecodedImage | null {
+  private async decodeJpeg(bytes: Uint8Array): Promise<DecodedImage | null> {
+    const jpeg = await import('jpeg-js');
     const raw = jpeg.decode(bytes, { useTArray: true });
     if (!raw || raw.width <= 0 || raw.height <= 0) {
       return null;

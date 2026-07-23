@@ -106,7 +106,7 @@ class BookmarkBarEventBus {
 }
 
 class BookmarkBar implements IBookmarkBar {
-  private readonly service: IBookmarkService;
+  private service: IBookmarkService;
   private readonly validator: BookmarkValidator;
   private readonly bus = new BookmarkBarEventBus();
   private _items: BookmarkEntry[] = [];
@@ -115,6 +115,14 @@ class BookmarkBar implements IBookmarkBar {
   constructor(service?: IBookmarkService) {
     this.service = service ?? new BookmarkService();
     this.validator = new BookmarkValidator();
+  }
+
+  /**
+   * Replace the bookmark service after construction.
+   * Used when DI services become available after the BookmarkBar is created.
+   */
+  setService(service: IBookmarkService): void {
+    this.service = service;
   }
 
   get state(): BookmarkBarState {

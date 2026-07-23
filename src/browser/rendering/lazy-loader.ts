@@ -257,7 +257,7 @@ export class LazyLoader {
 
       // Decode the binary data
       if (isSupportedImageType(result.contentType)) {
-        const decoded = this.decoder!.decode(result.bodyBinary, result.contentType);
+        const decoded = await this.decoder!.decode(result.bodyBinary, result.contentType);
         if (decoded) {
           el.imageData = { data: decoded.data, width: decoded.width, height: decoded.height };
           el.naturalWidth = decoded.width;

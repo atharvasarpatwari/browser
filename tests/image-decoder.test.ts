@@ -77,9 +77,9 @@ describe('ImageDecoder', () => {
   const decoder = new ImageDecoder();
 
   describe('PNG decoding', () => {
-    it('should decode a 1x1 red PNG', () => {
+    it('should decode a 1x1 red PNG', async () => {
       const pngBuf = createMinimalPng(1, 1, 255, 0, 0);
-      const result = decoder.decode(new Uint8Array(pngBuf), 'image/png');
+      const result = await decoder.decode(new Uint8Array(pngBuf), 'image/png');
 
       expect(result).not.toBeNull();
       expect(result!.width).toBe(1);
@@ -91,9 +91,9 @@ describe('ImageDecoder', () => {
       expect(result!.data[3]).toBe(255); // A
     });
 
-    it('should decode a 4x4 blue PNG', () => {
+    it('should decode a 4x4 blue PNG', async () => {
       const pngBuf = createMinimalPng(4, 4, 0, 0, 255);
-      const result = decoder.decode(new Uint8Array(pngBuf), 'image/png');
+      const result = await decoder.decode(new Uint8Array(pngBuf), 'image/png');
 
       expect(result).not.toBeNull();
       expect(result!.width).toBe(4);
@@ -109,10 +109,10 @@ describe('ImageDecoder', () => {
       }
     });
 
-    it('should handle PNG with ArrayBuffer input', () => {
+    it('should handle PNG with ArrayBuffer input', async () => {
       const pngBuf = createMinimalPng(2, 2, 100, 200, 50);
       const arrayBuffer = new Uint8Array(pngBuf).buffer;
-      const result = decoder.decode(arrayBuffer, 'image/png');
+      const result = await decoder.decode(arrayBuffer, 'image/png');
 
       expect(result).not.toBeNull();
       expect(result!.width).toBe(2);
@@ -121,9 +121,9 @@ describe('ImageDecoder', () => {
   });
 
   describe('JPEG decoding', () => {
-    it('should decode a 1x1 red JPEG', () => {
+    it('should decode a 1x1 red JPEG', async () => {
       const jpegBuf = createMinimalJpeg(1, 1, 255, 0, 0);
-      const result = decoder.decode(new Uint8Array(jpegBuf), 'image/jpeg');
+      const result = await decoder.decode(new Uint8Array(jpegBuf), 'image/jpeg');
 
       expect(result).not.toBeNull();
       expect(result!.width).toBe(1);
@@ -135,9 +135,9 @@ describe('ImageDecoder', () => {
       expect(result!.data[2]).toBeLessThan(50);     // B
     });
 
-    it('should decode a 4x4 green JPEG', () => {
+    it('should decode a 4x4 green JPEG', async () => {
       const jpegBuf = createMinimalJpeg(4, 4, 0, 200, 0);
-      const result = decoder.decode(new Uint8Array(jpegBuf), 'image/jpeg');
+      const result = await decoder.decode(new Uint8Array(jpegBuf), 'image/jpeg');
 
       expect(result).not.toBeNull();
       expect(result!.width).toBe(4);
@@ -147,51 +147,51 @@ describe('ImageDecoder', () => {
   });
 
   describe('Error handling', () => {
-    it('should return null for unsupported MIME type', () => {
+    it('should return null for unsupported MIME type', async () => {
       const buf = new Uint8Array([1, 2, 3, 4]);
-      const result = decoder.decode(buf, 'image/webp');
+      const result = await decoder.decode(buf, 'image/webp');
       expect(result).toBeNull();
     });
 
-    it('should return null for garbage PNG data', () => {
+    it('should return null for garbage PNG data', async () => {
       const garbage = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]);
-      const result = decoder.decode(garbage, 'image/png');
+      const result = await decoder.decode(garbage, 'image/png');
       expect(result).toBeNull();
     });
 
-    it('should return null for garbage JPEG data', () => {
+    it('should return null for garbage JPEG data', async () => {
       const garbage = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]);
-      const result = decoder.decode(garbage, 'image/jpeg');
+      const result = await decoder.decode(garbage, 'image/jpeg');
       expect(result).toBeNull();
     });
 
-    it('should return null for empty buffer', () => {
-      const result = decoder.decode(new Uint8Array(0), 'image/png');
+    it('should return null for empty buffer', async () => {
+      const result = await decoder.decode(new Uint8Array(0), 'image/png');
       expect(result).toBeNull();
     });
 
-    it('should return null for text/html MIME type', () => {
-      const result = decoder.decode(new Uint8Array([1, 2, 3]), 'text/html');
+    it('should return null for text/html MIME type', async () => {
+      const result = await decoder.decode(new Uint8Array([1, 2, 3]), 'text/html');
       expect(result).toBeNull();
     });
   });
 
   describe('Edge cases', () => {
-    it('should handle MIME type with parameters', () => {
+    it('should handle MIME type with parameters', async () => {
       const pngBuf = createMinimalPng(1, 1, 0, 0, 0);
-      const result = decoder.decode(new Uint8Array(pngBuf), 'image/png; charset=utf-8');
+      const result = await decoder.decode(new Uint8Array(pngBuf), 'image/png; charset=utf-8');
       expect(result).not.toBeNull();
     });
 
-    it('should handle image/jpg normalization', () => {
+    it('should handle image/jpg normalization', async () => {
       const jpegBuf = createMinimalJpeg(1, 1, 128, 128, 128);
-      const result = decoder.decode(new Uint8Array(jpegBuf), 'image/jpg');
+      const result = await decoder.decode(new Uint8Array(jpegBuf), 'image/jpg');
       expect(result).not.toBeNull();
     });
 
-    it('should decode a large PNG (100x100)', () => {
+    it('should decode a large PNG (100x100)', async () => {
       const pngBuf = createMinimalPng(100, 100, 128, 64, 32);
-      const result = decoder.decode(new Uint8Array(pngBuf), 'image/png');
+      const result = await decoder.decode(new Uint8Array(pngBuf), 'image/png');
 
       expect(result).not.toBeNull();
       expect(result!.width).toBe(100);
