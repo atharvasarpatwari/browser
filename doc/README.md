@@ -19,6 +19,7 @@
 | Date | File | Summary |
 |------|------|---------|
 | 2026-07-23 | [2026-07-23-xhr-implementation.md](2026-07-23-xhr-implementation.md) | XMLHttpRequest implementation — open/send/abort, event lifecycle, response/request headers, EventTarget mixin. 58 tests. Fixed JSFunction invocation and readyState propagation bugs. |
+| 2026-07-23 | [2026-07-23-web-workers.md](2026-07-23-web-workers.md) | Web Workers — isolated background JS execution, bidirectional postMessage/onmessage, structured clone, terminate(), worker environment (no DOM). 59 tests. |
 | 2026-07-22 | [2026-07-22-tab-management-overhaul.md](2026-07-22-tab-management-overhaul.md) | Tab management overhaul — TabSession↔TabContext bridge, session persistence (auto-save/restore), event emission gaps fixed, 148 new tests. |
 | 2026-07-22 | [2026-07-22-tab-persistence.md](2026-07-22-tab-persistence.md) | Tab persistence — storage abstraction (localStorage + MemoryStore), orchestrator with auto-save on TabManager events, debounced title/url, staleness check. 189 lines. |
 | 2026-07-22 | [2026-07-22-navigation-bridge-test-suite.md](2026-07-22-navigation-bridge-test-suite.md) | NavigationBridge comprehensive test suite — 25 mock-based tests across construction, navigation, back/forward, tab sync, events, address bar input, dispose. |
