@@ -14,6 +14,7 @@ import {
   createHeadersClass, createResponseClass, createRequestClass,
   createAbortControllerClass, createFetchFn,
 } from './fetch-api';
+import { createXMLHttpRequestClass } from './xhr';
 import type { CspResourceEnforcer } from '../security/csp-resource-enforcer';
 
 export { Lexer } from './lexer';
@@ -326,6 +327,9 @@ export function createGlobalEnv(
   env.setLocal('Request', createRequestClass(eventLoop));
   env.setLocal('AbortController', createAbortControllerClass(eventLoop));
   env.setLocal('fetch', createFetchFn(eventLoop, platformFetch, resourceEnforcer, pageOrigin));
+
+  // XMLHttpRequest
+  env.setLocal('XMLHttpRequest', createXMLHttpRequestClass(eventLoop));
 
   // IntersectionObserver constructor
   env.setLocal('IntersectionObserver', createNativeFunction('IntersectionObserver', (_this, args) => {

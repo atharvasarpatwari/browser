@@ -11,11 +11,14 @@
 | 2026-07-18 | [../docs/browser-building-gap-analysis.md](../docs/browser-building-gap-analysis.md) | Comprehensive gap analysis against 9 phases of browser building — 207 source files, 91 test files, critical gaps: no OS window, no real networking, no persistence. Recommended path: Electron integration. |
 | 2026-07-18 | [../docs/ui-broken-items-fixes.md](../docs/ui-broken-items-fixes.md) | 8 broken UI items fixed — NavigationFetcher boot order, toolbar sync, tab title updates, duplicate DI services, shared NavigationController, settings persistence, mobile layout activation. |
 | 2026-07-22 | [2026-07-22-vite-dev-server.md](2026-07-22-vite-dev-server.md) | Vite dev server setup — `npm run dev` serves full browser chrome UI at localhost:5173. Fixed Buffer.byteLength in IPC transport, lazy-imported Node-only image decoders, aliased electron for Vite resolution. |
+| 2026-07-22 | [android-apk-build-guide.md](android-apk-build-guide.md) | Android APK build guide — Capacitor setup for wrapping Nova browser as native Android app. Requires JDK 17+ and Android Studio. |
+| 2026-07-22 | [2026-07-22-android-apk-setup.md](2026-07-22-android-apk-setup.md) | Android APK setup session — Capacitor integration, web→APK pipeline, customization options. |
 
 ## Change Logs
 
 | Date | File | Summary |
 |------|------|---------|
+| 2026-07-23 | [2026-07-23-xhr-implementation.md](2026-07-23-xhr-implementation.md) | XMLHttpRequest implementation — open/send/abort, event lifecycle, response/request headers, EventTarget mixin. 58 tests. Fixed JSFunction invocation and readyState propagation bugs. |
 | 2026-07-22 | [2026-07-22-tab-management-overhaul.md](2026-07-22-tab-management-overhaul.md) | Tab management overhaul — TabSession↔TabContext bridge, session persistence (auto-save/restore), event emission gaps fixed, 148 new tests. |
 | 2026-07-22 | [2026-07-22-tab-persistence.md](2026-07-22-tab-persistence.md) | Tab persistence — storage abstraction (localStorage + MemoryStore), orchestrator with auto-save on TabManager events, debounced title/url, staleness check. 189 lines. |
 | 2026-07-22 | [2026-07-22-navigation-bridge-test-suite.md](2026-07-22-navigation-bridge-test-suite.md) | NavigationBridge comprehensive test suite — 25 mock-based tests across construction, navigation, back/forward, tab sync, events, address bar input, dispose. |
