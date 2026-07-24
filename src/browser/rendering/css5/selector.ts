@@ -82,9 +82,9 @@ function matchesCompound(element: SelectableElement, sel: CssCompoundSelector): 
     if (!matchesAttribute(element, attr)) return false;
   }
 
-  // Pseudo-class
-  if (sel.pseudoClass) {
-    if (!matchesPseudoClass(element, sel.pseudoClass)) return false;
+  // Pseudo-classes
+  for (const pc of sel.pseudoClasses) {
+    if (!matchesPseudoClass(element, pc)) return false;
   }
 
   // Pseudo-elements — can't match in this context (they refer to generated content)

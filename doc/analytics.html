@@ -174,9 +174,9 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 <header>
   <h1>Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num">61</span> Documents</span>
-    <span><span class="num">6</span> Days</span>
-    <span><span class="num">4,393</span> Total Suite Tests</span>
+    <span><span class="num">67</span> Documents</span>
+    <span><span class="num">7</span> Days</span>
+    <span><span class="num">5,631</span> Total Suite Tests</span>
     <span>Generated <span class="num">2026-07-23</span></span>
   </p>
 </header>
@@ -190,10 +190,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <div class="kpi-row">
-  <div class="kpi cyan glass"><div class="value" id="kpiDocs">59</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
-  <div class="kpi purple glass"><div class="value" id="kpiTests">3,967</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
-  <div class="kpi red glass"><div class="value" id="kpiRootCauses">84</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
-  <div class="kpi green glass"><div class="value" id="kpiFiles">151</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi cyan glass"><div class="value" id="kpiDocs">67</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi purple glass"><div class="value" id="kpiTests">4,133</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
+  <div class="kpi red glass"><div class="value" id="kpiRootCauses">91</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><div class="value" id="kpiFiles">197</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
   <div class="kpi amber glass"><div class="value" id="kpiCompliance">~72%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
 </div>
 
@@ -306,7 +306,7 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <footer>
-  Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-07-22 (refreshed)
+  Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-07-24 (refreshed)
   <div class="kbd-hint">Press <kbd>/</kbd> to search · <kbd>Esc</kbd> to clear · click a row for details</div>
 </footer>
 
@@ -385,7 +385,15 @@ const DOCS=[
 {file:"2026-07-22-navigation-bridge-test-suite.md",date:"2026-07-22",title:"NavigationBridge Test Suite",category:"UI",tests:25,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
 {file:"2026-07-22-tab-context-tests.md",date:"2026-07-22",title:"TabContext Test Suite",category:"UI",tests:25,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
 {file:"2026-07-22-tab-persistence.md",date:"2026-07-22",title:"Tab Persistence",category:"UI",tests:20,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
-{file:"2026-07-22-vite-dev-server.md",date:"2026-07-22",title:"Vite Dev Server",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1}
+{file:"2026-07-22-vite-dev-server.md",date:"2026-07-22",title:"Vite Dev Server",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1},
+{file:"2026-07-23-persistent-storage-networking.md",date:"2026-07-23",title:"Persistent Storage & Networking Pipeline",category:"IPC/Networking",tests:0,status:"Completed",rootCauses:3,filesModified:1,filesCreated:1},
+{file:"2026-07-23-test-suite-expansion.md",date:"2026-07-23",title:"Test Suite Expansion",category:"Architecture",tests:274,status:"Completed",rootCauses:0,filesModified:0,filesCreated:9},
+{file:"2026-07-23-process-separation.md",date:"2026-07-23",title:"Process Separation",category:"IPC/Networking",tests:51,status:"Completed",rootCauses:0,filesModified:4,filesCreated:8},
+{file:"2026-07-23-wpt-spec-compliance.md",date:"2026-07-23",title:"WPT & Spec Compliance",category:"Architecture",tests:227,status:"Completed",rootCauses:0,filesModified:0,filesCreated:5},
+{file:"2026-07-23-cors-security.md",date:"2026-07-23",title:"CORS Security Engine",category:"Security",tests:80,status:"Completed",rootCauses:1,filesModified:1,filesCreated:2},
+{file:"2026-07-23-csp-evaluator-tests.md",date:"2026-07-23",title:"CSP Evaluator Test Suite",category:"Security",tests:127,status:"Completed",rootCauses:1,filesModified:0,filesCreated:1},
+{file:"2026-07-24-compositing-layers.md",date:"2026-07-24",title:"Compositing Layers",category:"Rendering",tests:75,status:"Completed",rootCauses:0,filesModified:8,filesCreated:7},
+{file:"2026-07-24-cascade-inheritance-resolution.md",date:"2026-07-24",title:"Cascade & Inheritance Resolution",category:"CSS",tests:91,status:"Completed",rootCauses:0,filesModified:3,filesCreated:6}
 ];
 
 const CAT_COLORS={CSS:'#60a5fa',HTML5:'#f472b6',JavaScript:'#fbbf24',Layout:'#34d399',Rendering:'#a855f7',Security:'#f87171','IPC/Networking':'#00f0ff',UI:'#f472b6',Architecture:'#94a3b8',Plan:'#fbbf24'};

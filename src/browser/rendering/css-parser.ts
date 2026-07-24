@@ -248,7 +248,7 @@ function compoundToString(sel: CssCompoundSelector): string {
 
   if (sel.tagName) {
     result += sel.tagName;
-  } else if (sel.id || sel.classes.length > 0 || sel.attributes.length > 0 || sel.pseudoClass) {
+  } else if (sel.id || sel.classes.length > 0 || sel.attributes.length > 0 || sel.pseudoClasses.length > 0) {
     result += '*';
   }
 
@@ -264,21 +264,21 @@ function compoundToString(sel: CssCompoundSelector): string {
     }
   }
 
-  if (sel.pseudoClass) {
-    if (sel.pseudoClass.type === 'negation') {
-      const inner = sel.pseudoClass.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
+  for (const pc of sel.pseudoClasses) {
+    if (pc.type === 'negation') {
+      const inner = pc.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
       result += `:not(${inner})`;
-    } else if (sel.pseudoClass.type === 'is' || sel.pseudoClass.type === 'any') {
-      const inner = sel.pseudoClass.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
+    } else if (pc.type === 'is' || pc.type === 'any') {
+      const inner = pc.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
       result += `:is(${inner})`;
-    } else if (sel.pseudoClass.type === 'has') {
-      const inner = sel.pseudoClass.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
+    } else if (pc.type === 'has') {
+      const inner = pc.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
       result += `:has(${inner})`;
-    } else if (sel.pseudoClass.type === 'structural') {
-      result += `:${sel.pseudoClass.name}`;
-      if (sel.pseudoClass.value) result += `(${sel.pseudoClass.value})`;
+    } else if (pc.type === 'structural') {
+      result += `:${pc.name}`;
+      if (pc.value) result += `(${pc.value})`;
     } else {
-      result += `:${sel.pseudoClass.name}`;
+      result += `:${pc.name}`;
     }
   }
 

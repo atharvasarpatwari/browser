@@ -132,57 +132,11 @@ export class CssParser {
         continue;
       }
 
-      const rule = this.consumeQualifiedRule();
+      const rule = this.consumeQualifiedRuleFromTokens();
       if (rule) rules.push(rule);
     }
 
     return rules;
-  }
-
-  private consumeQualifiedRule(): CssStyleRule | null {
-    const selectorTokens = this.collectTokensUntil(CssTokenType.CurlyBracketOpen);
-    if (selectorTokens.length === 0) {
-      if (this.current()?.type === CssTokenType.CurlyBracketOpen) {
-        this.pos++;
-        this.skipToClosingBrace(1);
-      }
-      return null;
-    }
-
-    // Parse selector
-    this.tokens = selectorTokens;
-    this.pos = 0;
-    const selector = this.consumeSelector();
-
-    // Restore original tokens
-    const savedTokens = this.tokens;
-    const savedPos = this.pos;
-
-    // We need to go back to the main token stream to consume the block
-    // Instead, let's work differently — collect declaration tokens from the original stream
-    // Actually, let's re-approach: use the original tokens array
-
-    // Find { in the main stream
-    this.tokens = savedTokens;
-    this.pos = savedPos;
-
-    if (!selector) {
-      // Skip block
-      if (this.current()?.type === CssTokenType.CurlyBracketOpen) {
-        this.pos++;
-        this.skipToClosingBrace(1);
-      }
-      return null;
-    }
-
-    // Now we need to find { in the original full token stream
-    // This is tricky because we've swapped tokens. Let me use a different approach.
-    // We'll consume the declaration block from the raw text instead.
-
-    // Actually, let's rework. The clean approach is to parse from the original stream.
-    // But we've already consumed selector tokens. Let me use a sub-parser approach.
-
-    return null; // Will be reworked below
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -285,12 +239,28 @@ export class CssParser {
     return left;
   }
 
+  /** Parse a comma-separated selector list. */
+  private consumeSelectorList(): CssSelector[] {
+    const selectors: CssSelector[] = [];
+    const selector = this.consumeSelector();
+    if (selector) selectors.push(selector);
+
+    while (this.current()?.type === CssTokenType.Comma) {
+      this.pos++; // skip comma
+      this.skipWs();
+      const next = this.consumeSelector();
+      if (next) selectors.push(next);
+    }
+
+    return selectors;
+  }
+
   private consumeCompoundSelector(): CssCompoundSelector | null {
     let tagName: string | null = null;
     let id: string | null = null;
     const classes: string[] = [];
     const attributes: CssAttributeSelector[] = [];
-    let pseudoClass: CssPseudoClassSelector | null = null;
+    const pseudoClasses: CssPseudoClassSelector[] = [];
     let pseudoElement: string | null = null;
 
     this.skipWs();
@@ -302,11 +272,11 @@ export class CssParser {
       if (!tok) break;
 
       // Tag name or universal
-      if (tok.type === CssTokenType.Ident) {
-        if (tok.value === '*') {
+      if (tok.type === CssTokenType.Ident || tok.type === CssTokenType.Asterisk) {
+        if (tok.type === CssTokenType.Asterisk || tok.value === '*') {
           tagName = '*';
           this.pos++;
-        } else if (!tagName && id === null && classes.length === 0 && attributes.length === 0 && !pseudoClass) {
+        } else if (!tagName && id === null && classes.length === 0 && attributes.length === 0 && pseudoClasses.length === 0) {
           tagName = tok.value.toLowerCase();
           this.pos++;
         } else {
@@ -354,10 +324,12 @@ export class CssParser {
         } else if (next?.type === CssTokenType.Ident) {
           // Pseudo-class
           this.pos += 2;
-          pseudoClass = this.consumePseudoClass(next.value.toLowerCase());
+          const pc = this.consumePseudoClass(next.value.toLowerCase());
+          if (pc) pseudoClasses.push(pc);
         } else if (next?.type === CssTokenType.Function) {
           this.pos += 2;
-          pseudoClass = this.consumePseudoClassFunction(next.value.toLowerCase());
+          const pc = this.consumePseudoClassFunction(next.value.toLowerCase());
+          if (pc) pseudoClasses.push(pc);
         }
         continue;
       }
@@ -367,7 +339,7 @@ export class CssParser {
 
     if (start === this.pos && !tagName) return null;
 
-    return { type: 'compound', tagName, id, classes, attributes, pseudoClass, pseudoElement };
+    return { type: 'compound', tagName, id, classes, attributes, pseudoClasses, pseudoElement };
   }
 
   private consumeAttributeSelector(): CssAttributeSelector | null {
@@ -395,7 +367,7 @@ export class CssParser {
     else if (tok.type === CssTokenType.Ident && tok.value === '|' && this.peekNext()?.type === CssTokenType.Equals) { operator = '|='; this.pos += 2; }
     else if (tok.type === CssTokenType.Ident && tok.value === '^' && this.peekNext()?.type === CssTokenType.Equals) { operator = '^='; this.pos += 2; }
     else if (tok.type === CssTokenType.Ident && tok.value === '$' && this.peekNext()?.type === CssTokenType.Equals) { operator = '$='; this.pos += 2; }
-    else if (tok.type === CssTokenType.Ident && tok.value === '*' && this.peekNext()?.type === CssTokenType.Equals) { operator = '*='; this.pos += 2; }
+    else if (tok.type === CssTokenType.Asterisk && this.peekNext()?.type === CssTokenType.Equals) { operator = '*='; this.pos += 2; }
 
     this.skipWs();
 
@@ -448,10 +420,14 @@ export class CssParser {
         this.pos++; // (
         const arg = this.consumeUntilClosingParen();
         if (name === 'not' || name === 'is' || name === 'any' || name === 'where' || name === 'matches' || name === 'has') {
-          // Parse argument as selector list
+          // Parse argument as selector list — use raw tokens to preserve whitespace for combinators
           const savedTokens = this.tokens;
           const savedPos = this.pos;
-          this.tokens = this.cleanTokens(arg);
+          this.tokens = tokenizeCss(arg).filter((t: CssToken) =>
+            t.type !== CssTokenType.Comment &&
+            t.type !== CssTokenType.BadComment &&
+            t.type !== CssTokenType.EOF
+          );
           this.pos = 0;
           const selectors: CssSelector[] = [];
           while (this.pos < this.tokens.length) {
@@ -484,9 +460,14 @@ export class CssParser {
     const arg = this.consumeUntilClosingParen();
 
     if (name === 'not' || name === 'is' || name === 'any' || name === 'where' || name === 'matches' || name === 'has') {
+      // Use raw tokens to preserve whitespace for combinators
       const savedTokens = this.tokens;
       const savedPos = this.pos;
-      this.tokens = this.cleanTokens(arg);
+      this.tokens = tokenizeCss(arg).filter((t: CssToken) =>
+        t.type !== CssTokenType.Comment &&
+        t.type !== CssTokenType.BadComment &&
+        t.type !== CssTokenType.EOF
+      );
       this.pos = 0;
       const selectors: CssSelector[] = [];
       while (this.pos < this.tokens.length) {
@@ -511,7 +492,7 @@ export class CssParser {
 
   private consumeDeclarationList(raw: string): CssDeclaration[] {
     const declarations: CssDeclaration[] = [];
-    const parts = raw.split(';');
+    const parts = splitOnSemicolon(raw);
 
     for (const part of parts) {
       const colon = part.indexOf(':');
@@ -797,7 +778,7 @@ export class CssParser {
     this.tokens = selectorTokens;
     this.pos = 0;
 
-    const selector = this.consumeSelector();
+    const selectors = this.consumeSelectorList();
 
     this.tokens = savedTokens;
     this.pos = savedPos;
@@ -809,14 +790,24 @@ export class CssParser {
     this.pos++;
     const declarations = this.consumeDeclarationBlock();
 
-    if (!selector) return null;
+    if (selectors.length === 0) return null;
 
     const order = this.sourceOrder++;
+    // For specificity, use the most specific selector in the list
+    let specificity = computeSelectorSpecificity(selectors[0]!);
+    for (let i = 1; i < selectors.length; i++) {
+      const spec = computeSelectorSpecificity(selectors[i]!);
+      if (spec.id > specificity.id || (spec.id === specificity.id && spec.a > specificity.a) ||
+          (spec.id === specificity.id && spec.a === specificity.a && spec.b > specificity.b)) {
+        specificity = spec;
+      }
+    }
+
     return {
       type: 'style',
-      selectors: [selector],
+      selectors,
       declarations,
-      specificity: computeSelectorSpecificity(selector),
+      specificity,
       sourceOrder: order,
       sourceUrl: this.sourceUrl,
     };
@@ -917,7 +908,97 @@ function isIdentChar(ch: string): boolean {
     || ch === '_' || ch === '-' || ch > '\u0080';
 }
 
-/** Find the matching } for an opening { starting at `start`. Returns index AFTER closing }. */
+/** Split on semicolons while respecting string boundaries. */
+function splitOnSemicolon(raw: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let inString: string | null = null;
+  let i = 0;
+
+  while (i < raw.length) {
+    const ch = raw[i]!;
+
+    if (inString) {
+      if (ch === '\\') {
+        current += ch;
+        i++;
+        if (i < raw.length) {
+          current += raw[i]!;
+          i++;
+        }
+        continue;
+      }
+      if (ch === inString) {
+        inString = null;
+      }
+      current += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      inString = ch;
+      current += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === ';') {
+      parts.push(current);
+      current = '';
+      i++;
+      continue;
+    }
+
+    current += ch;
+    i++;
+  }
+
+  if (current) parts.push(current);
+  return parts;
+}
+
+function splitSelectorList(str: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let depth = 0;
+  let inString: string | null = null;
+  let i = 0;
+
+  while (i < str.length) {
+    const ch = str[i]!;
+
+    if (inString) {
+      if (ch === '\\') {
+        current += ch;
+        i++;
+        if (i < str.length) { current += str[i]!; i++; }
+        continue;
+      }
+      if (ch === inString) inString = null;
+      current += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") { inString = ch; current += ch; i++; continue; }
+    if (ch === '(') { depth++; current += ch; i++; continue; }
+    if (ch === ')') { depth = Math.max(0, depth - 1); current += ch; i++; continue; }
+
+    if (ch === ',' && depth === 0) {
+      if (current.trim()) parts.push(current.trim());
+      current = '';
+      i++;
+      continue;
+    }
+
+    current += ch;
+    i++;
+  }
+
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
 function findMatchingBrace(css: string, start: number): number {
   let depth = 0;
   let inString: string | null = null;
@@ -1058,6 +1139,14 @@ function consumeAtRuleFromText(
         .replace(/^url\((['"]?)(.+?)\1\)/, '$2').replace(/^(['"])(.+?)\1/, '$2');
       return { rule: { type: 'namespace', prefix, url }, end: i };
     }
+    if (kw === 'layer') {
+      // @layer a, b, c; — layer order declaration
+      const names = prelude.split(/,\s*/).map(s => s.trim()).filter(Boolean);
+      if (names.length > 0) {
+        return { rule: { type: 'layer-order', names }, end: i };
+      }
+      return { rule: null, end: i };
+    }
     return { rule: null, end: i };
   }
 
@@ -1089,6 +1178,14 @@ function consumeAtRuleFromText(
         const subParser = new CssParser();
         const { rules } = subParser.parseStylesheetRobust(blockBody);
         return { rule: { type: 'supports', condition: prelude, rules }, end: blockEnd };
+      }
+      case 'layer': {
+        // @layer name { ... } or anonymous @layer { ... }
+        const names = prelude ? prelude.split(/,\s*/).map(s => s.trim()).filter(Boolean) : [];
+        const subCss = stripComments(blockBody);
+        const subParser = new CssParser();
+        const { rules } = subParser.parseStylesheetRobust(subCss);
+        return { rule: { type: 'layer', names, rules }, end: blockEnd };
       }
       default:
         return { rule: { type: 'unknown', atKeyword: kw, prelude, body: blockBody }, end: blockEnd };
@@ -1129,19 +1226,33 @@ function consumeQualifiedRuleFromText(
 
   if (!selectorStr) return { rule: null, end: blockEnd };
 
-  // Parse selector
-  const selector = parseSelectorFromString(selectorStr);
-  if (!selector) return { rule: null, end: blockEnd };
+  // Split on commas (respecting parentheses for pseudo-class functions like :not(a, b))
+  const selectorStrings = splitSelectorList(selectorStr);
+  const selectors: CssSelector[] = [];
+  for (const s of selectorStrings) {
+    const parsed = parseSelectorFromString(s);
+    if (parsed) selectors.push(parsed);
+  }
+  if (selectors.length === 0) return { rule: null, end: blockEnd };
 
   // Parse declarations
   const declarations = consumeDeclarationsFromText(declText);
 
+  // Specificity: use the most specific selector in the list (CSS spec)
+  let maxSpecificity = computeSelectorSpecificity(selectors[0]!);
+  for (let i = 1; i < selectors.length; i++) {
+    const spec = computeSelectorSpecificity(selectors[i]!);
+    if (spec.id > maxSpecificity.id || (spec.id === maxSpecificity.id && spec.a > maxSpecificity.a) || (spec.id === maxSpecificity.id && spec.a === maxSpecificity.a && spec.b > maxSpecificity.b)) {
+      maxSpecificity = spec;
+    }
+  }
+
   return {
     rule: {
       type: 'style',
-      selectors: [selector],
+      selectors,
       declarations,
-      specificity: computeSelectorSpecificity(selector),
+      specificity: maxSpecificity,
       sourceOrder: order,
       sourceUrl,
     },
@@ -1152,7 +1263,7 @@ function consumeQualifiedRuleFromText(
 function consumeDeclarationsFromText(raw: string): CssDeclaration[] {
   const declarations: CssDeclaration[] = [];
   const cleaned = stripComments(raw);
-  const parts = cleaned.split(';');
+  const parts = splitOnSemicolon(cleaned);
 
   for (const part of parts) {
     const colon = part.indexOf(':');
@@ -1268,7 +1379,10 @@ function tokenizeSelector(str: string): SelectorToken[] {
       tokens.push({ type: 'attr-open', value: '[' }); i++;
       while (i < str.length && isWhitespace(str[i]!)) i++;
       let name = '';
-      while (i < str.length && str[i] !== ']' && str[i] !== '=' && !isWhitespace(str[i]!)) { name += str[i]!; i++; }
+      while (i < str.length && str[i] !== ']' && str[i] !== '=' && !isWhitespace(str[i]!) &&
+             !(i + 1 < str.length && str[i + 1] === '=' && (str[i] === '~' || str[i] === '|' || str[i] === '^' || str[i] === '$' || str[i] === '*'))) {
+        name += str[i]!; i++;
+      }
       tokens.push({ type: 'attr-name', value: name });
       while (i < str.length && isWhitespace(str[i]!)) i++;
       if (str[i] === '=' || (str[i + 1] === '=' && (str[i] === '~' || str[i] === '|' || str[i] === '^' || str[i] === '$' || str[i] === '*'))) {
@@ -1387,7 +1501,7 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
   let id: string | null = null;
   const classes: string[] = [];
   const attributes: CssAttributeSelector[] = [];
-  let pseudoClass: CssPseudoClassSelector | null = null;
+  const pseudoClasses: CssPseudoClassSelector[] = [];
   let pseudoElement: string | null = null;
 
   let i = start;
@@ -1398,7 +1512,7 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
       tagName = '*';
       i++;
     } else if (tok.type === 'ident') {
-      if (tagName === null && id === null && classes.length === 0 && attributes.length === 0 && !pseudoClass) {
+      if (tagName === null && id === null && classes.length === 0 && attributes.length === 0 && pseudoClasses.length === 0) {
         tagName = tok.value.toLowerCase();
       }
       i++;
@@ -1448,16 +1562,16 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
             const innerTokens = tokenizeSelector(arg);
             const innerSelector = buildSelectorFromTokens(innerTokens, 0, innerTokens.length);
             if (innerSelector) {
-              if (pseudoName === 'not') pseudoClass = { type: 'negation', selectors: [innerSelector] };
-              else if (pseudoName === 'has') pseudoClass = { type: 'has', selectors: [innerSelector] };
-              else pseudoClass = { type: 'is', selectors: [innerSelector] };
+              if (pseudoName === 'not') pseudoClasses.push({ type: 'negation', selectors: [innerSelector] });
+              else if (pseudoName === 'has') pseudoClasses.push({ type: 'has', selectors: [innerSelector] });
+              else pseudoClasses.push({ type: 'is', selectors: [innerSelector] });
             }
           } else {
-            pseudoClass = { type: 'structural', name: pseudoName, value: arg };
+            pseudoClasses.push({ type: 'structural', name: pseudoName, value: arg });
           }
         } else {
           // Dynamic pseudo-class
-          pseudoClass = { type: 'dynamic', name: pseudoName };
+          pseudoClasses.push({ type: 'dynamic', name: pseudoName });
         }
       }
     } else {
@@ -1465,9 +1579,9 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
     }
   }
 
-  if (tagName === null && id === null && classes.length === 0 && attributes.length === 0 && !pseudoClass) return null;
+  if (tagName === null && id === null && classes.length === 0 && attributes.length === 0 && pseudoClasses.length === 0) return null;
 
-  return { type: 'compound', tagName, id, classes, attributes, pseudoClass, pseudoElement };
+  return { type: 'compound', tagName, id, classes, attributes, pseudoClasses, pseudoElement };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1517,11 +1631,18 @@ function parseSingleMediaQuery(query: string): CssMediaQuery | null {
     if (p === 'and' || p === 'or') { i++; continue; }
 
     if (p.startsWith('(')) {
-      const featureStr = p;
-      // Handle features that span multiple parts due to spaces
+      // Reconstruct full feature string by joining parts until we find the closing )
+      let featureStr = p;
       if (!featureStr.includes(')')) {
-        while (i < parts.length && !parts[i]!.includes(')')) { i++; }
-        if (i < parts.length) { i++; } // skip the part with )
+        i++;
+        while (i < parts.length && !parts[i]!.includes(')')) {
+          featureStr += ' ' + parts[i]!;
+          i++;
+        }
+        if (i < parts.length) {
+          featureStr += ' ' + parts[i]!;
+          i++;
+        }
       } else {
         i++;
       }
@@ -1585,10 +1706,10 @@ function computeCompoundSpecificity(sel: CssCompoundSelector): CssSpecificity {
   a += sel.classes.length;
   a += sel.attributes.length;
 
-  if (sel.pseudoClass) {
-    if (sel.pseudoClass.type === 'negation' || sel.pseudoClass.type === 'is' || sel.pseudoClass.type === 'any' || sel.pseudoClass.type === 'has') {
+  for (const pc of sel.pseudoClasses) {
+    if (pc.type === 'negation' || pc.type === 'is' || pc.type === 'any' || pc.type === 'has') {
       // :not() specificity = most specific selector in the list
-      for (const inner of sel.pseudoClass.selectors) {
+      for (const inner of pc.selectors) {
         const innerSpec = computeSelectorSpecificity(inner);
         if (innerSpec.id > id) id = innerSpec.id;
         if (innerSpec.a > a) a = innerSpec.a;

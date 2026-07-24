@@ -27,6 +27,8 @@ interface DomElement extends DomNode {
   naturalHeight: number;
   /** Lazy loading state. */
   loadingState: 'none' | 'lazy' | 'loading' | 'loaded' | 'error';
+  /** Cached will-change computed value (populated by CSS cascade). */
+  willChange: string | null;
 }
 
 interface DomTextNode extends DomNode {
@@ -434,6 +436,7 @@ class DomTree implements IDomTree {
         naturalWidth: 0,
         naturalHeight: 0,
         loadingState,
+        willChange: null,
         _dirtyLayout: true,
         _dirtyPaint: true,
       };

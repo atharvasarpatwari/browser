@@ -294,10 +294,10 @@ describe('CSS5 — Parser: Selectors', () => {
   it('parses :first-child pseudo-class', () => {
     const sel = parser.parseSelector(':first-child');
     expect(sel).not.toBeNull();
-    if (sel?.type === 'compound' && sel.pseudoClass) {
-      expect(sel.pseudoClass.type).toBe('structural');
-      if (sel.pseudoClass.type === 'structural') {
-        expect(sel.pseudoClass.name).toBe('first-child');
+    if (sel?.type === 'compound' && sel.pseudoClasses.length > 0) {
+      expect(sel.pseudoClasses[0]!.type).toBe('structural');
+      if (sel.pseudoClasses[0]!.type === 'structural') {
+        expect(sel.pseudoClasses[0]!.name).toBe('first-child');
       }
     }
   });
@@ -305,10 +305,10 @@ describe('CSS5 — Parser: Selectors', () => {
   it('parses :not() pseudo-class', () => {
     const sel = parser.parseSelector(':not(.hidden)');
     expect(sel).not.toBeNull();
-    if (sel?.type === 'compound' && sel.pseudoClass) {
-      expect(sel.pseudoClass.type).toBe('negation');
-      if (sel.pseudoClass.type === 'negation') {
-        expect(sel.pseudoClass.selectors.length).toBe(1);
+    if (sel?.type === 'compound' && sel.pseudoClasses.length > 0) {
+      expect(sel.pseudoClasses[0]!.type).toBe('negation');
+      if (sel.pseudoClasses[0]!.type === 'negation') {
+        expect(sel.pseudoClasses[0]!.selectors.length).toBe(1);
       }
     }
   });
@@ -316,9 +316,9 @@ describe('CSS5 — Parser: Selectors', () => {
   it('parses :nth-child(an+b)', () => {
     const sel = parser.parseSelector(':nth-child(2n+1)');
     expect(sel).not.toBeNull();
-    if (sel?.type === 'compound' && sel.pseudoClass?.type === 'structural') {
-      expect(sel.pseudoClass.name).toBe('nth-child');
-      expect(sel.pseudoClass.value).toBe('2n+1');
+    if (sel?.type === 'compound' && sel.pseudoClasses[0]?.type === 'structural') {
+      expect(sel.pseudoClasses[0].name).toBe('nth-child');
+      expect(sel.pseudoClasses[0].value).toBe('2n+1');
     }
   });
 });
@@ -403,28 +403,28 @@ describe('CSS5 — Parser: Stylesheets', () => {
 describe('CSS5 — Selector Matching', () => {
   it('matches type selectors', () => {
     const div = sel('div');
-    expect(matchesSelector(div, { type: 'compound', tagName: 'div', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null })).toBe(true);
-    expect(matchesSelector(div, { type: 'compound', tagName: 'span', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null })).toBe(false);
+    expect(matchesSelector(div, { type: 'compound', tagName: 'div', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null })).toBe(true);
+    expect(matchesSelector(div, { type: 'compound', tagName: 'span', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null })).toBe(false);
   });
 
   it('matches universal selector', () => {
     const div = sel('div');
-    expect(matchesSelector(div, { type: 'compound', tagName: '*', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null })).toBe(true);
+    expect(matchesSelector(div, { type: 'compound', tagName: '*', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null })).toBe(true);
   });
 
   it('matches ID selectors', () => {
     const div = sel('div', { id: 'main' });
-    const match = { type: 'compound' as const, tagName: null, id: 'main', classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
-    const noMatch = { type: 'compound' as const, tagName: null, id: 'other', classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: null, id: 'main', classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const noMatch = { type: 'compound' as const, tagName: null, id: 'other', classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
     expect(matchesSelector(div, match)).toBe(true);
     expect(matchesSelector(div, noMatch)).toBe(false);
   });
 
   it('matches class selectors', () => {
     const span = sel('span', { class: 'btn primary' });
-    const match = { type: 'compound' as const, tagName: null, id: null, classes: ['btn'], attributes: [], pseudoClass: null, pseudoElement: null };
-    const matchBoth = { type: 'compound' as const, tagName: null, id: null, classes: ['btn', 'primary'], attributes: [], pseudoClass: null, pseudoElement: null };
-    const noMatch = { type: 'compound' as const, tagName: null, id: null, classes: ['hidden'], attributes: [], pseudoClass: null, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: null, id: null, classes: ['btn'], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const matchBoth = { type: 'compound' as const, tagName: null, id: null, classes: ['btn', 'primary'], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const noMatch = { type: 'compound' as const, tagName: null, id: null, classes: ['hidden'], attributes: [], pseudoClasses: [], pseudoElement: null };
     expect(matchesSelector(span, match)).toBe(true);
     expect(matchesSelector(span, matchBoth)).toBe(true);
     expect(matchesSelector(span, noMatch)).toBe(false);
@@ -432,43 +432,43 @@ describe('CSS5 — Selector Matching', () => {
 
   it('matches [attr] presence selector', () => {
     const a = sel('a', { href: 'https://example.com' });
-    const match = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'href', operator: null, value: null, caseInsensitive: false }], pseudoClass: null, pseudoElement: null };
-    const noMatch = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'src', operator: null, value: null, caseInsensitive: false }], pseudoClass: null, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'href', operator: null, value: null, caseInsensitive: false }], pseudoClasses: [], pseudoElement: null };
+    const noMatch = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'src', operator: null, value: null, caseInsensitive: false }], pseudoClasses: [], pseudoElement: null };
     expect(matchesSelector(a, match)).toBe(true);
     expect(matchesSelector(a, noMatch)).toBe(false);
   });
 
   it('matches [attr=val] exact match', () => {
     const input = sel('input', { type: 'text' });
-    const match = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'type', operator: '=' as const, value: 'text', caseInsensitive: false }], pseudoClass: null, pseudoElement: null };
-    const noMatch = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'type', operator: '=' as const, value: 'password', caseInsensitive: false }], pseudoClass: null, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'type', operator: '=' as const, value: 'text', caseInsensitive: false }], pseudoClasses: [], pseudoElement: null };
+    const noMatch = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'type', operator: '=' as const, value: 'password', caseInsensitive: false }], pseudoClasses: [], pseudoElement: null };
     expect(matchesSelector(input, match)).toBe(true);
     expect(matchesSelector(input, noMatch)).toBe(false);
   });
 
   it('matches [attr^=val] prefix match', () => {
     const a = sel('a', { href: 'https://example.com/page' });
-    const match = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'href', operator: '^=' as const, value: 'https://', caseInsensitive: false }], pseudoClass: null, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'href', operator: '^=' as const, value: 'https://', caseInsensitive: false }], pseudoClasses: [], pseudoElement: null };
     expect(matchesSelector(a, match)).toBe(true);
   });
 
   it('matches [attr$=val] suffix match', () => {
     const a = sel('a', { href: 'page.html' });
-    const match = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'href', operator: '$=' as const, value: '.html', caseInsensitive: false }], pseudoClass: null, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'href', operator: '$=' as const, value: '.html', caseInsensitive: false }], pseudoClasses: [], pseudoElement: null };
     expect(matchesSelector(a, match)).toBe(true);
   });
 
   it('matches [attr*=val] substring match', () => {
     const a = sel('a', { href: 'https://example.com/page' });
-    const match = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'href', operator: '*=' as const, value: 'example', caseInsensitive: false }], pseudoClass: null, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: null, id: null, classes: [], attributes: [{ name: 'href', operator: '*=' as const, value: 'example', caseInsensitive: false }], pseudoClasses: [], pseudoElement: null };
     expect(matchesSelector(a, match)).toBe(true);
   });
 
   it('matches descendant combinator', () => {
     const child = sel('span');
     const parent = sel('div', {}, [child]);
-    const right = { type: 'compound' as const, tagName: 'span', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
-    const left = { type: 'compound' as const, tagName: 'div', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
+    const right = { type: 'compound' as const, tagName: 'span', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const left = { type: 'compound' as const, tagName: 'div', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
     const complex: CssSelector = { type: 'complex', left, combinator: ' ', right };
     expect(matchesSelector(child, complex)).toBe(true);
   });
@@ -476,8 +476,8 @@ describe('CSS5 — Selector Matching', () => {
   it('matches child combinator', () => {
     const child = sel('span');
     const parent = sel('div', {}, [child]);
-    const right = { type: 'compound' as const, tagName: 'span', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
-    const left = { type: 'compound' as const, tagName: 'div', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
+    const right = { type: 'compound' as const, tagName: 'span', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const left = { type: 'compound' as const, tagName: 'div', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
     const complex: CssSelector = { type: 'complex', left, combinator: '>', right };
     expect(matchesSelector(child, complex)).toBe(true);
   });
@@ -486,9 +486,9 @@ describe('CSS5 — Selector Matching', () => {
     const grandchild = sel('span');
     const child = sel('div', {}, [grandchild]);
     const root = sel('section', {}, [child]);
-    const right = { type: 'compound' as const, tagName: 'span', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
-    const divLeft = { type: 'compound' as const, tagName: 'div', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
-    const sectionLeft = { type: 'compound' as const, tagName: 'section', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
+    const right = { type: 'compound' as const, tagName: 'span', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const divLeft = { type: 'compound' as const, tagName: 'div', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const sectionLeft = { type: 'compound' as const, tagName: 'section', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
     // div > span matches grandchild because its parent IS a div
     expect(matchesSelector(grandchild, { type: 'complex', left: divLeft, combinator: '>', right })).toBe(true);
     // section > span does NOT match grandchild because grandchild's parent is div, not section
@@ -499,8 +499,8 @@ describe('CSS5 — Selector Matching', () => {
     const h1 = sel('h1');
     const p = sel('p');
     const parent = sel('div', {}, [h1, p]);
-    const right = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
-    const left = { type: 'compound' as const, tagName: 'h1', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
+    const right = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const left = { type: 'compound' as const, tagName: 'h1', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
     const complex: CssSelector = { type: 'complex', left, combinator: '+', right };
     expect(matchesSelector(p, complex)).toBe(true);
   });
@@ -510,8 +510,8 @@ describe('CSS5 — Selector Matching', () => {
     const p1 = sel('p');
     const p2 = sel('p');
     const parent = sel('div', {}, [h1, p1, p2]);
-    const right = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
-    const left = { type: 'compound' as const, tagName: 'h1', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
+    const right = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const left = { type: 'compound' as const, tagName: 'h1', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
     const complex: CssSelector = { type: 'complex', left, combinator: '+', right };
     expect(matchesSelector(p2, complex)).toBe(false);
   });
@@ -521,8 +521,8 @@ describe('CSS5 — Selector Matching', () => {
     const p1 = sel('p');
     const p2 = sel('p');
     const parent = sel('div', {}, [h1, p1, p2]);
-    const right = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
-    const left = { type: 'compound' as const, tagName: 'h1', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
+    const right = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const left = { type: 'compound' as const, tagName: 'h1', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
     const complex: CssSelector = { type: 'complex', left, combinator: '~', right };
     expect(matchesSelector(p1, complex)).toBe(true);
     expect(matchesSelector(p2, complex)).toBe(true);
@@ -533,7 +533,7 @@ describe('CSS5 — Selector Matching', () => {
     const second = sel('p');
     const parent = sel('div', {}, [first, second]);
     const pseudo = { type: 'structural' as const, name: 'first-child', value: null };
-    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClass: pseudo, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClasses: [pseudo], pseudoElement: null };
     expect(matchesSelector(first, match)).toBe(true);
     expect(matchesSelector(second, match)).toBe(false);
   });
@@ -543,7 +543,7 @@ describe('CSS5 — Selector Matching', () => {
     const second = sel('p');
     const parent = sel('div', {}, [first, second]);
     const pseudo = { type: 'structural' as const, name: 'last-child', value: null };
-    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClass: pseudo, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClasses: [pseudo], pseudoElement: null };
     expect(matchesSelector(first, match)).toBe(false);
     expect(matchesSelector(second, match)).toBe(true);
   });
@@ -555,7 +555,7 @@ describe('CSS5 — Selector Matching', () => {
     const c4 = sel('p');
     const parent = sel('div', {}, [c1, c2, c3, c4]);
     const pseudo = { type: 'structural' as const, name: 'nth-child', value: 'odd' };
-    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClass: pseudo, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClasses: [pseudo], pseudoElement: null };
     expect(matchesSelector(c1, match)).toBe(true);   // 1st (odd)
     expect(matchesSelector(c2, match)).toBe(false);  // 2nd (even)
     expect(matchesSelector(c3, match)).toBe(true);   // 3rd (odd)
@@ -568,7 +568,7 @@ describe('CSS5 — Selector Matching', () => {
     const c3 = sel('p');
     const parent = sel('div', {}, [c1, c2, c3]);
     const pseudo = { type: 'structural' as const, name: 'nth-child', value: 'even' };
-    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClass: pseudo, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClasses: [pseudo], pseudoElement: null };
     expect(matchesSelector(c1, match)).toBe(false);  // 1st (odd)
     expect(matchesSelector(c2, match)).toBe(true);   // 2nd (even)
     expect(matchesSelector(c3, match)).toBe(false);  // 3rd (odd)
@@ -581,7 +581,7 @@ describe('CSS5 — Selector Matching', () => {
     const c4 = sel('p');
     const parent = sel('div', {}, [c1, c2, c3, c4]);
     const pseudo = { type: 'structural' as const, name: 'nth-child', value: '2n+1' };
-    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClass: pseudo, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClasses: [pseudo], pseudoElement: null };
     expect(matchesSelector(c1, match)).toBe(true);
     expect(matchesSelector(c2, match)).toBe(false);
     expect(matchesSelector(c3, match)).toBe(true);
@@ -595,7 +595,7 @@ describe('CSS5 — Selector Matching', () => {
     const c4 = sel('p');
     const parent = sel('div', {}, [c1, c2, c3, c4]);
     const pseudo = { type: 'structural' as const, name: 'nth-child', value: '3' };
-    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClass: pseudo, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: 'p', id: null, classes: [], attributes: [], pseudoClasses: [pseudo], pseudoElement: null };
     expect(matchesSelector(c1, match)).toBe(false);
     expect(matchesSelector(c2, match)).toBe(false);
     expect(matchesSelector(c3, match)).toBe(true);
@@ -607,7 +607,7 @@ describe('CSS5 — Selector Matching', () => {
     const parser = new CssParser();
     const innerSel = parser.parseSelector('.hidden');
     expect(innerSel).not.toBeNull();
-    const notSel: CssSelector = { type: 'compound', tagName: null, id: null, classes: [], attributes: [], pseudoClass: { type: 'negation', selectors: [innerSel!] }, pseudoElement: null };
+    const notSel: CssSelector = { type: 'compound', tagName: null, id: null, classes: [], attributes: [], pseudoClasses: [{ type: 'negation', selectors: [innerSel!] }], pseudoElement: null };
     expect(matchesSelector(div, notSel)).toBe(false);
 
     const visible = sel('div', { class: 'visible' });
@@ -618,15 +618,15 @@ describe('CSS5 — Selector Matching', () => {
     const empty = sel('div');
     const full = sel('div', {}, [sel('span')]);
     const pseudo = { type: 'structural' as const, name: 'empty', value: null };
-    const match = { type: 'compound' as const, tagName: 'div', id: null, classes: [], attributes: [], pseudoClass: pseudo, pseudoElement: null };
+    const match = { type: 'compound' as const, tagName: 'div', id: null, classes: [], attributes: [], pseudoClasses: [pseudo], pseudoElement: null };
     expect(matchesSelector(empty, match)).toBe(true);
     expect(matchesSelector(full, match)).toBe(false);
   });
 
   it('matchesSelectorList', () => {
     const div = sel('div');
-    const s1: CssSelector = { type: 'compound', tagName: 'div', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
-    const s2: CssSelector = { type: 'compound', tagName: 'span', id: null, classes: [], attributes: [], pseudoClass: null, pseudoElement: null };
+    const s1: CssSelector = { type: 'compound', tagName: 'div', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
+    const s2: CssSelector = { type: 'compound', tagName: 'span', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null };
     expect(matchesSelectorList(div, [s1, s2])).toBe(true);
     expect(matchesSelectorList(div, [s2])).toBe(false);
   });
@@ -684,7 +684,7 @@ describe('CSS5 — Cascade', () => {
     const sheet = parser.parseStylesheetRobust(css);
     const element = styleEl('div');
     const computed = computeComputedStyles(element, sheet);
-    expect(computed.get('color')).toBe('red');
+    expect(computed.get('color')).toBe('#ff0000');
   });
 
   it('later rules override earlier rules with same specificity', () => {
@@ -693,7 +693,7 @@ describe('CSS5 — Cascade', () => {
     const sheet = parser.parseStylesheetRobust(css);
     const element = styleEl('div');
     const computed = computeComputedStyles(element, sheet);
-    expect(computed.get('color')).toBe('blue');
+    expect(computed.get('color')).toBe('#0000ff');
   });
 
   it('ID specificity overrides class specificity', () => {
@@ -702,7 +702,7 @@ describe('CSS5 — Cascade', () => {
     const sheet = parser.parseStylesheetRobust(css);
     const element = styleEl('div', { id: 'id', class: 'cls' });
     const computed = computeComputedStyles(element, sheet);
-    expect(computed.get('color')).toBe('blue');
+    expect(computed.get('color')).toBe('#0000ff');
   });
 
   it('class specificity overrides type specificity', () => {
@@ -711,7 +711,7 @@ describe('CSS5 — Cascade', () => {
     const sheet = parser.parseStylesheetRobust(css);
     const element = styleEl('div', { class: 'cls' });
     const computed = computeComputedStyles(element, sheet);
-    expect(computed.get('color')).toBe('blue');
+    expect(computed.get('color')).toBe('#0000ff');
   });
 
   it('inline styles override stylesheet rules', () => {
@@ -720,7 +720,7 @@ describe('CSS5 — Cascade', () => {
     const sheet = parser.parseStylesheetRobust(css);
     const element = styleEl('div', { style: 'color: green' });
     const computed = computeComputedStyles(element, sheet);
-    expect(computed.get('color')).toBe('green');
+    expect(computed.get('color')).toBe('#008000');
   });
 
   it('applies UA defaults', () => {
@@ -747,7 +747,7 @@ describe('CSS5 — Cascade', () => {
     const sheet = parser.parseStylesheetRobust(css);
     const parentComputed = computeComputedStyles(parent, sheet);
     const childComputed = computeComputedStyles(child, sheet, undefined, parentComputed);
-    expect(childComputed.get('color')).toBe('red');
+    expect(childComputed.get('color')).toBe('#ff0000');
   });
 
   it('applies inheritance for font-size', () => {
@@ -769,7 +769,9 @@ describe('CSS5 — Cascade', () => {
     const sheet = parser.parseStylesheetRobust(css);
     const parentComputed = computeComputedStyles(parent, sheet);
     const childComputed = computeComputedStyles(child, sheet, undefined, parentComputed);
-    expect(childComputed.has('background-color')).toBe(false);
+    // background-color is non-inheritable; child gets the initial value 'transparent',
+    // not the parent's red (#ff0000).
+    expect(childComputed.get('background-color')).toBe('transparent');
   });
 });
 

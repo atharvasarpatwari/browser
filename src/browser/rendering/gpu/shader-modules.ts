@@ -97,6 +97,13 @@ export class ShaderModules {
   }
 
   /**
+   * Get the composite-with-offset compute shader (for layer compositing).
+   */
+  getCompositeOffsetShader(): GpuShaderModule {
+    return this.getOrCreate(COMPOSITE_OFFSET_SHADER, 'composite-offset');
+  }
+
+  /**
    * Get the draw-image compute shader.
    */
   getDrawImageShader(): GpuShaderModule {
@@ -476,5 +483,82 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       pixels[idx] = packRgba(result);
     }
   }
+}
+`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPOSITE WITH OFFSET SHADER
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GPU compute shader for compositing a source layer onto a destination buffer
+ * with position offset and per-layer opacity.
+ *
+ * Used by the layer compositor for GPU-accelerated layer blending.
+ */
+const COMPOSITE_OFFSET_SHADER = /* wgsl */`
+struct Params {
+  dstW: u32,
+  dstH: u32,
+  srcW: u32,
+  srcH: u32,
+  offsetX: i32,
+  offsetY: i32,
+  opacity: f32,
+}
+
+@group(0) @binding(0) var<storage, read_write> dstPixels: array<u32>;
+@group(0) @binding(1) var<storage, read> srcPixels: array<u32>;
+@group(0) @binding(2) var<uniform> params: Params;
+
+fn unpackRgba(packed: u32) -> vec4<f32> {
+  let r = f32(packed & 0xFFu);
+  let g = f32((packed >> 8u) & 0xFFu);
+  let b = f32((packed >> 16u) & 0xFFu);
+  let a = f32((packed >> 24u) & 0xFFu) / 255.0;
+  return vec4<f32>(r / 255.0, g / 255.0, b / 255.0, a);
+}
+
+fn packRgba(color: vec4<f32>) -> u32 {
+  let r = u32(clamp(color.r * 255.0, 0.0, 255.0));
+  let g = u32(clamp(color.g * 255.0, 0.0, 255.0));
+  let b = u32(clamp(color.b * 255.0, 0.0, 255.0));
+  let a = u32(clamp(color.a * 255.0, 0.0, 255.0));
+  return r | (g << 8u) | (b << 16u) | (a << 24u);
+}
+
+fn sourceOver(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let outA = src.a + dst.a * (1.0 - src.a);
+  if (outA <= 0.0) { return vec4<f32>(0.0); }
+  return vec4<f32>(
+    (src.r * src.a + dst.r * dst.a * (1.0 - src.a)) / outA,
+    (src.g * src.a + dst.g * dst.a * (1.0 - src.a)) / outA,
+    (src.b * src.a + dst.b * dst.a * (1.0 - src.a)) / outA,
+    outA
+  );
+}
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let sx = i32(gid.x);
+  let sy = i32(gid.y);
+
+  if (sx >= params.srcW || sy >= params.srcH) { return; }
+
+  let dx = sx + params.offsetX;
+  let dy = sy + params.offsetY;
+
+  if (dx < 0 || dy < 0 || dx >= i32(params.dstW) || dy >= i32(params.dstH)) { return; }
+
+  let srcIdx = u32(sy) * params.srcW + u32(sx);
+  var srcColor = unpackRgba(srcPixels[srcIdx]);
+  srcColor.a = srcColor.a * params.opacity;
+
+  if (srcColor.a <= 0.004) { return; }
+
+  let dstIdx = u32(dy) * params.dstW + u32(dx);
+  let dstColor = unpackRgba(dstPixels[dstIdx]);
+  let result = sourceOver(dstColor, srcColor);
+  dstPixels[dstIdx] = packRgba(result);
 }
 `;

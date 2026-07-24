@@ -286,6 +286,71 @@ export class GpuRasterizer {
     this.shaders?.clear();
   }
 
+  // ── PER-LAYER RASTERIZATION ──────────────────────────────────────
+
+  /**
+   * Rasterize a compositing layer's paint commands into a separate buffer.
+   * Used by the LayerCompositor for per-layer texture generation.
+   */
+  rasterizeLayerToBuffer(
+    commands: readonly PaintCommand[],
+    width: number,
+    height: number,
+  ): Uint8ClampedArray | null {
+    if (!this.useGpu || !this.device || !this.computeOps) {
+      // Software path
+      const tempRasterizer = new Rasterizer({ width, height, backgroundColor: 'transparent' });
+      tempRasterizer.rasterize(commands);
+      return tempRasterizer.getPixels();
+    }
+
+    // GPU path: create a temporary buffer for this layer
+    const layerSize = width * height * 4;
+    const layerBuf = this.bufferPool!.acquire(
+      layerSize,
+      GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    );
+
+    const encoder = this.device.createCommandEncoder();
+
+    for (const cmd of commands) {
+      this.execGpu(cmd, layerBuf.buffer, encoder);
+    }
+
+    this.device.queue.submit([encoder.finish()]);
+
+    // Read back the layer buffer synchronously (software fallback for now)
+    // TODO: async readback for GPU layers
+    this.bufferPool!.release(layerBuf);
+    return null;
+  }
+
+  /**
+   * Composite a source layer buffer onto the destination pixel buffer
+   * with offset and opacity. GPU-accelerated.
+   */
+  compositeLayerToBuffer(
+    dstBuffer: GPUBuffer,
+    srcBuffer: GPUBuffer,
+    dstWidth: number, dstHeight: number,
+    srcWidth: number, srcHeight: number,
+    offsetX: number, offsetY: number,
+    opacity: number,
+  ): void {
+    if (!this.useGpu || !this.device || !this.computeOps) return;
+
+    const encoder = this.device.createCommandEncoder();
+    this.computeOps.compositeWithOffset(
+      dstBuffer, srcBuffer,
+      dstWidth, dstHeight,
+      srcWidth, srcHeight,
+      offsetX, offsetY,
+      opacity,
+      encoder,
+    );
+    this.device.queue.submit([encoder.finish()]);
+  }
+
   // ── GPU Command Execution ───────────────────────────────────────
 
   private execGpu(cmd: PaintCommand, buf: GPUBuffer, encoder: GPUCommandEncoder): void {

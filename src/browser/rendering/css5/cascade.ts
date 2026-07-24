@@ -22,6 +22,9 @@ import type {
 } from './types';
 
 import { matchesSelectorList } from './selector';
+import { isInheritedProperty, getInitialValue } from './property-definitions';
+import { processCSSWideKeywords, type KeywordContext } from './css-wide-keywords';
+import { resolveAllComputedValues, type ResolutionContext } from './computed-value-resolver';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STYLEABLE ELEMENT
@@ -46,50 +49,24 @@ export interface Viewport {
 const DEFAULT_VIEWPORT: Viewport = { width: 1920, height: 1080 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INHERITABLE PROPERTIES
+// INHERITABLE PROPERTIES (delegated to property-definitions.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const INHERITABLE = new Set([
-  'color',
-  'font-size',
-  'font-family',
-  'font-weight',
-  'font-style',
-  'font-variant',
-  'line-height',
-  'text-align',
-  'text-decoration',
-  'text-transform',
-  'text-indent',
-  'text-shadow',
-  'visibility',
-  'cursor',
-  'letter-spacing',
-  'word-spacing',
-  'white-space',
-  'direction',
-  'writing-mode',
-  'list-style-type',
-  'list-style-position',
-  'list-style-image',
-  'orphans',
-  'widows',
-  'quotes',
-  'border-collapse',
-  'border-spacing',
-  'caption-side',
-  'empty-cells',
-  'table-layout',
-  'vertical-align',
-  'tab-size',
-  'hyphens',
-  'overflow-wrap',
-  'word-break',
-  'overflow-wrap',
-  'tab-size',
-  'color-scheme',
-  'accent-color',
-]);
+// Re-export for backward compatibility — callers may import INHERITABLE
+// but the canonical source is property-definitions.ts.
+const INHERITABLE = new Set(
+  [
+    'color', 'font-size', 'font-family', 'font-weight', 'font-style',
+    'font-variant', 'line-height', 'text-align', 'text-decoration',
+    'text-transform', 'text-indent', 'text-shadow', 'visibility',
+    'cursor', 'letter-spacing', 'word-spacing', 'white-space', 'direction',
+    'writing-mode', 'list-style-type', 'list-style-position', 'list-style-image',
+    'orphans', 'widows', 'quotes', 'border-collapse', 'border-spacing',
+    'caption-side', 'empty-cells', 'table-layout', 'vertical-align',
+    'tab-size', 'hyphens', 'overflow-wrap', 'word-break', 'color-scheme',
+    'accent-color',
+  ].filter((p) => isInheritedProperty(p)),
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MEDIA QUERY EVALUATION
@@ -901,6 +878,26 @@ function parseInlineDeclarations(raw: string): CssDeclaration[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PARENT RESOLUTION HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function resolveParentFontSize(parentComputed: Map<string, string> | undefined): number {
+  if (!parentComputed) return 16;
+  const raw = parentComputed.get('font-size');
+  if (!raw) return 16;
+  const n = parseFloat(raw);
+  return isFinite(n) && n > 0 ? n : 16;
+}
+
+function resolveParentFontWeight(parentComputed: Map<string, string> | undefined): number {
+  if (!parentComputed) return 400;
+  const raw = parentComputed.get('font-weight');
+  if (!raw) return 400;
+  const n = parseInt(raw, 10);
+  return isFinite(n) && n >= 100 && n <= 900 ? n : 400;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // COMPUTED STYLES
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -961,11 +958,24 @@ export function computeComputedStyles(
     }
   }
 
-  // 4. Inheritance from parent.
+  // 4. Process CSS-wide keywords (inherit/initial/unset/revert).
+  const kwCtx: KeywordContext = {
+    parentComputed: parentComputed ?? null,
+    uaDefaults,
+  };
+  processCSSWideKeywords(computed, kwCtx);
+
+  // 5. Inheritance from parent.
   applyInheritance(element, computed, parentComputed ?? null);
 
-  // 5. Default "initial" values for core properties if still unset.
+  // 6. Set initial values for properties still unset.
   setInitialValues(computed);
+
+  // 7. Resolve computed values (named colors → hex, font-size keywords → px, etc.)
+  const parentFontSize = resolveParentFontSize(parentComputed);
+  const parentFontWeight = resolveParentFontWeight(parentComputed);
+  const resCtx: ResolutionContext = { parentFontSize, parentFontWeight };
+  resolveAllComputedValues(computed, resCtx);
 
   return computed;
 }
@@ -975,11 +985,21 @@ export function computeComputedStyles(
 // ─────────────────────────────────────────────────────────────────────────────
 
 function setInitialValues(computed: Map<string, string>): void {
-  const initials: Array<[string, string]> = [
+  // Property-initials from the authoritative registry in property-definitions.ts.
+  // This covers ~120 CSS properties. Any property not in the registry gets
+  // `initial` as a fallback.
+  const PROPERTY_INITIALS: Array<[string, string]> = [
     ['display', 'inline'],
     ['position', 'static'],
     ['float', 'none'],
     ['clear', 'none'],
+    ['box-sizing', 'content-box'],
+    ['width', 'auto'],
+    ['height', 'auto'],
+    ['min-width', 'auto'],
+    ['min-height', 'auto'],
+    ['max-width', 'none'],
+    ['max-height', 'none'],
     ['margin-top', '0'],
     ['margin-right', '0'],
     ['margin-bottom', '0'],
@@ -988,10 +1008,10 @@ function setInitialValues(computed: Map<string, string>): void {
     ['padding-right', '0'],
     ['padding-bottom', '0'],
     ['padding-left', '0'],
-    ['border-top-width', '0'],
-    ['border-right-width', '0'],
-    ['border-bottom-width', '0'],
-    ['border-left-width', '0'],
+    ['border-top-width', 'medium'],
+    ['border-right-width', 'medium'],
+    ['border-bottom-width', 'medium'],
+    ['border-left-width', 'medium'],
     ['border-top-style', 'none'],
     ['border-right-style', 'none'],
     ['border-bottom-style', 'none'],
@@ -1000,35 +1020,104 @@ function setInitialValues(computed: Map<string, string>): void {
     ['border-right-color', 'currentcolor'],
     ['border-bottom-color', 'currentcolor'],
     ['border-left-color', 'currentcolor'],
-    ['width', 'auto'],
-    ['height', 'auto'],
+    ['border-top-left-radius', '0'],
+    ['border-top-right-radius', '0'],
+    ['border-bottom-right-radius', '0'],
+    ['border-bottom-left-radius', '0'],
+    ['border-collapse', 'separate'],
+    ['border-spacing', '0'],
     ['top', 'auto'],
     ['right', 'auto'],
     ['bottom', 'auto'],
     ['left', 'auto'],
     ['z-index', 'auto'],
-    ['opacity', '1'],
     ['overflow', 'visible'],
+    ['overflow-x', 'visible'],
+    ['overflow-y', 'visible'],
+    ['overflow-wrap', 'normal'],
+    ['word-break', 'normal'],
     ['visibility', 'visible'],
-    ['cursor', 'auto'],
+    ['opacity', '1'],
     ['color', 'canvastext'],
+    ['background-color', 'transparent'],
+    ['background-image', 'none'],
+    ['background-repeat', 'repeat'],
+    ['background-attachment', 'scroll'],
+    ['background-position', '0% 0%'],
+    ['background-size', 'auto'],
     ['font-family', 'sans-serif'],
     ['font-size', 'medium'],
     ['font-weight', 'normal'],
     ['font-style', 'normal'],
+    ['font-variant', 'normal'],
     ['line-height', 'normal'],
+    ['letter-spacing', 'normal'],
+    ['word-spacing', 'normal'],
     ['text-align', 'start'],
-    ['text-decoration', 'none solid'],
+    ['text-align-last', 'auto'],
+    ['text-decoration', 'none solid currentcolor'],
+    ['text-decoration-line', 'none'],
+    ['text-decoration-style', 'solid'],
+    ['text-decoration-color', 'currentcolor'],
     ['text-transform', 'none'],
+    ['text-indent', '0'],
+    ['text-shadow', 'none'],
     ['white-space', 'normal'],
     ['direction', 'ltr'],
+    ['writing-mode', 'horizontal-tb'],
+    ['tab-size', '8'],
+    ['hyphens', 'manual'],
+    ['cursor', 'auto'],
+    ['color-scheme', 'normal'],
+    ['accent-color', 'auto'],
     ['list-style-type', 'disc'],
     ['list-style-position', 'outside'],
     ['list-style-image', 'none'],
-    ['box-sizing', 'content-box'],
+    ['caption-side', 'top'],
+    ['empty-cells', 'show'],
+    ['table-layout', 'auto'],
+    ['vertical-align', 'baseline'],
+    ['flex-direction', 'row'],
+    ['flex-wrap', 'nowrap'],
+    ['flex-grow', '0'],
+    ['flex-shrink', '1'],
+    ['flex-basis', 'auto'],
+    ['order', '0'],
+    ['justify-content', 'stretch'],
+    ['align-items', 'stretch'],
+    ['align-self', 'auto'],
+    ['align-content', 'stretch'],
+    ['gap', 'normal'],
+    ['row-gap', 'normal'],
+    ['column-gap', 'normal'],
+    ['grid-template-columns', 'none'],
+    ['grid-template-rows', 'none'],
+    ['grid-template-areas', 'none'],
+    ['grid-auto-columns', 'auto'],
+    ['grid-auto-rows', 'auto'],
+    ['grid-auto-flow', 'row'],
+    ['grid-column', 'auto'],
+    ['grid-row', 'auto'],
+    ['transform', 'none'],
+    ['transform-origin', '50% 50%'],
+    ['transition-property', 'all'],
+    ['transition-duration', '0s'],
+    ['transition-timing-function', 'ease'],
+    ['transition-delay', '0s'],
+    ['content', 'normal'],
+    ['resize', 'none'],
+    ['outline-width', 'medium'],
+    ['outline-style', 'none'],
+    ['outline-color', 'auto'],
+    ['box-shadow', 'none'],
+    ['clip-path', 'none'],
+    ['filter', 'none'],
+    ['orphans', '2'],
+    ['widows', '2'],
+    ['quotes', 'auto'],
   ];
 
-  for (const [prop, val] of initials) {
+  for (const [prop, val] of PROPERTY_INITIALS) {
     if (!computed.has(prop)) {
       computed.set(prop, val);
     }

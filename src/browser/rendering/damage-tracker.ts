@@ -132,6 +132,15 @@ export class DamageTracker {
     this.regions.length = 0;
   }
 
+  /**
+   * Add all regions from another DamageTracker to this one.
+   */
+  addRegionIntersection(other: DamageTracker): void {
+    for (const r of other.regions) {
+      this.regions.push(r);
+    }
+  }
+
   /** Release all tracked regions. */
   dispose(): void {
     this.clear();

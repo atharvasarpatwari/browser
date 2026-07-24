@@ -23,6 +23,7 @@ export class ComputeOps {
   private fillRectPipeline: GPUComputePipeline | null = null;
   private clearRectPipeline: GPUComputePipeline | null = null;
   private compositePipeline: GPUComputePipeline | null = null;
+  private compositeOffsetPipeline: GPUComputePipeline | null = null;
   private drawImagePipeline: GPUComputePipeline | null = null;
   private fillTextPipeline: GPUComputePipeline | null = null;
   private fontAtlasBuffer: GPUBuffer | null = null;
@@ -31,6 +32,7 @@ export class ComputeOps {
   private fillRectLayout: GPUBindGroupLayout | null = null;
   private clearRectLayout: GPUBindGroupLayout | null = null;
   private compositeLayout: GPUBindGroupLayout | null = null;
+  private compositeOffsetLayout: GPUBindGroupLayout | null = null;
   private drawImageLayout: GPUBindGroupLayout | null = null;
   private fillTextLayout: GPUBindGroupLayout | null = null;
 
@@ -140,6 +142,47 @@ export class ComputeOps {
 
     this.dispatchCompute(encoder, pipeline, bindGroup,
       Math.ceil(width / GPU_WORKGROUP_SIZE), Math.ceil(height / GPU_WORKGROUP_SIZE));
+    uniformBuffer.destroy();
+  }
+
+  /**
+   * Composite with offset and per-layer opacity.
+   * Used by the layer compositor for GPU-accelerated layer blending.
+   */
+  compositeWithOffset(
+    dstBuffer: GPUBuffer,
+    srcBuffer: GPUBuffer,
+    dstWidth: number, dstHeight: number,
+    srcWidth: number, srcHeight: number,
+    offsetX: number, offsetY: number,
+    opacity: number,
+    encoder: GPUCommandEncoder,
+  ): void {
+    const pipeline = this.getCompositeOffsetPipeline();
+    const layout = this.getCompositeOffsetLayout();
+
+    const uniformData = new ArrayBuffer(28);
+    const view = new DataView(uniformData);
+    view.setUint32(0, dstWidth, true);
+    view.setUint32(4, dstHeight, true);
+    view.setUint32(8, srcWidth, true);
+    view.setUint32(12, srcHeight, true);
+    view.setInt32(16, offsetX, true);
+    view.setInt32(20, offsetY, true);
+    view.setFloat32(24, opacity, true);
+
+    const uniformBuffer = this.createUniformBuffer(uniformData);
+    const bindGroup = this.device.createBindGroup({
+      layout,
+      entries: [
+        { binding: 0, resource: { buffer: dstBuffer } },
+        { binding: 1, resource: { buffer: srcBuffer } },
+        { binding: 2, resource: { buffer: uniformBuffer } },
+      ],
+    });
+
+    this.dispatchCompute(encoder, pipeline, bindGroup,
+      Math.ceil(srcWidth / GPU_WORKGROUP_SIZE), Math.ceil(srcHeight / GPU_WORKGROUP_SIZE));
     uniformBuffer.destroy();
   }
 
@@ -274,11 +317,13 @@ export class ComputeOps {
     this.fillRectPipeline = null;
     this.clearRectPipeline = null;
     this.compositePipeline = null;
+    this.compositeOffsetPipeline = null;
     this.drawImagePipeline = null;
     this.fillTextPipeline = null;
     this.fillRectLayout = null;
     this.clearRectLayout = null;
     this.compositeLayout = null;
+    this.compositeOffsetLayout = null;
     this.drawImageLayout = null;
     this.fillTextLayout = null;
   }
@@ -353,11 +398,28 @@ export class ComputeOps {
     return this.compositePipeline;
   }
 
-  private getCompositeLayout(): GPUBindGroupLayout {
+  private   getCompositeLayout(): GPUBindGroupLayout {
     if (!this.compositeLayout) {
       this.compositeLayout = this.getCompositePipeline().getBindGroupLayout(0);
     }
     return this.compositeLayout;
+  }
+
+  private getCompositeOffsetPipeline(): GPUComputePipeline {
+    if (!this.compositeOffsetPipeline) {
+      this.compositeOffsetPipeline = this.device.createComputePipeline({
+        layout: 'auto',
+        compute: { module: this.shaders.getCompositeOffsetShader().module, entryPoint: 'main' },
+      });
+    }
+    return this.compositeOffsetPipeline;
+  }
+
+  private getCompositeOffsetLayout(): GPUBindGroupLayout {
+    if (!this.compositeOffsetLayout) {
+      this.compositeOffsetLayout = this.getCompositeOffsetPipeline().getBindGroupLayout(0);
+    }
+    return this.compositeOffsetLayout;
   }
 
   private getDrawImagePipeline(): GPUComputePipeline {

@@ -76,13 +76,7 @@ export class CssTokenizer {
         continue;
       }
 
-      // Function or ident (including backslash-escaped identifiers)
-      if (this.isIdentStart(ch) || ch === '\\' || (ch === '-' && this.peek(1) !== undefined && this.isIdentStart(this.peek(1)!))) {
-        this.consumeIdentOrFunction();
-        continue;
-      }
-
-      // Number or dimension or percentage
+      // Number or dimension or percentage (must be checked before ident — spec §4.3.1)
       if (this.isDigit(ch) || (ch === '.' && this.peek(1) !== undefined && this.isDigit(this.peek(1)!)) || (ch === '+' || ch === '-')) {
         if (this.couldStartNumber()) {
           this.consumeNumberOrDimension();
@@ -91,9 +85,25 @@ export class CssTokenizer {
         // + / - could be operator, fall through
       }
 
-      // URL
+      // CDOToken/CDC (for HTML integration) — must be checked before ident for '-' and '<'
+      if (ch === '<' && this.matchAhead('!--')) {
+        this.addToken(CssTokenType.CDOToken, '<!--');
+        continue;
+      }
+      if (ch === '-' && this.matchAhead('->')) {
+        this.addToken(CssTokenType.CDCToken, '-->');
+        continue;
+      }
+
+      // URL — must be checked before ident since 'u' is an ident start character
       if (ch === 'u' && this.matchAhead('url(')) {
         this.consumeUrl();
+        continue;
+      }
+
+      // Function or ident (including backslash-escaped identifiers)
+      if (this.isIdentStart(ch) || ch === '\\' || (ch === '-' && this.peek(1) !== undefined && this.isIdentStart(this.peek(1)!))) {
+        this.consumeIdentOrFunction();
         continue;
       }
 
@@ -112,17 +122,8 @@ export class CssTokenizer {
       if (ch === '~') { this.addToken(CssTokenType.Tilde, '~'); continue; }
       if (ch === '.') { this.addToken(CssTokenType.Period, '.'); continue; }
       if (ch === '=') { this.addToken(CssTokenType.Equals, '='); continue; }
-      if (ch === '*') { this.addToken(CssTokenType.Ident, '*'); continue; }
-
-      // CDOToken/CDC (for HTML integration)
-      if (ch === '<' && this.matchAhead('!--')) {
-        this.addToken(CssTokenType.CDOToken, '<!--');
-        continue;
-      }
-      if (ch === '-' && this.matchAhead('->')) {
-        this.addToken(CssTokenType.CDCToken, '-->');
-        continue;
-      }
+      if (ch === '*') { this.addToken(CssTokenType.Asterisk, '*'); continue; }
+      if (ch === '|' || ch === '^' || ch === '$') { this.addToken(CssTokenType.Ident, ch); continue; }
 
       // Unknown character — skip
       this.advance();
@@ -181,8 +182,8 @@ export class CssTokenizer {
       this.advance();
     }
 
-    // Unterminated string
-    this.tokens.push({ type: CssTokenType.String, value, start, end: this.pos, sourceLine: startLine, sourceColumn: startCol });
+    // Unterminated string — emit BadString per spec §4.3.4
+    this.tokens.push({ type: CssTokenType.BadString, value, start, end: this.pos, sourceLine: startLine, sourceColumn: startCol });
   }
 
   private consumeComment(): void {
@@ -310,13 +311,12 @@ export class CssTokenizer {
 
     const numStr = this.consumeNumber();
 
-    // Save position before skipping whitespace so we can restore if no dimension/percentage follows
+    // Save position before checking for dimension/percentage suffix
     const savedPos = this.pos;
     const savedLine = this.line;
     const savedCol = this.column;
-    this.skipWhitespace();
 
-    // Check for dimension suffix (px, em, rem, etc.)
+    // Check for dimension suffix (px, em, rem, etc.) — must be immediately adjacent (no whitespace)
     if (this.pos < this.input.length && this.isIdentStart(this.input[this.pos]!)) {
       const unit = this.consumeIdent();
       this.tokens.push({ type: CssTokenType.Dimension, value: numStr + unit, start, end: this.pos, sourceLine: startLine, sourceColumn: startCol });
@@ -417,15 +417,22 @@ export class CssTokenizer {
         this.tokens.push({ type: CssTokenType.BadUrl, value, start, end: this.pos, sourceLine: startLine, sourceColumn: startCol });
       }
     } else {
-      // Unquoted URL
+      // Unquoted URL — per spec §4.3.5, \, (, ", ', non-printable chars = BadUrl
       while (this.pos < this.input.length && this.input[this.pos] !== ')' && !this.isWhitespace(this.input[this.pos]!)) {
-        if (this.input[this.pos] === '\\') {
-          this.advance();
-          value += this.consumeEscaped();
-        } else {
-          value += this.input[this.pos]!;
-          this.advance();
+        const ch = this.input[this.pos]!;
+        if (ch === '"' || ch === "'" || ch === '(' || ch === '\\' || this.isNonPrintable(ch)) {
+          // Parse error — emit BadUrl and consume until ) or EOF
+          while (this.pos < this.input.length && this.input[this.pos] !== ')') {
+            this.advance();
+          }
+          if (this.pos < this.input.length && this.input[this.pos] === ')') {
+            this.advance();
+          }
+          this.tokens.push({ type: CssTokenType.BadUrl, value, start, end: this.pos, sourceLine: startLine, sourceColumn: startCol });
+          return;
         }
+        value += ch;
+        this.advance();
       }
       this.skipWhitespace();
       if (this.pos < this.input.length && this.input[this.pos] === ')') {
@@ -458,7 +465,13 @@ export class CssTokenizer {
         this.advance();
       }
       const codePoint = parseInt(hex, 16);
-      return codePoint === 0 ? '\uFFFD' : String.fromCodePoint(codePoint);
+      // Per spec §4.3.19: replace null, surrogates, >0x10FFFF, U+FFFE, U+FFFF with U+FFFD
+      if (codePoint === 0 || codePoint > 0x10FFFF ||
+          (codePoint >= 0xD800 && codePoint <= 0xDFFF) ||
+          codePoint === 0xFFFE || codePoint === 0xFFFF) {
+        return '\uFFFD';
+      }
+      return String.fromCodePoint(codePoint);
     }
 
     if (ch === '\n') {
@@ -535,12 +548,17 @@ export class CssTokenizer {
     return this.isDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
   }
 
+  private isNonPrintable(ch: string): boolean {
+    const code = ch.charCodeAt(0);
+    return (code >= 0x0000 && code <= 0x0008) || (code >= 0x000E && code <= 0x001F) || code === 0x007F;
+  }
+
   private isIdentStart(ch: string): boolean {
-    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_' || ch === '-' || ch > '\u0080';
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_' || ch >= '\u0080';
   }
 
   private isIdentChar(ch: string): boolean {
-    return this.isIdentStart(ch) || this.isDigit(ch);
+    return this.isIdentStart(ch) || this.isDigit(ch) || ch === '-';
   }
 }
 

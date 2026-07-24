@@ -32,7 +32,7 @@ import { TabManager } from '../browser/tabs/tab-manager';
 import type { ITabManager } from '../browser/tabs/tab-manager';
 
 // Tab-process adapter (bridges TabContextManager ↔ ProcessManager)
-import { TabProcessManager, createTabProcessManager } from '../browser/engine/tab-process-adapter';
+import { TabProcessManager, createTabProcessManager, createChildProcessTabManager } from '../browser/engine/tab-process-adapter';
 import type { ITabProcessManager } from '../browser/engine/tab-process-adapter';
 import { TabContextManager } from '../browser/engine/tab-context';
 import type { ITabContextManager } from '../browser/engine/tab-context';
@@ -606,7 +606,24 @@ class ApplicationBootstrap {
    */
   private async wireTabProcessManager(): Promise<void> {
     try {
-      const tabProcessManager = await createTabProcessManager();
+      const config = this.container.resolve<AppConfig>(Tokens.AppConfig);
+      const processModel = config.processModel;
+      
+      let tabProcessManager: TabProcessManager;
+      
+      if (processModel.enableRendererIsolation && processModel.isolationMode !== 'none') {
+        // Use child-process mode for renderer isolation
+        console.log(`[Bootstrap] Using child-process mode (${processModel.isolationMode})`);
+        tabProcessManager = await createChildProcessTabManager(
+          processModel.rendererEntryPath,
+          { processConfig: { maxProcesses: processModel.maxRendererProcesses || 20 } }
+        );
+      } else {
+        // Use in-process mode (default)
+        console.log('[Bootstrap] Using in-process mode');
+        tabProcessManager = await createTabProcessManager();
+      }
+      
       this.container.registerValue<ITabProcessManager>(Tokens.TabProcessManager, tabProcessManager);
 
       const crashReporter = this.container.resolve<ICrashReporter>(Tokens.CrashReporter);

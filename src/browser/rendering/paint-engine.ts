@@ -10,6 +10,9 @@ import {
 } from './formatting/stacking';
 import { Rasterizer } from './rasterizer';
 import { GpuRasterizer } from './gpu/gpu-rasterizer';
+import { LayerCompositor } from './compositing/layer-compositor';
+import { LayerTree } from './compositing/layer-tree';
+import { LayerPromoter } from './compositing/layer-promoter';
 
 type PaintCommandType =
   | 'clearRect' | 'fillRect' | 'strokeRect'
@@ -100,6 +103,11 @@ class PaintEngine implements IPaintEngine {
   private readonly elementCommands = new Map<DomElement, PaintCommand[]>();
   private rasterizer: Rasterizer | GpuRasterizer;
 
+  // Compositing layer system
+  private layerCompositor: LayerCompositor | null = null;
+  private layerTree: LayerTree | null = null;
+  private layerPromoter: LayerPromoter = new LayerPromoter();
+
   constructor(config?: Partial<PaintConfig>) {
     this.config = { ...DEFAULT_PAINT_CONFIG, ...config };
     this.rasterizer = this.createRasterizer();
@@ -115,6 +123,15 @@ class PaintEngine implements IPaintEngine {
     if (!root) return;
 
     this.stackingTree = buildStackingContextTree(root);
+
+    // Build compositing layer tree from stacking context
+    if (this.layerCompositor) {
+      this.layerTree = LayerTree.fromStackingContext(
+        this.stackingTree,
+        this.layerPromoter,
+        { enableTiling: true, tileThreshold: 512 },
+      );
+    }
 
     // Also build a flat list of PaintLayers for backward compat (getLayers/getLayerById)
     this.buildFlatLayers(root);
@@ -527,9 +544,74 @@ class PaintEngine implements IPaintEngine {
     this.elementCommands.clear();
     this.stackingTree = null;
     this.eventListeners.clear();
+    this.layerTree?.dispose();
+    this.layerTree = null;
+    this.layerCompositor?.dispose();
+    this.layerCompositor = null;
     if ('dispose' in this.rasterizer) {
       (this.rasterizer as GpuRasterizer).dispose();
     }
+  }
+
+  // ── COMPOSITOR INTEGRATION ───────────────────────────────────────
+
+  /**
+   * Set a LayerCompositor for compositing-layer-based rendering.
+   * When set, paint() will also build a LayerTree.
+   */
+  setLayerCompositor(compositor: LayerCompositor): void {
+    this.layerCompositor = compositor;
+  }
+
+  /**
+   * Get the current LayerCompositor, if any.
+   */
+  getLayerCompositor(): LayerCompositor | null {
+    return this.layerCompositor;
+  }
+
+  /**
+   * Get the current LayerTree (built during paint()).
+   */
+  getLayerTree(): LayerTree | null {
+    return this.layerTree;
+  }
+
+  /**
+   * Get or set the layer promoter for controlling which elements become layers.
+   */
+  getLayerPromoter(): LayerPromoter {
+    return this.layerPromoter;
+  }
+
+  setLayerPromoter(promoter: LayerPromoter): void {
+    this.layerPromoter = promoter;
+  }
+
+  /**
+   * Composite using the LayerCompositor for per-layer textures.
+   * Returns an ImageData with composited layers.
+   *
+   * Falls back to flat compositeFrame() if no compositor is set.
+   */
+  compositeFrameWithLayers(): ImageData {
+    if (!this.layerCompositor || !this.layerTree) {
+      // Fallback: use flat compositing
+      const commands = this.compositeFrame();
+      return this.rasterizer.rasterize(commands);
+    }
+    return this.layerCompositor.composite(this.layerTree);
+  }
+
+  /**
+   * Incremental composite using layers — only dirty layers are re-rasterized.
+   */
+  compositeFrameIncrementalLayers(): ImageData {
+    if (!this.layerCompositor || !this.layerTree) {
+      const commands = this.compositeFrame();
+      return this.rasterizer.rasterize(commands);
+    }
+    return this.layerCompositor.compositeIncremental(this.layerTree);
   }
 }
 

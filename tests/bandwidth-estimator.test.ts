@@ -1,110 +1,143 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { BandwidthEstimator } from '../src/browser/netwroking/bandwidth-estimator';
 
 describe('BandwidthEstimator', () => {
-  let est: BandwidthEstimator;
+  let estimator: BandwidthEstimator;
 
   beforeEach(() => {
-    est = new BandwidthEstimator({ windowMs: 1000, maxSamples: 10 });
+    estimator = new BandwidthEstimator({ windowMs: 10_000, maxSamples: 20 });
   });
 
-  it('defaults to fast when no data', () => {
-    expect(est.estimate()).toBe(1.0);
-    expect(est.tier()).toBe('fast');
-    expect(est.effectiveConcurrency()).toBe(6);
+  // ── Basic estimation ────────────────────────────────────────────────────────
+
+  it('should return default 1.0 when no samples', () => {
+    expect(estimator.estimate()).toBe(1.0);
   });
 
-  it('records and estimates bandwidth', () => {
-    est.record(1000, 100); // 10 bytes/ms
-    expect(est.estimate()).toBeCloseTo(10.0, 1);
-    expect(est.tier()).toBe('fast');
+  it('should calculate bandwidth from samples', () => {
+    estimator.record(1000, 100); // 10 bytes/ms
+    estimator.record(2000, 100); // 20 bytes/ms
+    const bps = estimator.estimate();
+    expect(bps).toBe(15); // (1000+2000)/(100+100) = 15
   });
 
-  it('medium bandwidth tier', () => {
-    est.record(50, 100); // 0.5 bytes/ms
-    expect(est.estimate()).toBeCloseTo(0.5, 2);
-    expect(est.tier()).toBe('medium');
-    expect(est.effectiveConcurrency()).toBe(4);
+  it('should ignore samples with 0 duration', () => {
+    estimator.record(1000, 0);
+    expect(estimator.estimate()).toBe(1.0);
   });
 
-  it('slow bandwidth tier', () => {
-    est.record(10, 100); // 0.1 bytes/ms
-    expect(est.estimate()).toBeCloseTo(0.1, 2);
-    expect(est.tier()).toBe('slow');
-    expect(est.effectiveConcurrency()).toBe(2);
+  it('should ignore negative duration', () => {
+    estimator.record(1000, -5);
+    expect(estimator.estimate()).toBe(1.0);
   });
 
-  it('averages multiple samples', () => {
-    est.record(100, 100); // 1.0
-    est.record(200, 100); // 2.0
-    expect(est.estimate()).toBeCloseTo(1.5, 1);
+  // ── Tier ────────────────────────────────────────────────────────────────────
+
+  describe('tier', () => {
+    it('should return fast for high bandwidth', () => {
+      estimator.record(10000, 100); // 100 bytes/ms = fast
+      expect(estimator.tier()).toBe('fast');
+    });
+
+    it('should return medium for moderate bandwidth', () => {
+      estimator.record(500, 1000); // 0.5 bytes/ms = medium
+      expect(estimator.tier()).toBe('medium');
+    });
+
+    it('should return slow for low bandwidth', () => {
+      estimator.record(100, 1000); // 0.1 bytes/ms = slow
+      expect(estimator.tier()).toBe('slow');
+    });
   });
 
-  it('prunes old samples outside window', () => {
-    vi.useFakeTimers();
-    est.record(100, 10); // 10 bytes/ms → fast
-    vi.advanceTimersByTime(1500); // > windowMs=1000
-    est.record(10, 100); // 0.1 bytes/ms → slow
-    expect(est.estimate()).toBeCloseTo(0.1, 2);
-    expect(est.tier()).toBe('slow');
-    vi.useRealTimers();
+  // ── shouldDemote ────────────────────────────────────────────────────────────
+
+  describe('shouldDemote', () => {
+    it('should not demote when fast', () => {
+      estimator.record(10000, 100);
+      expect(estimator.shouldDemote(1)).toBe(false);
+      expect(estimator.shouldDemote(3)).toBe(false);
+    });
+
+    it('should demote low+deferred when medium', () => {
+      estimator.record(500, 1000);
+      expect(estimator.shouldDemote(1)).toBe(false); // high
+      expect(estimator.shouldDemote(2)).toBe(false); // normal
+      expect(estimator.shouldDemote(3)).toBe(true);  // low
+      expect(estimator.shouldDemote(4)).toBe(true);  // deferred
+    });
+
+    it('should demote normal+low+deferred when slow', () => {
+      estimator.record(100, 1000);
+      expect(estimator.shouldDemote(1)).toBe(false); // high
+      expect(estimator.shouldDemote(2)).toBe(true);  // normal
+      expect(estimator.shouldDemote(3)).toBe(true);  // low
+      expect(estimator.shouldDemote(4)).toBe(true);  // deferred
+    });
   });
 
-  it('prunes to maxSamples', () => {
-    for (let i = 0; i < 15; i++) {
-      est.record(100, 100);
-    }
-    expect(est.estimate()).toBeCloseTo(1.0, 1);
+  // ── effectiveConcurrency ────────────────────────────────────────────────────
+
+  describe('effectiveConcurrency', () => {
+    it('should return 6 for fast', () => {
+      estimator.record(10000, 100);
+      expect(estimator.effectiveConcurrency()).toBe(6);
+    });
+
+    it('should return 4 for medium', () => {
+      estimator.record(500, 1000);
+      expect(estimator.effectiveConcurrency()).toBe(4);
+    });
+
+    it('should return 2 for slow', () => {
+      estimator.record(100, 1000);
+      expect(estimator.effectiveConcurrency()).toBe(2);
+    });
   });
 
-  it('ignores zero/negative duration', () => {
-    est.record(100, 0);
-    est.record(100, -10);
-    expect(est.estimate()).toBe(1.0); // default
+  // ── reset ───────────────────────────────────────────────────────────────────
+
+  describe('reset', () => {
+    it('should clear all samples', () => {
+      estimator.record(1000, 100);
+      estimator.record(2000, 100);
+      estimator.reset();
+      expect(estimator.estimate()).toBe(1.0);
+    });
   });
 
-  it('shouldDemote fast never demotes', () => {
-    est.record(1000, 100); // fast
-    expect(est.shouldDemote(0)).toBe(false);
-    expect(est.shouldDemote(2)).toBe(false);
-    expect(est.shouldDemote(4)).toBe(false);
+  // ── Pruning ─────────────────────────────────────────────────────────────────
+
+  describe('pruning', () => {
+    it('should prune old samples outside window', async () => {
+      const shortWindow = new BandwidthEstimator({ windowMs: 50, maxSamples: 100 });
+      shortWindow.record(1000, 10);
+      // Wait for window to expire
+      await new Promise(r => setTimeout(r, 100));
+      shortWindow.record(100, 10);
+      // Old sample should be pruned
+      const bps = shortWindow.estimate();
+      expect(bps).toBe(10); // only the new sample
+    });
+
+    it('should enforce maxSamples limit', () => {
+      const limited = new BandwidthEstimator({ windowMs: 60_000, maxSamples: 3 });
+      limited.record(100, 10);
+      limited.record(200, 10);
+      limited.record(300, 10);
+      limited.record(400, 10);
+      // Should only keep the last 3
+      const bps = limited.estimate();
+      // 200+300+400 / 30 = 900/30 = 30
+      expect(bps).toBeCloseTo(30, 0);
+    });
   });
 
-  it('shouldDemote medium demotes low + deferred (priority >= 3)', () => {
-    est.record(50, 100); // medium
-    expect(est.shouldDemote(0)).toBe(false);
-    expect(est.shouldDemote(1)).toBe(false);
-    expect(est.shouldDemote(2)).toBe(false);
-    expect(est.shouldDemote(3)).toBe(true);  // low
-    expect(est.shouldDemote(4)).toBe(true);  // deferred
-  });
+  // ── Multiple samples ────────────────────────────────────────────────────────
 
-  it('shouldDemote slow demotes normal + low + deferred (priority >= 2)', () => {
-    est.record(10, 100); // slow
-    expect(est.shouldDemote(0)).toBe(false);
-    expect(est.shouldDemote(1)).toBe(false);
-    expect(est.shouldDemote(2)).toBe(true);  // normal
-    expect(est.shouldDemote(3)).toBe(true);  // low
-    expect(est.shouldDemote(4)).toBe(true);  // deferred
-  });
-
-  it('reset clears all data', () => {
-    est.record(10, 100); // slow
-    est.reset();
-    expect(est.estimate()).toBe(1.0);
-    expect(est.tier()).toBe('fast');
-  });
-
-  it('concurrency tiers', () => {
-    est.record(1000, 100);
-    expect(est.effectiveConcurrency()).toBe(6);
-    est.reset();
-
-    est.record(50, 100);
-    expect(est.effectiveConcurrency()).toBe(4);
-    est.reset();
-
-    est.record(10, 100);
-    expect(est.effectiveConcurrency()).toBe(2);
+  it('should average across multiple samples', () => {
+    estimator.record(1000, 100); // 10 bytes/ms
+    estimator.record(1000, 100); // 10 bytes/ms
+    expect(estimator.estimate()).toBe(10);
   });
 });

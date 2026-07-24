@@ -372,6 +372,44 @@ function createInProcessManager(config?: Partial<ProcessManagerConfig>): {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CHILD-PROCESS FACTORY
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Create a ProcessManager that uses real child_process.fork().
+ * Each "process" is an actual Node.js child process.
+ * 
+ * @param entryPath Path to the renderer entry script
+ * @param config Optional process manager configuration
+ */
+function createChildProcessManager(
+  entryPath: string,
+  config?: Partial<ProcessManagerConfig>
+): {
+  manager: ProcessManager;
+  getProcessTransport: (processId: string) => ITransport | null;
+} {
+  const transports = new Map<string, ITransport>();
+
+  const factory: ProcessFactory = async (processId) => {
+    const { ChildProcessTransport } = await import('./child-process-transport');
+    const transport = ChildProcessTransport.fork(entryPath, [], {
+      // Pass the process ID as an environment variable
+      env: { ...process.env, NOVA_PROCESS_ID: processId },
+    });
+    transports.set(processId, transport);
+    return transport;
+  };
+
+  const manager = new ProcessManager(factory, config);
+
+  return {
+    manager,
+    getProcessTransport: (processId: string) => transports.get(processId) ?? null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -380,6 +418,7 @@ export {
   ProcessEventBus,
   ProcessState,
   createInProcessManager,
+  createChildProcessManager,
   DEFAULT_PROCESS_MANAGER_CONFIG,
 };
 

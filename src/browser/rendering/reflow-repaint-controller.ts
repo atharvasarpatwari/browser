@@ -12,6 +12,8 @@ import { DamageTracker } from './damage-tracker';
 import { FrameScheduler } from './frame-scheduler';
 import type { ILayoutEngine } from './layout-engine';
 import type { IPaintEngine } from './paint-engine';
+import type { LayerCompositor } from './compositing/layer-compositor';
+import type { LayerTree } from './compositing/layer-tree';
 
 // ─── TYPES ──────────────────────────────────────────────────────────────────
 
@@ -49,6 +51,8 @@ export class ReflowRepaintController {
   private viewportWidth: number;
   private viewportHeight: number;
   private processing = false;
+  private layerCompositor: LayerCompositor | null = null;
+  private lastCompositedImageData: ImageData | null = null;
 
   constructor(
     private layoutEngine: ILayoutEngine,
@@ -109,6 +113,23 @@ export class ReflowRepaintController {
     return this.scheduler.getFrameCount();
   }
 
+  // ── Compositor Integration ──────────────────────────────────────
+
+  /**
+   * Set a LayerCompositor for layer-based compositing.
+   * When set, processFrame() will use the compositor for the final image.
+   */
+  setLayerCompositor(compositor: LayerCompositor): void {
+    this.layerCompositor = compositor;
+  }
+
+  /**
+   * Get the most recently composited ImageData.
+   */
+  getLastCompositedImageData(): ImageData | null {
+    return this.lastCompositedImageData;
+  }
+
   // ── Processing ────────────────────────────────────────────────────
 
   /**
@@ -130,7 +151,15 @@ export class ReflowRepaintController {
       // 2. Incremental paint — uses layout damage to know what to repaint
       this.paintEngine.paintIncremental(this.document, layoutDamage);
 
-      // 3. Clear paint damage after successful paint
+      // 3. If a layer compositor is available, use layer-based compositing
+      if (this.layerCompositor) {
+        const layerTree = (this.paintEngine as { getLayerTree?(): import('./compositing/layer-tree').LayerTree | null }).getLayerTree?.();
+        if (layerTree) {
+          this.lastCompositedImageData = this.layerCompositor.compositeIncremental(layerTree);
+        }
+      }
+
+      // 4. Clear paint damage after successful paint
       this.paintDamage.clear();
     } finally {
       this.processing = false;
@@ -161,5 +190,6 @@ export class ReflowRepaintController {
     this.paintDamage.clear();
     this.document = null;
     this.processing = false;
+    this.lastCompositedImageData = null;
   }
 }

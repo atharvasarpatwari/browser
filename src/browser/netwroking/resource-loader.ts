@@ -6,6 +6,8 @@ import { ResponseParser } from './response-parser';
 import type { DiscoveredResource, DiscoveredResourceKind } from '../rendering/html-parser';
 import type { ITrackerBlocker } from '../security/tracker-blocker';
 import type { ICacheManager } from './cache-manager';
+import type { ICorsEngine, CorsRequest } from '../security/cors';
+import { CorsMode, CorsCredentials, CorsBlockedError, CorsViolationError } from '../security/cors';
 import { PriorityQueue } from './priority-queue';
 import { BandwidthEstimator } from './bandwidth-estimator';
 
@@ -57,6 +59,8 @@ class ResourceLoader implements IResourceLoader {
   private readonly retryPolicy: RetryPolicy;
   private readonly blocker: ITrackerBlocker | null;
   private cache: ICacheManager | null = null;
+  private cors: ICorsEngine | null = null;
+  private pageOrigin = '';
   private maxConcurrent = 6;
   private activeCount = 0;
   private readonly pendingQueue = new PriorityQueue<{ resolve: () => void }>();
@@ -78,6 +82,11 @@ class ResourceLoader implements IResourceLoader {
 
   setCache(cache: ICacheManager): void {
     this.cache = cache;
+  }
+
+  setCors(cors: ICorsEngine, pageOrigin: string): void {
+    this.cors = cors;
+    this.pageOrigin = pageOrigin;
   }
 
   async loadResource(url: string, _kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
@@ -128,10 +137,72 @@ class ResourceLoader implements IResourceLoader {
     }
 
     try {
+      const headers = new Map<string, string>([['accept', '*/*']]);
+
+      // ── CORS pre-request check ──────────────────────────────────────────
+      let corsPreflightDone = false;
+      if (this.cors && this.pageOrigin) {
+        const corsReq: CorsRequest = {
+          url,
+          origin:      this.pageOrigin,
+          method:      'GET',
+          headers,
+          mode:        CorsMode.Cors,
+          credentials: CorsCredentials.Omit,
+        };
+        const preCheck = this.cors.checkRequest(corsReq);
+
+        if (preCheck.decision === 'blocked') {
+          this.releaseSlot();
+          return {
+            url,
+            kind: _kind,
+            statusCode: 0,
+            contentType: '',
+            body: '',
+            bodyBinary: null,
+            headers: new Map(),
+            loadedAt: Date.now(),
+            durationMs: Date.now() - start,
+            fromCache: false,
+            error: `CORS blocked: ${preCheck.reason}`,
+          };
+        }
+
+        // Inject CORS request headers (e.g. Origin)
+        for (const [k, v] of preCheck.requestHeaders) {
+          headers.set(k, v);
+        }
+
+        // Perform pre-flight if required
+        if (preCheck.requiresPreflight) {
+          try {
+            await this.cors.performPreflight(corsReq, { send: this.client.send.bind(this.client) } as never, signal);
+            corsPreflightDone = true;
+          } catch (err) {
+            this.releaseSlot();
+            const reason = err instanceof Error ? err.message : String(err);
+            return {
+              url,
+              kind: _kind,
+              statusCode: 0,
+              contentType: '',
+              body: '',
+              bodyBinary: null,
+              headers: new Map(),
+              loadedAt: Date.now(),
+              durationMs: Date.now() - start,
+              fromCache: false,
+              error: `CORS preflight failed: ${reason}`,
+            };
+          }
+        }
+      }
+
       const spec = {
         url,
         method: HttpMethod.GET,
-        headers: new Map<string, string>([['accept', '*/*']]),
+        headers,
         timeoutMs: options?.timeoutMs ?? 15_000,
       };
 
@@ -149,6 +220,39 @@ class ResourceLoader implements IResourceLoader {
 
       const parsed = this.responseParser.parse(res);
       const durationMs = Date.now() - start;
+
+      // ── CORS post-response check ────────────────────────────────────────
+      if (this.cors && this.pageOrigin && !corsPreflightDone) {
+        const corsReq: CorsRequest = {
+          url,
+          origin:      this.pageOrigin,
+          method:      'GET',
+          headers,
+          mode:        CorsMode.Cors,
+          credentials: CorsCredentials.Omit,
+        };
+        try {
+          this.cors.checkResponse(corsReq, res);
+        } catch (err) {
+          if (err instanceof CorsViolationError) {
+            this.releaseSlot();
+            return {
+              url,
+              kind: _kind,
+              statusCode: 0,
+              contentType: '',
+              body: '',
+              bodyBinary: null,
+              headers: new Map(),
+              loadedAt: Date.now(),
+              durationMs: Date.now() - start,
+              fromCache: false,
+              error: `CORS violation: ${err.message}`,
+            };
+          }
+          throw err;
+        }
+      }
 
       // ── Record bandwidth ──────────────────────────────────────────────────
       this.bandwidth.record(res.body.length, durationMs);

@@ -302,6 +302,23 @@ async function createTabProcessManager(
   return new TabProcessManager(processManager, undefined, config);
 }
 
+/**
+ * Create a TabProcessManager with child-process transport.
+ * Each tab will get its own Node.js child process.
+ * 
+ * @param entryPath Path to the renderer entry script
+ * @param config Optional configuration
+ */
+async function createChildProcessTabManager(
+  entryPath: string,
+  config?: Partial<TabProcessAdapterConfig> & { processConfig?: any },
+): Promise<TabProcessManager> {
+  const { createChildProcessManager } = await import('../../common/ipc/process-manager');
+  const { manager: processManager } = createChildProcessManager(entryPath, config?.processConfig);
+
+  return new TabProcessManager(processManager, undefined, config);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -310,6 +327,7 @@ export {
   TabProcessManager,
   TabProcessEventBus,
   createTabProcessManager,
+  createChildProcessTabManager,
   DEFAULT_ADAPTER_CONFIG,
 };
 

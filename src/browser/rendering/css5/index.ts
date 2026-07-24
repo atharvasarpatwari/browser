@@ -51,3 +51,33 @@ export {
   expandShorthands,
 } from './cascade';
 export type { StyleableElement } from './cascade';
+
+// Property Definitions
+export {
+  isInheritedProperty,
+  getInitialValue,
+  isShorthandProperty,
+  getLonghands,
+  isCSSWideKeyword,
+  getInheritedProperties,
+  getAllPropertyDefinitions,
+} from './property-definitions';
+
+// CSS-Wide Keywords
+export {
+  resolveCSSWideKeyword,
+  isCSSWideKeywordValue,
+  extractCSSWideKeyword,
+  processCSSWideKeywords,
+} from './css-wide-keywords';
+export type { KeywordContext } from './css-wide-keywords';
+
+// Computed Value Resolver
+export {
+  resolveComputedValue,
+  resolveAllComputedValues,
+  resolveFontSizeKeyword,
+  resolveFontWeightKeyword,
+  resolveBorderWidthKeyword,
+} from './computed-value-resolver';
+export type { ResolutionContext } from './computed-value-resolver';

@@ -20,6 +20,8 @@
  */
 
 import type { IServiceContainer } from './dependency-container';
+import type { ProcessModelConfig } from './config/process-model';
+import { DEFAULT_PROCESS_MODEL } from './config/process-model';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -40,6 +42,8 @@ interface AppConfig {
   readonly userAgent: string;
   /** Browser name displayed in title bar, new tab, and branding. */
   readonly browserName: string;
+  /** Process model configuration for browser/renderer separation. */
+  readonly processModel: ProcessModelConfig;
 }
 
 /** Reasonable defaults used when environment variables are absent. */
@@ -50,6 +54,7 @@ const DEFAULT_CONFIG: AppConfig = {
   homePage: 'about:blank',
   userAgent: 'NovaBrowser/1.0',
   browserName: 'Nova Browser',
+  processModel: DEFAULT_PROCESS_MODEL,
 };
 
 // ── Shared-service interface ───────────────────────────────────────────────────

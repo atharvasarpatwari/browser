@@ -39,6 +39,7 @@ export const enum CssTokenType {
   Tilde = '~',
   Period = '.',
   Equals = '=',
+  Asterisk = '*',
   EOF = 'eof',
 
   // Special
@@ -68,7 +69,7 @@ export type CssCompoundSelector = {
   readonly id: string | null;             // e.g. 'myId'
   readonly classes: readonly string[];    // e.g. ['foo', 'bar']
   readonly attributes: readonly CssAttributeSelector[];
-  readonly pseudoClass: CssPseudoClassSelector | null;
+  readonly pseudoClasses: readonly CssPseudoClassSelector[];
   readonly pseudoElement: string | null;  // e.g. 'before', 'after'
 };
 
@@ -166,6 +167,17 @@ export interface CssSupportsRule {
   readonly rules: readonly CssRule[];
 }
 
+export interface CssLayerRule {
+  readonly type: 'layer';
+  readonly names: readonly string[];        // empty for anonymous @layer
+  readonly rules: readonly CssRule[];       // for @layer name { ... }
+}
+
+export interface CssLayerOrderRule {
+  readonly type: 'layer-order';
+  readonly names: readonly string[];        // @layer a, b, c;
+}
+
 export interface CssUnknownRule {
   readonly type: 'unknown';
   readonly atKeyword: string;
@@ -182,6 +194,8 @@ export type CssRule =
   | CssCharsetRule
   | CssNamespaceRule
   | CssSupportsRule
+  | CssLayerRule
+  | CssLayerOrderRule
   | CssUnknownRule;
 
 // ─────────────────────────────────────────────────────────────────────────────

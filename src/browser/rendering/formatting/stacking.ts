@@ -46,6 +46,8 @@ export interface StackingContext {
   readonly isGrouped: boolean;
   /** The resolved opacity for group compositing. */
   readonly groupOpacity: number;
+  /** The will-change CSS property value, if any. */
+  readonly willChange: string | null;
 }
 
 /** Paint command placeholder — mirrors PaintCommand from paint-engine. */
@@ -84,6 +86,10 @@ function getFilter(style: ReadonlyMap<string, string>): string | undefined {
 
 function getIsolation(style: ReadonlyMap<string, string>): string | undefined {
   return style.get('isolation');
+}
+
+function getWillChange(style: ReadonlyMap<string, string>): string | undefined {
+  return style.get('will-change');
 }
 
 function getDisplay(style: ReadonlyMap<string, string>): string {
@@ -144,6 +150,15 @@ export function createsStackingContext(
   // isolation: isolate
   if (getIsolation(style) === 'isolate') return true;
 
+  // will-change: transform, opacity, paint → create stacking context
+  const willChange = getWillChange(style);
+  if (willChange) {
+    const props = willChange.split(',').map(s => s.trim().toLowerCase());
+    if (props.includes('transform') || props.includes('opacity') || props.includes('paint')) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -182,6 +197,7 @@ function createContext(el: DomElement, isRoot: boolean): StackingContext {
     positionedAutoEntries: [],
     isGrouped: opacity < 1,
     groupOpacity: opacity,
+    willChange: getWillChange(style) ?? null,
   };
 
   classifyChildrenIntoContext(ctx, el, isRoot);
