@@ -57,6 +57,18 @@ export type {
   TransportCloseHandler,
 } from './transport';
 
+// Worker Transport
+export {
+  WorkerParentTransport,
+  WorkerSideTransport,
+} from './worker-transport';
+
+// Socket Transport
+export {
+  SocketTransport,
+  SocketServerTransport,
+} from './socket-transport';
+
 // Channel
 export {
   Channel,
@@ -70,6 +82,7 @@ export type {
   ChannelConfig,
   ChannelMessageHandler,
   ChannelRequestHandler,
+  ChannelStreamHandler,
 } from './channel';
 
 // Service Proxy
@@ -94,6 +107,7 @@ export {
   ProcessEventBus,
   ProcessState,
   createInProcessManager,
+  createChildProcessManager,
   DEFAULT_PROCESS_MANAGER_CONFIG,
 } from './process-manager';
 

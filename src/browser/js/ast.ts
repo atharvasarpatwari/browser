@@ -113,6 +113,7 @@ export interface FunctionExpression {
   body: BlockStatement | Expression;
   async: boolean;
   generator: boolean;
+  strictMode?: boolean;
   loc?: SourceLocation;
 }
 
@@ -287,7 +288,8 @@ export type Statement =
   | DebuggerStatement
   | VariableDeclaration
   | FunctionDeclaration
-  | ClassDeclaration;
+  | ClassDeclaration
+  | WithStatement;
 
 export interface Program {
   type: 'Program';
@@ -425,6 +427,13 @@ export interface DebuggerStatement {
   loc?: SourceLocation;
 }
 
+export interface WithStatement {
+  type: 'WithStatement';
+  object: Expression;
+  body: Statement;
+  loc?: SourceLocation;
+}
+
 export interface VariableDeclaration {
   type: 'VariableDeclaration';
   declarations: VariableDeclarator[];
@@ -446,6 +455,7 @@ export interface FunctionDeclaration {
   body: BlockStatement;
   async: boolean;
   generator: boolean;
+  strictMode?: boolean;
   loc?: SourceLocation;
 }
 

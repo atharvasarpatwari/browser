@@ -1,4 +1,5 @@
 import type { IDomTree, DomNode, DomElement, DomTextNode, DomDocument } from '../rendering/dom-tree';
+import { BLOCKED_URL_SCHEMES } from './blocked-url-schemes';
 
 export interface HtmlSanitizerConfig {
   readonly strippedElements?: ReadonlySet<string>;
@@ -28,9 +29,7 @@ const DEFAULT_STRIPPED_ATTRIBUTES = new Set([
   'oncontentvisibilityautostatechange', 'onformdata',
 ]);
 
-const DEFAULT_STRIPPED_URL_SCHEMES = new Set([
-  'javascript:', 'vbscript:', 'data:', 'livescript:',
-]);
+const DEFAULT_STRIPPED_URL_SCHEMES = BLOCKED_URL_SCHEMES;
 
 type SanitizeRoot = DomDocument | DomNode;
 
@@ -90,6 +89,7 @@ export class HtmlSanitizer {
 
   private sanitizeAttributes(el: DomElement, domTree: IDomTree): void {
     const attrsToRemove: string[] = [];
+    const attrsToSanitize: Array<{ name: string; newValue: string }> = [];
 
     for (const [name, value] of el.attributes) {
       const lowerName = name.toLowerCase();
@@ -103,11 +103,20 @@ export class HtmlSanitizer {
         attrsToRemove.push(name);
         continue;
       }
+
+      // CSS injection: sanitize style attribute values
+      if (lowerName === 'style' && containsDangerousCss(value)) {
+        attrsToSanitize.push({ name, newValue: sanitizeStyleAttribute(value) });
+      }
     }
 
     for (const attr of attrsToRemove) {
       domTree.removeAttribute(el, attr);
       this.removedCount++;
+    }
+
+    for (const { name, newValue } of attrsToSanitize) {
+      domTree.setAttribute(el, name, newValue);
     }
   }
 
@@ -135,4 +144,59 @@ export function sanitizeHtmlTree(root: SanitizeRoot, domTree: IDomTree, config?:
   const sanitizer = new HtmlSanitizer(config);
   sanitizer.sanitize(root, domTree);
   return sanitizer.getRemovedCount();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CSS INJECTION SANITIZATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Patterns that indicate CSS injection attacks. */
+const DANGEROUS_CSS_PATTERNS: RegExp[] = [
+  /expression\s*\(/i,                    // IE CSS expressions: expression(alert(1))
+  /url\s*\(\s*['"]?\s*javascript\s*:/i,  // url(javascript:...) — script execution
+  /url\s*\(\s*['"]?\s*data\s*:/i,        // url(data:...) — data exfiltration
+  /url\s*\(\s*['"]?\s*vbscript\s*:/i,    // url(vbscript:...) — IE script
+  /-moz-binding\s*:/i,                   // Firefox XBL binding attacks
+  /behavior\s*:\s*url/i,                 // IE behavior attachment
+  /@import\s+['"]?\s*javascript\s*:/i,   // @import with javascript:
+  /@import\s+['"]?\s*data\s*:/i,         // @import with data:
+  /expression\s*\(\s*['"]?eval/i,        // Nested eval in expression
+  /behavior\s*:\s*url\s*\(\s*['"]?\s*http/i, // External behavior
+];
+
+/**
+ * Check if a CSS value string contains a dangerous pattern.
+ * Returns true if the value should be blocked.
+ */
+export function containsDangerousCss(value: string): boolean {
+  for (const pattern of DANGEROUS_CSS_PATTERNS) {
+    if (pattern.test(value)) return true;
+  }
+  return false;
+}
+
+/**
+ * Sanitize a CSS property value, removing dangerous patterns.
+ * Returns the sanitized value, or empty string if the entire value is dangerous.
+ */
+export function sanitizeCssValue(value: string): string {
+  if (containsDangerousCss(value)) {
+    return '';
+  }
+  return value;
+}
+
+/**
+ * Sanitize a style attribute value (e.g., from setAttribute or inline style).
+ * Strips dangerous CSS injection patterns.
+ */
+export function sanitizeStyleAttribute(value: string): string {
+  const declarations = value.split(';');
+  const safe: string[] = [];
+  for (const decl of declarations) {
+    if (!containsDangerousCss(decl)) {
+      safe.push(decl);
+    }
+  }
+  return safe.join(';');
 }

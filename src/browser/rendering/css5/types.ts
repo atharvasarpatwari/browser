@@ -97,6 +97,7 @@ export type CssPseudoClassSelector =
   | { readonly type: 'negation'; readonly selectors: readonly CssSelector[] }
   | { readonly type: 'is'; readonly selectors: readonly CssSelector[] }
   | { readonly type: 'any'; readonly selectors: readonly CssSelector[] }
+  | { readonly type: 'where'; readonly selectors: readonly CssSelector[] }
   | { readonly type: 'has'; readonly selectors: readonly CssSelector[] };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,6 +214,11 @@ export interface CssMediaFeature {
   readonly name: string;
   readonly value: string;
   readonly range: 'min' | 'max' | null;   // min-width, max-width
+  /** Range syntax operator: (width >= 800px), (400px <= width <= 800px) */
+  readonly operator?: '>=' | '<=' | '>' | '<' | null;
+  /** For double-range syntax: (400px <= width <= 800px) */
+  readonly lowerValue?: string;
+  readonly lowerOperator?: '>=' | '<=' | '>' | '<' | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ export class Parser {
   private pos = 0;
   private lexer?: Lexer;
   private templateDepth = 0;
+  private strictStack: boolean[] = [];
 
   constructor(tokens: Token[], lexer?: Lexer) {
     if (lexer) {
@@ -99,7 +100,10 @@ export class Parser {
     this.advance(); // =>
     let body: AST.BlockStatement | AST.Expression;
     if (this.is(TokenType.LBrace)) {
+      const strict = this.lookaheadStrictDirective();
+      this.strictStack.push(strict);
       body = this.parseBlock();
+      this.strictStack.pop();
     } else {
       body = this.parseAssignExpr();
     }
@@ -112,7 +116,7 @@ export class Parser {
     switch (tok.type) {
       case TokenType.Number:
         this.advance();
-        return { type: 'Literal', value: parseFloat(tok.value), raw: tok.value, loc: { line: tok.line, column: tok.column } };
+        return { type: 'Literal', value: Number(tok.value), raw: tok.value, loc: { line: tok.line, column: tok.column } };
 
       case TokenType.String:
         this.advance();
@@ -148,6 +152,10 @@ export class Parser {
       case TokenType.This:
         this.advance();
         return { type: 'ThisExpression', loc: { line: tok.line, column: tok.column } };
+
+      case TokenType.RegExp:
+        this.advance();
+        return { type: 'Literal', value: { type: 'RegExp', pattern: tok.value.split('/')[1] ?? '', flags: tok.value.split('/').pop() ?? '' }, raw: tok.value, loc: { line: tok.line, column: tok.column } };
 
       case TokenType.Identifier:
         this.advance();
@@ -521,8 +529,11 @@ export class Parser {
     this.expect(TokenType.LParen);
     const params = this.parseParams();
     this.expect(TokenType.RParen);
+    const strict = this.lookaheadStrictDirective();
+    this.strictStack.push(strict);
     const body = this.parseBlock();
-    return { type: 'FunctionExpression', id, params, body, async, generator, loc: { line: tok.line, column: tok.column } };
+    this.strictStack.pop();
+    return { type: 'FunctionExpression', id, params, body, async, generator, strictMode: strict, loc: { line: tok.line, column: tok.column } };
   }
 
   private parseParenExpression(): AST.Expression {
@@ -573,6 +584,8 @@ export class Parser {
       case TokenType.Debugger:
         this.advance();
         return { type: 'DebuggerStatement', loc: { line: tok.line, column: tok.column } };
+      case TokenType.With:
+        return this.parseWithStatement();
       default:
         if (tok.type === TokenType.Identifier && this.peek(1).type === TokenType.Colon) {
           return this.parseLabeledStatement();
@@ -596,8 +609,21 @@ export class Parser {
   private parseExpressionStatement(): AST.ExpressionStatement {
     const tok = this.peek();
     const expr = this.parseExpression();
-    if (this.is(TokenType.Semicolon)) this.advance();
+    this.eatSemicolon();
     return { type: 'ExpressionStatement', expression: expr, loc: { line: tok.line, column: tok.column } };
+  }
+
+  private parseWithStatement(): AST.WithStatement {
+    const tok = this.peek();
+    if (this.strictStack.length > 0 && this.strictStack[this.strictStack.length - 1]) {
+      throw new Error(`SyntaxError: 'with' statements cannot be used in strict mode at line ${tok.line}:${tok.column}`);
+    }
+    this.advance(); // consume 'with'
+    this.expect(TokenType.LParen);
+    const object = this.parseExpression();
+    this.expect(TokenType.RParen);
+    const body = this.parseStatement();
+    return { type: 'WithStatement', object, body, loc: { line: tok.line, column: tok.column } };
   }
 
   private parseVariableDeclaration(): AST.VariableDeclaration {
@@ -614,7 +640,7 @@ export class Parser {
       }
       declarations.push({ type: 'VariableDeclarator', id, init });
     } while (this.is(TokenType.Comma) && (this.advance(), true));
-    if (this.is(TokenType.Semicolon)) this.advance();
+    this.eatSemicolon();
     return { type: 'VariableDeclaration', declarations, kind, loc: { line: tok.line, column: tok.column } };
   }
 
@@ -741,8 +767,11 @@ export class Parser {
     this.expect(TokenType.LParen);
     const params = this.parseParams();
     this.expect(TokenType.RParen);
+    const strict = this.lookaheadStrictDirective();
+    this.strictStack.push(strict);
     const body = this.parseBlock();
-    return { type: 'FunctionDeclaration', id, params, body, async, generator, loc: { line: tok.line, column: tok.column } };
+    this.strictStack.pop();
+    return { type: 'FunctionDeclaration', id, params, body, async, generator, strictMode: strict, loc: { line: tok.line, column: tok.column } };
   }
 
   private parseClassDeclaration(): AST.ClassDeclaration {
@@ -772,10 +801,12 @@ export class Parser {
         this.expect(TokenType.LParen);
         const params = this.parseParams();
         this.expect(TokenType.RParen);
+        this.strictStack.push(true);
         const funcBody = this.parseBlock();
+        this.strictStack.pop();
         body.push({
           type: 'MethodDefinition', key,
-          value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false },
+          value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
           kind: 'method', computed: false, static: true,
         });
       } else {
@@ -784,11 +815,13 @@ export class Parser {
           this.advance();
           const params = this.parseParams();
           this.expect(TokenType.RParen);
+          this.strictStack.push(true);
           const funcBody = this.parseBlock();
+          this.strictStack.pop();
           const kind = key.type === 'Identifier' && key.name === 'constructor' ? 'constructor' : 'method';
           body.push({
             type: 'MethodDefinition', key,
-            value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false },
+            value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
             kind, computed: false, static: false,
           });
         } else {
@@ -807,10 +840,12 @@ export class Parser {
     const tok = this.peek();
     this.advance();
     let arg: AST.Expression | null = null;
-    if (!this.is(TokenType.Semicolon) && !this.is(TokenType.RBrace) && !this.is(TokenType.EOF)) {
+    // ASI: per spec, return [lookahead ∉ {*, +/, */}] Expression_opt
+    // If the next token is on a new line, ASI inserts a semicolon
+    if (!this.is(TokenType.Semicolon) && !this.is(TokenType.RBrace) && !this.is(TokenType.EOF) && !this.hasNewlineBeforeCurrent()) {
       arg = this.parseExpression();
     }
-    if (this.is(TokenType.Semicolon)) this.advance();
+    this.eatSemicolon();
     return { type: 'ReturnStatement', argument: arg, loc: { line: tok.line, column: tok.column } };
   }
 
@@ -847,7 +882,7 @@ export class Parser {
     this.expect(TokenType.LParen);
     const test = this.parseExpression();
     this.expect(TokenType.RParen);
-    if (this.is(TokenType.Semicolon)) this.advance();
+    this.eatSemicolon();
     return { type: 'DoWhileStatement', test, body, loc: { line: tok.line, column: tok.column } };
   }
 
@@ -991,7 +1026,7 @@ export class Parser {
     const tok = this.peek();
     this.advance();
     const argument = this.parseExpression();
-    if (this.is(TokenType.Semicolon)) this.advance();
+    this.eatSemicolon();
     return { type: 'ThrowStatement', argument, loc: { line: tok.line, column: tok.column } };
   }
 
@@ -999,11 +1034,12 @@ export class Parser {
     const tok = this.peek();
     this.advance();
     let label: AST.Identifier | null = null;
-    if (this.is(TokenType.Identifier)) {
+    // ASI: label only accepted if on same line as 'break'
+    if (this.is(TokenType.Identifier) && !this.hasNewlineBeforeCurrent()) {
       label = { type: 'Identifier', name: this.peek().value };
       this.advance();
     }
-    if (this.is(TokenType.Semicolon)) this.advance();
+    this.eatSemicolon();
     return { type: 'BreakStatement', label, loc: { line: tok.line, column: tok.column } };
   }
 
@@ -1011,11 +1047,12 @@ export class Parser {
     const tok = this.peek();
     this.advance();
     let label: AST.Identifier | null = null;
-    if (this.is(TokenType.Identifier)) {
+    // ASI: label only accepted if on same line as 'continue'
+    if (this.is(TokenType.Identifier) && !this.hasNewlineBeforeCurrent()) {
       label = { type: 'Identifier', name: this.peek().value };
       this.advance();
     }
-    if (this.is(TokenType.Semicolon)) this.advance();
+    this.eatSemicolon();
     return { type: 'ContinueStatement', label, loc: { line: tok.line, column: tok.column } };
   }
 
@@ -1029,6 +1066,15 @@ export class Parser {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /** Pre-scan: check if the next tokens are a 'use strict' directive without consuming them. */
+  private lookaheadStrictDirective(): boolean {
+    if (this.peek().type !== TokenType.String) return false;
+    const val = this.peek().value;
+    if (val !== 'use strict') return false;
+    const next = this.peek(1);
+    return next.type === TokenType.Semicolon || next.type === TokenType.RBrace || next.type === TokenType.EOF;
+  }
 
   private parseParams(): (AST.Identifier | AST.RestElement | AST.AssignmentPattern)[] {
     const params: (AST.Identifier | AST.RestElement | AST.AssignmentPattern)[] = [];
@@ -1087,6 +1133,55 @@ export class Parser {
 
   private is(type: TokenType): boolean {
     return this.peek().type === type;
+  }
+
+  /**
+   * Eat a semicolon, with ASI (Automatic Semicolon Insertion) support.
+   * Per ECMAScript § 11.9.1, a semicolon is automatically inserted when:
+   * 1. The offending token is separated by at least one LineTerminator
+   * 2. The offending token is `}`
+   * 3. End of input
+   *
+   * This method skips Newline tokens when looking for the semicolon.
+   */
+  private eatSemicolon(): void {
+    if (this.is(TokenType.Semicolon)) {
+      this.advance();
+      return;
+    }
+
+    // ASI: check if there's a newline before the current token
+    const prev = this.peek(0);
+    const hasNewlineBefore = this.hasNewlineBeforeCurrent();
+
+    // ASI Rule 1: EOF — always insert semicolon
+    if (this.is(TokenType.EOF)) {
+      return;
+    }
+
+    // ASI Rule 2: `}` — always insert semicolon
+    if (this.is(TokenType.RBrace)) {
+      return;
+    }
+
+    // ASI Rule 3: offending token on a new line
+    if (hasNewlineBefore) {
+      return;
+    }
+
+    // No ASI applicable — the semicolon is required
+    // (caller can throw if needed, but for now we're lenient)
+  }
+
+  /**
+   * Check if there's a newline between the previous token and the current one.
+   * Used for ASI decisions per ECMAScript § 11.9.
+   */
+  private hasNewlineBeforeCurrent(): boolean {
+    if (this.pos === 0) return false;
+    const prevToken = this.peek(-1);
+    const currToken = this.peek(0);
+    return prevToken.line < currToken.line;
   }
 
   // ── Operator precedence ───────────────────────────────────────────────────

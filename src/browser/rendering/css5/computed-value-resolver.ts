@@ -13,9 +13,12 @@
  *   - Display/visibility/overflow keyword normalization
  *   - `auto` pass-through for dimensions (resolved later by layout)
  *
- * Values that require layout context (em, rem, %, vw, calc) are left as-is
+ * Values that require layout context (em, rem, %, vw, vh) are left as-is
  * for the layout engine to resolve.
+ * calc(), min(), max(), clamp() are evaluated when operands share the same unit.
  */
+
+import { hasMathFunctions, resolveMathFunctions, type MathResolutionContext } from './math-functions.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NAMED COLOR TABLE (CSS Color Level 4 — 148 named colors)
@@ -299,6 +302,14 @@ export interface ResolutionContext {
   readonly parentFontSize: number;
   /** Parent element's computed font-weight (default: 400). */
   readonly parentFontWeight: number;
+  /** The element's computed `color` value (for resolving `currentcolor`). */
+  readonly currentColor?: string;
+  /** Custom property values (--my-prop: value) collected from the element and ancestors. */
+  readonly customProperties?: ReadonlyMap<string, string>;
+  /** Viewport width in px (default: 1920). */
+  readonly viewportWidth?: number;
+  /** Viewport height in px (default: 1080). */
+  readonly viewportHeight?: number;
 }
 
 const DEFAULT_CTX: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400 };
@@ -315,7 +326,8 @@ const DEFAULT_CTX: ResolutionContext = { parentFontSize: 16, parentFontWeight: 4
  *   - Display/visibility/overflow/position normalization
  *   - `auto` pass-through for dimensions
  *
- * Values with em/rem/%/vw/vh/calc() are left as-is for the layout engine.
+ * Values with em/rem/%/vw/vh are left as-is for the layout engine.
+ * calc(), min(), max(), clamp() are evaluated when operands share the same unit.
  *
  * @param property  - CSS property name
  * @param value     - Specified value string
@@ -329,12 +341,38 @@ export function resolveComputedValue(
 ): string {
   const ctx = context ?? DEFAULT_CTX;
   const prop = property.toLowerCase();
-  const v = value.trim();
+  let v = value.trim();
+
+  // Skip custom properties — they are collected but not themselves computed
+  if (prop.startsWith('--')) return v;
+
+  // Resolve var() references first if present
+  if (v.includes('var(')) {
+    v = resolveVarReferences(v, ctx.customProperties ?? new Map());
+  }
+
+  // Resolve math functions (calc, min, max, clamp) if present
+  if (hasMathFunctions(v)) {
+    const mathCtx: MathResolutionContext = {
+      fontSize: ctx.parentFontSize,
+      rootFontSize: ctx.parentFontSize,
+      viewportWidth: ctx.viewportWidth,
+      viewportHeight: ctx.viewportHeight,
+    };
+    const resolved = resolveMathFunctions(v, mathCtx);
+    if (resolved !== v) {
+      v = resolved;
+    }
+  }
 
   // ── Special values ──────────────────────────────────────────────────
   if (v === '' || v === 'initial') return v;
   if (v === 'auto' || v === 'normal' || v === 'none') return v;
-  if (v === 'currentcolor' || v === 'inherit') return v;
+  if (v === 'inherit') return v;
+  if (v === 'currentcolor') {
+    // Resolve currentcolor to the element's computed color value.
+    return ctx.currentColor ?? 'canvastext';
+  }
 
   // ── Color resolution ────────────────────────────────────────────────
   if (prop.endsWith('color') || prop === 'color' || prop === 'background-color' ||
@@ -475,7 +513,83 @@ export function resolveComputedValue(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COLOR RESOLUTION
+// CUSTOM PROPERTY (var()) RESOLUTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolves `var()` references in a CSS value string.
+ *
+ * Syntax: `var(--custom-name, fallback)`
+ * - `--custom-name`: The custom property to substitute (required)
+ * - `fallback`: Optional fallback value if the custom property is not defined
+ *
+ * Supports multiple var() references in a single value and nested var().
+ */
+export function resolveVarReferences(
+  value: string,
+  customProperties: ReadonlyMap<string, string>,
+  maxDepth: number = 10,
+): string {
+  if (!value.includes('var(')) return value;
+  if (maxDepth <= 0) return value; // Prevent infinite recursion
+
+  // Find var( and match the closing paren
+  const idx = value.indexOf('var(');
+  if (idx === -1) return value;
+
+  // Find matching closing paren
+  let depth = 0;
+  let start = idx + 4; // after "var("
+  let end = -1;
+  for (let i = start; i < value.length; i++) {
+    if (value[i] === '(') depth++;
+    else if (value[i] === ')') {
+      if (depth === 0) { end = i; break; }
+      depth--;
+    }
+  }
+  if (end === -1) return value; // Malformed — leave as-is
+
+  const inner = value.slice(start, end).trim();
+  // Split on first comma to get name and fallback
+  let name = '';
+  let fallback = '';
+  let parenDepth = 0;
+  let inQuote: string | null = null;
+  let splitIdx = -1;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i]!;
+    if (inQuote) {
+      if (ch === inQuote && inner[i - 1] !== '\\') inQuote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { inQuote = ch; continue; }
+    if (ch === '(') parenDepth++;
+    if (ch === ')') parenDepth--;
+    if (ch === ',' && parenDepth === 0) { splitIdx = i; break; }
+  }
+  if (splitIdx >= 0) {
+    name = inner.slice(0, splitIdx).trim();
+    fallback = inner.slice(splitIdx + 1).trim();
+  } else {
+    name = inner.trim();
+  }
+
+  // Resolve the custom property
+  let resolved = customProperties.get(name) ?? fallback;
+
+  // Recurse in case fallback also contains var()
+  if (resolved && resolved.includes('var(')) {
+    resolved = resolveVarReferences(resolved, customProperties, maxDepth - 1);
+  }
+
+  // Replace the var() token in the original value and recurse for remaining var()
+  const result = value.slice(0, idx) + resolved + value.slice(end + 1);
+  return resolveVarReferences(result, customProperties, maxDepth - 1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VALUE RESOLUTION
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

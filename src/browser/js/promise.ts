@@ -30,6 +30,34 @@ export function isPromiseObject(val: JSValue): boolean {
   return promiseStates.has(val as JSObject);
 }
 
+/** Check if a promise is fulfilled (resolved) */
+export function isPromiseFulfilled(val: JSValue): boolean {
+  if (typeof val !== 'object' || val === null) return false;
+  const state = promiseStates.get(val as JSObject);
+  return state?.state === 'fulfilled';
+}
+
+/** Check if a promise is rejected */
+export function isPromiseRejected(val: JSValue): boolean {
+  if (typeof val !== 'object' || val === null) return false;
+  const state = promiseStates.get(val as JSObject);
+  return state?.state === 'rejected';
+}
+
+/** Check if a promise is pending */
+export function isPromisePending(val: JSValue): boolean {
+  if (typeof val !== 'object' || val === null) return false;
+  const state = promiseStates.get(val as JSObject);
+  return state?.state === 'pending';
+}
+
+/** Get the result of a fulfilled or rejected promise */
+export function getPromiseResult(val: JSValue): JSValue {
+  if (typeof val !== 'object' || val === null) return undefined;
+  const state = promiseStates.get(val as JSObject);
+  return state?.result;
+}
+
 export function wrapAsyncResult(value: JSValue, eventLoop: EventLoop): JSValue {
   if (isPromiseObject(value)) return value;
   const p = createPromiseObj(eventLoop);

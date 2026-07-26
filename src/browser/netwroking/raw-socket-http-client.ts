@@ -20,6 +20,8 @@
  */
 
 import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from './request-manager';
+import type { ITlsHandler } from './tls-handler';
+import { CertVerificationStatus, TlsCertificateError } from './tls-handler';
 
 export class RawSocketError extends Error {
   constructor(message: string) {
@@ -82,9 +84,23 @@ function decodeChunkedBody(raw: string): string {
 
 class RawSocketHttpClient implements IHttpClient {
   private readonly defaultTimeoutMs: number;
+  private readonly tlsHandler?: ITlsHandler;
+  private readonly trustedCAs: Set<string>;
 
-  constructor(options?: { defaultTimeoutMs?: number }) {
+  constructor(options?: { defaultTimeoutMs?: number; tlsHandler?: ITlsHandler }) {
     this.defaultTimeoutMs = options?.defaultTimeoutMs ?? 30_000;
+    this.tlsHandler = options?.tlsHandler;
+
+    // Load system trust store once.
+    let cas = new Set<string>();
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { rootCertificates } = require('node:tls') as typeof import('node:tls');
+      for (const pem of rootCertificates) {
+        cas.add(pem.trim());
+      }
+    } catch { /* empty */ }
+    this.trustedCAs = cas;
   }
 
   async send(request: HttpRequestSpec, signal: AbortSignal): Promise<HttpResponseSpec> {
@@ -158,6 +174,7 @@ class RawSocketHttpClient implements IHttpClient {
       let socket: any;
 
       if (useTls) {
+        // Use rejectUnauthorized: false so we can inspect the peer cert before deciding.
         socket = tls.connect({ host: hostname, port, servername: hostname, rejectUnauthorized: false });
       } else {
         socket = net.connect({ host: hostname, port });
@@ -165,10 +182,43 @@ class RawSocketHttpClient implements IHttpClient {
 
       socket.on('error', onSocketError);
 
-      socket.on('connect', () => {
-        // Send the HTTP request bytes
-        socket.write(requestBytes);
-      });
+      if (useTls) {
+        // Wait for the TLS handshake to complete, then validate the certificate.
+        socket.on('secureConnect', () => {
+          const peerCert = socket.getPeerCertificate(true);
+          if (!peerCert || !peerCert.subject) {
+            socket.destroy();
+            finish(() => reject(new RawSocketConnectionError(hostname, port,
+              new Error('Server did not present a certificate'))));
+            return;
+          }
+
+          // Validate certificate if tlsHandler is available.
+          if (this.tlsHandler) {
+            this.tlsHandler.negotiate(hostname, port).then(result => {
+              if (!result.verified) {
+                socket.destroy();
+                const detail = `Certificate verification failed: ${result.verificationStatus}`;
+                finish(() => reject(new TlsCertificateError(hostname, result.verificationStatus, detail)));
+                return;
+              }
+              // Certificate valid — send the HTTP request.
+              socket.write(requestBytes);
+            }).catch(err => {
+              socket.destroy();
+              finish(() => reject(err instanceof Error ? err : new RawSocketConnectionError(hostname, port, err)));
+            });
+          } else {
+            // No tlsHandler — trust the connection (legacy behavior).
+            socket.write(requestBytes);
+          }
+        });
+      } else {
+        // Plain TCP — send immediately on connect.
+        socket.on('connect', () => {
+          socket.write(requestBytes);
+        });
+      }
 
       const chunks: Buffer[] = [];
 

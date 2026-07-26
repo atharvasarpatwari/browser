@@ -50,6 +50,10 @@ interface TransportConfig {
   readonly maxMessageSize: number;
   /** Timeout in ms for connection establishment. */
   readonly connectTimeoutMs: number;
+  /** High watermark for backpressure (0 = disabled). */
+  readonly highWaterMark: number;
+  /** Low watermark for resuming after backpressure (0 = disabled). */
+  readonly lowWaterMark: number;
 }
 
 const DEFAULT_TRANSPORT_CONFIG: TransportConfig = {
@@ -57,6 +61,8 @@ const DEFAULT_TRANSPORT_CONFIG: TransportConfig = {
   remoteId: 'remote',
   maxMessageSize: 16 * 1024 * 1024, // 16MB
   connectTimeoutMs: 10_000,
+  highWaterMark: 0,
+  lowWaterMark: 0,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,6 +78,8 @@ interface ITransport extends IDisposable {
   readonly localId: string;
   /** The remote endpoint ID. */
   readonly remoteId: string;
+  /** Number of bytes queued but not yet sent (for backpressure). */
+  readonly bufferedAmount: number;
 
   /** Connect to the remote endpoint. */
   connect(): Promise<void>;
@@ -85,8 +93,12 @@ interface ITransport extends IDisposable {
   onError(handler: TransportErrorHandler): void;
   /** Register a handler for transport close. */
   onClose(handler: TransportCloseHandler): void;
+  /** Register a handler called when bufferedAmount drops below lowWaterMark. */
+  onDrain(handler: () => void): void;
   /** Remove a data handler. */
   offData(handler: TransportHandler): void;
+  /** Remove a drain handler. */
+  offDrain(handler: () => void): void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,7 +116,9 @@ class InProcessTransport implements ITransport {
   private readonly _dataHandlers: TransportHandler[] = [];
   private readonly _errorHandlers: TransportErrorHandler[] = [];
   private readonly _closeHandlers: TransportCloseHandler[] = [];
+  private readonly _drainHandlers: (() => void)[] = [];
   private readonly _config: TransportConfig;
+  private _bufferedAmount = 0;
 
   constructor(config?: Partial<TransportConfig>) {
     this._config = { ...DEFAULT_TRANSPORT_CONFIG, ...config };
@@ -114,6 +128,7 @@ class InProcessTransport implements ITransport {
   get connected(): boolean { return this._connected; }
   get localId(): string { return this._config.localId; }
   get remoteId(): string { return this._config.remoteId; }
+  get bufferedAmount(): number { return this._bufferedAmount; }
 
   /**
    * Bind this transport to a remote transport (for in-process use).
@@ -172,11 +187,21 @@ class InProcessTransport implements ITransport {
     if (i !== -1) this._dataHandlers.splice(i, 1);
   }
 
+  onDrain(handler: () => void): void {
+    this._drainHandlers.push(handler);
+  }
+
+  offDrain(handler: () => void): void {
+    const i = this._drainHandlers.indexOf(handler);
+    if (i !== -1) this._drainHandlers.splice(i, 1);
+  }
+
   dispose(): void {
     this._connected = false;
     this._dataHandlers.length = 0;
     this._errorHandlers.length = 0;
     this._closeHandlers.length = 0;
+    this._drainHandlers.length = 0;
     this._remote = null;
   }
 }
@@ -192,10 +217,12 @@ class InProcessTransport implements ITransport {
 class EventEmitterTransport implements ITransport {
   readonly id: string;
   private _connected = false;
+  private _bufferedAmount = 0;
   private readonly _emitter: { send(data: string): void; on(event: string, handler: (...args: any[]) => void): void; removeListener(event: string, handler: (...args: any[]) => void): void };
   private readonly _dataHandlers: TransportHandler[] = [];
   private readonly _errorHandlers: TransportErrorHandler[] = [];
   private readonly _closeHandlers: TransportCloseHandler[] = [];
+  private readonly _drainHandlers: (() => void)[] = [];
   private readonly _config: TransportConfig;
   private readonly _onMessage = (data: unknown) => {
     if (typeof data === 'string') {
@@ -221,6 +248,7 @@ class EventEmitterTransport implements ITransport {
   get connected(): boolean { return this._connected; }
   get localId(): string { return this._config.localId; }
   get remoteId(): string { return this._config.remoteId; }
+  get bufferedAmount(): number { return this._bufferedAmount; }
 
   async connect(): Promise<void> {
     if (this._connected) return;
@@ -255,9 +283,14 @@ class EventEmitterTransport implements ITransport {
   onData(handler: TransportHandler): void { this._dataHandlers.push(handler); }
   onError(handler: TransportErrorHandler): void { this._errorHandlers.push(handler); }
   onClose(handler: TransportCloseHandler): void { this._closeHandlers.push(handler); }
+  onDrain(handler: () => void): void { this._drainHandlers.push(handler); }
   offData(handler: TransportHandler): void {
     const i = this._dataHandlers.indexOf(handler);
     if (i !== -1) this._dataHandlers.splice(i, 1);
+  }
+  offDrain(handler: () => void): void {
+    const i = this._drainHandlers.indexOf(handler);
+    if (i !== -1) this._drainHandlers.splice(i, 1);
   }
 
   dispose(): void {
@@ -265,6 +298,7 @@ class EventEmitterTransport implements ITransport {
     this._dataHandlers.length = 0;
     this._errorHandlers.length = 0;
     this._closeHandlers.length = 0;
+    this._drainHandlers.length = 0;
     this._emitter.removeListener('message', this._onMessage);
   }
 }

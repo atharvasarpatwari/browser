@@ -25,6 +25,7 @@ import {
 } from '../src/browser/js/values';
 import type { JSValue, JSObject, JSFunction } from '../src/browser/js/values';
 import { EventLoop } from '../src/browser/js/event-loop';
+import { createGlobalEnv } from '../src/browser/js/index';
 
 function getProp(obj: JSObject, key: string): JSValue | undefined {
   return obj.properties.get(key)?.value;
@@ -701,6 +702,71 @@ describe('Worker', () => {
       worker.getEventLoop().drainMicrotasks();
 
       expect(receivedData).toBeUndefined();
+    });
+  });
+
+  describe('Worker in global env', () => {
+    it('should be available as a constructor in global env', () => {
+      const eventLoop = new EventLoop();
+      const doc = { createElement: () => ({}), createTextNode: () => ({}), children: [] } as any;
+      const domTree = { querySelector: () => null, getElementById: () => null, insertBefore: () => {}, removeChild: () => {} } as any;
+      const env = createGlobalEnv(doc, domTree, eventLoop);
+      const workerCtor = env.get('Worker');
+      expect(workerCtor).toBeDefined();
+    });
+  });
+
+  describe('Promise in workers', () => {
+    it('should have Promise available in worker scope', () => {
+      const worker = new Worker('postMessage(typeof Promise);', 'test.js');
+      let receivedData: JSValue | undefined;
+      worker.addEventListener('message', (event) => {
+        if (event.type === 'message') receivedData = event.data;
+      });
+      worker.start();
+      expect(receivedData).toBe('function');
+    });
+
+    it('should resolve Promise.resolve inside a worker', () => {
+      const worker = new Worker(
+        `Promise.resolve(42).then(function(v) { postMessage(v); });`,
+        'test.js',
+      );
+      let receivedData: JSValue | undefined;
+      worker.addEventListener('message', (event) => {
+        if (event.type === 'message') receivedData = event.data;
+      });
+      worker.start();
+      worker.getEventLoop().drainMicrotasks();
+      expect(receivedData).toBe(42);
+    });
+
+    it('should reject Promise.reject inside a worker', () => {
+      const worker = new Worker(
+        `Promise.reject("err").catch(function(e) { postMessage(e); });`,
+        'test.js',
+      );
+      let receivedData: JSValue | undefined;
+      worker.addEventListener('message', (event) => {
+        if (event.type === 'message') receivedData = event.data;
+      });
+      worker.start();
+      worker.getEventLoop().drainMicrotasks();
+      expect(receivedData).toBe('err');
+    });
+
+    it('should chain .then handlers on Promise in worker', () => {
+      const worker = new Worker(
+        `Promise.resolve(1).then(function(v) { return v + 1; }).then(function(v) { postMessage(v); });`,
+        'test.js',
+      );
+      let receivedData: JSValue | undefined;
+      worker.addEventListener('message', (event) => {
+        if (event.type === 'message') receivedData = event.data;
+      });
+      worker.start();
+      worker.getEventLoop().drainMicrotasks();
+      expect(receivedData).toBe(2);
     });
   });
 });

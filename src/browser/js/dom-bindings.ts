@@ -6,6 +6,12 @@ import {
   Environment,
   callJSFunction,
 } from './values';
+import { HTMLCanvasElement } from '../rendering/canvas/canvas-element';
+import { CanvasRenderingContext2D } from '../rendering/canvas/canvas-context';
+import type { CanvasGradient } from '../rendering/canvas/canvas-gradient';
+import type { CanvasPattern } from '../rendering/canvas/canvas-pattern';
+import type { Path2D } from '../rendering/canvas/canvas-path';
+import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../security/blocked-url-schemes';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DOM BINDINGS — Bridges the JS interpreter to the Nova DOM tree
@@ -139,6 +145,16 @@ export function createDocumentBinding(
     value: createNativeFunction('getElementsByTagName', (_this, args) => {
       const tag = toString(args[0]);
       const els = domTree.getElementsByTagName(tag);
+      return createArray(els.map(e => wrapElement(e, domTree)));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // getElementsByClassName
+  docObj.properties.set('getElementsByClassName', {
+    value: createNativeFunction('getElementsByClassName', (_this, args) => {
+      const names = toString(args[0]);
+      const els = domTree.getElementsByClassName(names);
       return createArray(els.map(e => wrapElement(e, domTree)));
     }),
     writable: true, enumerable: true, configurable: true,
@@ -380,11 +396,22 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     writable: true, enumerable: true, configurable: true,
   });
 
-  // setAttribute
+  // setAttribute (sanitized — blocks on* event handlers and dangerous URL schemes)
   obj.properties.set('setAttribute', {
     value: createNativeFunction('setAttribute', (_this, args) => {
       const name = toString(args[0]);
       const value = toString(args[1]);
+
+      // Block event handler attributes (onclick, onerror, etc.)
+      if (isEventHandlerAttribute(name)) {
+        return undefined;
+      }
+
+      // Block dangerous URL schemes in URL-bearing attributes
+      if (isUrlAttribute(name) && isBlockedUrlScheme(value)) {
+        return undefined;
+      }
+
       domTree.setAttribute(el, name, value);
       return undefined;
     }),
@@ -514,11 +541,26 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       (evt as any).__defaultPrevented = false;
 
       // Build ancestor chain (elements only, no text or document nodes)
+      // When composed=false, stop at shadow root boundaries.
+      // When composed=true, cross shadow boundaries to the host element.
+      const composed = evt.properties.get('composed')?.value === true;
       const ancestors: DomNode[] = [];
       let cur: DomNode | null = el.parent;
       while (cur) {
-        if (cur.nodeType === 'element') ancestors.push(cur);
-        cur = cur.parent;
+        if (cur.nodeType === 'element') {
+          ancestors.push(cur);
+        }
+        // Shadow root boundary: a fragment node with a host (e.g. shadow root).
+        // When composed=false, stop here; when composed=true, jump to host.
+        const isShadowBoundary = cur.nodeType !== 'element' && 'host' in cur && (cur as any).host;
+        if (isShadowBoundary) {
+          if (!composed) break;
+          const host = (cur as any).host as DomNode;
+          if (host && host.nodeType === 'element') ancestors.push(host);
+          cur = host?.parent ?? null;
+        } else {
+          cur = cur.parent;
+        }
       }
 
       const bubbles = evt.properties.get('bubbles')?.value === true;
@@ -579,6 +621,29 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     writable: true, enumerable: true, configurable: true,
   });
 
+  // getElementsByClassName
+  obj.properties.set('getElementsByClassName', {
+    value: createNativeFunction('getElementsByClassName', (_this, args) => {
+      const names = toString(args[0]);
+      const tokens = names.split(/\s+/).filter(Boolean);
+      if (tokens.length === 0) return createArray([]);
+      const result: DomElement[] = [];
+      const queue: DomNode[] = [...el.children];
+      while (queue.length > 0) {
+        const node = queue.shift()!;
+        if (node.nodeType === 'element') {
+          const childEl = node as DomElement;
+          const classAttr = childEl.attributes.get('class') ?? '';
+          const classSet = new Set(classAttr.split(/\s+/));
+          if (tokens.every(t => classSet.has(t))) result.push(childEl);
+        }
+        for (const child of node.children) queue.push(child);
+      }
+      return createArray(result.map(e => wrapElement(e, domTree)));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
   // getBoundingClientRect
   obj.properties.set('getBoundingClientRect', {
     value: createNativeFunction('getBoundingClientRect', () => {
@@ -630,6 +695,552 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       enumerable: true,
       configurable: true,
       getter: createNativeFunction('get naturalHeight', () => el.naturalHeight),
+    });
+  }
+
+  // Canvas-specific properties
+  if (tagName === 'canvas') {
+    // Lazily create / retrieve the TS-side HTMLCanvasElement
+    const getCanvas = (): HTMLCanvasElement => {
+      let hc = (el as any).__canvasElement as HTMLCanvasElement | undefined;
+      if (!hc) {
+        const w = parseInt(el.attributes.get('width') ?? '300', 10) || 300;
+        const h = parseInt(el.attributes.get('height') ?? '150', 10) || 150;
+        hc = new HTMLCanvasElement(w, h);
+        (el as any).__canvasElement = hc;
+      }
+      return hc;
+    };
+    const attrs = el.attributes as Map<string, string>;
+
+    obj.properties.set('getContext', {
+      value: createNativeFunction('getContext', (_this, args) => {
+        const contextId = toString(args[0] ?? '');
+        if (contextId === '2d') {
+          const hc = getCanvas();
+          const ctx = hc.getContext('2d');
+          if (!ctx) return null;
+          // Cache the wrapped context on the canvas element's wrapper
+          let wrapped = (obj as any).__wrappedCtx as JSObject | undefined;
+          if (!wrapped) {
+            wrapped = wrapCanvasContext(ctx);
+            (obj as any).__wrappedCtx = wrapped;
+            // Store reference back to canvas for 'canvas' property
+            (wrapped as any).__canvasEl = hc;
+          }
+          return wrapped;
+        }
+        return null;
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+
+    obj.properties.set('width', {
+      value: parseInt(el.attributes.get('width') ?? '300', 10) || 300,
+      writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction('get width', () => getCanvas().width),
+      setter: createNativeFunction('set width', (_t, args) => {
+        const v = toNumber(args[0]);
+        getCanvas().width = v;
+        attrs.set('width', String(v));
+        (obj as any).__wrappedCtx = undefined;
+      }),
+    });
+
+    obj.properties.set('height', {
+      value: parseInt(el.attributes.get('height') ?? '150', 10) || 150,
+      writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction('get height', () => getCanvas().height),
+      setter: createNativeFunction('set height', (_t, args) => {
+        const v = toNumber(args[0]);
+        getCanvas().height = v;
+        attrs.set('height', String(v));
+        (obj as any).__wrappedCtx = undefined;
+      }),
+    });
+
+    obj.properties.set('toDataURL', {
+      value: createNativeFunction('toDataURL', (_this, args) => {
+        const type = args[0] !== undefined ? toString(args[0]) : undefined;
+        const quality = args[1] !== undefined ? toNumber(args[1]) : undefined;
+        return getCanvas().toDataURL(type, quality);
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+
+    obj.properties.set('toBlob', {
+      value: createNativeFunction('toBlob', (_this, args) => {
+        const callback = args[0] as JSFunction;
+        const type = args[1] !== undefined ? toString(args[1]) : undefined;
+        const quality = args[2] !== undefined ? toNumber(args[2]) : undefined;
+        getCanvas().toBlob((blob) => {
+          // Blob is passed as-is (will be wrapped by JS engine if needed)
+          if (callback) callJSFunction(callback, null, [blob as any]);
+        }, type, quality);
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+  }
+
+  // Iframe-specific properties (SOP-enforced contentWindow / contentDocument)
+  if (tagName === 'iframe') {
+    const iframeOrigin = getAttr(el, 'data-origin') ?? getAttr(el, 'srcdoc') !== null ? '' : (() => {
+      const src = getAttr(el, 'src') ?? '';
+      try { return new URL(src).origin; } catch { return ''; }
+    })();
+
+    // contentWindow — returns null for cross-origin iframes
+    obj.properties.set('contentWindow', {
+      value: null,
+      writable: false, enumerable: true, configurable: true,
+      getter: createNativeFunction('get contentWindow', () => {
+        // In a real browser, this returns the Window proxy for the iframe.
+        // Cross-origin iframes return null for contentWindow in some contexts.
+        // For now, return a placeholder object representing the child window.
+        const childWindow = createObject(null);
+        childWindow.properties.set('origin', {
+          value: iframeOrigin || 'null',
+          writable: false, enumerable: true, configurable: false,
+        });
+        return childWindow;
+      }),
+    });
+
+    // contentDocument — blocked for cross-origin iframes
+    obj.properties.set('contentDocument', {
+      value: null,
+      writable: false, enumerable: true, configurable: true,
+      getter: createNativeFunction('get contentDocument', () => {
+        // Cross-origin iframe contentDocument access is blocked by SOP
+        // The CrossOriginGuard.checkAccess() would be called here in production.
+        // For now, return null for cross-origin iframes.
+        if (iframeOrigin) {
+          // Would need calling page origin to do full SOP check.
+          // Return null as a safe default for cross-origin.
+          return null;
+        }
+        // Same-origin: return the iframe's document
+        return null; // Placeholder — full implementation needs document proxy
+      }),
+    });
+  }
+
+  return obj;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CANVAS 2D CONTEXT WRAPPER
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Unwrap a JSObject to get the raw data behind it (e.g., ImageData, CanvasGradient, Path2D). */
+function unwrapRaw(v: JSValue): any {
+  if (v && typeof v === 'object' && '__raw' in (v as any)) return (v as any).__raw;
+  return v;
+}
+
+/** Unwrap an image source for drawImage: accepts a canvas wrapper or a raw image-data object. */
+function unwrapImageSource(v: JSValue): any {
+  if (v && typeof v === 'object') {
+    const obj = v as JSObject;
+    // If it's a canvas element wrapper, get the HTMLCanvasElement
+    if ('__canvasEl' in (obj as any)) return (obj as any).__canvasEl;
+    // If it's an ImageData-like raw object
+    if ('__raw' in (obj as any)) return (obj as any).__raw;
+    // If it looks like { data, width, height } pass through
+    if (obj.properties.has('data') && obj.properties.has('width') && obj.properties.has('height')) {
+      return {
+        data: (obj.properties.get('data')?.value as any)?._data ?? obj.properties.get('data')?.value,
+        width: toNumber(obj.properties.get('width')?.value),
+        height: toNumber(obj.properties.get('height')?.value),
+      };
+    }
+  }
+  return v;
+}
+
+/** Wrap a canvas gradient as a JSObject. */
+function wrapGradient(g: CanvasGradient): JSObject {
+  const obj = createObject(null);
+  (obj as any).__raw = g;
+  obj.properties.set('addColorStop', {
+    value: createNativeFunction('addColorStop', (_this, args) => {
+      g.addColorStop(toNumber(args[0]), toString(args[1]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  return obj;
+}
+
+/** Wrap a canvas pattern as a JSObject. */
+function wrapPattern(p: any): JSObject {
+  const obj = createObject(null);
+  (obj as any).__raw = p;
+  return obj;
+}
+
+/** Wrap an ImageData as a JSObject. */
+function wrapImageData(d: { data: Uint8ClampedArray; width: number; height: number }): JSObject {
+  const obj = createObject(null);
+  (obj as any).__raw = d;
+  obj.properties.set('data', { value: d.data as any, writable: false, enumerable: true, configurable: false });
+  obj.properties.set('width', { value: d.width, writable: false, enumerable: true, configurable: false });
+  obj.properties.set('height', { value: d.height, writable: false, enumerable: true, configurable: false });
+  return obj;
+}
+
+/** Wrap a Path2D as a JSObject. */
+function wrapPath2D(p: Path2D): JSObject {
+  const obj = createObject(null);
+  (obj as any).__raw = p;
+  obj.properties.set('addPath', {
+    value: createNativeFunction('addPath', (_this, args) => {
+      const other = unwrapRaw(args[0]);
+      if (other && typeof other === 'object' && '_commands' in other) {
+        p._commands.push(...other._commands);
+      }
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('closePath', {
+    value: createNativeFunction('closePath', () => p.closePath()),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('moveTo', {
+    value: createNativeFunction('moveTo', (_t, args) => p.moveTo(toNumber(args[0]), toNumber(args[1]))),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('lineTo', {
+    value: createNativeFunction('lineTo', (_t, args) => p.lineTo(toNumber(args[0]), toNumber(args[1]))),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('arc', {
+    value: createNativeFunction('arc', (_t, args) => p.arc(toNumber(args[0]), toNumber(args[1]), toNumber(args[2]), toNumber(args[3]), toNumber(args[4]), args[5] !== undefined ? toBoolean(args[5]) : undefined)),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('rect', {
+    value: createNativeFunction('rect', (_t, args) => p.rect(toNumber(args[0]), toNumber(args[1]), toNumber(args[2]), toNumber(args[3]))),
+    writable: true, enumerable: true, configurable: true,
+  });
+  return obj;
+}
+
+/** Wrap a TextMetrics as a JSObject. */
+function wrapTextMetrics(m: any): JSObject {
+  const obj = createObject(null);
+  (obj as any).__raw = m;
+  const fields = [
+    'width', 'actualBoundingBoxAscent', 'actualBoundingBoxDescent',
+    'actualBoundingBoxLeft', 'actualBoundingBoxRight',
+    'fontBoundingBoxAscent', 'fontBoundingBoxDescent',
+  ];
+  for (const f of fields) {
+    obj.properties.set(f, { value: m[f] ?? 0, writable: false, enumerable: true, configurable: false });
+  }
+  return obj;
+}
+
+function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
+  const obj = createObject(null);
+
+  // Store raw context for internal access
+  (obj as any).__raw = ctx;
+
+  // ── State ──
+  obj.properties.set('save', {
+    value: createNativeFunction('save', () => { ctx.save(); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('restore', {
+    value: createNativeFunction('restore', () => { ctx.restore(); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Transforms ──
+  obj.properties.set('translate', {
+    value: createNativeFunction('translate', (_t, a) => { ctx.translate(toNumber(a[0]), toNumber(a[1])); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('rotate', {
+    value: createNativeFunction('rotate', (_t, a) => { ctx.rotate(toNumber(a[0])); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('scale', {
+    value: createNativeFunction('scale', (_t, a) => { ctx.scale(toNumber(a[0]), toNumber(a[1])); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('transform', {
+    value: createNativeFunction('transform', (_t, a) => {
+      ctx.transform(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]), toNumber(a[4]), toNumber(a[5]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('setTransform', {
+    value: createNativeFunction('setTransform', (_t, a) => {
+      ctx.setTransform(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]), toNumber(a[4]), toNumber(a[5]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('resetTransform', {
+    value: createNativeFunction('resetTransform', () => { ctx.resetTransform(); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Line dash ──
+  obj.properties.set('setLineDash', {
+    value: createNativeFunction('setLineDash', (_t, a) => {
+      const segs = Array.isArray(a[0]) ? a[0].map(toNumber) : [];
+      ctx.setLineDash(segs);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('getLineDash', {
+    value: createNativeFunction('getLineDash', () => createArray(ctx.getLineDash())),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Path ──
+  obj.properties.set('beginPath', {
+    value: createNativeFunction('beginPath', () => { ctx.beginPath(); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('closePath', {
+    value: createNativeFunction('closePath', () => { ctx.closePath(); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('moveTo', {
+    value: createNativeFunction('moveTo', (_t, a) => { ctx.moveTo(toNumber(a[0]), toNumber(a[1])); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('lineTo', {
+    value: createNativeFunction('lineTo', (_t, a) => { ctx.lineTo(toNumber(a[0]), toNumber(a[1])); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('quadraticCurveTo', {
+    value: createNativeFunction('quadraticCurveTo', (_t, a) => {
+      ctx.quadraticCurveTo(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('bezierCurveTo', {
+    value: createNativeFunction('bezierCurveTo', (_t, a) => {
+      ctx.bezierCurveTo(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]), toNumber(a[4]), toNumber(a[5]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('arc', {
+    value: createNativeFunction('arc', (_t, a) => {
+      ctx.arc(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]), toNumber(a[4]), a[5] !== undefined ? toBoolean(a[5]) : undefined);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('arcTo', {
+    value: createNativeFunction('arcTo', (_t, a) => {
+      ctx.arcTo(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]), toNumber(a[4]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('ellipse', {
+    value: createNativeFunction('ellipse', (_t, a) => {
+      ctx.ellipse(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]), toNumber(a[4]), toNumber(a[5]), toNumber(a[6]), a[7] !== undefined ? toBoolean(a[7]) : undefined);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('rect', {
+    value: createNativeFunction('rect', (_t, a) => {
+      ctx.rect(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('clip', {
+    value: createNativeFunction('clip', (_t, a) => {
+      ctx.clip(a[0] !== undefined ? toString(a[0]) as any : undefined);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Drawing ──
+  obj.properties.set('clearRect', {
+    value: createNativeFunction('clearRect', (_t, a) => {
+      ctx.clearRect(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('fillRect', {
+    value: createNativeFunction('fillRect', (_t, a) => {
+      ctx.fillRect(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('strokeRect', {
+    value: createNativeFunction('strokeRect', (_t, a) => {
+      ctx.strokeRect(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('fill', {
+    value: createNativeFunction('fill', (_t, a) => {
+      ctx.fill(a[0] !== undefined ? toString(a[0]) as any : undefined);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('stroke', {
+    value: createNativeFunction('stroke', () => { ctx.stroke(); }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Text ──
+  obj.properties.set('fillText', {
+    value: createNativeFunction('fillText', (_t, a) => {
+      ctx.fillText(toString(a[0]), toNumber(a[1]), toNumber(a[2]), a[3] !== undefined ? toNumber(a[3]) : undefined);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('strokeText', {
+    value: createNativeFunction('strokeText', (_t, a) => {
+      ctx.strokeText(toString(a[0]), toNumber(a[1]), toNumber(a[2]), a[3] !== undefined ? toNumber(a[3]) : undefined);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('measureText', {
+    value: createNativeFunction('measureText', (_t, a) => {
+      return wrapTextMetrics(ctx.measureText(toString(a[0])));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Images ──
+  obj.properties.set('drawImage', {
+    value: createNativeFunction('drawImage', (_t, a) => {
+      const img = unwrapImageSource(a[0]);
+      if (!img) return;
+      if (a.length === 3) {
+        ctx.drawImage(img, toNumber(a[1]), toNumber(a[2]));
+      } else if (a.length === 5) {
+        ctx.drawImage(img, toNumber(a[1]), toNumber(a[2]), toNumber(a[3]), toNumber(a[4]));
+      } else if (a.length === 9) {
+        ctx.drawImage(img, toNumber(a[1]), toNumber(a[2]), toNumber(a[3]), toNumber(a[4]),
+          toNumber(a[5]), toNumber(a[6]), toNumber(a[7]), toNumber(a[8]));
+      }
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Pixel data ──
+  obj.properties.set('getImageData', {
+    value: createNativeFunction('getImageData', (_t, a) => {
+      return wrapImageData(ctx.getImageData(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3])));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('putImageData', {
+    value: createNativeFunction('putImageData', (_t, a) => {
+      const raw = unwrapRaw(a[0]);
+      ctx.putImageData(raw, toNumber(a[1]), toNumber(a[2]));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('createImageData', {
+    value: createNativeFunction('createImageData', (_t, a) => {
+      return wrapImageData(ctx.createImageData(toNumber(a[0]), toNumber(a[1])));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Gradients & patterns ──
+  obj.properties.set('createLinearGradient', {
+    value: createNativeFunction('createLinearGradient', (_t, a) => {
+      return wrapGradient(ctx.createLinearGradient(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3])));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('createRadialGradient', {
+    value: createNativeFunction('createRadialGradient', (_t, a) => {
+      return wrapGradient(ctx.createRadialGradient(toNumber(a[0]), toNumber(a[1]), toNumber(a[2]), toNumber(a[3]), toNumber(a[4]), toNumber(a[5])));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('createPattern', {
+    value: createNativeFunction('createPattern', (_t, a) => {
+      const img = unwrapImageSource(a[0]);
+      if (!img) return null;
+      const rep = a[1] !== undefined ? toString(a[1]) : 'repeat';
+      const p = ctx.createPattern(img, rep as any);
+      return p ? wrapPattern(p) : null;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Path2D support ──
+  obj.properties.set('Path2D', {
+    value: createNativeFunction('Path2D', (_t, a) => {
+      const { Path2D: P2D } = require('../rendering/canvas/canvas-path');
+      const p = a[0] !== undefined ? new P2D(unwrapRaw(a[0])) : new P2D();
+      return wrapPath2D(p);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Export ──
+  obj.properties.set('toDataURL', {
+    value: createNativeFunction('toDataURL', (_t, a) => {
+      return ctx.toDataURL(a[0] !== undefined ? toString(a[0]) : undefined, a[1] !== undefined ? toNumber(a[1]) : undefined);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('toBlob', {
+    value: createNativeFunction('toBlob', (_t, a) => {
+      const callback = a[0] as JSFunction;
+      ctx.toBlob((blob) => {
+        if (callback) callJSFunction(callback, null, [blob as any]);
+      }, a[1] !== undefined ? toString(a[1]) : undefined, a[2] !== undefined ? toNumber(a[2]) : undefined);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── canvas reference ──
+  obj.properties.set('canvas', {
+    value: undefined, // set by wrapElement when creating the context
+    writable: false, enumerable: true, configurable: false,
+    getter: createNativeFunction('get canvas', () => {
+      const hc = (obj as any).__canvasEl;
+      if (!hc) return null;
+      // Return a minimal object with width/height
+      const canvasRef = createObject(null);
+      canvasRef.properties.set('width', { value: hc.width, writable: false, enumerable: true, configurable: false });
+      canvasRef.properties.set('height', { value: hc.height, writable: false, enumerable: true, configurable: false });
+      return canvasRef;
+    }),
+  });
+
+  // ── Getter/setter properties ──
+  const gsProps: Array<[string, () => any, (v: any) => void]> = [
+    ['fillStyle', () => ctx.fillStyle, (v) => { ctx.fillStyle = unwrapRaw(v); }],
+    ['strokeStyle', () => ctx.strokeStyle, (v) => { ctx.strokeStyle = unwrapRaw(v); }],
+    ['lineWidth', () => ctx.lineWidth, (v) => { ctx.lineWidth = toNumber(v); }],
+    ['lineCap', () => ctx.lineCap, (v) => { ctx.lineCap = toString(v) as any; }],
+    ['lineJoin', () => ctx.lineJoin, (v) => { ctx.lineJoin = toString(v) as any; }],
+    ['miterLimit', () => ctx.miterLimit, (v) => { ctx.miterLimit = toNumber(v); }],
+    ['globalAlpha', () => ctx.globalAlpha, (v) => { ctx.globalAlpha = toNumber(v); }],
+    ['globalCompositeOperation', () => ctx.globalCompositeOperation, (v) => { ctx.globalCompositeOperation = toString(v); }],
+    ['font', () => ctx.font, (v) => { ctx.font = toString(v); }],
+    ['textAlign', () => ctx.textAlign, (v) => { ctx.textAlign = toString(v) as any; }],
+    ['textBaseline', () => ctx.textBaseline, (v) => { ctx.textBaseline = toString(v) as any; }],
+    ['direction', () => ctx.direction, (v) => { ctx.direction = toString(v) as any; }],
+    ['shadowBlur', () => ctx.shadowBlur, (v) => { ctx.shadowBlur = toNumber(v); }],
+    ['shadowColor', () => ctx.shadowColor, (v) => { ctx.shadowColor = toString(v); }],
+    ['shadowOffsetX', () => ctx.shadowOffsetX, (v) => { ctx.shadowOffsetX = toNumber(v); }],
+    ['shadowOffsetY', () => ctx.shadowOffsetY, (v) => { ctx.shadowOffsetY = toNumber(v); }],
+    ['imageSmoothingEnabled', () => ctx.imageSmoothingEnabled, (v) => { ctx.imageSmoothingEnabled = toBoolean(v); }],
+    ['imageSmoothingQuality', () => ctx.imageSmoothingQuality, (v) => { ctx.imageSmoothingQuality = toString(v) as any; }],
+    ['lineDashOffset', () => ctx.lineDashOffset, (v) => { ctx.lineDashOffset = toNumber(v); }],
+  ];
+
+  for (const [name, getter, setter] of gsProps) {
+    obj.properties.set(name, {
+      value: undefined,
+      writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction(`get ${name}`, getter),
+      setter: createNativeFunction(`set ${name}`, (_t, a) => setter(a[0])),
     });
   }
 
@@ -720,7 +1331,7 @@ function deepClone(el: DomElement): DomElement {
   return clone;
 }
 
-export function createEventObject(type: string, target: JSValue, options?: { bubbles?: boolean; cancelable?: boolean }): JSObject {
+export function createEventObject(type: string, target: JSValue, options?: { bubbles?: boolean; cancelable?: boolean; composed?: boolean }): JSObject {
   const evt = createObject(null);
   evt.properties.set('type', { value: type, writable: false, enumerable: true, configurable: false });
   evt.properties.set('target', { value: target, writable: false, enumerable: true, configurable: false });
@@ -728,6 +1339,7 @@ export function createEventObject(type: string, target: JSValue, options?: { bub
   evt.properties.set('eventPhase', { value: 0, writable: true, enumerable: true, configurable: false });
   evt.properties.set('bubbles', { value: options?.bubbles ?? false, writable: false, enumerable: true, configurable: false });
   evt.properties.set('cancelable', { value: options?.cancelable ?? false, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('composed', { value: options?.composed ?? false, writable: false, enumerable: true, configurable: false });
   evt.properties.set('defaultPrevented', { value: false, writable: true, enumerable: true, configurable: false });
   evt.properties.set('preventDefault', {
     value: createNativeFunction('preventDefault', (_this, _args) => {

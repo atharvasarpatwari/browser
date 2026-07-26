@@ -12,6 +12,8 @@ import {
   callJSFunction, isReturnSignal, isThrowSignal,
   type ReturnSignal, type ThrowSignal,
 } from './values';
+import { isPromiseObject, isPromiseFulfilled, getPromiseResult } from './promise';
+import type { EventLoop } from './event-loop';
 
 // ── Call Frame ───────────────────────────────────────────────────────────────
 
@@ -54,6 +56,9 @@ export class BytecodeVM {
   /** GC collection callback — called at safe points if set */
   private gcCallback: ((vm: BytecodeVM) => void) | null = null;
 
+  /** Event loop for microtask integration (async/await) */
+  private eventLoop: EventLoop | null = null;
+
   constructor(env: Environment) {
     this.env = env;
   }
@@ -69,6 +74,11 @@ export class BytecodeVM {
   /** Set the GC callback invoked at safe points */
   setGCCallback(cb: ((vm: BytecodeVM) => void) | null): void {
     this.gcCallback = cb;
+  }
+
+  /** Set the event loop for microtask integration (async/await) */
+  setEventLoop(eventLoop: EventLoop): void {
+    this.eventLoop = eventLoop;
   }
 
   /** Get the operand stack (for root scanning) */
@@ -214,7 +224,12 @@ export class BytecodeVM {
           const name = constants[idx] as string;
           const val = this.stack[this.sp - 1];
           const kind = _kind === 0 ? 'var' : _kind === 1 ? 'let' : 'const';
-          frame.env.declare(name, val, kind);
+          if (kind === 'let' || kind === 'const') {
+            frame.env.declareTDZ(name, kind);
+            frame.env.initialize(name, val);
+          } else {
+            frame.env.declare(name, val, kind);
+          }
           break;
         }
         case OP.LOAD_THIS:
@@ -642,8 +657,19 @@ export class BytecodeVM {
           break;
         }
         case OP.AWAIT: {
-          // For now, just pass through the value (basic await support)
-          // Full microtask integration is deferred
+          const val = this.stack[this.sp - 1];
+          // If value is a pending Promise, we need to handle async suspension
+          if (this.eventLoop && typeof val === 'object' && val !== null && isPromiseObject(val)) {
+            if (isPromiseFulfilled(val)) {
+              // Already fulfilled — extract value and continue
+              this.stack[this.sp - 1] = getPromiseResult(val);
+            } else {
+              // Pending promise — for now, just pass through the Promise object
+              // Full async suspension would require saving/restoring VM state
+              // which is complex. For now, the Promise object itself is returned.
+              // The caller (interpreter callFunction) handles async wrapping.
+            }
+          }
           break;
         }
         case OP.YIELD: {

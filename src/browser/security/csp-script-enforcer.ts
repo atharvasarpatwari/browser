@@ -89,6 +89,8 @@ interface ScriptCheckResult {
   readonly reason?: string;
   /** The matched source expression. */
   readonly matchedSource?: string;
+  /** The script content sample (first 40 chars) for reporting. */
+  readonly scriptSample?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,6 +156,7 @@ class CspScriptEnforcer {
       source: request.url || 'inline',
       reason: result.allowed ? undefined : this.getDenialReason(request.scriptType, result),
       matchedSource: result.matchedSource?.raw,
+      scriptSample: request.scriptSample,
     };
 
     if (!result.allowed) {

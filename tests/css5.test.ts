@@ -731,7 +731,10 @@ describe('CSS5 — Cascade', () => {
 
   it('applies UA defaults for body', () => {
     const defaults = getUserAgentDefaults('body');
-    expect(defaults.get('margin')).toBe('8px');
+    expect(defaults.get('margin-top')).toBe('8px');
+    expect(defaults.get('margin-right')).toBe('8px');
+    expect(defaults.get('margin-bottom')).toBe('8px');
+    expect(defaults.get('margin-left')).toBe('8px');
   });
 
   it('applies UA defaults for headings', () => {
@@ -812,11 +815,14 @@ describe('CSS5 — Shorthand Expansion', () => {
     expect(declVal(expanded, 'padding-left')).toBe('10px');
   });
 
-  it('expands border shorthand', () => {
+  it('expands border shorthand to longhand', () => {
     const expanded = expandShorthands(decls(['border', '1px solid red']));
-    expect(declVal(expanded, 'border-width')).toBe('1px');
-    expect(declVal(expanded, 'border-style')).toBe('solid');
-    expect(declVal(expanded, 'border-color')).toBe('red');
+    expect(declVal(expanded, 'border-top-width')).toBe('1px');
+    expect(declVal(expanded, 'border-top-style')).toBe('solid');
+    expect(declVal(expanded, 'border-top-color')).toBe('red');
+    expect(declVal(expanded, 'border-right-width')).toBe('1px');
+    expect(declVal(expanded, 'border-bottom-width')).toBe('1px');
+    expect(declVal(expanded, 'border-left-width')).toBe('1px');
   });
 });
 
@@ -844,5 +850,299 @@ describe('CSS5 — Backward Compatibility', () => {
     expect(spec.id).toBe(1);
     expect(spec.class).toBe(1);
     expect(spec.tag).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// @SUPPORTS CONDITION EVALUATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('CSS5 — @supports', () => {
+  function makeEl(tag = 'div'): StyleableElement {
+    return { tagName: tag, attributes: new Map(), parent: null, children: [] };
+  }
+
+  it('parses @supports rule with condition', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports (display: grid) { div { display: grid; } }');
+    expect(sheet.rules.length).toBe(1);
+    expect(sheet.rules[0].type).toBe('supports');
+  });
+
+  it('@supports with known property applies nested rules', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports (display) { div { color: red; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet);
+    expect(computed.get('color')).toBe('#ff0000');
+  });
+
+  it('@supports with known property: value applies rules', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports (display: grid) { div { color: blue; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet);
+    expect(computed.get('color')).toBe('#0000ff');
+  });
+
+  it('@supports with unknown property skips rules', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports (nonexistent-prop: 1) { div { color: green; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet);
+    expect(computed.get('color')).not.toBe('green');
+  });
+
+  it('@supports not inverts condition', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports not (display) { div { color: yellow; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet);
+    expect(computed.get('color')).not.toBe('yellow');
+  });
+
+  it('@supports not with unknown property applies rules', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports not (nonexistent-prop: 1) { div { color: cyan; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet);
+    expect(computed.get('color')).toBe('#00ffff');
+  });
+
+  it('@supports with and requires both conditions', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports (display) and (color) { div { color: magenta; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet);
+    expect(computed.get('color')).toBe('#ff00ff');
+  });
+
+  it('@supports with and fails if one condition is unknown', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports (display) and (nonexistent-prop: 1) { div { color: orange; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet);
+    expect(computed.get('color')).not.toBe('orange');
+  });
+
+  it('@supports with or succeeds if one condition is true', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports (nonexistent-prop: 1) or (display) { div { color: pink; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet);
+    expect(computed.get('color')).toBe('#ffc0cb');
+  });
+
+  it('@supports with or fails if both conditions are false', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports (nonexistent-prop: 1) or (nonexistent-prop: 2) { div { color: gray; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet);
+    expect(computed.get('color')).not.toBe('gray');
+  });
+
+  it('@supports with nested parentheses', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@supports ((display) and (color)) { div { color: teal; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet);
+    expect(computed.get('color')).toBe('#008080');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// @IMPORT WITH MEDIA QUERIES
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('CSS5 — @import with media queries', () => {
+  function makeEl(tag = 'div'): StyleableElement {
+    return { tagName: tag, attributes: new Map(), parent: null, children: [] };
+  }
+
+  it('parses @import with no media query', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@import "foo.css";');
+    expect(sheet.rules.length).toBe(1);
+    const rule = sheet.rules[0];
+    expect(rule.type).toBe('import');
+    expect((rule as any).url).toBe('foo.css');
+    expect((rule as any).mediaQueries.length).toBe(0);
+  });
+
+  it('parses @import with media type', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@import "foo.css" screen;');
+    const rule = sheet.rules[0] as any;
+    expect(rule.type).toBe('import');
+    expect(rule.url).toBe('foo.css');
+    expect(rule.mediaQueries.length).toBe(1);
+    expect(rule.mediaQueries[0].mediaType).toBe('screen');
+  });
+
+  it('parses @import with complex media query', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@import "foo.css" screen and (min-width: 800px);');
+    const rule = sheet.rules[0] as any;
+    expect(rule.type).toBe('import');
+    expect(rule.url).toBe('foo.css');
+    expect(rule.mediaQueries.length).toBe(1);
+    expect(rule.mediaQueries[0].mediaType).toBe('screen');
+    expect(rule.mediaQueries[0].features.length).toBe(1);
+    expect(rule.mediaQueries[0].features[0].name).toBe('min-width');
+  });
+
+  it('parses @import with url() syntax and media query', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@import url("bar.css") print;');
+    const rule = sheet.rules[0] as any;
+    expect(rule.type).toBe('import');
+    expect(rule.url).toBe('bar.css');
+    expect(rule.mediaQueries.length).toBe(1);
+    expect(rule.mediaQueries[0].mediaType).toBe('print');
+  });
+
+  it('@import with matching media query passes through', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@import "foo.css" screen;');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 1920, height: 1080 });
+    // No crash, import simply doesn't add rules (content not fetched)
+    expect(computed).toBeInstanceOf(Map);
+  });
+
+  it('@import with non-matching media query (print) is skipped', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@import "foo.css" print;');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 1920, height: 1080 });
+    // No crash, import is skipped
+    expect(computed).toBeInstanceOf(Map);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RANGE SYNTAX MEDIA QUERIES
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('CSS5 — Media Query Range Syntax', () => {
+  function makeEl(tag = 'div'): StyleableElement {
+    return { tagName: tag, attributes: new Map(), parent: null, children: [] };
+  }
+
+  it('parses (width >= 800px)', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (width >= 800px) { div { color: red; } }');
+    const rule = sheet.rules[0] as any;
+    expect(rule.type).toBe('media');
+    expect(rule.mediaQueries[0].features[0].name).toBe('width');
+    expect(rule.mediaQueries[0].features[0].operator).toBe('>=');
+    expect(rule.mediaQueries[0].features[0].value).toBe('800px');
+  });
+
+  it('parses (width < 800px)', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (width < 800px) { div { color: red; } }');
+    const rule = sheet.rules[0] as any;
+    expect(rule.mediaQueries[0].features[0].operator).toBe('<');
+  });
+
+  it('parses (400px <= width <= 800px) double range', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (400px <= width <= 800px) { div { color: red; } }');
+    const rule = sheet.rules[0] as any;
+    const feature = rule.mediaQueries[0].features[0];
+    expect(feature.name).toBe('width');
+    expect(feature.lowerValue).toBe('400px');
+    expect(feature.lowerOperator).toBe('<=');
+    expect(feature.operator).toBe('<=');
+    expect(feature.value).toBe('800px');
+  });
+
+  it('(width >= 800px) matches wide viewport', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (width >= 800px) { div { color: red; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 1920, height: 1080 });
+    expect(computed.get('color')).toBe('#ff0000');
+  });
+
+  it('(width >= 800px) does not match narrow viewport', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (width >= 800px) { div { color: red; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 400, height: 800 });
+    expect(computed.get('color')).not.toBe('#ff0000');
+  });
+
+  it('(width < 800px) matches narrow viewport', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (width < 800px) { div { color: blue; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 400, height: 800 });
+    expect(computed.get('color')).toBe('#0000ff');
+  });
+
+  it('(width < 800px) does not match wide viewport', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (width < 800px) { div { color: blue; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 1920, height: 1080 });
+    expect(computed.get('color')).not.toBe('#0000ff');
+  });
+
+  it('(width > 600px) matches', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (width > 600px) { div { color: green; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 1024, height: 768 });
+    expect(computed.get('color')).toBe('#008000');
+  });
+
+  it('(width > 600px) does not match exactly 600', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (width > 600px) { div { color: green; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 600, height: 768 });
+    expect(computed.get('color')).not.toBe('#008000');
+  });
+
+  it('(400px <= width <= 800px) matches mid-range viewport', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (400px <= width <= 800px) { div { color: teal; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 600, height: 768 });
+    expect(computed.get('color')).toBe('#008080');
+  });
+
+  it('(400px <= width <= 800px) does not match wide viewport', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (400px <= width <= 800px) { div { color: teal; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 1920, height: 1080 });
+    expect(computed.get('color')).not.toBe('#008080');
+  });
+
+  it('(400px <= width <= 800px) does not match narrow viewport', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (400px <= width <= 800px) { div { color: teal; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 200, height: 400 });
+    expect(computed.get('color')).not.toBe('#008080');
+  });
+
+  it('(height >= 600px) matches tall viewport', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (height >= 600px) { div { color: purple; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 1024, height: 768 });
+    expect(computed.get('color')).toBe('#800080');
+  });
+
+  it('(height >= 600px) does not match short viewport', () => {
+    const parser = new CssParser();
+    const sheet = parser.parseStylesheetRobust('@media (height >= 600px) { div { color: purple; } }');
+    const el = makeEl('div');
+    const computed = computeComputedStyles(el, sheet, { width: 1024, height: 400 });
+    expect(computed.get('color')).not.toBe('#800080');
   });
 });

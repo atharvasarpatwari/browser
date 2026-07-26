@@ -17,6 +17,8 @@
 
 import type { HtmlNode, HtmlElement } from './dom';
 import { NodeType } from './dom';
+import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../../security/blocked-url-schemes';
+import { containsDangerousCss, sanitizeStyleAttribute } from '../../security/html-sanitizer';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MUTATION RECORD
@@ -231,7 +233,9 @@ export interface MutationFireOptions {
  * Called by dom.ts mutation functions.
  */
 export function fireMutation(opts: MutationFireOptions): void {
-  const { target } = opts;
+  // Sanitize mutation data as defense-in-depth
+  const sanitized = sanitizeMutationFire(opts);
+  const { target } = sanitized;
 
   // Walk the target and all ancestors to find matching observers.
   // An observer on ancestor A with subtree:true fires for mutations
@@ -248,28 +252,28 @@ export function fireMutation(opts: MutationFireOptions): void {
       const { options } = reg;
 
       // Check if this mutation matches the observer's options
-      if (!matchesMutation(opts, options)) continue;
+      if (!matchesMutation(sanitized, options)) continue;
 
       // Determine oldValue based on observer options
       let oldValue: string | null = null;
-      if (opts.oldValue != null) {
-        if (opts.type === 'attributes' && options.attributeOldValue) {
-          oldValue = opts.oldValue;
-        } else if (opts.type === 'characterData' && options.characterDataOldValue) {
-          oldValue = opts.oldValue;
+      if (sanitized.oldValue != null) {
+        if (sanitized.type === 'attributes' && options.attributeOldValue) {
+          oldValue = sanitized.oldValue;
+        } else if (sanitized.type === 'characterData' && options.characterDataOldValue) {
+          oldValue = sanitized.oldValue;
         }
       }
 
       // Create the record
       const record: MutationRecord = {
-        type: opts.type,
+        type: sanitized.type,
         target,
-        addedNodes: opts.addedNodes ?? [],
-        removedNodes: opts.removedNodes ?? [],
-        previousSibling: opts.previousSibling ?? null,
-        nextSibling: opts.nextSibling ?? null,
-        attributeName: opts.attributeName ?? null,
-        attributeNamespace: opts.attributeNamespace ?? null,
+        addedNodes: sanitized.addedNodes ?? [],
+        removedNodes: sanitized.removedNodes ?? [],
+        previousSibling: sanitized.previousSibling ?? null,
+        nextSibling: sanitized.nextSibling ?? null,
+        attributeName: sanitized.attributeName ?? null,
+        attributeNamespace: sanitized.attributeNamespace ?? null,
         oldValue,
       };
 
@@ -356,4 +360,79 @@ export function clearAllRegistrations(): void {
   recordQueue.length = 0;
   pendingObservers.clear();
   microtaskScheduled = false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MUTATION SANITIZATION — Defense-in-depth for DOM-based XSS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sanitize a newly added HtmlNode tree in-place.
+ * Strips event handler attributes and dangerous URL schemes from
+ * element attributes and text content.
+ *
+ * Called automatically from `fireMutation()` for childList mutations.
+ */
+function sanitizeAddedNode(node: HtmlNode): void {
+  if (node.nodeType !== NodeType.ELEMENT) return;
+  const el = node as HtmlElement;
+  const attrs = el.attributes as unknown as Map<string, string>;
+
+  // Sanitize attributes on this element
+  const attrsToRemove: string[] = [];
+  for (const [name, value] of attrs) {
+    // Block event handler attributes
+    if (isEventHandlerAttribute(name)) {
+      attrsToRemove.push(name);
+      continue;
+    }
+    // Block dangerous URL schemes in URL-bearing attributes
+    if (isUrlAttribute(name) && isBlockedUrlScheme(value)) {
+      attrsToRemove.push(name);
+      continue;
+    }
+    // Sanitize style attribute
+    if (name.toLowerCase() === 'style' && containsDangerousCss(value)) {
+      attrs.set(name, sanitizeStyleAttribute(value));
+    }
+  }
+  for (const attr of attrsToRemove) {
+    attrs.delete(attr);
+  }
+
+  // Recurse into children
+  for (const child of el.children) {
+    sanitizeAddedNode(child);
+  }
+}
+
+/**
+ * Sanitize a mutation fire call — intercepts childList mutations
+ * to strip dangerous attributes from added nodes.
+ *
+ * This is a defense-in-depth measure. The primary sanitization
+ * should happen at the HTML parser level, but this catches
+ * dynamically inserted content.
+ */
+export function sanitizeMutationFire(opts: MutationFireOptions): MutationFireOptions {
+  if (opts.type === 'childList' && opts.addedNodes) {
+    for (const node of opts.addedNodes) {
+      sanitizeAddedNode(node);
+    }
+  }
+
+  // Sanitize attribute mutations
+  if (opts.type === 'attributes' && opts.attributeName) {
+    const attrName = opts.attributeName;
+    // Block event handler attributes
+    if (isEventHandlerAttribute(attrName)) {
+      return { ...opts, type: 'attributes', oldValue: null } as MutationFireOptions;
+    }
+    // Block dangerous URL schemes
+    if (isUrlAttribute(attrName) && typeof opts.oldValue === 'string' && isBlockedUrlScheme(opts.oldValue)) {
+      return { ...opts, type: 'attributes', oldValue: null } as MutationFireOptions;
+    }
+  }
+
+  return opts;
 }

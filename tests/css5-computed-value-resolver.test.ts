@@ -46,8 +46,18 @@ describe('Computed Value Resolver — Colors', () => {
     expect(resolveComputedValue('color', 'yellow', CTX)).toBe('#ffff00');
   });
 
-  it('resolves currentcolor', () => {
-    expect(resolveComputedValue('border-top-color', 'currentcolor', CTX)).toBe('currentcolor');
+  it('resolves currentcolor to canvastext when no context color', () => {
+    expect(resolveComputedValue('border-top-color', 'currentcolor', CTX)).toBe('canvastext');
+  });
+
+  it('resolves currentcolor to context color when provided', () => {
+    const ctxWithColor: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400, currentColor: '#ff0000' };
+    expect(resolveComputedValue('border-top-color', 'currentcolor', ctxWithColor)).toBe('#ff0000');
+  });
+
+  it('resolves currentcolor on color property', () => {
+    const ctxWithColor: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400, currentColor: '#0000ff' };
+    expect(resolveComputedValue('color', 'currentcolor', ctxWithColor)).toBe('#0000ff');
   });
 
   it('resolves colors on border-color properties', () => {
@@ -405,5 +415,209 @@ describe('Computed Value Resolver — Batch', () => {
     expect(computed.get('width')).toBe('100px');
     expect(computed.get('margin-top')).toBe('10px');
     expect(computed.get('display')).toBe('block');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOM PROPERTIES (var())
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Computed Value Resolver — Custom Properties (var())', () => {
+  it('resolves var() to custom property value', () => {
+    const customProps = new Map([['--my-color', '#ff0000']]);
+    const ctx: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400, customProperties: customProps };
+    expect(resolveComputedValue('color', 'var(--my-color)', ctx)).toBe('#ff0000');
+  });
+
+  it('resolves var() with fallback when custom property is missing', () => {
+    const ctx: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400, customProperties: new Map() };
+    expect(resolveComputedValue('color', 'var(--missing, red)', ctx)).toBe('#ff0000');
+  });
+
+  it('resolves var() to fallback when no custom properties provided', () => {
+    const ctx: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400 };
+    expect(resolveComputedValue('color', 'var(--missing, blue)', ctx)).toBe('#0000ff');
+  });
+
+  it('resolves multiple var() references in one value', () => {
+    const customProps = new Map([
+      ['--x', '10px'],
+      ['--y', '20px'],
+    ]);
+    const ctx: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400, customProperties: customProps };
+    expect(resolveComputedValue('margin', 'var(--x) var(--y) var(--x) var(--y)', ctx)).toBe('10px 20px 10px 20px');
+  });
+
+  it('resolves nested var() in fallback', () => {
+    const customProps = new Map([['--inner', '#00ff00']]);
+    const ctx: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400, customProperties: customProps };
+    expect(resolveComputedValue('color', 'var(--outer, var(--inner))', ctx)).toBe('#00ff00');
+  });
+
+  it('resolves var() with no fallback and missing property to empty', () => {
+    const ctx: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400, customProperties: new Map() };
+    expect(resolveComputedValue('color', 'var(--missing)', ctx)).toBe('');
+  });
+
+  it('passes through custom property values unchanged', () => {
+    const ctx: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400 };
+    expect(resolveComputedValue('--my-prop', 'red', ctx)).toBe('red');
+    expect(resolveComputedValue('--spacing', '10px', ctx)).toBe('10px');
+  });
+
+  it('resolves var() on non-color properties', () => {
+    const customProps = new Map([['--gap', '16px']]);
+    const ctx: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400, customProperties: customProps };
+    expect(resolveComputedValue('padding', 'var(--gap)', ctx)).toBe('16px');
+    expect(resolveComputedValue('width', 'calc(100% - var(--gap))', ctx)).toBe('calc(100% - 16px)');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CASE-INSENSITIVE COLORS
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Computed Value Resolver — Case-Insensitive Colors', () => {
+  it('resolves case-insensitive named colors', () => {
+    expect(resolveComputedValue('color', 'RED', CTX)).toBe('#ff0000');
+    expect(resolveComputedValue('color', 'Blue', CTX)).toBe('#0000ff');
+    expect(resolveComputedValue('color', 'GREEN', CTX)).toBe('#008000');
+    expect(resolveComputedValue('color', 'Coral', CTX)).toBe('#ff7f50');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLEAR NORMALIZATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Computed Value Resolver — Clear', () => {
+  it('normalizes clear values', () => {
+    expect(resolveComputedValue('clear', 'none', CTX)).toBe('none');
+    expect(resolveComputedValue('clear', 'left', CTX)).toBe('left');
+    expect(resolveComputedValue('clear', 'right', CTX)).toBe('right');
+    expect(resolveComputedValue('clear', 'both', CTX)).toBe('both');
+    expect(resolveComputedValue('clear', 'inline-start', CTX)).toBe('inline-start');
+    expect(resolveComputedValue('clear', 'inline-end', CTX)).toBe('inline-end');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OVERFLOW-X / OVERFLOW-Y
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Computed Value Resolver — Overflow-X/Y', () => {
+  it('normalizes overflow-x values', () => {
+    expect(resolveComputedValue('overflow-x', 'visible', CTX)).toBe('visible');
+    expect(resolveComputedValue('overflow-x', 'hidden', CTX)).toBe('hidden');
+    expect(resolveComputedValue('overflow-x', 'scroll', CTX)).toBe('scroll');
+    expect(resolveComputedValue('overflow-x', 'auto', CTX)).toBe('auto');
+    expect(resolveComputedValue('overflow-x', 'clip', CTX)).toBe('clip');
+  });
+
+  it('normalizes overflow-y values', () => {
+    expect(resolveComputedValue('overflow-y', 'visible', CTX)).toBe('visible');
+    expect(resolveComputedValue('overflow-y', 'hidden', CTX)).toBe('hidden');
+    expect(resolveComputedValue('overflow-y', 'scroll', CTX)).toBe('scroll');
+    expect(resolveComputedValue('overflow-y', 'auto', CTX)).toBe('auto');
+    expect(resolveComputedValue('overflow-y', 'clip', CTX)).toBe('clip');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPECIAL VALUE HANDLING
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Computed Value Resolver — Special Values', () => {
+  it('passes through inherit unchanged (resolved by cascade layer)', () => {
+    expect(resolveComputedValue('color', 'inherit', CTX)).toBe('inherit');
+  });
+
+  it('passes through initial unchanged (resolved by cascade layer)', () => {
+    expect(resolveComputedValue('color', 'initial', CTX)).toBe('initial');
+  });
+
+  it('passes through unset unchanged', () => {
+    expect(resolveComputedValue('color', 'unset', CTX)).toBe('unset');
+  });
+
+  it('passes through revert unchanged', () => {
+    expect(resolveComputedValue('color', 'revert', CTX)).toBe('revert');
+  });
+
+  it('passes through revert-layer unchanged', () => {
+    expect(resolveComputedValue('color', 'revert-layer', CTX)).toBe('revert-layer');
+  });
+
+  it('resolves auto on dimensions', () => {
+    expect(resolveComputedValue('width', 'auto', CTX)).toBe('auto');
+    expect(resolveComputedValue('height', 'auto', CTX)).toBe('auto');
+  });
+
+  it('resolves none on appropriate properties', () => {
+    expect(resolveComputedValue('display', 'none', CTX)).toBe('none');
+    expect(resolveComputedValue('background-image', 'none', CTX)).toBe('none');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EDGE CASES
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Computed Value Resolver — Edge Cases', () => {
+  it('handles whitespace-only values (trimmed to empty)', () => {
+    expect(resolveComputedValue('color', '  ', CTX)).toBe('');
+  });
+
+  it('handles font-size with different parent sizes', () => {
+    expect(resolveComputedValue('font-size', 'smaller', { parentFontSize: 32, parentFontWeight: 400 })).toBe('26px');
+    expect(resolveComputedValue('font-size', 'larger', { parentFontSize: 10, parentFontWeight: 400 })).toBe('12px');
+  });
+
+  it('handles font-weight bolder/lighter at boundaries', () => {
+    expect(resolveComputedValue('font-weight', 'bolder', { parentFontSize: 16, parentFontWeight: 900 })).toBe('900');
+    expect(resolveComputedValue('font-weight', 'lighter', { parentFontSize: 16, parentFontWeight: 100 })).toBe('100');
+    expect(resolveComputedValue('font-weight', 'bolder', { parentFontSize: 16, parentFontWeight: 400 })).toBe('500');
+    expect(resolveComputedValue('font-weight', 'lighter', { parentFontSize: 16, parentFontWeight: 700 })).toBe('600');
+  });
+
+  it('handles text-align start/end', () => {
+    expect(resolveComputedValue('text-align', 'start', CTX)).toBe('start');
+    expect(resolveComputedValue('text-align', 'end', CTX)).toBe('end');
+    expect(resolveComputedValue('text-align', 'match-parent', CTX)).toBe('match-parent');
+    expect(resolveComputedValue('text-align', 'justify-all', CTX)).toBe('justify-all');
+  });
+
+  it('handles float inline-start/inline-end', () => {
+    expect(resolveComputedValue('float', 'inline-start', CTX)).toBe('inline-start');
+    expect(resolveComputedValue('float', 'inline-end', CTX)).toBe('inline-end');
+  });
+
+  it('handles position sticky', () => {
+    expect(resolveComputedValue('position', 'sticky', CTX)).toBe('sticky');
+  });
+
+  it('handles display run-in and contents', () => {
+    expect(resolveComputedValue('display', 'run-in', CTX)).toBe('run-in');
+    expect(resolveComputedValue('display', 'contents', CTX)).toBe('contents');
+  });
+
+  it('handles line-height with units', () => {
+    expect(resolveComputedValue('line-height', '12px', CTX)).toBe('12px');
+    expect(resolveComputedValue('line-height', '1.5em', CTX)).toBe('1.5em');
+    expect(resolveComputedValue('line-height', '150%', CTX)).toBe('150%');
+  });
+
+  it('handles batch resolution with custom properties', () => {
+    const customProps = new Map([['--main', '#ff0000']]);
+    const ctx: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400, customProperties: customProps };
+    const computed = new Map([
+      ['color', 'var(--main)'],
+      ['font-size', 'large'],
+      ['opacity', '2'],
+    ]);
+    resolveAllComputedValues(computed, ctx);
+    expect(computed.get('color')).toBe('#ff0000');
+    expect(computed.get('font-size')).toBe('18px');
+    expect(computed.get('opacity')).toBe('1');
   });
 });

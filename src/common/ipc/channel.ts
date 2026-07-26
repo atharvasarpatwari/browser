@@ -57,12 +57,18 @@ type ChannelRequestHandler<TPayload = unknown, TResult = unknown> = (
   message: IRequestMessage,
 ) => Promise<TResult> | TResult;
 
+/** Handler for stream request messages (server-side). Returns an async iterable of chunks. */
+type ChannelStreamHandler<TPayload = unknown, TChunk = unknown> = (
+  payload: TPayload,
+  message: IStreamRequestMessage,
+) => AsyncIterable<TChunk> | Promise<AsyncIterable<TChunk>>;
+
 /** Configuration for a channel. */
 interface ChannelConfig {
   /** The channel name. */
   readonly name: string;
-  /** Direction filter — only receive messages from this direction. */
-  readonly directionFilter?: string;
+  /** The direction of messages sent by this channel (e.g., 'main-to-renderer'). */
+  readonly direction: string;
   /** Maximum pending requests (0 = unlimited). */
   readonly maxPendingRequests: number;
   /** Default timeout for requests on this channel. */
@@ -71,6 +77,7 @@ interface ChannelConfig {
 
 const DEFAULT_CHANNEL_CONFIG: ChannelConfig = {
   name: 'unnamed',
+  direction: 'main-to-renderer',
   maxPendingRequests: 100,
   defaultTimeoutMs: 30_000,
 };
@@ -98,13 +105,21 @@ interface IChannel extends IDisposable {
   onMessage<T = unknown>(handler: ChannelMessageHandler<T>): void;
   /** Subscribe to request messages (handler returns a result). */
   onRequest<TPayload = unknown, TResult = unknown>(handler: ChannelRequestHandler<TPayload, TResult>): void;
+  /** Subscribe to stream requests (handler returns an async iterable of chunks). */
+  onStream<TPayload = unknown, TChunk = unknown>(handler: ChannelStreamHandler<TPayload, TChunk>): void;
   /** Unsubscribe from fire-and-forget messages. */
   offMessage<T = unknown>(handler: ChannelMessageHandler<T>): void;
   /** Unsubscribe from request messages. */
   offRequest<TPayload = unknown, TResult = unknown>(handler: ChannelRequestHandler<TPayload, TResult>): void;
+  /** Unsubscribe from stream request handlers. */
+  offStream<TPayload = unknown, TChunk = unknown>(handler: ChannelStreamHandler<TPayload, TChunk>): void;
 
+  /** Subscribe to fire-and-forget messages. Returns an unsubscribe function. */
+  subscribe<T = unknown>(topic: string, handler: (payload: T) => void): () => void;
   /** Send a fire-and-forget message. */
   send(payload: unknown): Promise<void>;
+  /** Send a fire-and-forget message on a named topic (for subscribe pattern). */
+  send(topic: string, payload: unknown): Promise<void>;
   /** Send a request and await a response. */
   request<TPayload = unknown, TResult = unknown>(payload: unknown, timeoutMs?: number): Promise<TResult>;
   /** Open a stream and iterate over chunks. */
@@ -129,13 +144,17 @@ class Channel implements IChannel {
   private readonly _processId: string;
   private readonly _messageHandlers = new Set<ChannelMessageHandler>();
   private readonly _requestHandlers = new Set<ChannelRequestHandler>();
+  private readonly _streamHandlers = new Set<ChannelStreamHandler>();
   private readonly _pendingRequests = new Map<string, PendingRequest>();
   private readonly _pendingStreams = new Map<string, {
-    chunks: unknown[];
-    resolve: (value: AsyncIterable<unknown>) => void;
-    reject: (error: Error) => void;
+    queue: unknown[];
+    resolve: ((value: IteratorResult<unknown>) => void) | null;
     done: boolean;
+    error: Error | null;
+    timeout: ReturnType<typeof setTimeout> | null;
   }>();
+  private readonly _topicHandlers = new Map<string, Set<(payload: unknown) => void>>();
+  private _transportDataHandler: ((data: string) => void) | null = null;
 
   constructor(
     transport: ITransport,
@@ -170,13 +189,57 @@ class Channel implements IChannel {
     this._requestHandlers.delete(handler as ChannelRequestHandler);
   }
 
+  onStream<TPayload = unknown, TChunk = unknown>(handler: ChannelStreamHandler<TPayload, TChunk>): void {
+    this._streamHandlers.add(handler as ChannelStreamHandler);
+  }
+
+  offStream<TPayload = unknown, TChunk = unknown>(handler: ChannelStreamHandler<TPayload, TChunk>): void {
+    this._streamHandlers.delete(handler as ChannelStreamHandler);
+  }
+
+  subscribe<T = unknown>(topic: string, handler: (payload: T) => void): () => void {
+    if (!this._topicHandlers.has(topic)) {
+      this._topicHandlers.set(topic, new Set());
+    }
+    const handlers = this._topicHandlers.get(topic)!;
+    const wrapped = handler as (payload: unknown) => void;
+    handlers.add(wrapped);
+
+    // Register a message handler that filters by topic
+    const messageHandler: ChannelMessageHandler<{ __topic__: string; __payload__: unknown }> = (payload, _msg) => {
+      if (payload && typeof payload === 'object' && '__topic__' in payload && (payload as any).__topic__ === topic) {
+        handler((payload as any).__payload__ as T);
+      }
+    };
+    this._messageHandlers.add(messageHandler as ChannelMessageHandler);
+
+    return () => {
+      handlers.delete(wrapped);
+      this._messageHandlers.delete(messageHandler as ChannelMessageHandler);
+      if (handlers.size === 0) {
+        this._topicHandlers.delete(topic);
+      }
+    };
+  }
+
   // ── Sending ───────────────────────────────────────────────────────────────
 
-  async send(payload: unknown): Promise<void> {
+  async send(topicOrPayload: unknown, maybePayload?: unknown): Promise<void> {
     if (!this._active) throw new Error(`Channel "${this.name}" is not active`);
+
+    // Support both send(payload) and send(topic, payload) overloads
+    let payload: unknown;
+    let topic: string | null = null;
+    if (maybePayload !== undefined && typeof topicOrPayload === 'string') {
+      topic = topicOrPayload;
+      payload = { __topic__: topic, __payload__: maybePayload };
+    } else {
+      payload = topicOrPayload;
+    }
+
     const msg = createFireAndForget(
       this.name,
-      'main-to-renderer', // TODO: direction should come from config
+      this._config.direction,
       this._processId,
       payload,
     );
@@ -193,7 +256,7 @@ class Channel implements IChannel {
     const timeout = timeoutMs ?? this._config.defaultTimeoutMs;
     const msg = createRequest(
       this.name,
-      'main-to-renderer',
+      this._config.direction,
       this._processId,
       payload,
       timeout,
@@ -234,50 +297,109 @@ class Channel implements IChannel {
     const timeout = timeoutMs ?? this._config.defaultTimeoutMs;
     const msg = createStreamRequest(
       this.name,
-      'main-to-renderer',
+      this._config.direction,
       this._processId,
       payload,
       timeout,
     );
 
-    // Send the stream request
-    await this._transport.send(this._serializer.encode(msg));
-
-    // Yield chunks as they arrive
-    // In a real implementation, this would use a queue-based approach
-    // For now, we collect chunks from the stream handler
     const correlationId = msg.id;
-    const chunks: unknown[] = [];
-    let done = false;
-    let resolveChunk: (() => void) | null = null;
-    let rejectChunk: ((err: Error) => void) | null = null;
 
-    // Register a temporary handler for stream chunks
-    const chunkHandler = (message: IPCMessage) => {
-      if (isStreamChunk(message) && message.correlationId === correlationId) {
-        chunks.push(message.data);
-        done = message.done;
-        if (resolveChunk) resolveChunk();
+    // Set up pending stream state with queue
+    const state: {
+      queue: unknown[];
+      resolve: ((value: IteratorResult<unknown>) => void) | null;
+      done: boolean;
+      error: Error | null;
+      timeout: ReturnType<typeof setTimeout> | null;
+    } = { queue: [], resolve: null, done: false, error: null, timeout: null };
+
+    if (timeout > 0) {
+      state.timeout = setTimeout(() => {
+        state.error = new Error(`Stream timed out after ${timeout}ms on channel "${this.name}"`);
+        state.done = true;
+        if (state.resolve) {
+          const r = state.resolve;
+          state.resolve = null;
+          r({ value: undefined, done: true });
+        }
+      }, timeout);
+    }
+
+    this._pendingStreams.set(correlationId, state);
+
+    // Register a raw handler for stream chunks (bypasses onMessage — chunks are internal)
+    const rawChunkHandler = (data: string) => {
+      let msg: IPCMessage;
+      try {
+        msg = this._serializer.decode(data);
+      } catch { return; }
+      if (msg.channel !== this.name) return;
+
+      if (isStreamChunk(msg) && msg.correlationId === correlationId) {
+        if (state.timeout) clearTimeout(state.timeout);
+
+        if (msg.done) {
+          state.done = true;
+        } else {
+          state.queue.push(msg.data);
+        }
+
+        // Wake up the iterator if it's waiting
+        if (state.resolve) {
+          const r = state.resolve;
+          state.resolve = null;
+
+          if (state.error) {
+            r({ value: undefined, done: true });
+          } else if (state.queue.length > 0) {
+            r({ value: state.queue.shift(), done: false });
+          } else if (state.done) {
+            r({ value: undefined, done: true });
+          } else {
+            // Still waiting — re-register
+            state.timeout = setTimeout(() => {
+              state.error = new Error(`Stream timed out after ${timeout}ms on channel "${this.name}"`);
+              state.done = true;
+              if (state.resolve) {
+                const r2 = state.resolve;
+                state.resolve = null;
+                r2({ value: undefined, done: true });
+              }
+            }, timeout);
+          }
+        }
       }
     };
 
-    // Use a wrapper for the message handler
-    this.onMessage(chunkHandler as ChannelMessageHandler);
+    this._transport.onData(rawChunkHandler);
+
+    // Send the stream request
+    await this._transport.send(this._serializer.encode(msg));
 
     try {
-      while (!done) {
-        if (chunks.length === 0) {
-          await new Promise<void>((resolve, reject) => {
-            resolveChunk = resolve;
-            rejectChunk = reject;
-          });
+      while (true) {
+        // If queue has items, yield them
+        if (state.queue.length > 0) {
+          yield state.queue.shift() as TChunk;
+          continue;
         }
-        while (chunks.length > 0) {
-          yield chunks.shift() as TChunk;
-        }
+
+        // If done, stop
+        if (state.done) break;
+
+        // Wait for next chunk or done
+        const result = await new Promise<IteratorResult<unknown>>((resolve) => {
+          state.resolve = resolve;
+        });
+
+        if (result.done) break;
+        yield result.value as TChunk;
       }
     } finally {
-      this.offMessage(chunkHandler as ChannelMessageHandler);
+      this._transport.offData(rawChunkHandler);
+      if (state.timeout) clearTimeout(state.timeout);
+      this._pendingStreams.delete(correlationId);
     }
   }
 
@@ -288,14 +410,19 @@ class Channel implements IChannel {
     this._active = true;
 
     // Register a raw message handler on the transport
-    this._transport.onData((data) => {
-      this._handleIncoming(data);
-    });
+    this._transportDataHandler = (data) => this._handleIncoming(data);
+    this._transport.onData(this._transportDataHandler);
   }
 
   deactivate(): void {
     if (!this._active) return;
     this._active = false;
+
+    // Remove transport handler
+    if (this._transportDataHandler) {
+      this._transport.offData(this._transportDataHandler);
+      this._transportDataHandler = null;
+    }
 
     // Clear pending requests
     for (const [, pending] of this._pendingRequests) {
@@ -303,6 +430,19 @@ class Channel implements IChannel {
       pending.reject(new Error(`Channel "${this.name}" deactivated`));
     }
     this._pendingRequests.clear();
+
+    // Clear pending streams
+    for (const [id, state] of this._pendingStreams) {
+      if (state.timeout) clearTimeout(state.timeout);
+      state.done = true;
+      state.error = new Error(`Channel "${this.name}" deactivated`);
+      if (state.resolve) {
+        const r = state.resolve;
+        state.resolve = null;
+        r({ value: undefined, done: true });
+      }
+    }
+    this._pendingStreams.clear();
   }
 
   // ── Private ───────────────────────────────────────────────────────────────
@@ -335,27 +475,38 @@ class Channel implements IChannel {
   }
 
   private async _handleRequest(msg: IRequestMessage): Promise<void> {
-    for (const handler of this._requestHandlers) {
-      try {
-        const result = await handler(msg.payload, msg);
-        const response = createResponse(
-          this.name,
-          'renderer-to-main',
-          this._processId,
-          msg.id,
-          result,
-        );
-        await this._transport.send(this._serializer.encode(response));
-      } catch (err) {
-        const errorResponse = createErrorResponse(
-          this.name,
-          'renderer-to-main',
-          this._processId,
-          msg.id,
-          err instanceof Error ? err : new Error(String(err)),
-        );
-        await this._transport.send(this._serializer.encode(errorResponse));
-      }
+    const handlers = Array.from(this._requestHandlers);
+    if (handlers.length === 0) {
+      const errorResponse = createErrorResponse(
+        this.name,
+        this._config.direction,
+        this._processId,
+        msg.id,
+        new Error(`No handler registered for channel "${this.name}"`),
+      );
+      await this._transport.send(this._serializer.encode(errorResponse));
+      return;
+    }
+
+    try {
+      const result = await handlers[0](msg.payload, msg);
+      const response = createResponse(
+        this.name,
+        this._config.direction,
+        this._processId,
+        msg.id,
+        result,
+      );
+      await this._transport.send(this._serializer.encode(response));
+    } catch (err) {
+      const errorResponse = createErrorResponse(
+        this.name,
+        this._config.direction,
+        this._processId,
+        msg.id,
+        err instanceof Error ? err : new Error(String(err)),
+      );
+      await this._transport.send(this._serializer.encode(errorResponse));
     }
   }
 
@@ -375,9 +526,57 @@ class Channel implements IChannel {
     }
   }
 
-  private _handleStreamRequest(_msg: IStreamRequestMessage): void {
-    // Stream requests are handled by the request handler on the other side
-    // The handler would call createStreamChunk and send chunks back
+  private async _handleStreamRequest(msg: IStreamRequestMessage): Promise<void> {
+    const handlers = Array.from(this._streamHandlers);
+    if (handlers.length === 0) {
+      // No stream handler registered — send done signal
+      const doneChunk = createStreamChunk(
+        this.name,
+        this._config.direction,
+        this._processId,
+        msg.id,
+        undefined,
+        true,
+      );
+      await this._transport.send(this._serializer.encode(doneChunk));
+      return;
+    }
+
+    try {
+      const iterable = await handlers[0](msg.payload, msg);
+      for await (const chunk of iterable) {
+        const streamChunk = createStreamChunk(
+          this.name,
+          this._config.direction,
+          this._processId,
+          msg.id,
+          chunk,
+          false,
+        );
+        await this._transport.send(this._serializer.encode(streamChunk));
+      }
+      // Send done signal
+      const doneChunk = createStreamChunk(
+        this.name,
+        this._config.direction,
+        this._processId,
+        msg.id,
+        undefined,
+        true,
+      );
+      await this._transport.send(this._serializer.encode(doneChunk));
+    } catch (err) {
+      // Send done signal with error — the stream consumer will see done=true
+      const doneChunk = createStreamChunk(
+        this.name,
+        this._config.direction,
+        this._processId,
+        msg.id,
+        undefined,
+        true,
+      );
+      await this._transport.send(this._serializer.encode(doneChunk));
+    }
   }
 
   private _handleStreamChunk(msg: IStreamChunkMessage): void {
@@ -393,6 +592,8 @@ class Channel implements IChannel {
     this.deactivate();
     this._messageHandlers.clear();
     this._requestHandlers.clear();
+    this._streamHandlers.clear();
+    this._topicHandlers.clear();
   }
 }
 
@@ -496,4 +697,5 @@ export type {
   ChannelConfig,
   ChannelMessageHandler,
   ChannelRequestHandler,
+  ChannelStreamHandler,
 };

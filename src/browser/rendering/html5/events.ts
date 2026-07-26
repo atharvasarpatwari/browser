@@ -14,6 +14,8 @@
 
 import type { HtmlNode, HtmlElement, HtmlDocument } from './dom';
 import { NodeType } from './dom';
+import { isShadowRoot } from './shadow';
+import type { MutableShadowRoot } from './shadow';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EVENT PHASES
@@ -267,6 +269,126 @@ export class CustomEvent<T = unknown> extends Event {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WHEEL EVENT (https://w3c.github.io/uievents/#idl-WheelEvent)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface WheelEventInit extends MouseEventInit {
+  deltaX?: number;
+  deltaY?: number;
+  deltaZ?: number;
+  deltaMode?: number;
+}
+
+export const DOM_DELTA_PIXEL = 0;
+export const DOM_DELTA_LINE = 1;
+export const DOM_DELTA_PAGE = 2;
+
+export class WheelEvent extends MouseEvent {
+  readonly deltaX: number;
+  readonly deltaY: number;
+  readonly deltaZ: number;
+  readonly deltaMode: number;
+
+  constructor(type: string, options?: WheelEventInit) {
+    super(type, options);
+    this.deltaX = options?.deltaX ?? 0;
+    this.deltaY = options?.deltaY ?? 0;
+    this.deltaZ = options?.deltaZ ?? 0;
+    this.deltaMode = options?.deltaMode ?? DOM_DELTA_PIXEL;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POINTER EVENT (https://w3c.github.io/pointerevents/#idl-PointerEvent)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PointerEventInit extends MouseEventInit {
+  pointerId?: number;
+  width?: number;
+  height?: number;
+  pressure?: number;
+  tangentialPressure?: number;
+  tiltX?: number;
+  tiltY?: number;
+  twist?: number;
+  pointerType?: string;
+  isPrimary?: boolean;
+}
+
+export class PointerEvent extends MouseEvent {
+  readonly pointerId: number;
+  readonly width: number;
+  readonly height: number;
+  readonly pressure: number;
+  readonly tangentialPressure: number;
+  readonly tiltX: number;
+  readonly tiltY: number;
+  readonly twist: number;
+  readonly pointerType: string;
+  readonly isPrimary: boolean;
+
+  constructor(type: string, options?: PointerEventInit) {
+    super(type, options);
+    this.pointerId = options?.pointerId ?? 0;
+    this.width = options?.width ?? 1;
+    this.height = options?.height ?? 1;
+    this.pressure = options?.pressure ?? 0;
+    this.tangentialPressure = options?.tangentialPressure ?? 0;
+    this.tiltX = options?.tiltX ?? 0;
+    this.tiltY = options?.tiltY ?? 0;
+    this.twist = options?.twist ?? 0;
+    this.pointerType = options?.pointerType ?? '';
+    this.isPrimary = options?.isPrimary ?? false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLIPBOARD EVENT (https://w3c.github.io/clipboard-clipboard/#clipboard-event)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ClipboardEventInit extends EventInit {
+  clipboardData?: DataTransfer | null;
+}
+
+export class DataTransfer {
+  private _data = new Map<string, string>();
+  readonly dropEffect: string = 'none';
+  readonly effectAllowed: string = 'uninitialized';
+  readonly files: readonly unknown[] = [];
+  readonly items: readonly unknown[] = [];
+  readonly types: readonly string[] = [];
+
+  getData(format: string): string {
+    return this._data.get(format.toLowerCase()) ?? '';
+  }
+
+  setData(format: string, data: string): void {
+    this._data.set(format.toLowerCase(), data);
+  }
+
+  clearData(format?: string): void {
+    if (format) {
+      this._data.delete(format.toLowerCase());
+    } else {
+      this._data.clear();
+    }
+  }
+
+  setDragImage(_image: unknown, _x: number, _y: number): void {
+    // no-op in non-browser context
+  }
+}
+
+export class ClipboardEvent extends Event {
+  readonly clipboardData: DataTransfer | null;
+
+  constructor(type: string, options?: ClipboardEventInit) {
+    super(type, { bubbles: true, cancelable: true, ...options });
+    this.clipboardData = options?.clipboardData ?? new DataTransfer();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EVENT LISTENER REGISTRATION
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -386,11 +508,21 @@ export function dispatchEvent(node: HtmlNode, event: Event): boolean {
   event._setTarget(node);
 
   // Build the ancestor chain for propagation
+  // When composed=false, stop at shadow root boundaries (events stay inside shadow DOM).
+  // When composed=true, cross shadow boundaries by jumping to the host element.
   const ancestors: HtmlNode[] = [];
   let current: HtmlNode | null = node.parent as HtmlNode | null;
   while (current) {
-    ancestors.push(current);
-    current = current.parent as HtmlNode | null;
+    if (isShadowRoot(current)) {
+      if (!event.composed) break;
+      const sr = current as unknown as MutableShadowRoot;
+      const host = sr.host as unknown as HtmlNode;
+      ancestors.push(host);
+      current = host.parent as HtmlNode | null;
+    } else {
+      ancestors.push(current);
+      current = current.parent as HtmlNode | null;
+    }
   }
 
   // ─── CAPTURE PHASE ────────────────────────────────────────────────────

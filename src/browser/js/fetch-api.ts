@@ -10,6 +10,9 @@ import {
 import type { EventLoop } from './event-loop';
 import { createWiredPromise, fulfillPromise, rejectPromise } from './promise';
 import type { CspResourceEnforcer } from '../security/csp-resource-enforcer';
+import type { ICorsEngine, CorsRequest } from '../security/cors';
+import { CorsMode, CorsCredentials } from '../security/cors';
+import { parseOrigin } from '../security/origin-service';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -674,6 +677,7 @@ export function createFetchFn(
   platformFetch?: PlatformFetch,
   resourceEnforcer?: CspResourceEnforcer,
   pageOrigin?: string,
+  corsEngine?: ICorsEngine,
 ): JSFunction {
   const fetchFn = platformFetch ?? platformFetchRef;
   return createNativeFunction('fetch', (_this, args) => {
@@ -685,6 +689,8 @@ export function createFetchFn(
     let headers: Record<string, string> = {};
     let body: string | undefined;
     let signalObj: JSObject | undefined;
+    let mode = CorsMode.Cors;
+    let credentials = CorsCredentials.SameOrigin;
 
     // Parse arguments
     if (urlOrRequest && typeof urlOrRequest === 'object' && requestState.has(urlOrRequest as JSObject)) {
@@ -700,7 +706,6 @@ export function createFetchFn(
           rejectPromise(p, createDOMException('The operation was aborted.', 'AbortError'));
           return p;
         }
-        // We'd need a way to convert our signal to a real AbortSignal — skip for now
       }
     } else {
       url = toString(urlOrRequest);
@@ -733,6 +738,22 @@ export function createFetchFn(
           return p;
         }
       }
+      // Parse mode and credentials from init
+      const modeProp = initObj.properties.get('mode');
+      if (modeProp) {
+        const modeStr = toString(modeProp.value).toLowerCase();
+        if (modeStr === 'no-cors') mode = CorsMode.NoCors;
+        else if (modeStr === 'same-origin') mode = CorsMode.SameOrigin;
+        else if (modeStr === 'navigate') mode = CorsMode.Navigate;
+        else mode = CorsMode.Cors;
+      }
+      const credProp = initObj.properties.get('credentials');
+      if (credProp) {
+        const credStr = toString(credProp.value).toLowerCase();
+        if (credStr === 'omit') credentials = CorsCredentials.Omit;
+        else if (credStr === 'include') credentials = CorsCredentials.Include;
+        else credentials = CorsCredentials.SameOrigin;
+      }
     }
 
     // Validate URL scheme
@@ -762,6 +783,51 @@ export function createFetchFn(
       }
     }
 
+    // ── CORS enforcement ──────────────────────────────────────────────────
+    const corsReqOrigin = pageOrigin ?? '';
+    const requestOrigin = parseOrigin(url, corsReqOrigin);
+
+    // same-origin mode — block cross-origin outright
+    if (mode === CorsMode.SameOrigin && corsReqOrigin && requestOrigin !== corsReqOrigin) {
+      const p = createWiredPromise(eventLoop);
+      rejectPromise(p, `Blocked fetch to '${url}': request mode is "same-origin" but URL is cross-origin`);
+      return p;
+    }
+
+    // If CORS engine is available, run pre-request check
+    let corsDecision: string | null = null;
+    let corsRequestHeaders = new Map<string, string>();
+    if (corsEngine && corsReqOrigin && requestOrigin !== corsReqOrigin && mode !== CorsMode.Navigate) {
+      const corsReq: CorsRequest = {
+        url,
+        origin: corsReqOrigin,
+        method,
+        headers: new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])),
+        mode,
+        credentials,
+      };
+      try {
+        const preCheck = corsEngine.checkRequest(corsReq);
+        corsDecision = preCheck.decision;
+
+        // Inject CORS request headers (e.g. Origin)
+        for (const [k, v] of preCheck.requestHeaders) {
+          corsRequestHeaders.set(k, v);
+          headers[k] = v;
+        }
+      } catch (err) {
+        // CorsBlockedError — reject the fetch
+        const p = createWiredPromise(eventLoop);
+        rejectPromise(p, err instanceof Error ? err.message : String(err));
+        return p;
+      }
+    } else if (corsReqOrigin && requestOrigin !== corsReqOrigin) {
+      // No CORS engine but cross-origin — inject Origin header for best-effort
+      if (!headers['origin']) {
+        headers['origin'] = corsReqOrigin;
+      }
+    }
+
     // Build platform fetch init
     const platformInit: Record<string, unknown> = { method, headers };
     if (body !== undefined) platformInit.body = body;
@@ -771,6 +837,10 @@ export function createFetchFn(
 
     // Check if signal was provided and store reference for abort checking
     const signalInternal = signalObj ? signalState.get(signalObj) : undefined;
+
+    // Determine if response should be opaque
+    const shouldBeOpaque = mode === CorsMode.NoCors ||
+      corsDecision === 'opaque';
 
     // Call platform fetch and bridge native Promise → our JS Promise
     Promise.resolve(fetchFn(url, platformInit)).then(
@@ -787,20 +857,48 @@ export function createFetchFn(
               resHeaders.map.set(key.toLowerCase(), value);
             });
           }
+
+          // CORS post-response check (skip for no-cors, navigate, or same-origin)
+          let responseType = 'default';
+          if (shouldBeOpaque) {
+            responseType = 'opaque';
+          } else if (corsEngine && corsReqOrigin && requestOrigin !== corsReqOrigin && mode === CorsMode.Cors) {
+            const corsReq: CorsRequest = {
+              url,
+              origin: corsReqOrigin,
+              method,
+              headers: new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])),
+              mode,
+              credentials,
+            };
+            try {
+              corsEngine.checkResponse(corsReq, {
+                statusCode: res.status ?? 200,
+                statusText: res.statusText ?? 'OK',
+                headers: new Map(Object.entries(resHeaders.map).map(([k, v]) => [k, v])) as Map<string, string>,
+                body: '',
+              });
+            } catch {
+              // CORS violation — make response opaque
+              responseType = 'opaque';
+            }
+          }
+
           const textFn = res?.text;
           if (typeof textFn === 'function') {
             Promise.resolve(textFn.call(res)).then(
               (text: string) => {
-                fulfillPromise(promise, buildResponseInstance(eventLoop, {
-                  body: text,
+                const respInternal: ResponseInternal = {
+                  body: responseType === 'opaque' ? '' : text,
                   status: res.status ?? 200,
                   statusText: res.statusText ?? 'OK',
                   headers: resHeaders,
                   url: res.url ?? '',
                   redirected: res.redirected ?? false,
-                  type: 'default',
+                  type: responseType,
                   bodyUsed: false,
-                }));
+                };
+                fulfillPromise(promise, buildResponseInstance(eventLoop, respInternal));
               },
               (err: unknown) => {
                 rejectPromise(promise, err instanceof Error ? err.message : String(err));
@@ -808,9 +906,10 @@ export function createFetchFn(
             );
           } else {
             fulfillPromise(promise, buildResponseInstance(eventLoop, {
-              body: '', status: res.status ?? 200, statusText: res.statusText ?? 'OK',
+              body: responseType === 'opaque' ? '' : '',
+              status: res.status ?? 200, statusText: res.statusText ?? 'OK',
               headers: resHeaders, url: res.url ?? '', redirected: res.redirected ?? false,
-              type: 'default', bodyUsed: false,
+              type: responseType, bodyUsed: false,
             }));
           }
         } catch (err) {

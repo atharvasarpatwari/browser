@@ -344,8 +344,8 @@ describe('Channel', () => {
     await expect(channelA.request({})).rejects.toThrow('handler failed');
   });
 
-  it('request times out when no handler', async () => {
-    await expect(channelA.request({}, 100)).rejects.toThrow('timed out');
+  it('request rejects when no handler registered', async () => {
+    await expect(channelA.request({}, 200)).rejects.toThrow('No handler registered');
   });
 
   it('channel name is accessible', () => {
@@ -376,6 +376,64 @@ describe('Channel', () => {
   it('dispose clears handlers', () => {
     channelA.dispose();
     channelB.dispose();
+  });
+
+  it('channel uses configured direction in messages', async () => {
+    const dirA = new Channel(transportA, { name: 'dir-test', direction: 'main-to-renderer' }, 'proc-a');
+    dirA.activate();
+
+    let receivedDir = '';
+    transportB.onData((data) => {
+      const msg = JSON.parse(data);
+      receivedDir = msg.direction;
+    });
+
+    await dirA.send({ test: true });
+    expect(receivedDir).toBe('main-to-renderer');
+    dirA.deactivate();
+  });
+
+  it('only first request handler is called (no duplicate responses)', async () => {
+    let handler1Calls = 0;
+    let handler2Calls = 0;
+    channelB.onRequest(async () => { handler1Calls++; return 'result1'; });
+    channelB.onRequest(async () => { handler2Calls++; return 'result2'; });
+
+    const result = await channelA.request({});
+    expect(result).toBe('result1');
+    expect(handler1Calls).toBe(1);
+    expect(handler2Calls).toBe(0);
+  });
+
+  it('no handler sends error response', async () => {
+    await expect(channelA.request({}, 200)).rejects.toThrow('No handler registered');
+  });
+
+  it('reactivation does not accumulate transport handlers', async () => {
+    let messageCount = 0;
+    channelB.onMessage(() => { messageCount++; });
+
+    channelA.deactivate();
+    channelA.activate();
+    channelA.activate(); // double activate should be no-op
+
+    await channelA.send('msg1');
+    expect(messageCount).toBe(1);
+
+    channelA.deactivate();
+    await expect(channelA.send('msg2')).rejects.toThrow('not active');
+    expect(messageCount).toBe(1);
+  });
+
+  it('reactivation still receives messages', async () => {
+    let received = false;
+    channelB.onMessage(() => { received = true; });
+
+    channelB.deactivate();
+    channelB.activate();
+
+    await channelA.send('ping');
+    expect(received).toBe(true);
   });
 });
 

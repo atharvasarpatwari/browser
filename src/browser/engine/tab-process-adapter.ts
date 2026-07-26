@@ -146,6 +146,8 @@ class TabProcessManager implements ITabProcessManager {
   private readonly tabToProcess = new Map<string, string>();
   /** processId → tabId */
   private readonly processToTab = new Map<string, string>();
+  /** Processes being intentionally destroyed (skip orphan cleanup). */
+  private readonly _intentionalDestroys = new Set<string>();
 
   /** Bound event handlers (stored for cleanup). */
   private readonly processCrashHandler: (event: ProcessBusEvent) => void;
@@ -201,6 +203,9 @@ class TabProcessManager implements ITabProcessManager {
   destroyTab(tabId: string): boolean {
     const processId = this.tabToProcess.get(tabId);
 
+    // Mark as intentional so handleProcessExit won't double-destroy the tab
+    if (processId) this._intentionalDestroys.add(processId);
+
     // Destroy the process first if configured
     if (processId && this.config.autoDestroyProcess) {
       this.processManager.destroyProcess(processId).catch(() => {});
@@ -210,6 +215,8 @@ class TabProcessManager implements ITabProcessManager {
     this.tabToProcess.delete(tabId);
 
     const result = this.tabManager.destroyContext(tabId);
+
+    if (processId) this._intentionalDestroys.delete(processId);
 
     if (result) {
       this.bus.emit({
@@ -276,11 +283,26 @@ class TabProcessManager implements ITabProcessManager {
   private handleProcessExit(event: ProcessBusEvent): void {
     if (event.kind !== 'processExited') return;
 
+    // Skip if this was an intentional destroy (destroyTab handles its own cleanup)
+    if (this._intentionalDestroys.has(event.processId)) return;
+
     const tabId = this.processToTab.get(event.processId);
     if (!tabId) return;
 
     this.processToTab.delete(event.processId);
     this.tabToProcess.delete(tabId);
+
+    // Destroy the orphaned tab context — the process is permanently gone
+    // (maxRestarts exceeded or unhandled crash).
+    if (this.config.autoDestroyProcess) {
+      this.tabManager.destroyContext(tabId);
+    }
+
+    this.bus.emit({
+      kind: 'tabProcessDestroyed',
+      tabId,
+      processId: event.processId,
+    });
   }
 }
 

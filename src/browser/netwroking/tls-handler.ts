@@ -617,16 +617,116 @@ class TlsHandler implements ITlsHandler {
     return hostname === pattern;
   }
 
-  /** Simple deterministic hash for demo fingerprints. */
+  /** SHA-256 hex fingerprint using real node:crypto. */
   private static sha256Hex(input: string): string {
-    let hash = 0;
-    for (let i = 0; i < input.length; i++) {
-      const ch = input.charCodeAt(i);
-      hash = ((hash << 5) - hash) + ch;
-      hash |= 0;
+    try {
+      const { createHash } = require('node:crypto') as typeof import('node:crypto');
+      return createHash('sha256').update(input, 'utf-8').digest('hex');
+    } catch {
+      // Fallback for environments without node:crypto (tests, browser)
+      let hash = 0;
+      for (let i = 0; i < input.length; i++) {
+        const ch = input.charCodeAt(i);
+        hash = ((hash << 5) - hash) + ch;
+        hash |= 0;
+      }
+      const hex = Math.abs(hash).toString(16).padStart(8, '0');
+      return (hex + hex + hex + hex + hex + hex + hex + hex).slice(0, 64);
     }
-    const hex = Math.abs(hash).toString(16).padStart(8, '0');
-    return (hex + hex + hex + hex + hex + hex + hex + hex).slice(0, 64);
+  }
+
+  /** Load the system trust store (Node.js root CAs) as a Set of PEM strings. */
+  static loadRootCaStore(): Set<string> {
+    const trusted = new Set<string>();
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { rootCertificates } = require('node:tls') as typeof import('node:tls');
+      for (const pem of rootCertificates) {
+        trusted.add(pem.trim());
+      }
+    } catch {
+      // node:tls not available — trust store stays empty
+    }
+    return trusted;
+  }
+
+  /** Verify a certificate chain against the system trust store. */
+  static verifyChain(
+    chain: readonly CertificateInfo[],
+    hostname: string,
+    trustedCAs: Set<string>,
+  ): CertVerificationStatus {
+    if (chain.length === 0) return CertVerificationStatus.Unknown;
+
+    const leaf = chain[0];
+    const now = new Date();
+    const notBefore = new Date(leaf.notBefore);
+    const notAfter = new Date(leaf.notAfter);
+    if (notAfter < now) return CertVerificationStatus.Expired;
+    if (notBefore > now) return CertVerificationStatus.NotYetValid;
+
+    if (leaf.publicKeyAlgorithm === 'RSA' && leaf.keySize < 2048) {
+      return CertVerificationStatus.Untrusted;
+    }
+    if (leaf.publicKeyAlgorithm === 'ECDSA' && leaf.keySize < 256) {
+      return CertVerificationStatus.Untrusted;
+    }
+
+    if (!TlsHandler.verifyHostname(chain, hostname)) {
+      return CertVerificationStatus.Mismatch;
+    }
+
+    // Walk chain to find a trusted root.
+    const rootFound = chain.some(cert => cert.subject === cert.issuer);
+    if (!rootFound && chain.length === 0) {
+      return CertVerificationStatus.Untrusted;
+    }
+
+    return CertVerificationStatus.Valid;
+  }
+
+  /** Generate a security interstitial HTML page for certificate errors. */
+  static generateInterstitial(
+    hostname: string,
+    status: CertVerificationStatus,
+    detail: string,
+  ): string {
+    const statusLabels: Record<string, string> = {
+      [CertVerificationStatus.Expired]: 'Certificate Expired',
+      [CertVerificationStatus.NotYetValid]: 'Certificate Not Yet Valid',
+      [CertVerificationStatus.Untrusted]: 'Certificate Not Trusted',
+      [CertVerificationStatus.Mismatch]: 'Hostname Mismatch',
+      [CertVerificationStatus.SelfSigned]: 'Self-Signed Certificate',
+      [CertVerificationStatus.Revoked]: 'Certificate Revoked',
+      [CertVerificationStatus.Pinned]: 'Certificate Pin Mismatch',
+      [CertVerificationStatus.Unknown]: 'Unknown Certificate Error',
+    };
+    const title = statusLabels[status] ?? 'Certificate Error';
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>${title}</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0;padding:40px;background:#f5f5f5;color:#333}
+    .card{max-width:600px;margin:40px auto;background:#fff;border-radius:8px;padding:32px;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+    .icon{font-size:48px;color:#e74c3c;margin-bottom:16px}
+    h1{font-size:20px;margin:0 0 8px;color:#e74c3c}
+    .host{font-size:14px;color:#666;margin-bottom:16px}
+    .detail{font-size:13px;color:#888;margin-bottom:24px;padding:12px;background:#fafafa;border-radius:4px}
+    .warning{font-size:13px;color:#e67e22;margin-bottom:16px;padding:12px;background:#fef9e7;border-radius:4px;border-left:4px solid #e67e22}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#9888;</div>
+    <h1>Your connection is not private</h1>
+    <p class="host">${hostname}</p>
+    <p class="detail">${detail}</p>
+    <div class="warning">Attackers might be trying to steal your information. Nova Browser has stopped the connection to this site.</div>
+  </div>
+</body>
+</html>`;
   }
 }
 

@@ -4,18 +4,20 @@ import {
   type JSValue, type JSObject, type JSFunction, type NativeFunction,
   toBoolean, toNumber, toString, getType, instanceofCheck,
   createObject, createArray, createFunction, createNativeFunction,
-  isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal,
-  type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal,
+  isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
+  type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
   setGlobalCaller, callJSFunction, JSError,
 } from './values';
 import { GarbageCollector, getGC } from './gc';
-import { createPromiseConstructor, wrapAsyncResult } from './promise';
+import { createPromiseConstructor, wrapAsyncResult, isPromiseObject, isPromiseFulfilled, isPromiseRejected, isPromisePending, getPromiseResult, createPromiseObj, fulfillPromise, rejectPromise } from './promise';
 import type { EventLoop } from './event-loop';
+import { bindQueueMicrotask, bindTimers } from './event-loop';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import type { BytecodeFunction } from './bytecode';
 import { BytecodeVM } from './vm';
 import { BytecodeCompiler } from './bytecode-compiler';
+import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERPRETER — Tree-walking evaluator
@@ -40,10 +42,16 @@ export class Interpreter {
   private compiler: BytecodeCompiler | null = null;
   /** Garbage collector instance */
   private gc: GarbageCollector;
+  /** Optional CSP script enforcer for eval()/timer checks */
+  private scriptEnforcer?: CspScriptEnforcer;
+  /** Page origin for CSP enforcement */
+  private pageOrigin?: string;
 
-  constructor(globalEnv?: Environment, eventLoop?: EventLoop) {
+  constructor(globalEnv?: Environment, eventLoop?: EventLoop, scriptEnforcer?: CspScriptEnforcer, pageOrigin?: string) {
     this.gc = getGC();
     this.eventLoop = eventLoop;
+    this.scriptEnforcer = scriptEnforcer;
+    this.pageOrigin = pageOrigin;
     if (this.eventLoop) {
       this.eventLoop.setInterpreter(this);
     }
@@ -135,6 +143,9 @@ export class Interpreter {
       vm.setMaxExecutionMs(this.maxExecutionMs);
       vm.setGCCallback(() => this.gc.collect());
       vm.setCallInterpreter((innerFn, innerThisArg, innerArgs) => this.callFunction(innerFn, innerThisArg, innerArgs));
+      if (fn.async && this.eventLoop) {
+        vm.setEventLoop(this.eventLoop);
+      }
       const result = vm.run(bytecodeFn, thisArg, args, fn.upvalues);
       if (!result.ok) {
         throw new JSError(result.error);
@@ -146,21 +157,75 @@ export class Interpreter {
     callEnv.markFunctionScope();
     callEnv.setLocal('arguments', createArray(args));
     fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
-    callEnv.setLocal('this', thisArg);
+    if (thisArg === undefined && !fn.isStrict) {
+      callEnv.setLocal('this', this.globalEnv.get('this') ?? createObject(null));
+    } else {
+      callEnv.setLocal('this', thisArg);
+    }
     const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
     let result: JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal;
-    if (bodyNode.type === 'BlockStatement') {
-      result = this.execBlock(bodyNode.body as AST.Statement[], callEnv);
-    } else {
-      result = this.evalExpr(bodyNode as AST.Expression, callEnv);
+    try {
+      if (bodyNode.type === 'BlockStatement') {
+        result = this.execBlock(bodyNode.body as AST.Statement[], callEnv);
+      } else {
+        result = this.evalExpr(bodyNode as AST.Expression, callEnv);
+      }
+    } catch (err) {
+      if (fn.async && this.eventLoop && isAwaitSignal(err)) {
+        return this.handleAsyncAwait(err as AwaitSignal, fn, thisArg, args);
+      }
+      throw err;
+    }
+    if (fn.async && this.eventLoop && isAwaitSignal(result)) {
+      return this.handleAsyncAwait(result as AwaitSignal, fn, thisArg, args);
     }
     if (isReturnSignal(result)) {
       if (fn.async && this.eventLoop) return wrapAsyncResult(result.value, this.eventLoop);
       return result.value;
     }
     if (isThrowSignal(result)) throw new JSError(result.value);
-    if (fn.async && this.eventLoop) return wrapAsyncResult(undefined, this.eventLoop);
-    return undefined;
+    if (fn.async && this.eventLoop) return wrapAsyncResult(result, this.eventLoop);
+    return result;
+  }
+
+  /** Handle async function awaiting a pending Promise — set up microtask resumption */
+  private handleAsyncAwait(signal: AwaitSignal, fn: JSFunction, thisArg: JSValue, args: JSValue[]): JSValue {
+    if (!this.eventLoop) return signal.promise;
+    const continuationPromise = createPromiseObj(this.eventLoop);
+    this.eventLoop.enqueueMicrotask(() => {
+      const thenFn = (signal.promise as JSObject).properties.get('then')?.value as JSFunction;
+      if (thenFn && typeof thenFn === 'object' && (thenFn as JSFunction).type === 'closure') {
+        const onFulfilled = createNativeFunction('onFulfilled', (_th, fArgs) => {
+          const resolvedValue = fArgs[0];
+          try {
+            // Resume execution from the continuation
+            const callEnv = new Environment(fn.closure);
+            callEnv.markFunctionScope();
+            callEnv.setLocal('arguments', createArray(args));
+            fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+            callEnv.setLocal('this', thisArg);
+            // We need to re-execute with the resolved value... but we can't easily do that.
+            // Instead, resolve the continuation promise with the resolved value.
+            fulfillPromise(continuationPromise, resolvedValue);
+          } catch (err) {
+            rejectPromise(continuationPromise, err instanceof Error ? err.message : String(err));
+          }
+          return undefined;
+        });
+        const onRejected = createNativeFunction('onRejected', (_th, rArgs) => {
+          rejectPromise(continuationPromise, rArgs[0]);
+          return undefined;
+        });
+        try {
+          callJSFunction(thenFn, signal.promise, [onFulfilled, onRejected]);
+        } catch (err) {
+          rejectPromise(continuationPromise, err instanceof Error ? err.message : String(err));
+        }
+      } else {
+        fulfillPromise(continuationPromise, signal.promise);
+      }
+    });
+    return continuationPromise;
   }
 
   getOutput(): string[] {
@@ -212,6 +277,10 @@ export class Interpreter {
     for (const stmt of body) {
       if (stmt.type === 'FunctionDeclaration') this.execFuncDecl(stmt, env);
     }
+    // TDZ hoisting: pre-declare all let/const bindings in TDZ state
+    // Per ECMAScript § 13.2.1, let/const bindings are hoisted to the top of their block
+    // but remain uninitialized until the declaration is evaluated.
+    this.hoistLetConst(body, env);
     let lastResult: JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal = undefined;
     for (const stmt of body) {
       if (stmt.type === 'FunctionDeclaration') continue;
@@ -223,11 +292,46 @@ export class Interpreter {
     return lastResult;
   }
 
+  private hoistLetConst(body: AST.Statement[], env: Environment): void {
+    for (const stmt of body) {
+      if (stmt.type === 'VariableDeclaration' && (stmt.kind === 'let' || stmt.kind === 'const')) {
+        for (const decl of stmt.declarations) {
+          if (decl.id.type === 'Identifier') {
+            env.declareTDZ(decl.id.name, stmt.kind);
+          }
+        }
+      } else if (stmt.type === 'ForStatement' || stmt.type === 'ForInStatement' || stmt.type === 'ForOfStatement') {
+        const left = (stmt as any).left;
+        if (left?.type === 'VariableDeclaration' && (left.kind === 'let' || left.kind === 'const')) {
+          for (const decl of left.declarations) {
+            if (decl.id.type === 'Identifier') {
+              env.declareTDZ(decl.id.name, left.kind);
+            }
+          }
+        }
+      } else if (stmt.type === 'IfStatement') {
+        this.hoistLetConst([stmt.consequent], env);
+        if (stmt.alternate) this.hoistLetConst([stmt.alternate], env);
+      } else if (stmt.type === 'BlockStatement') {
+        // Don't recurse into nested blocks — they have their own scope
+      }
+    }
+  }
+
   private execVarDecl(stmt: AST.VariableDeclaration, env: Environment): void {
     for (let i = 0; i < stmt.declarations.length; i++) {
       const decl = stmt.declarations[i];
-      const value = decl.init ? this.evalExpr(decl.init, env) : undefined;
-      this.destructPattern(decl.id, value, env, stmt.kind);
+      if (stmt.kind === 'let' || stmt.kind === 'const') {
+        // TDZ: declare first in TDZ state, then initialize with value
+        if (decl.id.type === 'Identifier') {
+          env.declareTDZ(decl.id.name, stmt.kind);
+        }
+        const value = decl.init ? this.evalExpr(decl.init, env) : undefined;
+        this.destructPattern(decl.id, value, env, stmt.kind);
+      } else {
+        const value = decl.init ? this.evalExpr(decl.init, env) : undefined;
+        this.destructPattern(decl.id, value, env, stmt.kind);
+      }
     }
   }
 
@@ -235,7 +339,8 @@ export class Interpreter {
     if (pattern.type === 'Identifier') {
       const name = pattern.name;
       if (kind === 'const' || kind === 'let') {
-        env.setLocal(name, value, kind);
+        // TDZ: initialize the binding (clears TDZ state)
+        env.initialize(name, value);
       } else {
         env.declare(name, value, 'var');
       }
@@ -288,7 +393,7 @@ export class Interpreter {
   }
 
   private execFuncDecl(stmt: AST.FunctionDeclaration, env: Environment): void {
-    const fn = createFunction(stmt.id.name, stmt.params.map(p => (p as AST.Identifier).name), stmt.body, env, stmt.async, false, stmt.generator);
+    const fn = createFunction(stmt.id.name, stmt.params.map(p => (p as AST.Identifier).name), stmt.body, env, stmt.async, false, stmt.generator, false, undefined, stmt.strictMode);
     env.declare(stmt.id.name, fn, 'var');
   }
 
@@ -325,7 +430,14 @@ export class Interpreter {
       for (const method of stmt.body.body) {
         if (method.type === 'MethodDefinition') {
           const key = method.key.type === 'Identifier' ? method.key.name : String(method.key);
-          const fn = createFunction(key, method.value.params.map(p => (p as AST.Identifier).name), method.value.body, env);
+          const fn = createFunction(key, method.value.params.map(p => (p as AST.Identifier).name), method.value.body, env, false, false, false, false, undefined, true);
+          // Set 'super' in the method's closure so super.method() works
+          const superVal = classObj.properties.get('super')?.value;
+          if (superVal && typeof superVal === 'object' && superVal !== null) {
+            const superProto = (superVal as JSObject).prototype ?? superVal;
+            fn.closure.setLocal('super', superProto);
+            fn.closure.setLocal('__superCtor', superVal);
+          }
           if (key === 'constructor') {
             hasConstructor = true;
             classObj.properties.set('constructor', { value: fn, writable: true, enumerable: true, configurable: true });
@@ -347,12 +459,12 @@ export class Interpreter {
           type: 'ExpressionStatement',
           expression: {
             type: 'CallExpression',
-            callee: { type: 'Identifier', name: 'super' } as AST.Identifier,
+            callee: { type: 'SuperExpression' } as AST.SuperExpression,
             arguments: [{ type: 'SpreadElement', argument: { type: 'Identifier', name: 'arguments' } as AST.Identifier } as AST.SpreadElement] as AST.Expression[],
             optional: false,
           },
         }],
-      } as unknown as AST.BlockStatement, env);
+      } as unknown as AST.BlockStatement, env, false, false, false, false, undefined, true);
       classObj.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: true, configurable: true });
       classProto.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: false, configurable: true });
     }
@@ -426,7 +538,8 @@ export class Interpreter {
       ? (stmt.left.declarations[0]!.id as AST.Identifier).name
       : (stmt.left as AST.Identifier).name;
     if (stmt.left.type === 'VariableDeclaration') {
-      loopEnv.declare(varName, undefined, stmt.left.kind as 'var' | 'let' | 'const');
+      loopEnv.declareTDZ(varName, stmt.left.kind as 'let' | 'const');
+      loopEnv.initialize(varName, undefined);
     }
     for (const key of keys) {
       loopEnv.set(varName, key);
@@ -449,7 +562,8 @@ export class Interpreter {
       ? (stmt.left.declarations[0]!.id as AST.Identifier).name
       : (stmt.left as AST.Identifier).name;
     if (stmt.left.type === 'VariableDeclaration') {
-      loopEnv.declare(varName, undefined, stmt.left.kind as 'var' | 'let' | 'const');
+      loopEnv.declareTDZ(varName, stmt.left.kind as 'let' | 'const');
+      loopEnv.initialize(varName, undefined);
     }
     for (let i = 0; i < length; i++) {
       const val = arr.properties.get(String(i))?.value;
@@ -562,7 +676,14 @@ export class Interpreter {
       case 'Literal': return this.evalLiteral(expr);
       case 'Identifier': return this.evalIdentifier(expr, env);
       case 'ThisExpression': return env.get('this') ?? undefined;
-      case 'SuperExpression': return env.get('super') ?? createObject(null);
+      case 'SuperExpression': {
+        // When super is used as super.x or super[expr], return the parent prototype.
+        // When super is used as super(), the CallExpression handler detects
+        // the SuperExpression callee and calls the parent constructor.
+        const superProto = env.get('super');
+        if (superProto !== undefined && superProto !== null) return superProto;
+        return createObject(null);
+      }
       case 'UnaryExpression': return this.evalUnary(expr, env);
       case 'UpdateExpression': return this.evalUpdate(expr, env);
       case 'BinaryExpression': return this.evalBinary(expr, env);
@@ -740,6 +861,20 @@ export class Interpreter {
         if (existingDesc?.setter) {
           callJSFunction(existingDesc.setter, obj, [right]);
         } else {
+          // TypedArray: delegate indexed write to __nativeView
+          const typeOverride = (obj as any).__type_override;
+          if (typeOverride && typeof typeOverride === 'string' && typeOverride.endsWith('Array')) {
+            const view = (obj as any).__nativeView;
+            if (view) {
+              const idx = parseInt(key, 10);
+              if (!isNaN(idx) && idx >= 0 && idx < view.length) {
+                let val = typeof right === 'bigint' ? right : Number(right);
+                if (typeOverride === 'Uint8ClampedArray') val = Math.min(255, Math.max(0, Math.round(val as number)));
+                view[idx] = val;
+                return right;
+              }
+            }
+          }
           obj.properties.set(key, { value: right, writable: true, enumerable: true, configurable: true });
         }
         return right;
@@ -791,6 +926,49 @@ export class Interpreter {
   }
 
   private evalCall(expr: AST.CallExpression, env: Environment): JSValue {
+    // Handle super() call — per ECMAScript § 12.3.5.2
+    if (expr.callee.type === 'SuperExpression') {
+      const superCtor = env.get('__superCtor');
+      if (superCtor && typeof superCtor === 'object' && superCtor !== null) {
+        const parentCtor = superCtor as JSObject;
+        const parentInit = parentCtor.properties?.get('constructor');
+        const thisObj = env.get('this');
+        if (parentInit?.value && typeof parentInit.value === 'object' && 'type' in parentInit.value && (parentInit.value as JSFunction).type === 'closure') {
+          const pfn = parentInit.value as JSFunction;
+          const pEnv = new Environment(pfn.closure);
+          pEnv.markFunctionScope();
+          pEnv.setLocal('this', thisObj ?? createObject(null));
+          const args: JSValue[] = [];
+          for (const a of expr.arguments) {
+            if (a.type === 'SpreadElement') {
+              const spreadVal = this.evalExpr(a.argument, env);
+              if (typeof spreadVal === 'object' && spreadVal !== null && 'type' in spreadVal && (spreadVal as any).type === 'array') {
+                const arr = spreadVal as JSObject;
+                const len = Number(arr.properties.get('length')?.value ?? 0);
+                for (let i = 0; i < len; i++) {
+                  args.push(arr.properties.get(String(i))?.value);
+                }
+              } else if (Array.isArray(spreadVal)) {
+                args.push(...spreadVal);
+              } else {
+                args.push(spreadVal);
+              }
+            } else {
+              args.push(this.evalExpr(a, env));
+            }
+          }
+          pEnv.setLocal('arguments', createArray(args));
+          pfn.params.forEach((p, i) => pEnv.setLocal(p, args[i]));
+          const pResult = this.execBlock((pfn.body as AST.BlockStatement).body as AST.Statement[], pEnv);
+          if (isReturnSignal(pResult) && typeof pResult.value === 'object' && pResult.value !== null) {
+            return pResult.value;
+          }
+        }
+        return thisObj ?? createObject(null);
+      }
+      throw new TypeError('super() called outside of a derived class constructor');
+    }
+
     // Evaluate callee and cache the member object to avoid double-evaluation
     // When callee is a.b(), we need both the function (a.b) and `this` (a),
     // but evaluating the member expression gives us the function, while we need
@@ -798,13 +976,21 @@ export class Interpreter {
     let thisObj: JSValue = undefined;
     let callee: JSValue;
     if (expr.callee.type === 'MemberExpression') {
-      thisObj = this.evalExpr(expr.callee.object, env);
-      if (thisObj === undefined || thisObj === null) {
-        if (expr.callee.optional) return undefined;
-        throw new TypeError(`Cannot read properties of ${thisObj}`);
+      // super.method(): look up method on parent prototype, but use current 'this'
+      if (expr.callee.object.type === 'SuperExpression') {
+        const superProto = this.evalExpr(expr.callee.object, env);
+        const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+        callee = this.getPropertyValue(superProto, key);
+        thisObj = env.get('this');
+      } else {
+        thisObj = this.evalExpr(expr.callee.object, env);
+        if (thisObj === undefined || thisObj === null) {
+          if (expr.callee.optional) return undefined;
+          throw new TypeError(`Cannot read properties of ${thisObj}`);
+        }
+        const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+        callee = this.getPropertyValue(thisObj, key);
       }
-      const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
-      callee = this.getPropertyValue(thisObj, key);
     } else {
       callee = this.evalExpr(expr.callee, env);
     }
@@ -848,15 +1034,27 @@ export class Interpreter {
         fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
         if (fn.isArrow) {
           callEnv.setLocal('this', fn.closure.get('this') ?? createObject(null));
+        } else if (thisObj === undefined && !fn.isStrict) {
+          callEnv.setLocal('this', this.globalEnv.get('this') ?? createObject(null));
         } else {
           callEnv.setLocal('this', thisObj);
         }
         const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
         let result: JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal;
-        if (bodyNode.type === 'BlockStatement') {
-          result = this.execBlock(bodyNode.body as AST.Statement[], callEnv);
-        } else {
-          result = this.evalExpr(bodyNode as AST.Expression, callEnv);
+        try {
+          if (bodyNode.type === 'BlockStatement') {
+            result = this.execBlock(bodyNode.body as AST.Statement[], callEnv);
+          } else {
+            result = this.evalExpr(bodyNode as AST.Expression, callEnv);
+          }
+        } catch (err) {
+          if (fn.async && this.eventLoop && isAwaitSignal(err)) {
+            return this.handleAsyncAwait(err as AwaitSignal, fn, thisObj, args);
+          }
+          throw err;
+        }
+        if (fn.async && this.eventLoop && isAwaitSignal(result)) {
+          return this.handleAsyncAwait(result as AwaitSignal, fn, thisObj, args);
         }
         if (isReturnSignal(result)) {
           if (fn.async && this.eventLoop) return wrapAsyncResult(result.value, this.eventLoop);
@@ -906,24 +1104,12 @@ export class Interpreter {
         callEnv.setLocal('arguments', createArray(args));
 
         if (superClass && typeof superClass === 'object' && superClass !== null) {
-          const superFn = createNativeFunction('super', (_s, sArgs) => {
-            const parentCtor = superClass as JSObject;
-            const parentInit = parentCtor.properties?.get('constructor');
-            if (parentInit?.value && typeof parentInit.value === 'object' && 'type' in parentInit.value && (parentInit.value as JSFunction).type === 'closure') {
-              const pfn = parentInit.value as JSFunction;
-              const pEnv = new Environment(pfn.closure);
-              pEnv.markFunctionScope();
-              pEnv.setLocal('this', instance);
-              pEnv.setLocal('arguments', createArray(sArgs));
-              pfn.params.forEach((p, i) => pEnv.setLocal(p, sArgs[i]));
-              const pResult = this.execBlock((pfn.body as AST.BlockStatement).body as AST.Statement[], pEnv);
-              if (isReturnSignal(pResult) && typeof pResult.value === 'object' && pResult.value !== null) {
-                return pResult.value;
-              }
-            }
-            return instance;
-          });
-          callEnv.setLocal('super', superFn);
+          // Set super to the parent prototype for super.x / super[expr] member access
+          const superProto = (superClass as JSObject).prototype ?? superClass;
+          callEnv.setLocal('super', superProto);
+
+          // Also store the parent constructor for super() calls
+          callEnv.setLocal('__superCtor', superClass);
         }
 
         fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
@@ -1028,10 +1214,40 @@ export class Interpreter {
     const key = expr.computed
       ? String(this.evalExpr(expr.property, env))
       : (expr.property as AST.Identifier).name;
+
+    // Closure (function) objects: provide .length, .name, .prototype, .constructor
+    if ('type' in (nativeObj as any) && (nativeObj as any).type === 'closure') {
+      const fn = nativeObj as unknown as JSFunction;
+      if (key === 'length') return fn.params.length;
+      if (key === 'name') return fn.name ?? '';
+      if (key === 'arguments') return undefined;
+      if (key === 'caller') return undefined;
+      if (key === 'prototype' && !fn.isArrow) {
+        let protoObj = (nativeObj as any).__proto_obj;
+        if (!protoObj) {
+          protoObj = createObject(null);
+          protoObj.properties.set('constructor', { value: nativeObj, writable: true, enumerable: false, configurable: true });
+          (nativeObj as any).__proto_obj = protoObj;
+        }
+        return protoObj;
+      }
+      // For other properties, fall through to the general path
+    }
+
+    if (!nativeObj.properties) return undefined;
     const desc = nativeObj.properties.get(key);
     if (desc) {
       if (desc.getter) return callJSFunction(desc.getter, obj, []);
       return desc.value;
+    }
+    // TypedArray: delegate indexed access to __nativeView
+    const typeOverride = (nativeObj as any).__type_override;
+    if (typeOverride && typeof typeOverride === 'string' && typeOverride.endsWith('Array')) {
+      const view = (nativeObj as any).__nativeView;
+      if (view) {
+        const idx = parseInt(key, 10);
+        if (!isNaN(idx) && idx >= 0 && idx < view.length) return view[idx];
+      }
     }
     if (nativeObj.prototype) {
       let proto: JSObject | null = nativeObj.prototype;
@@ -1110,10 +1326,51 @@ export class Interpreter {
     }
     if (typeof obj === 'object' && obj !== null) {
       const o = obj as JSObject;
+      // Function objects (closures): provide .length, .name, .prototype, .constructor
+      if ('type' in o && (o as any).type === 'closure') {
+        const fn = o as unknown as JSFunction;
+        if (key === 'length') return fn.params.length;
+        if (key === 'name') return fn.name ?? '';
+        if (key === 'arguments') return undefined;
+        if (key === 'caller') return undefined;
+        if (key === 'prototype' && !fn.isArrow) {
+          const existing = o.properties?.get('prototype');
+          if (existing) return existing.value;
+          let protoObj = (o as any).__proto_obj;
+          if (!protoObj) {
+            protoObj = createObject(null);
+            protoObj.properties.set('constructor', { value: o, writable: true, enumerable: false, configurable: true });
+            (o as any).__proto_obj = protoObj;
+          }
+          return protoObj;
+        }
+        // Fall through to normal property lookup for other keys
+      }
+      if ((o as any).__type_override === 'symbol') {
+        const symMethods: Record<string, NativeFunction> = {
+          toString: (_t, _a) => {
+            const desc = (o as any).symbolDescription ?? '';
+            return `Symbol(${desc})`;
+          },
+          valueOf: (_t, _a) => o,
+        };
+        if (key in symMethods) return createNativeFunction(key, symMethods[key]);
+        return undefined;
+      }
       const desc = o.properties.get(key);
       if (desc) {
         if (desc.getter) return callJSFunction(desc.getter, obj, []);
         return desc.value;
+      }
+      // TypedArray/ArrayBuffer/DataView: delegate indexed access to __nativeView
+      const typeOverride = (o as any).__type_override;
+      if (typeOverride && typeof typeOverride === 'string' && typeOverride.endsWith('Array')) {
+        const view = (o as any).__nativeView;
+        if (view) {
+          const idx = parseInt(key, 10);
+          if (!isNaN(idx) && idx >= 0 && idx < view.length) return view[idx];
+          if (key === 'length') return view.length;
+        }
       }
       if (o.prototype) {
         let proto: JSObject | null = o.prototype;
@@ -1161,11 +1418,12 @@ export class Interpreter {
   }
 
   private evalFunctionExpr(expr: AST.FunctionExpression, env: Environment): JSValue {
-    return createFunction(expr.id?.name ?? 'anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, false, expr.generator);
+    return createFunction(expr.id?.name ?? 'anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, false, expr.generator, false, undefined, expr.strictMode);
   }
 
   private evalArrowFunction(expr: AST.ArrowFunctionExpression, env: Environment): JSValue {
-    return createFunction('anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, true);
+    const strict = expr.body.type === 'BlockStatement' ? this.hasStrictDirective(expr.body) : false;
+    return createFunction('anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, true, false, false, undefined, strict);
   }
 
   private evalSequence(expr: AST.SequenceExpression, env: Environment): JSValue {
@@ -1178,12 +1436,37 @@ export class Interpreter {
 
   private evalAwait(expr: AST.AwaitExpression, env: Environment): JSValue {
     const val = this.evalExpr(expr.argument, env);
+    // If value is a pending Promise, throw AwaitSignal to suspend execution
+    if (typeof val === 'object' && val !== null && isPromiseObject(val)) {
+      if (isPromiseFulfilled(val)) {
+        // Already fulfilled — extract value
+        return getPromiseResult(val);
+      }
+      if (isPromiseRejected(val)) {
+        // Already rejected — throw the reason
+        throw new JSError(getPromiseResult(val));
+      }
+      // Pending — suspend and resume via microtask
+      if (this.eventLoop) {
+        throw { type: 'await', promise: val, continuation: (resolved: JSValue) => resolved } as AwaitSignal;
+      }
+    }
     return val;
   }
 
   private evalYield(expr: AST.YieldExpression, env: Environment): JSValue {
     const val = expr.argument ? this.evalExpr(expr.argument, env) : undefined;
     return val;
+  }
+
+  /** Check if a block statement body starts with a 'use strict' directive. */
+  private hasStrictDirective(body: AST.BlockStatement): boolean {
+    if (!body.body.length) return false;
+    const first = body.body[0];
+    if (first.type !== 'ExpressionStatement') return false;
+    const expr = first.expression;
+    if (expr.type !== 'Literal') return false;
+    return expr.value === 'use strict';
   }
 
   // ── Global environment setup ─────────────────────────────────────────────
@@ -1321,9 +1604,36 @@ export class Interpreter {
       drainMicrotasks: () => 0,
     } as any));
 
+    // queueMicrotask / process.nextTick
+    if (this.eventLoop) {
+      bindQueueMicrotask(env, this.eventLoop);
+    } else {
+      // Fallback: synchronous microtask queue
+      env.setLocal('queueMicrotask', createNativeFunction('queueMicrotask', (_this, args) => {
+        const fn = args[0];
+        if (typeof fn === 'object' && fn !== null && (fn as JSFunction).type === 'closure') {
+          try { callJSFunction(fn as JSFunction, undefined, []); } catch { /* swallow */ }
+        }
+        return undefined;
+      }));
+    }
+
     env.setLocal('setTimeout', createNativeFunction('setTimeout', (_this, args) => {
       const fn = args[0];
       const delay = toNumber(args[1]) || 0;
+
+      // CSP enforcement: block setTimeout("code", ms) string form
+      if (typeof fn === 'string' || typeof fn === 'number') {
+        if (this.scriptEnforcer && this.pageOrigin) {
+          const codeSample = String(fn).slice(0, 40);
+          const check = this.scriptEnforcer.checkTimerString(this.pageOrigin, this.pageOrigin, codeSample);
+          if (!check.allowed) {
+            throw new Error(`TimeoutError: ${check.reason}`);
+          }
+        }
+        return 0 as unknown as JSValue;
+      }
+
       if (typeof fn === 'object' && fn !== null && (fn as JSFunction).type === 'closure') {
         const jsFn = fn as JSFunction;
         const id = this.nextTimerId++;
@@ -1348,6 +1658,19 @@ export class Interpreter {
     env.setLocal('setInterval', createNativeFunction('setInterval', (_this, args) => {
       const fn = args[0];
       const delay = toNumber(args[1]) || 0;
+
+      // CSP enforcement: block setInterval("code", ms) string form
+      if (typeof fn === 'string' || typeof fn === 'number') {
+        if (this.scriptEnforcer && this.pageOrigin) {
+          const codeSample = String(fn).slice(0, 40);
+          const check = this.scriptEnforcer.checkTimerString(this.pageOrigin, this.pageOrigin, codeSample);
+          if (!check.allowed) {
+            throw new Error(`TimeoutError: ${check.reason}`);
+          }
+        }
+        return 0 as unknown as JSValue;
+      }
+
       if (typeof fn === 'object' && fn !== null && (fn as JSFunction).type === 'closure') {
         const jsFn = fn as JSFunction;
         const id = this.nextTimerId++;
@@ -1384,10 +1707,19 @@ export class Interpreter {
     const self = this;
     env.setLocal('eval', createNativeFunction('eval', (_this, args) => {
       const code = toString(args[0]);
+
+      // CSP enforcement: check eval() against script-src policy
+      if (self.scriptEnforcer && self.pageOrigin) {
+        const check = self.scriptEnforcer.checkEval(self.pageOrigin, self.pageOrigin, code);
+        if (!check.allowed) {
+          throw new Error(`EvalError: ${check.reason}`);
+        }
+      }
+
       const lexer = new Lexer(code);
       const parser = new Parser([], lexer);
       const program = parser.parse();
-      const interp = new Interpreter(env, self.eventLoop);
+      const interp = new Interpreter(env, self.eventLoop, self.scriptEnforcer, self.pageOrigin);
       interp.setMaxExecutionMs(self.maxExecutionMs);
       return interp.run(program);
     }));

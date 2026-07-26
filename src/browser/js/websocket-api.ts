@@ -29,6 +29,12 @@ const CLOSED     = 3;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const TYPED_ARRAY_TYPES = new Set([
+  'int8array', 'uint8array', 'uint8clampedarray',
+  'int16array', 'uint16array', 'int32array', 'uint32array',
+  'float32array', 'float64array', 'bigint64array', 'biguint64array',
+]);
+
 function setProp(obj: JSObject, name: string, value: JSValue, writable = true, enumerable = true): void {
   obj.properties.set(name, { value, writable, enumerable, configurable: true });
 }
@@ -185,12 +191,34 @@ export function createWebSocketClass(
         formattedData = String(data);
       } else if (typeof data === 'boolean') {
         formattedData = String(data);
-      } else if (typeof data === 'object' && data !== null && '__domNode' in data) {
-        // DOM node — convert to string
-        formattedData = '[object Object]';
       } else if (typeof data === 'object' && data !== null && 'properties' in data) {
-        // JSObject — try to convert to JSON-like string
-        formattedData = '[object Object]';
+        const jsObj = data as JSObject;
+        const typeOverride = jsObj.properties.get('__type_override')?.value;
+        if (typeof typeOverride === 'string') {
+          if (typeOverride === 'arraybuffer') {
+            const buf = jsObj.properties.get('__buffer')?.value;
+            if (buf !== undefined) {
+              formattedData = buf as ArrayBufferLike;
+            } else {
+              formattedData = String(data);
+            }
+          } else if (TYPED_ARRAY_TYPES.has(typeOverride)) {
+            const buf = jsObj.properties.get('__buffer')?.value;
+            if (buf !== undefined) {
+              formattedData = buf as ArrayBufferLike;
+            } else {
+              formattedData = String(data);
+            }
+          } else if ('__domNode' in data) {
+            formattedData = '[object Object]';
+          } else {
+            formattedData = '[object Object]';
+          }
+        } else if ('__domNode' in data) {
+          formattedData = '[object Object]';
+        } else {
+          formattedData = '[object Object]';
+        }
       } else {
         formattedData = String(data);
       }
@@ -220,12 +248,39 @@ export function createWebSocketClass(
         return undefined;
       }
 
+      const code = args[0] !== undefined ? Number(args[0]) : undefined;
+      const reason = args[1] !== undefined ? toString(args[1]) : undefined;
+
+      // Validate close code per spec
+      if (code !== undefined) {
+        if (!Number.isInteger(code) || code < 0 || code > 65535) {
+          throw new DOMException(
+            `Failed to execute 'close' on 'WebSocket': The close code must be an integer between 0 and 65535.`,
+            'SyntaxError',
+          );
+        }
+        if (code !== 1000 && !(code >= 3000 && code <= 4999)) {
+          throw new DOMException(
+            `Failed to execute 'close' on 'WebSocket': The close code '${code}' is not allowed.`,
+            'SyntaxError',
+          );
+        }
+      }
+
+      // Validate reason length (max 123 bytes UTF-8)
+      if (reason !== undefined && reason.length > 0) {
+        const reasonBytes = new TextEncoder().encode(reason).byteLength;
+        if (reasonBytes > 123) {
+          throw new DOMException(
+            `Failed to execute 'close' on 'WebSocket': The close reason is too long (max 123 bytes).`,
+            'SyntaxError',
+          );
+        }
+      }
+
       // Set state to CLOSING immediately per spec
       wsObj.__wsState = CLOSING;
       setProp(wsObj, 'readyState', CLOSING, false, false);
-
-      const code = args[0] !== undefined ? Number(args[0]) : undefined;
-      const reason = args[1] !== undefined ? toString(args[1]) : undefined;
 
       try {
         native!.close(code, reason);
@@ -348,11 +403,24 @@ export function createWebSocketClass(
     nativeWs.addEventListener('message', (ev: any) => {
       if (wsObj.__wsState !== OPEN) return;
 
-      const data = typeof ev.data === 'string' ? ev.data : '[Binary Data]';
       const origin = typeof location !== 'undefined' ? location.origin : '*';
+      let messageData: string | ArrayBuffer | ArrayBufferView;
+
+      if (typeof ev.data === 'string') {
+        messageData = ev.data;
+      } else if (ev.data && typeof ev.data === 'object' && ev.data.properties && ev.data.properties.has('__binaryData')) {
+        const binaryType = getProp(wsObj, 'binaryType') as string ?? 'blob';
+        if (binaryType === 'arraybuffer' && ev.data.properties.has('__buffer')) {
+          messageData = ev.data.properties.get('__buffer')!.value;
+        } else {
+          messageData = ev.data;
+        }
+      } else {
+        messageData = ev.data;
+      }
 
       eventLoop.enqueueMicrotask(() => {
-        const msgEvent = createMessageEvent(data, origin, '');
+        const msgEvent = createMessageEvent(messageData, origin, '');
         emitEvent(wsObj, 'message', msgEvent);
       });
     });

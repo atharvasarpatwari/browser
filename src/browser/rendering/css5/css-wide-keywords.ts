@@ -28,6 +28,17 @@ export interface KeywordContext {
   readonly uaDefaults: ReadonlyMap<string, string>;
   /** Default initial value when property is unknown. */
   readonly fallbackInitial?: string;
+  /** Current cascade entries (for revert/revert-layer origin tracking). */
+  readonly cascadeEntries?: ReadonlyArray<{
+    property: string;
+    value: string;
+    important: boolean;
+    layerIndex: number;
+    layerName: string | null;
+    sourceOrder: number;
+  }>;
+  /** Layer order array (for revert-layer). */
+  readonly layerOrder?: readonly string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,8 +104,9 @@ export function resolveCSSWideKeyword(
     case 'unset':
       return resolveUnset(property, context);
     case 'revert':
-    case 'revert-layer':
       return resolveRevert(property, context);
+    case 'revert-layer':
+      return resolveRevertLayer(property, context);
   }
 }
 
@@ -158,6 +170,47 @@ function resolveRevert(
   return resolveUnset(property, context);
 }
 
+/**
+ * `revert-layer` — Roll back to the value from the previous @layer.
+ *
+ * In the cascade, declarations are sorted by layer index.
+ * For a given property, find the entry with the next-lower layer index
+ * (or unlayered, i.e. layerIndex = -1) and use its value.
+ * If no previous layer exists, falls back to UA defaults.
+ */
+function resolveRevertLayer(
+  property: string,
+  context: KeywordContext,
+): string {
+  if (!context.cascadeEntries || !context.layerOrder) {
+    return resolveRevert(property, context);
+  }
+
+  // Find entries for this property, sorted by layerIndex ascending
+  const entries = context.cascadeEntries
+    .filter(e => e.property === property)
+    .sort((a, b) => a.layerIndex - b.layerIndex);
+
+  if (entries.length <= 1) {
+    // Only one entry (the current one using revert-layer), fall back to UA
+    return resolveRevert(property, context);
+  }
+
+  // The current entry is the last one (highest layer index).
+  // Use the second-to-last entry's value (previous layer).
+  const current = entries[entries.length - 1]!;
+  const previous = entries[entries.length - 2]!;
+
+  // If previous is unlayered (layerIndex === -1), use it
+  // If previous is in a different layer, use it
+  if (previous.layerIndex !== current.layerIndex) {
+    return previous.value;
+  }
+
+  // Same layer — fall back to UA defaults
+  return resolveRevert(property, context);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // BATCH PROCESSING
 // ─────────────────────────────────────────────────────────────────────────────
@@ -175,6 +228,8 @@ export function processCSSWideKeywords(
   context: KeywordContext,
 ): Map<string, string> {
   for (const [prop, value] of computed) {
+    // Custom properties (--*) store raw token values — skip them.
+    if (prop.startsWith('--')) continue;
     if (isCSSWideKeywordValue(value)) {
       computed.set(prop, resolveCSSWideKeyword(prop, value, context));
     }

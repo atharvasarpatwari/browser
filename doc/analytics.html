@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nova Browser — Documentation Analytics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -14,6 +17,11 @@
   --text:#e2e8f0;--text-dim:#94a3b8;--text-muted:#475569;
   --radius:16px;--radius-sm:10px;
   --modal-bg:#12122c;
+  --font-head:'Sora',system-ui,sans-serif;
+  --glow-cyan:0 12px 32px -6px rgba(0,240,255,.35);--glow-purple:0 12px 32px -6px rgba(168,85,247,.35);
+  --glow-green:0 12px 32px -6px rgba(52,211,153,.35);--glow-amber:0 12px 32px -6px rgba(251,191,36,.35);
+  --glow-red:0 12px 32px -6px rgba(248,113,113,.35);--glow-blue:0 12px 32px -6px rgba(96,165,250,.35);
+  --glow-pink:0 12px 32px -6px rgba(244,114,182,.35);
 }
 html[data-theme="light"]{
   --bg:#f4f6fb;--bg2:#eaedf6;--glass:rgba(15,15,40,0.035);--glass-border:rgba(15,15,40,0.09);
@@ -24,15 +32,38 @@ html{font-family:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',R
 body{min-height:100vh;background:radial-gradient(ellipse at 20% 0%,rgba(0,240,255,0.06) 0%,transparent 50%),radial-gradient(ellipse at 80% 100%,rgba(168,85,247,0.06) 0%,transparent 50%),var(--bg);padding:24px 32px 64px;transition:background .25s,color .25s}
 @keyframes fadeInUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes drift1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(60px,40px) scale(1.15)}}
+@keyframes drift2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-50px,-30px) scale(1.1)}}
+@keyframes gradientShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+@keyframes popIn{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
 @media (prefers-reduced-motion: reduce){*{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
+
+.skip-link{position:absolute;left:-999px;top:0;background:var(--cyan);color:#00141a;padding:10px 18px;border-radius:0 0 10px 0;font-weight:700;font-size:.85rem;z-index:999}
+.skip-link:focus{left:0}
+
+.bg-blob{position:fixed;border-radius:50%;filter:blur(80px);z-index:-1;pointer-events:none;opacity:.55}
+.bg-blob.b1{width:420px;height:420px;top:-120px;left:-100px;background:radial-gradient(circle,rgba(0,240,255,.25),transparent 70%);animation:drift1 22s ease-in-out infinite}
+.bg-blob.b2{width:480px;height:480px;bottom:-160px;right:-120px;background:radial-gradient(circle,rgba(168,85,247,.22),transparent 70%);animation:drift2 26s ease-in-out infinite}
+.bg-blob.b3{width:320px;height:320px;top:40%;left:45%;background:radial-gradient(circle,rgba(52,211,153,.14),transparent 70%);animation:drift1 30s ease-in-out infinite}
+
+.scroll-progress{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--cyan),var(--purple));width:0%;z-index:300;transition:width .1s linear;box-shadow:0 0 12px rgba(0,240,255,.6)}
+
 .glass{background:var(--glass);border:1px solid var(--glass-border);border-radius:var(--radius);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);transition:background .2s,transform .2s,box-shadow .2s}
   .glass:hover{background:var(--glass-hover);transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,0.3)}
 
-  header{text-align:center;margin-bottom:20px;animation:fadeInUp .6s ease}
-  header h1{font-size:2rem;font-weight:700;background:linear-gradient(135deg,var(--cyan),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:6px}
+  header{text-align:center;margin-bottom:16px;animation:fadeInUp .6s ease}
+  header .kicker{display:inline-block;font-size:.68rem;letter-spacing:2.5px;text-transform:uppercase;color:var(--cyan);font-weight:700;padding:4px 14px;border:1px solid rgba(0,240,255,.3);border-radius:999px;background:rgba(0,240,255,.06);margin-bottom:14px}
+  header h1{font-family:var(--font-head);font-size:2.3rem;font-weight:800;letter-spacing:-.5px;background:linear-gradient(135deg,var(--cyan) 0%,var(--purple) 50%,var(--pink) 100%);background-size:200% 200%;-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px;animation:gradientShift 8s ease infinite}
 header p{color:var(--text-dim);font-size:.95rem;letter-spacing:.5px}
 header .stat-line span{margin:0 12px;font-size:.85rem}
-header .stat-line .num{color:var(--cyan);font-weight:600}
+header .stat-line .num{color:var(--cyan);font-weight:600;font-family:var(--font-head)}
+
+h3{font-family:var(--font-head)}
+
+.nav-pills{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:18px 0 28px;animation:fadeInUp .6s ease;position:sticky;top:8px;z-index:40}
+.nav-pills a{background:rgba(255,255,255,0.045);border:1px solid var(--glass-border);color:var(--text-dim);text-decoration:none;padding:7px 14px;border-radius:999px;font-size:.72rem;font-weight:600;letter-spacing:.4px;backdrop-filter:blur(10px);transition:all .2s}
+.nav-pills a:hover{color:var(--text);border-color:rgba(0,240,255,.35)}
+.nav-pills a.active{background:linear-gradient(135deg,var(--cyan),var(--purple));color:#00141a;border-color:transparent}
 
 .toolbar{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-bottom:32px;animation:fadeInUp .6s ease}
 .tbtn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:var(--text);padding:9px 16px;border-radius:999px;font-size:.8rem;font-weight:600;letter-spacing:.3px;cursor:pointer;transition:background .2s,border-color .2s,transform .15s}
@@ -41,8 +72,9 @@ header .stat-line .num{color:var(--cyan);font-weight:600}
 .tbtn.accent{background:linear-gradient(135deg,rgba(0,240,255,.18),rgba(168,85,247,.18));border-color:rgba(0,240,255,.35)}
 
 .kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:16px}
-.kpi{padding:22px 20px;text-align:center;animation:fadeInUp .6s ease;position:relative}
-.kpi .value{font-size:2.2rem;font-weight:800;line-height:1.1;margin-bottom:4px}
+.kpi{padding:22px 20px;text-align:center;animation:fadeInUp .6s ease both;position:relative;overflow:hidden}
+.kpi .icon{font-size:1.3rem;margin-bottom:6px;display:block;filter:drop-shadow(0 2px 6px rgba(0,0,0,.3))}
+.kpi .value{font-family:var(--font-head);font-size:2.2rem;font-weight:800;line-height:1.1;margin-bottom:4px}
 .kpi .label{font-size:.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1.2px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:5px}
 .kpi .info{width:13px;height:13px;border-radius:50%;border:1px solid var(--text-muted);color:var(--text-muted);font-size:.62rem;display:inline-flex;align-items:center;justify-content:center;cursor:help;font-style:normal}
 .kpi.cyan .value{color:var(--cyan)}
@@ -52,6 +84,16 @@ header .stat-line .num{color:var(--cyan);font-weight:600}
 .kpi.red .value{color:var(--red)}
 .kpi.blue .value{color:var(--blue)}
 .kpi.pink .value{color:var(--pink)}
+.kpi.cyan:hover{box-shadow:var(--glow-cyan)}
+.kpi.purple:hover{box-shadow:var(--glow-purple)}
+.kpi.green:hover{box-shadow:var(--glow-green)}
+.kpi.amber:hover{box-shadow:var(--glow-amber)}
+.kpi.red:hover{box-shadow:var(--glow-red)}
+.kpi.blue:hover{box-shadow:var(--glow-blue)}
+.kpi.pink:hover{box-shadow:var(--glow-pink)}
+.kpi-row .kpi:nth-child(1){animation-delay:.02s}.kpi-row .kpi:nth-child(2){animation-delay:.08s}
+.kpi-row .kpi:nth-child(3){animation-delay:.14s}.kpi-row .kpi:nth-child(4){animation-delay:.2s}
+.kpi-row .kpi:nth-child(5){animation-delay:.26s}
 
 .kpi-row.secondary{grid-template-columns:repeat(4,1fr);margin-bottom:32px}
 .kpi-row.secondary .kpi{padding:18px 16px}
@@ -65,6 +107,53 @@ header .stat-line .num{color:var(--cyan);font-weight:600}
 .insights-card li::before{content:"▸";position:absolute;left:0;color:var(--cyan);font-weight:700}
 .insights-card li b{color:var(--cyan);font-weight:700}
 
+.todo-section{padding:24px 28px;margin-bottom:20px;animation:fadeInUp .6s ease}
+.todo-section h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:4px;font-weight:600}
+.todo-section .todo-sub{font-size:.78rem;color:var(--text-muted);margin-bottom:18px}
+.todo-input-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.todo-input-row input[type=text]{flex:1;min-width:220px;background:rgba(255,255,255,0.06);border:1px solid var(--glass-border);color:var(--text);padding:11px 16px;border-radius:var(--radius-sm);font-size:.88rem;outline:none;transition:border-color .2s}
+.todo-input-row input[type=text]:focus{border-color:var(--cyan)}
+.todo-image-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:var(--text-dim);padding:11px 16px;border-radius:var(--radius-sm);font-size:.82rem;cursor:pointer;white-space:nowrap;transition:border-color .2s,color .2s}
+.todo-image-btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.todo-add-btn{background:linear-gradient(135deg,var(--cyan),var(--purple));border:none;color:#050510;font-weight:700;padding:11px 22px;border-radius:var(--radius-sm);font-size:.85rem;cursor:pointer;transition:opacity .2s}
+.todo-add-btn:hover{opacity:.88}
+.todo-preview{display:none;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border:1px solid var(--glass-border);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:14px;font-size:.78rem;color:var(--text-dim)}
+.todo-preview.show{display:flex}
+.todo-preview img{width:36px;height:36px;object-fit:cover;border-radius:6px}
+.todo-preview .todo-preview-remove{margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:.9rem}
+.todo-preview .todo-preview-remove:hover{color:var(--red)}
+.todo-meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:.78rem;color:var(--text-dim);flex-wrap:wrap;gap:8px}
+.todo-meta b{color:var(--cyan)}
+.todo-clear{background:none;border:none;color:var(--text-muted);font-size:.75rem;cursor:pointer;text-decoration:underline}
+.todo-clear:hover{color:var(--red)}
+.todo-list{list-style:none;display:flex;flex-direction:column;gap:8px}
+.todo-item{display:flex;align-items:center;gap:12px;background:rgba(255,255,255,0.03);border:1px solid var(--glass-border);border-radius:var(--radius-sm);padding:10px 14px;transition:background .15s,opacity .2s}
+.todo-item:hover{background:rgba(255,255,255,0.055)}
+.todo-item.done{opacity:.55}
+.todo-check{width:20px;height:20px;border-radius:6px;border:2px solid var(--text-muted);flex:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:border-color .2s,background .2s;background:transparent;color:#00141a;font-weight:900;font-size:.72rem}
+.todo-check:hover{border-color:var(--cyan)}
+.todo-check.checked{background:var(--cyan);border-color:var(--cyan)}
+.todo-thumb{width:38px;height:38px;object-fit:cover;border-radius:8px;flex:none;cursor:zoom-in}
+.todo-text{flex:1;font-size:.87rem;color:var(--text);word-break:break-word}
+.todo-item.done .todo-text{text-decoration:line-through;color:var(--text-muted)}
+.todo-del{background:none;border:none;color:var(--text-muted);font-size:1rem;cursor:pointer;flex:none;line-height:1;padding:2px 4px}
+.todo-del:hover{color:var(--red)}
+.todo-empty{text-align:center;color:var(--text-muted);font-size:.85rem;padding:24px}
+.todo-priority-select{background:rgba(255,255,255,0.06);border:1px solid var(--glass-border);color:var(--text);padding:11px 12px;border-radius:var(--radius-sm);font-size:.82rem;outline:none;cursor:pointer}
+.todo-priority-select option{background:#1a1a3a;color:var(--text)}
+.priority-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.priority-dot.high{background:var(--red);box-shadow:0 0 8px rgba(248,113,113,.7)}
+.priority-dot.medium{background:var(--amber);box-shadow:0 0 8px rgba(251,191,36,.6)}
+.priority-dot.low{background:var(--blue);box-shadow:0 0 8px rgba(96,165,250,.5)}
+.todo-saved-hint{font-size:.68rem;color:var(--text-muted);margin-top:10px;text-align:right}
+.upnext-strip{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.upnext-chip{background:rgba(0,240,255,0.07);border:1px solid rgba(0,240,255,0.22);color:var(--text);padding:6px 12px;border-radius:999px;font-size:.75rem;display:flex;align-items:center;gap:6px}
+.confetti-piece{position:fixed;top:-20px;width:9px;height:9px;z-index:400;pointer-events:none;animation:confettiFall linear forwards}
+@keyframes confettiFall{to{transform:translateY(105vh) rotate(540deg);opacity:.2}}
+.lightbox .modal{max-width:640px;padding:12px;background:transparent;border:none;box-shadow:none}
+.lightbox .modal-close{background:#00141a;border-radius:50%;top:8px;right:8px;width:30px;height:30px}
+.lightbox img{width:100%;border-radius:12px;display:block}
+
 .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}
 .chart-card{padding:24px;animation:fadeInUp .6s ease}
 .chart-card .chart-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap}
@@ -74,11 +163,17 @@ header .stat-line .num{color:var(--cyan);font-weight:600}
 .metric-toggle{display:flex;gap:4px;background:rgba(255,255,255,0.04);border-radius:8px;padding:3px}
 .metric-toggle button{background:transparent;border:none;color:var(--text-dim);font-size:.68rem;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:5px 10px;border-radius:6px;cursor:pointer;transition:background .15s,color .15s}
 .metric-toggle button.active{background:var(--cyan);color:#00141a}
+.expand-btn{background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:var(--text-dim);width:26px;height:26px;border-radius:7px;cursor:pointer;font-size:.8rem;display:inline-flex;align-items:center;justify-content:center;transition:color .2s,border-color .2s}
+.expand-btn:hover{color:var(--cyan);border-color:rgba(0,240,255,.4)}
+.chart-card.maximized{position:fixed;inset:24px;z-index:250;grid-column:auto;overflow:auto;animation:popIn .2s ease}
+.chart-card.maximized canvas{max-height:70vh!important}
+.maximize-backdrop{display:none;position:fixed;inset:0;background:rgba(4,4,14,.7);backdrop-filter:blur(3px);z-index:240}
+.maximize-backdrop.show{display:block}
 
 .heat-section{animation:fadeInUp .6s ease;padding:24px 28px;margin-bottom:20px}
 .heat-section h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:16px;font-weight:600}
 .heat-strip{display:flex;gap:10px;flex-wrap:wrap}
-.heat-cell{flex:1;min-width:120px;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--glass-border);cursor:default;transition:transform .15s}
+.heat-cell{flex:1;min-width:120px;border-radius:var(--radius-sm);padding:14px;border:1px solid var(--glass-border);cursor:pointer;transition:transform .15s}
 .heat-cell:hover{transform:translateY(-3px)}
 .heat-cell .hc-date{font-size:.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px}
 .heat-cell .hc-tests{font-size:1.3rem;font-weight:800}
@@ -119,10 +214,52 @@ tbody td{padding:11px 14px;color:var(--text);white-space:nowrap}
 tbody td.wrap{white-space:normal}
 mark{background:rgba(0,240,255,.35);color:inherit;border-radius:3px;padding:0 1px}
 .empty-row td{text-align:center;padding:36px;color:var(--text-muted)}
-.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.7rem;font-weight:600;letter-spacing:.5px}
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.7rem;font-weight:600;letter-spacing:.5px;cursor:pointer;transition:transform .15s,box-shadow .15s}
+.badge:hover{transform:translateY(-1px) scale(1.05);box-shadow:0 4px 12px rgba(0,0,0,.2)}
+
+.cmdk-overlay{display:none;position:fixed;inset:0;background:rgba(4,4,14,.65);backdrop-filter:blur(4px);z-index:600;align-items:flex-start;justify-content:center;padding:10vh 20px}
+.cmdk-overlay.open{display:flex}
+.cmdk-box{background:var(--modal-bg);border:1px solid var(--glass-border);border-radius:var(--radius);width:100%;max-width:560px;overflow:hidden;animation:popIn .2s ease;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+.cmdk-input-row{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--glass-border)}
+.cmdk-input-row span{color:var(--text-muted);font-size:1rem}
+.cmdk-input-row input{flex:1;background:transparent;border:none;color:var(--text);font-size:.95rem;outline:none;font-family:inherit}
+.cmdk-results{max-height:50vh;overflow-y:auto;padding:8px}
+.cmdk-group-label{font-size:.65rem;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);padding:10px 12px 4px}
+.cmdk-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:.85rem;color:var(--text)}
+.cmdk-item .cmdk-icon{flex:none;width:18px;text-align:center;opacity:.8}
+.cmdk-item .cmdk-meta{margin-left:auto;font-size:.68rem;color:var(--text-muted)}
+.cmdk-item.active,.cmdk-item:hover{background:rgba(0,240,255,0.1)}
+.cmdk-empty{padding:24px;text-align:center;color:var(--text-muted);font-size:.83rem}
+.cmdk-hint{padding:10px 18px;border-top:1px solid var(--glass-border);font-size:.68rem;color:var(--text-muted);display:flex;gap:14px}
+
+.related-docs{margin-top:16px;padding-top:16px;border-top:1px solid var(--glass-border)}
+.related-docs .rd-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim);margin-bottom:8px}
+.related-doc-item{display:flex;justify-content:space-between;gap:10px;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:.8rem;color:var(--text-dim)}
+.related-doc-item:hover{background:rgba(0,240,255,0.06);color:var(--text)}
 .badge.completed{background:rgba(52,211,153,0.15);color:var(--green)}
 .badge.planned{background:rgba(251,191,36,0.15);color:var(--amber)}
-.cat-tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:600;letter-spacing:.5px;text-transform:uppercase}
+.cat-tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.65rem;font-weight:600;letter-spacing:.5px;text-transform:uppercase;cursor:pointer;transition:transform .15s,box-shadow .15s}
+.cat-tag:hover{transform:translateY(-1px) scale(1.05);box-shadow:0 4px 12px rgba(0,0,0,.25)}
+.date-link{cursor:pointer;border-bottom:1px dashed var(--text-muted);transition:color .15s,border-color .15s}
+.date-link:hover{color:var(--cyan);border-color:var(--cyan)}
+
+.category-page{position:fixed;inset:0;background:var(--bg);z-index:500;overflow-y:auto;padding:32px;display:none}
+.category-page.open{display:block;animation:fadeInUp .35s ease}
+.category-page .cp-inner{max-width:1100px;margin:0 auto}
+.cp-back{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.06);border:1px solid var(--glass-border);color:var(--text);padding:8px 16px;border-radius:999px;font-size:.8rem;font-weight:600;cursor:pointer;margin-bottom:22px;transition:border-color .2s}
+.cp-back:hover{border-color:var(--cyan);color:var(--cyan)}
+.cp-banner{display:flex;align-items:center;gap:16px;margin-bottom:8px;flex-wrap:wrap}
+.cp-banner h2{font-family:var(--font-head);font-size:2rem;font-weight:800}
+.cp-desc{color:var(--text-dim);font-size:.92rem;line-height:1.6;max-width:760px;margin-bottom:28px}
+.cp-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px}
+.cp-stat{padding:18px;text-align:center}
+.cp-stat .cp-value{font-family:var(--font-head);font-size:1.7rem;font-weight:800;color:var(--cyan)}
+.cp-stat .cp-label{font-size:.68rem;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-top:4px}
+.cp-chart-card{padding:24px;margin-bottom:24px}
+.cp-chart-card canvas{max-height:280px}
+.cp-table-card{padding:24px 28px}
+.cp-table-card h3{font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:14px;font-weight:600}
+@media(max-width:800px){.cp-stats{grid-template-columns:repeat(2,1fr)}}
 .cat-css{background:rgba(96,165,250,0.12);color:var(--blue)}
 .cat-html5{background:rgba(244,114,182,0.12);color:var(--pink)}
 .cat-javascript{background:rgba(251,191,36,0.12);color:var(--amber)}
@@ -133,6 +270,18 @@ mark{background:rgba(0,240,255,.35);color:inherit;border-radius:3px;padding:0 1p
 .cat-ui{background:rgba(244,114,182,0.12);color:var(--pink)}
 .cat-architecture{background:rgba(148,163,184,0.12);color:var(--text-dim)}
 .cat-plan{background:rgba(251,191,36,0.12);color:var(--amber)}
+
+.star-btn{background:none;border:none;color:var(--text-muted);font-size:1rem;cursor:pointer;line-height:1;padding:2px;transition:color .15s,transform .15s}
+.star-btn:hover{transform:scale(1.2)}
+.star-btn.active{color:var(--amber)}
+.note-badge{display:inline-block;font-size:.7rem;margin-left:4px;opacity:.8}
+.fav-toggle{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;color:var(--text-dim);cursor:pointer;background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);padding:9px 14px;border-radius:var(--radius-sm);white-space:nowrap}
+.fav-toggle input{accent-color:var(--amber);cursor:pointer}
+.notes-box{margin-top:16px}
+.notes-box label{font-size:.68rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim);display:block;margin-bottom:6px}
+.notes-box textarea{width:100%;background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:var(--text);border-radius:var(--radius-sm);padding:10px 12px;font-size:.82rem;font-family:inherit;resize:vertical;min-height:64px;outline:none;transition:border-color .2s}
+.notes-box textarea:focus{border-color:var(--cyan)}
+.notes-saved{font-size:.65rem;color:var(--text-muted);margin-top:4px;text-align:right}
 
 .pagination{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:18px;flex-wrap:wrap}
 .pagination button{background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:var(--text);padding:6px 12px;border-radius:8px;font-size:.78rem;cursor:pointer;transition:background .15s}
@@ -164,56 +313,81 @@ footer{text-align:center;margin-top:48px;color:var(--text-muted);font-size:.75re
 footer .kbd-hint{margin-top:6px;font-size:.7rem}
 kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);border-radius:4px;padding:1px 6px;font-family:inherit;font-size:.68rem}
 
-@media(max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}.kpi-row.secondary{grid-template-columns:repeat(2,1fr)}.chart-grid{grid-template-columns:1fr}.kpi-row .kpi:last-child{grid-column:1/-1}.insights-card ul{grid-template-columns:1fr}}
-@media(max-width:600px){body{padding:16px}.kpi-row{grid-template-columns:1fr}.kpi .value{font-size:1.6rem}header h1{font-size:1.4rem}.modal-grid{grid-template-columns:1fr}}
-@media print{.toolbar,.back-to-top,.table-header,.pagination,.modal-overlay,.metric-toggle{display:none!important}body{padding:0;background:#fff;color:#000}.glass{border:1px solid #ccc;box-shadow:none;backdrop-filter:none;background:#fff}}
+@media(max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}.kpi-row.secondary{grid-template-columns:repeat(2,1fr)}.chart-grid{grid-template-columns:1fr}.kpi-row .kpi:last-child{grid-column:1/-1}.insights-card ul{grid-template-columns:1fr}.nav-pills{position:static}}
+@media(max-width:600px){body{padding:16px}.kpi-row{grid-template-columns:1fr}.kpi .value{font-size:1.6rem}header h1{font-size:1.4rem}.modal-grid{grid-template-columns:1fr}.chart-card.maximized{inset:10px}}
+@media print{.toolbar,.back-to-top,.table-header,.pagination,.modal-overlay,.metric-toggle,.nav-pills,.bg-blob,.scroll-progress,.expand-btn,.skip-link,.fav-toggle{display:none!important}body{padding:0;background:#fff;color:#000}.glass{border:1px solid #ccc;box-shadow:none;backdrop-filter:none;background:#fff}}
 </style>
 </head>
 <body>
+<a href="#main-content" class="skip-link">Skip to content</a>
+<div class="scroll-progress" id="scrollProgress"></div>
+<div class="bg-blob b1" aria-hidden="true"></div>
+<div class="bg-blob b2" aria-hidden="true"></div>
+<div class="bg-blob b3" aria-hidden="true"></div>
 
-<header>
+<header id="top">
+  <span class="kicker">Documentation Analytics</span>
   <h1>Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num">67</span> Documents</span>
-    <span><span class="num">7</span> Days</span>
-    <span><span class="num">5,631</span> Total Suite Tests</span>
+    <span><span class="num">61</span> Documents</span>
+    <span><span class="num">6</span> Days</span>
+    <span><span class="num">4,393</span> Total Suite Tests</span>
     <span>Generated <span class="num">2026-07-23</span></span>
   </p>
 </header>
 
+<nav class="nav-pills" id="navPills">
+  <a href="#kpis" data-nav="kpis">Overview</a>
+  <a href="#todo" data-nav="todo">To-Do</a>
+  <a href="#charts" data-nav="charts">Charts</a>
+  <a href="#heatmap" data-nav="heatmap">Activity</a>
+  <a href="#leaderboard" data-nav="leaderboard">Categories</a>
+  <a href="#docs" data-nav="docs">Documents</a>
+</nav>
+
+<main id="main-content">
+
 <div class="toolbar">
   <button class="tbtn accent" id="themeToggle">🌗 <span id="themeLabel">Light Mode</span></button>
+  <button class="tbtn accent" id="cmdkOpenBtn">🔍 Quick Search <kbd style="margin-left:4px;background:rgba(0,0,0,.25);border:none;padding:1px 6px;border-radius:4px">⌘K</kbd></button>
   <button class="tbtn" id="exportCsvBtn">⬇ Export CSV</button>
   <button class="tbtn" id="exportJsonBtn">⬇ Export JSON</button>
+  <button class="tbtn" id="copyMdBtn">📋 Copy as Markdown</button>
   <button class="tbtn" id="printBtn">🖨 Print Report</button>
+  <button class="tbtn accent" id="backupBtn">💾 Backup Data</button>
+  <label class="tbtn accent" for="restoreInput" style="margin:0">⬆ Restore Data<input type="file" id="restoreInput" accept="application/json" style="display:none"></label>
   <button class="tbtn" id="resetFiltersBtn">↺ Reset Filters</button>
 </div>
 
-<div class="kpi-row">
-  <div class="kpi cyan glass"><div class="value" id="kpiDocs">67</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
-  <div class="kpi purple glass"><div class="value" id="kpiTests">4,133</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
-  <div class="kpi red glass"><div class="value" id="kpiRootCauses">91</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
-  <div class="kpi green glass"><div class="value" id="kpiFiles">197</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
-  <div class="kpi amber glass"><div class="value" id="kpiCompliance">~72%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
+<div class="kpi-row" id="kpis">
+  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">59</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">3,967</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
+  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">84</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">151</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi amber glass"><span class="icon">📐</span><div class="value" id="kpiCompliance">~72%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
 </div>
 
 <div class="kpi-row secondary">
   <div class="kpi blue glass">
+    <span class="icon">⚡</span>
     <div class="value" id="kpiAvgTests">—</div>
     <div class="label">Avg Tests / Session <span class="info" title="Total tests added divided by number of sessions that added at least one test.">i</span></div>
     <svg class="spark" id="sparkAvg"></svg>
   </div>
   <div class="kpi pink glass">
+    <span class="icon">🔥</span>
     <div class="value" id="kpiBusiest">—</div>
     <div class="label">Busiest Day <span class="info" title="The date with the highest number of documents logged.">i</span></div>
     <svg class="spark" id="sparkBusy"></svg>
   </div>
   <div class="kpi green glass">
+    <span class="icon">✅</span>
     <div class="value" id="kpiCompletion">—</div>
     <div class="label">Completion Rate <span class="info" title="Share of documents marked Completed vs Planned.">i</span></div>
     <svg class="spark" id="sparkComp"></svg>
   </div>
   <div class="kpi cyan glass">
+    <span class="icon">✨</span>
     <div class="value" id="kpiCreated">—</div>
     <div class="label">Files Created <span class="info" title="Total brand-new files created across all sessions (subset of Files Touched).">i</span></div>
     <svg class="spark" id="sparkCreated"></svg>
@@ -221,38 +395,75 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <div class="insights-card glass">
-  <h3>Auto-Generated Insights</h3>
+  <h3>💡 Auto-Generated Insights</h3>
   <ul id="insightsList"></ul>
 </div>
 
-<div class="chart-grid">
-  <div class="chart-card glass">
+<div class="todo-section glass" id="todo">
+  <h3>🌙 Tomorrow's To-Do List</h3>
+  <div class="todo-sub" id="todoDateLabel">Plan for tomorrow</div>
+  <div class="todo-sub" id="todoStorageHint" style="margin-top:-12px;margin-bottom:14px"></div>
+  <div class="upnext-strip" id="upnextStrip"></div>
+  <div class="todo-input-row">
+    <input type="text" id="todoInput" placeholder="What needs to get done tomorrow? (Enter to add)">
+    <select class="todo-priority-select" id="todoPriority">
+      <option value="medium">🟡 Medium</option>
+      <option value="high">🔴 High</option>
+      <option value="low">🔵 Low</option>
+    </select>
+    <label class="todo-image-btn">📎 Attach Image<input type="file" id="todoImageInput" accept="image/*" style="display:none"></label>
+    <button class="todo-add-btn" id="todoAddBtn">+ Add Task</button>
+  </div>
+  <div class="todo-preview" id="todoPreview">
+    <img id="todoPreviewImg" src="" alt="">
+    <span id="todoPreviewName"></span>
+    <button class="todo-preview-remove" id="todoPreviewRemove">✕ remove image</button>
+  </div>
+  <div class="todo-meta">
+    <span><b id="todoDoneCount">0</b> of <b id="todoTotalCount">0</b> tasks completed</span>
+    <button class="todo-clear" id="todoClearCompleted">Clear completed</button>
+  </div>
+  <ul class="todo-list" id="todoList"></ul>
+  <div class="todo-saved-hint" id="todoSavedHint"></div>
+</div>
+
+<div class="modal-overlay lightbox" id="imgLightbox">
+  <div class="modal">
+    <button class="modal-close" id="imgLightboxClose">✕</button>
+    <img id="imgLightboxImg" src="" alt="Task attachment">
+  </div>
+</div>
+
+<div class="maximize-backdrop" id="maximizeBackdrop"></div>
+<div class="chart-grid" id="charts">
+  <div class="chart-card glass" data-chart-id="testsPerSession">
     <div class="chart-head">
-      <h3>Sessions By Metric</h3>
+      <h3>📊 Sessions By Metric</h3>
       <div class="metric-toggle" id="metricToggle">
         <button data-metric="tests" class="active">Tests</button>
         <button data-metric="files">Files</button>
         <button data-metric="rootCauses">Root Causes</button>
       </div>
+      <button class="expand-btn" data-expand="testsPerSession" title="Expand">⛶</button>
     </div>
     <canvas id="testsPerSession"></canvas>
   </div>
-  <div class="chart-card glass"><h3>Category Distribution</h3><canvas id="categoryDist"></canvas></div>
-  <div class="chart-card glass"><h3>Cumulative Test Growth</h3><canvas id="cumulativeGrowth"></canvas></div>
-  <div class="chart-card glass"><h3>Docs Per Date</h3><canvas id="docsPerDate"></canvas></div>
-  <div class="chart-card glass"><h3>Root Causes Per Session</h3><canvas id="rootCauses"></canvas></div>
-  <div class="chart-card glass"><h3>Spec Compliance</h3><canvas id="specCompliance"></canvas></div>
-  <div class="chart-card glass full"><h3>Files Modified vs Created</h3><canvas id="filesChart"></canvas></div>
-  <div class="chart-card glass" style="max-width:360px;margin:0 auto"><h3>Status Breakdown</h3><canvas id="statusPie"></canvas></div>
+  <div class="chart-card glass" data-chart-id="categoryDist"><div class="chart-head"><h3>🍩 Category Distribution</h3><button class="expand-btn" data-expand="categoryDist" title="Expand">⛶</button></div><canvas id="categoryDist"></canvas></div>
+  <div class="chart-card glass" data-chart-id="cumulativeGrowth"><div class="chart-head"><h3>📈 Cumulative Test Growth</h3><button class="expand-btn" data-expand="cumulativeGrowth" title="Expand">⛶</button></div><canvas id="cumulativeGrowth"></canvas></div>
+  <div class="chart-card glass" data-chart-id="docsPerDate"><div class="chart-head"><h3>📅 Docs Per Date</h3><button class="expand-btn" data-expand="docsPerDate" title="Expand">⛶</button></div><canvas id="docsPerDate"></canvas></div>
+  <div class="chart-card glass" data-chart-id="rootCauses"><div class="chart-head"><h3>🐞 Root Causes Per Session</h3><button class="expand-btn" data-expand="rootCauses" title="Expand">⛶</button></div><canvas id="rootCauses"></canvas></div>
+  <div class="chart-card glass" data-chart-id="specCompliance"><div class="chart-head"><h3>📐 Spec Compliance</h3><button class="expand-btn" data-expand="specCompliance" title="Expand">⛶</button></div><canvas id="specCompliance"></canvas></div>
+  <div class="chart-card glass full" data-chart-id="filesChart"><div class="chart-head"><h3>🗂 Files Modified vs Created</h3><button class="expand-btn" data-expand="filesChart" title="Expand">⛶</button></div><canvas id="filesChart"></canvas></div>
+  <div class="chart-card glass" data-chart-id="statusPie" style="max-width:360px;margin:0 auto"><div class="chart-head"><h3>🥧 Status Breakdown</h3><button class="expand-btn" data-expand="statusPie" title="Expand">⛶</button></div><canvas id="statusPie"></canvas></div>
 </div>
 
-<div class="heat-section glass">
-  <h3>Daily Activity Heat Strip</h3>
+<div class="heat-section glass" id="heatmap">
+  <h3>🌡 Daily Activity Heat Strip</h3>
   <div class="heat-strip" id="heatStrip"></div>
 </div>
 
-<div class="leader-section glass">
-  <h3>Category Leaderboard</h3>
+<div class="leader-section glass" id="leaderboard">
+  <h3>🏆 Category Leaderboard</h3>
   <div style="overflow-x:auto">
     <table class="leader-table" id="leaderTable">
       <thead><tr>
@@ -269,7 +480,7 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   </div>
 </div>
 
-<div class="table-section glass">
+<div class="table-section glass" id="docs">
   <div class="table-header">
     <input type="text" id="searchInput" placeholder="Search documents... ( / to focus )">
     <select id="categoryFilter"><option value="">All Categories</option></select>
@@ -278,6 +489,7 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
       <span>From</span><input type="date" id="dateFrom">
       <span>To</span><input type="date" id="dateTo">
     </div>
+    <label class="fav-toggle"><input type="checkbox" id="favOnlyToggle"> ★ Favorites only</label>
     <div class="col-dropdown">
       <button class="tbtn" id="colDropdownBtn">⚙ Columns</button>
       <div class="col-menu" id="colMenu"></div>
@@ -290,6 +502,7 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   <div style="overflow-x:auto;max-height:560px">
     <table id="mainTable">
       <thead><tr>
+        <th>★</th>
         <th data-col="date">Date <span class="sort-arrow">▲</span></th>
         <th data-col="title">Document <span class="sort-arrow">▲</span></th>
         <th data-col="category">Category <span class="sort-arrow">▲</span></th>
@@ -305,9 +518,11 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   <div class="pagination" id="pagination"></div>
 </div>
 
+</main>
+
 <footer>
-  Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-07-24 (refreshed)
-  <div class="kbd-hint">Press <kbd>/</kbd> to search · <kbd>Esc</kbd> to clear · click a row for details</div>
+  Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-07-22 (refreshed)
+  <div class="kbd-hint">Press <kbd>/</kbd> to search · <kbd>Esc</kbd> to clear · <kbd>★</kbd> to favorite · click a row for details</div>
 </footer>
 
 <button class="back-to-top" id="backToTop" title="Back to top">↑</button>
@@ -318,10 +533,121 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
     <h2 id="modalTitle"></h2>
     <div class="modal-file" id="modalFile"></div>
     <div class="modal-grid" id="modalGrid"></div>
+    <div class="related-docs" id="relatedDocs"></div>
+    <div class="notes-box">
+      <label for="modalNotes">📝 Private note (saved in this browser)</label>
+      <textarea id="modalNotes" placeholder="Add a note about this document..."></textarea>
+      <div class="notes-saved" id="modalNotesSaved"></div>
+    </div>
   </div>
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="category-page" id="datePage">
+  <div class="cp-inner">
+    <button class="cp-back" id="dpBack">← Back to dashboard</button>
+    <div class="cp-banner">
+      <h2 id="dpTitle"></h2>
+    </div>
+    <p class="cp-desc" id="dpDesc"></p>
+    <div class="cp-stats" id="dpStats"></div>
+    <div class="cp-chart-card glass">
+      <h3 style="font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:14px;font-weight:600">Tests Added That Day, By Document</h3>
+      <canvas id="dpChart"></canvas>
+    </div>
+    <div class="cp-table-card glass">
+      <h3 id="dpTableTitle">All Documents Logged This Day</h3>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+          <thead><tr>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Document</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Category</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Tests</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Root Causes</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Files Touched</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Status</th>
+          </tr></thead>
+          <tbody id="dpTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="category-page" id="statusPage">
+  <div class="cp-inner">
+    <button class="cp-back" id="spBack">← Back to dashboard</button>
+    <div class="cp-banner">
+      <h2 id="spTitle"></h2>
+      <span class="badge" id="spBadge" style="cursor:default"></span>
+    </div>
+    <p class="cp-desc" id="spDesc"></p>
+    <div class="cp-stats" id="spStats"></div>
+    <div class="cp-chart-card glass">
+      <h3 style="font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:14px;font-weight:600">Tests By Category</h3>
+      <canvas id="spChart"></canvas>
+    </div>
+    <div class="cp-table-card glass">
+      <h3 id="spTableTitle">All Documents</h3>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+          <thead><tr>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Date</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Document</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Category</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Tests</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Root Causes</th>
+          </tr></thead>
+          <tbody id="spTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="cmdk-overlay" id="cmdkOverlay">
+  <div class="cmdk-box">
+    <div class="cmdk-input-row">
+      <span>🔍</span>
+      <input type="text" id="cmdkInput" placeholder="Search documents, categories, dates, sections...">
+    </div>
+    <div class="cmdk-results" id="cmdkResults"></div>
+    <div class="cmdk-hint"><span><kbd>↑↓</kbd> navigate</span><span><kbd>↵</kbd> select</span><span><kbd>esc</kbd> close</span></div>
+  </div>
+</div>
+
+<div class="category-page" id="categoryPage">
+  <div class="cp-inner">
+    <button class="cp-back" id="cpBack">← Back to dashboard</button>
+    <div class="cp-banner">
+      <h2 id="cpTitle"></h2>
+      <span class="cat-tag" id="cpTag" style="cursor:default"></span>
+    </div>
+    <p class="cp-desc" id="cpDesc"></p>
+    <div class="cp-stats" id="cpStats"></div>
+    <div class="cp-chart-card glass">
+      <h3 style="font-size:.8rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);margin-bottom:14px;font-weight:600">Tests Added Per Document</h3>
+      <canvas id="cpChart"></canvas>
+    </div>
+    <div class="cp-table-card glass">
+      <h3 id="cpTableTitle">All Documents</h3>
+      <div style="overflow-x:auto">
+        <table id="cpTable" style="width:100%;border-collapse:collapse;font-size:.85rem">
+          <thead><tr>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Date</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Document</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Tests</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Root Causes</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Files Touched</th>
+            <th style="text-align:left;padding:10px 12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.8px;font-size:.65rem;border-bottom:1px solid var(--glass-border)">Status</th>
+          </tr></thead>
+          <tbody id="cpTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 const DOCS=[
@@ -385,19 +711,12 @@ const DOCS=[
 {file:"2026-07-22-navigation-bridge-test-suite.md",date:"2026-07-22",title:"NavigationBridge Test Suite",category:"UI",tests:25,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
 {file:"2026-07-22-tab-context-tests.md",date:"2026-07-22",title:"TabContext Test Suite",category:"UI",tests:25,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
 {file:"2026-07-22-tab-persistence.md",date:"2026-07-22",title:"Tab Persistence",category:"UI",tests:20,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
-{file:"2026-07-22-vite-dev-server.md",date:"2026-07-22",title:"Vite Dev Server",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1},
-{file:"2026-07-23-persistent-storage-networking.md",date:"2026-07-23",title:"Persistent Storage & Networking Pipeline",category:"IPC/Networking",tests:0,status:"Completed",rootCauses:3,filesModified:1,filesCreated:1},
-{file:"2026-07-23-test-suite-expansion.md",date:"2026-07-23",title:"Test Suite Expansion",category:"Architecture",tests:274,status:"Completed",rootCauses:0,filesModified:0,filesCreated:9},
-{file:"2026-07-23-process-separation.md",date:"2026-07-23",title:"Process Separation",category:"IPC/Networking",tests:51,status:"Completed",rootCauses:0,filesModified:4,filesCreated:8},
-{file:"2026-07-23-wpt-spec-compliance.md",date:"2026-07-23",title:"WPT & Spec Compliance",category:"Architecture",tests:227,status:"Completed",rootCauses:0,filesModified:0,filesCreated:5},
-{file:"2026-07-23-cors-security.md",date:"2026-07-23",title:"CORS Security Engine",category:"Security",tests:80,status:"Completed",rootCauses:1,filesModified:1,filesCreated:2},
-{file:"2026-07-23-csp-evaluator-tests.md",date:"2026-07-23",title:"CSP Evaluator Test Suite",category:"Security",tests:127,status:"Completed",rootCauses:1,filesModified:0,filesCreated:1},
-{file:"2026-07-24-compositing-layers.md",date:"2026-07-24",title:"Compositing Layers",category:"Rendering",tests:75,status:"Completed",rootCauses:0,filesModified:8,filesCreated:7},
-{file:"2026-07-24-cascade-inheritance-resolution.md",date:"2026-07-24",title:"Cascade & Inheritance Resolution",category:"CSS",tests:91,status:"Completed",rootCauses:0,filesModified:3,filesCreated:6}
+{file:"2026-07-22-vite-dev-server.md",date:"2026-07-22",title:"Vite Dev Server",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1}
 ];
 
 const CAT_COLORS={CSS:'#60a5fa',HTML5:'#f472b6',JavaScript:'#fbbf24',Layout:'#34d399',Rendering:'#a855f7',Security:'#f87171','IPC/Networking':'#00f0ff',UI:'#f472b6',Architecture:'#94a3b8',Plan:'#fbbf24'};
 const CAT_CLASS={CSS:'cat-css',HTML5:'cat-html5',JavaScript:'cat-javascript',Layout:'cat-layout',Rendering:'cat-rendering',Security:'cat-security','IPC/Networking':'cat-ipc',UI:'cat-ui',Architecture:'cat-architecture',Plan:'cat-plan'};
+const CHARTS={};
 
 /* ---------- theme ---------- */
 const html=document.documentElement;
@@ -443,6 +762,7 @@ function buildSessionsChart(metric){
   const cfg={type:'bar',data:{labels:data.map(d=>truncate(d.title,24)),datasets:[{label:METRIC_LABEL[metric],data:data.map(d=>metricValue(d,metric)),backgroundColor:data.map(d=>CAT_COLORS[d.category]+'cc'),borderRadius:6,borderSkipped:false}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>v>=1000?(v/1000)+'K':v}},y:{grid:{display:false},ticks:{font:{size:10}}}}}};
   if(sessionsChart){sessionsChart.destroy()}
   sessionsChart=new Chart(document.getElementById('testsPerSession'),cfg);
+  CHARTS.testsPerSession=sessionsChart;
 }
 buildSessionsChart(currentMetric);
 document.getElementById('metricToggle').addEventListener('click',e=>{
@@ -456,32 +776,56 @@ document.getElementById('metricToggle').addEventListener('click',e=>{
 /* ---------- Category Distribution ---------- */
 const cats={};DOCS.forEach(d=>{cats[d.category]=(cats[d.category]||0)+1});
 const catKeys=Object.keys(cats).sort((a,b)=>cats[b]-cats[a]);
-new Chart(document.getElementById('categoryDist'),{type:'doughnut',data:{labels:catKeys,datasets:[{data:catKeys.map(k=>cats[k]),backgroundColor:catKeys.map(k=>CAT_COLORS[k]+'dd'),borderWidth:0,hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'right',labels:{padding:14}}}}});
+CHARTS.categoryDist=new Chart(document.getElementById('categoryDist'),{type:'doughnut',data:{labels:catKeys,datasets:[{data:catKeys.map(k=>cats[k]),backgroundColor:catKeys.map(k=>CAT_COLORS[k]+'dd'),borderWidth:0,hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',onHover:(e,els)=>{e.native.target.style.cursor=els.length?'pointer':'default'},onClick:(e,els)=>{if(els.length)openCategoryPage(catKeys[els[0].index])},plugins:{legend:{position:'right',labels:{padding:14}}}}});
 
 /* ---------- Cumulative Growth ---------- */
 const sorted=[...DOCS].sort((a,b)=>a.date.localeCompare(b.date)||a.title.localeCompare(b.title));
 let cum=0;const cumData=sorted.map(d=>{cum+=d.tests;return{x:truncate(d.title,20),y:cum}});
-new Chart(document.getElementById('cumulativeGrowth'),{type:'line',data:{labels:cumData.map(d=>d.x),datasets:[{label:'Cumulative Tests',data:cumData.map(d=>d.y),borderColor:'#00f0ff',backgroundColor:'rgba(0,240,255,0.08)',fill:true,tension:.3,pointRadius:2,pointHoverRadius:5,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{display:false},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>v>=1000?(v/1000)+'K':v}}}}});
+CHARTS.cumulativeGrowth=new Chart(document.getElementById('cumulativeGrowth'),{type:'line',data:{labels:cumData.map(d=>d.x),datasets:[{label:'Cumulative Tests',data:cumData.map(d=>d.y),borderColor:'#00f0ff',backgroundColor:'rgba(0,240,255,0.08)',fill:true,tension:.3,pointRadius:2,pointHoverRadius:5,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{display:false},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>v>=1000?(v/1000)+'K':v}}}}});
 
 /* ---------- Docs Per Date ---------- */
 const dateCounts={};DOCS.forEach(d=>{dateCounts[d.date]=(dateCounts[d.date]||0)+1});
 const dateKeys=Object.keys(dateCounts).sort();
-new Chart(document.getElementById('docsPerDate'),{type:'bar',data:{labels:dateKeys.map(d=>{const p=d.split('-');return p[1]+'/'+p[2]}),datasets:[{label:'Documents',data:dateKeys.map(k=>dateCounts[k]),backgroundColor:['#00f0ffcc','#a855f7cc'],borderRadius:8,borderSkipped:false,barPercentage:.5}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:5}}}}});
+CHARTS.docsPerDate=new Chart(document.getElementById('docsPerDate'),{type:'bar',data:{labels:dateKeys.map(d=>{const p=d.split('-');return p[1]+'/'+p[2]}),datasets:[{label:'Documents',data:dateKeys.map(k=>dateCounts[k]),backgroundColor:['#00f0ffcc','#a855f7cc'],borderRadius:8,borderSkipped:false,barPercentage:.5}]},options:{responsive:true,maintainAspectRatio:false,onHover:(e,els)=>{e.native.target.style.cursor=els.length?'pointer':'default'},onClick:(e,els)=>{if(els.length)openDatePage(dateKeys[els[0].index])},plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:5}}}}});
 
 /* ---------- Root Causes ---------- */
 const rcData=DOCS.filter(d=>d.rootCauses>0).sort((a,b)=>b.rootCauses-a.rootCauses);
-new Chart(document.getElementById('rootCauses'),{type:'bar',data:{labels:rcData.map(d=>truncate(d.title,28)),datasets:[{label:'Root Causes',data:rcData.map(d=>d.rootCauses),backgroundColor:'rgba(248,113,113,0.7)',borderRadius:6,borderSkipped:false}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:2}},y:{grid:{display:false},ticks:{font:{size:10}}}}}});
+CHARTS.rootCauses=new Chart(document.getElementById('rootCauses'),{type:'bar',data:{labels:rcData.map(d=>truncate(d.title,28)),datasets:[{label:'Root Causes',data:rcData.map(d=>d.rootCauses),backgroundColor:'rgba(248,113,113,0.7)',borderRadius:6,borderSkipped:false}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:2}},y:{grid:{display:false},ticks:{font:{size:10}}}}}});
 
 /* ---------- Spec Compliance ---------- */
-new Chart(document.getElementById('specCompliance'),{type:'bar',data:{labels:['HTML5 Tree Builder','CSS5 Engine','JavaScript Engine','DOM/Events/Nav'],datasets:[{label:'Compliance %',data:[92,62,78,78],backgroundColor:['rgba(52,211,153,0.7)','rgba(96,165,250,0.7)','rgba(251,191,36,0.7)','rgba(244,114,182,0.7)'],borderRadius:6,borderSkipped:false,barPercentage:.6}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{max:100,grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}});
+CHARTS.specCompliance=new Chart(document.getElementById('specCompliance'),{type:'bar',data:{labels:['HTML5 Tree Builder','CSS5 Engine','JavaScript Engine','DOM/Events/Nav'],datasets:[{label:'Compliance %',data:[92,62,78,78],backgroundColor:['rgba(52,211,153,0.7)','rgba(96,165,250,0.7)','rgba(251,191,36,0.7)','rgba(244,114,182,0.7)'],borderRadius:6,borderSkipped:false,barPercentage:.6}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{max:100,grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}}}});
 
 /* ---------- Files Modified vs Created ---------- */
 const fData=DOCS.filter(d=>d.filesModified+d.filesCreated>0).sort((a,b)=>(b.filesModified+b.filesCreated)-(a.filesModified+a.filesCreated)).slice(0,15);
-new Chart(document.getElementById('filesChart'),{type:'bar',data:{labels:fData.map(d=>truncate(d.title,22)),datasets:[{label:'Modified',data:fData.map(d=>d.filesModified),backgroundColor:'rgba(96,165,250,0.65)',borderRadius:4,borderSkipped:false},{label:'Created',data:fData.map(d=>d.filesCreated),backgroundColor:'rgba(168,85,247,0.65)',borderRadius:4,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{grid:{display:false},ticks:{font:{size:9},maxRotation:45}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:2}}}}});
+CHARTS.filesChart=new Chart(document.getElementById('filesChart'),{type:'bar',data:{labels:fData.map(d=>truncate(d.title,22)),datasets:[{label:'Modified',data:fData.map(d=>d.filesModified),backgroundColor:'rgba(96,165,250,0.65)',borderRadius:4,borderSkipped:false},{label:'Created',data:fData.map(d=>d.filesCreated),backgroundColor:'rgba(168,85,247,0.65)',borderRadius:4,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{grid:{display:false},ticks:{font:{size:9},maxRotation:45}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:2}}}}});
 
 /* ---------- Status Pie ---------- */
 const statusCounts={Completed:0,Planned:0};DOCS.forEach(d=>statusCounts[d.status]=(statusCounts[d.status]||0)+1);
-new Chart(document.getElementById('statusPie'),{type:'pie',data:{labels:Object.keys(statusCounts),datasets:[{data:Object.values(statusCounts),backgroundColor:['rgba(52,211,153,0.75)','rgba(251,191,36,0.75)'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}});
+CHARTS.statusPie=new Chart(document.getElementById('statusPie'),{type:'pie',data:{labels:Object.keys(statusCounts),datasets:[{data:Object.values(statusCounts),backgroundColor:['rgba(52,211,153,0.75)','rgba(251,191,36,0.75)'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,onHover:(e,els)=>{e.native.target.style.cursor=els.length?'pointer':'default'},onClick:(e,els)=>{if(els.length)openStatusPage(Object.keys(statusCounts)[els[0].index])},plugins:{legend:{position:'bottom'}}}});
+
+/* ---------- Chart expand/maximize ---------- */
+document.querySelectorAll('.expand-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const id=btn.dataset.expand;
+    const card=document.querySelector(`.chart-card[data-chart-id="${id}"]`);
+    const backdrop=document.getElementById('maximizeBackdrop');
+    const isMax=card.classList.toggle('maximized');
+    backdrop.classList.toggle('show',isMax);
+    btn.textContent=isMax?'✕':'⛶';
+    btn.title=isMax?'Collapse':'Expand';
+    setTimeout(()=>{if(CHARTS[id])CHARTS[id].resize()},220);
+  });
+});
+document.getElementById('maximizeBackdrop').addEventListener('click',()=>{
+  document.querySelectorAll('.chart-card.maximized').forEach(card=>{
+    card.classList.remove('maximized');
+    const id=card.dataset.chartId;
+    const btn=card.querySelector('.expand-btn');
+    if(btn){btn.textContent='⛶';btn.title='Expand'}
+    setTimeout(()=>{if(CHARTS[id])CHARTS[id].resize()},220);
+  });
+  document.getElementById('maximizeBackdrop').classList.remove('show');
+});
 
 function refreshChartTheme(){
   const light=html.getAttribute('data-theme')==='light';
@@ -551,9 +895,13 @@ drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)
     const tests=docsOnDay.reduce((s,d)=>s+d.tests,0);
     const intensity=maxTests?tests/maxTests:0;
     const bg=`rgba(0,240,255,${(0.06+intensity*0.28).toFixed(3)})`;
-    return `<div class="heat-cell" style="background:${bg}" title="${docsOnDay.length} document(s), ${tests} tests"><div class="hc-date">${k}</div><div class="hc-tests">${tests.toLocaleString()}</div><div class="hc-docs">${docsOnDay.length} doc${docsOnDay.length===1?'':'s'}</div></div>`;
+    return `<div class="heat-cell" data-date="${k}" style="background:${bg}" title="Click for full details — ${docsOnDay.length} document(s), ${tests} tests"><div class="hc-date">${k}</div><div class="hc-tests">${tests.toLocaleString()}</div><div class="hc-docs">${docsOnDay.length} doc${docsOnDay.length===1?'':'s'}</div></div>`;
   }).join('');
 })();
+document.getElementById('heatStrip').addEventListener('click',e=>{
+  const cell=e.target.closest('.heat-cell[data-date]');
+  if(cell)openDatePage(cell.dataset.date);
+});
 
 /* ---------- Category leaderboard ---------- */
 let leaderSort={col:'tests',dir:'desc'};
@@ -570,7 +918,7 @@ function buildLeaderRows(){
   rows.sort((a,b)=>col==='category'?String(a[col]).localeCompare(String(b[col]))*dir:(a[col]-b[col])*dir);
   document.getElementById('leaderBody').innerHTML=rows.map(r=>{
     const pct=totalTests?Math.round((r.tests/totalTests)*100):0;
-    return `<tr><td><span class="cat-tag ${CAT_CLASS[r.category]||''}">${r.category}</span></td><td>${r.docs}</td><td>${r.tests.toLocaleString()}</td><td>${r.avg}</td><td>${r.rootCauses}</td><td>${r.files}</td><td style="min-width:120px"><div class="leader-bar"><div class="leader-bar-fill" style="width:${pct}%;background:${CAT_COLORS[r.category]}"></div></div><span style="font-size:.7rem;color:var(--text-dim)">${pct}%</span></td></tr>`;
+    return `<tr><td><span class="cat-tag ${CAT_CLASS[r.category]||''}" data-cat="${r.category}">${r.category}</span></td><td>${r.docs}</td><td>${r.tests.toLocaleString()}</td><td>${r.avg}</td><td>${r.rootCauses}</td><td>${r.files}</td><td style="min-width:120px"><div class="leader-bar"><div class="leader-bar-fill" style="width:${pct}%;background:${CAT_COLORS[r.category]}"></div></div><span style="font-size:.7rem;color:var(--text-dim)">${pct}%</span></td></tr>`;
   }).join('');
 }
 buildLeaderRows();
@@ -582,10 +930,38 @@ document.querySelectorAll('#leaderTable th[data-lcol]').forEach(th=>{
     buildLeaderRows();
   });
 });
+document.getElementById('leaderBody').addEventListener('click',e=>{
+  const tag=e.target.closest('.cat-tag[data-cat]');
+  if(tag)openCategoryPage(tag.dataset.cat);
+});
+
+/* ---------- Favorites (bookmarked documents) ---------- */
+const FAV_KEY='nova_analytics_favorites_v1';
+let favorites=[];
+function loadFavorites(){try{favorites=JSON.parse(localStorage.getItem(FAV_KEY))||[]}catch(e){favorites=[]}}
+function saveFavorites(){try{localStorage.setItem(FAV_KEY,JSON.stringify(favorites))}catch(e){}}
+function isFav(file){return favorites.includes(file)}
+function toggleFav(file){
+  if(isFav(file))favorites=favorites.filter(f=>f!==file);
+  else favorites.push(file);
+  saveFavorites();
+}
+loadFavorites();
+
+/* ---------- Notes (per-document, private, local) ---------- */
+const NOTES_KEY='nova_analytics_notes_v1';
+let docNotes={};
+function loadNotes(){try{docNotes=JSON.parse(localStorage.getItem(NOTES_KEY))||{}}catch(e){docNotes={}}}
+function saveNote(file,text){
+  if(text&&text.trim())docNotes[file]=text;
+  else delete docNotes[file];
+  try{localStorage.setItem(NOTES_KEY,JSON.stringify(docNotes))}catch(e){}
+}
+loadNotes();
 
 /* ---------- Column visibility ---------- */
 const COLS=[
-  {key:'date',label:'Date'},{key:'title',label:'Document'},{key:'category',label:'Category'},
+  {key:'star',label:'Favorite'},{key:'date',label:'Date'},{key:'title',label:'Document'},{key:'category',label:'Category'},
   {key:'tests',label:'Tests'},{key:'rootCauses',label:'Root Causes'},{key:'filesModified',label:'Files Modified'},
   {key:'filesCreated',label:'Files Created'},{key:'status',label:'Status'}
 ];
@@ -636,6 +1012,7 @@ function getFiltered(){
   if(statusFilter)data=data.filter(d=>d.status===statusFilter);
   if(from)data=data.filter(d=>d.date>=from);
   if(to)data=data.filter(d=>d.date<=to);
+  if(document.getElementById('favOnlyToggle').checked)data=data.filter(d=>isFav(d.file));
   const col=currentSort.col;const dir=currentSort.dir==='asc'?1:-1;
   const isNum=['tests','rootCauses','filesModified','filesCreated'].includes(col);
   data.sort((a,b)=>{if(isNum)return(a[col]-b[col])*dir;return String(a[col]).localeCompare(String(b[col]))*dir});
@@ -651,9 +1028,9 @@ function renderTable(){
   const pageData=pageSize>=9999?data:data.slice((currentPage-1)*pageSize,currentPage*pageSize);
 
   if(pageData.length===0){
-    tbody.innerHTML=`<tr class="empty-row"><td colspan="8">No documents match your filters. Try adjusting search or clearing filters.</td></tr>`;
+    tbody.innerHTML=`<tr class="empty-row"><td colspan="9">No documents match your filters. Try adjusting search or clearing filters.</td></tr>`;
   }else{
-    tbody.innerHTML=pageData.map((d,i)=>`<tr data-idx="${DOCS.indexOf(d)}"><td>${d.date}</td><td class="wrap">${highlightMatch(d.title,q)}</td><td><span class="cat-tag ${CAT_CLASS[d.category]||''}">${d.category}</span></td><td>${d.tests||'—'}</td><td>${d.rootCauses||'—'}</td><td>${d.filesModified||'—'}</td><td>${d.filesCreated||'—'}</td><td><span class="badge ${d.status.toLowerCase()}">${d.status}</span></td></tr>`).join('');
+    tbody.innerHTML=pageData.map((d,i)=>`<tr data-idx="${DOCS.indexOf(d)}"><td><button class="star-btn ${isFav(d.file)?'active':''}" data-action="fav" title="Toggle favorite">${isFav(d.file)?'★':'☆'}</button></td><td><span class="date-link" data-date="${d.date}">${d.date}</span></td><td class="wrap">${highlightMatch(d.title,q)}${docNotes[d.file]?'<span class="note-badge" title="Has a note">📝</span>':''}</td><td><span class="cat-tag ${CAT_CLASS[d.category]||''}" data-cat="${d.category}">${d.category}</span></td><td>${d.tests||'—'}</td><td>${d.rootCauses||'—'}</td><td>${d.filesModified||'—'}</td><td>${d.filesCreated||'—'}</td><td><span class="badge ${d.status.toLowerCase()}" data-status="${d.status}">${d.status}</span></td></tr>`).join('');
   }
   applyColumnVisibility();
 
@@ -664,7 +1041,23 @@ function renderTable(){
   renderPagination(totalPages);
 
   tbody.querySelectorAll('tr[data-idx]').forEach(tr=>{
-    tr.addEventListener('click',()=>openModal(DOCS[+tr.dataset.idx]));
+    tr.addEventListener('click',e=>{
+      const catTag=e.target.closest('.cat-tag[data-cat]');
+      if(catTag){openCategoryPage(catTag.dataset.cat);return}
+      const dateLink=e.target.closest('.date-link[data-date]');
+      if(dateLink){openDatePage(dateLink.dataset.date);return}
+      const statusBadge=e.target.closest('.badge[data-status]');
+      if(statusBadge){openStatusPage(statusBadge.dataset.status);return}
+      const starBtn=e.target.closest('[data-action="fav"]');
+      const d=DOCS[+tr.dataset.idx];
+      if(starBtn){
+        toggleFav(d.file);
+        renderTable();
+        showToast(isFav(d.file)?'Added to favorites':'Removed from favorites');
+        return;
+      }
+      openModal(d);
+    });
   });
 }
 
@@ -700,6 +1093,7 @@ catSel.addEventListener('change',()=>{currentPage=1;renderTable()});
 document.getElementById('statusFilter').addEventListener('change',()=>{currentPage=1;renderTable()});
 document.getElementById('dateFrom').addEventListener('change',()=>{currentPage=1;renderTable()});
 document.getElementById('dateTo').addEventListener('change',()=>{currentPage=1;renderTable()});
+document.getElementById('favOnlyToggle').addEventListener('change',()=>{currentPage=1;renderTable()});
 
 document.getElementById('resetFiltersBtn').addEventListener('click',()=>{
   document.getElementById('searchInput').value='';
@@ -707,9 +1101,24 @@ document.getElementById('resetFiltersBtn').addEventListener('click',()=>{
   document.getElementById('statusFilter').value='';
   document.getElementById('dateFrom').value='';
   document.getElementById('dateTo').value='';
+  document.getElementById('favOnlyToggle').checked=false;
   currentPage=1;
   renderTable();
   showToast('Filters reset');
+});
+
+document.getElementById('copyMdBtn').addEventListener('click',async()=>{
+  const rows=lastFiltered.length?lastFiltered:DOCS;
+  const header='| Date | Document | Category | Tests | Root Causes | Files Mod. | Files New | Status |\n|---|---|---|---|---|---|---|---|';
+  const body=rows.map(d=>`| ${d.date} | ${d.title} | ${d.category} | ${d.tests} | ${d.rootCauses} | ${d.filesModified} | ${d.filesCreated} | ${d.status} |`).join('\n');
+  const md=header+'\n'+body;
+  try{
+    await navigator.clipboard.writeText(md);
+    showToast('Copied '+rows.length+' rows as Markdown');
+  }catch(err){
+    downloadBlob(md,'nova-browser-docs-analytics.md','text/markdown');
+    showToast('Clipboard unavailable — downloaded .md instead');
+  }
 });
 
 document.querySelectorAll('#mainTable thead th').forEach(th=>{
@@ -727,23 +1136,58 @@ document.querySelectorAll('#mainTable thead th').forEach(th=>{
 renderTable();
 
 /* ---------- Modal ---------- */
+let modalCurrentFile=null;
+let notesSaveTimer=null;
 function openModal(d){
+  modalCurrentFile=d.file;
   document.getElementById('modalTitle').textContent=d.title;
   document.getElementById('modalFile').textContent=d.file;
   document.getElementById('modalGrid').innerHTML=`
-    <div class="modal-stat"><div class="ms-label">Date</div><div class="ms-value">${d.date}</div></div>
-    <div class="modal-stat"><div class="ms-label">Category</div><div class="ms-value"><span class="cat-tag ${CAT_CLASS[d.category]||''}">${d.category}</span></div></div>
-    <div class="modal-stat"><div class="ms-label">Status</div><div class="ms-value"><span class="badge ${d.status.toLowerCase()}">${d.status}</span></div></div>
+    <div class="modal-stat"><div class="ms-label">Date</div><div class="ms-value"><span class="date-link" data-date="${d.date}">${d.date}</span></div></div>
+    <div class="modal-stat"><div class="ms-label">Category</div><div class="ms-value"><span class="cat-tag ${CAT_CLASS[d.category]||''}" data-cat="${d.category}">${d.category}</span></div></div>
+    <div class="modal-stat"><div class="ms-label">Status</div><div class="ms-value"><span class="badge ${d.status.toLowerCase()}" data-status="${d.status}">${d.status}</span></div></div>
     <div class="modal-stat"><div class="ms-label">Tests Added</div><div class="ms-value">${d.tests.toLocaleString()}</div></div>
     <div class="modal-stat"><div class="ms-label">Root Causes Fixed</div><div class="ms-value">${d.rootCauses}</div></div>
     <div class="modal-stat"><div class="ms-label">Files Modified</div><div class="ms-value">${d.filesModified}</div></div>
     <div class="modal-stat"><div class="ms-label">Files Created</div><div class="ms-value">${d.filesCreated}</div></div>
     <div class="modal-stat"><div class="ms-label">Total Files Touched</div><div class="ms-value">${d.filesModified+d.filesCreated}</div></div>
   `;
+  const related=DOCS.filter(o=>o.category===d.category&&o.file!==d.file).sort((a,b)=>b.tests-a.tests).slice(0,3);
+  const relatedEl=document.getElementById('relatedDocs');
+  if(related.length){
+    relatedEl.innerHTML=`<div class="rd-label">More from ${d.category}</div>`+related.map(r=>`<div class="related-doc-item" data-file="${r.file}"><span>${r.title}</span><span>${r.tests?r.tests.toLocaleString()+' tests':r.date}</span></div>`).join('');
+  }else{
+    relatedEl.innerHTML='';
+  }
+  document.getElementById('modalNotes').value=docNotes[d.file]||'';
+  document.getElementById('modalNotesSaved').textContent='';
   document.getElementById('modalOverlay').classList.add('open');
 }
-function closeModal(){document.getElementById('modalOverlay').classList.remove('open')}
+function closeModal(){document.getElementById('modalOverlay').classList.remove('open');modalCurrentFile=null}
 document.getElementById('modalClose').addEventListener('click',closeModal);
+document.getElementById('modalGrid').addEventListener('click',e=>{
+  const tag=e.target.closest('.cat-tag[data-cat]');
+  if(tag){closeModal();openCategoryPage(tag.dataset.cat);return}
+  const dl=e.target.closest('.date-link[data-date]');
+  if(dl){closeModal();openDatePage(dl.dataset.date);return}
+  const sb=e.target.closest('.badge[data-status]');
+  if(sb){closeModal();openStatusPage(sb.dataset.status)}
+});
+document.getElementById('relatedDocs').addEventListener('click',e=>{
+  const item=e.target.closest('.related-doc-item[data-file]');
+  if(!item)return;
+  const doc=DOCS.find(o=>o.file===item.dataset.file);
+  if(doc)openModal(doc);
+});
+document.getElementById('modalNotes').addEventListener('input',e=>{
+  if(!modalCurrentFile)return;
+  clearTimeout(notesSaveTimer);
+  notesSaveTimer=setTimeout(()=>{
+    saveNote(modalCurrentFile,e.target.value);
+    document.getElementById('modalNotesSaved').textContent='Saved '+new Date().toLocaleTimeString();
+    renderTable();
+  },500);
+});
 document.getElementById('modalOverlay').addEventListener('click',e=>{if(e.target.id==='modalOverlay')closeModal()});
 
 /* ---------- Export ---------- */
@@ -768,6 +1212,278 @@ document.getElementById('exportJsonBtn').addEventListener('click',()=>{
 });
 document.getElementById('printBtn').addEventListener('click',()=>window.print());
 
+/* ---------- Backup / Restore (todos + favorites + notes, portable across files) ---------- */
+document.getElementById('backupBtn').addEventListener('click',()=>{
+  const payload={
+    _type:'nova-analytics-backup',
+    exportedAt:new Date().toISOString(),
+    todos:todos,
+    favorites:favorites,
+    notes:docNotes
+  };
+  downloadBlob(JSON.stringify(payload,null,2),'nova-analytics-backup.json','application/json');
+  showToast('Backup downloaded — keep it safe to restore later');
+});
+
+document.getElementById('restoreInput').addEventListener('change',e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      const payload=JSON.parse(ev.target.result);
+      if(!payload||typeof payload!=='object')throw new Error('bad file');
+      todos=Array.isArray(payload.todos)?payload.todos:[];
+      favorites=Array.isArray(payload.favorites)?payload.favorites:[];
+      docNotes=(payload.notes&&typeof payload.notes==='object')?payload.notes:{};
+      todoIdSeq=todos.reduce((max,t)=>Math.max(max,t.id||0),0)+1;
+      todosCelebrated=false;
+      saveTodos();
+      saveFavorites();
+      try{localStorage.setItem(NOTES_KEY,JSON.stringify(docNotes))}catch(err){}
+      renderTodos();
+      renderTable();
+      showToast('Backup restored — '+todos.length+' tasks, '+favorites.length+' favorites');
+    }catch(err){
+      showToast('Could not read that backup file');
+    }
+    e.target.value='';
+  };
+  reader.readAsText(file);
+});
+
+/* ---------- Category Detail Page (opens full-screen on clicking any category tag) ---------- */
+let cpChartInstance=null;
+function openCategoryPage(category){
+  const docs=DOCS.filter(d=>d.category===category).sort((a,b)=>a.date.localeCompare(b.date)||b.tests-a.tests);
+  if(docs.length===0)return;
+  const totalTests=docs.reduce((s,d)=>s+d.tests,0);
+  const totalRoot=docs.reduce((s,d)=>s+d.rootCauses,0);
+  const totalFiles=docs.reduce((s,d)=>s+d.filesModified+d.filesCreated,0);
+  const completed=docs.filter(d=>d.status==='Completed').length;
+  const avgTests=Math.round(totalTests/docs.length);
+  const allTestsSum=DOCS.reduce((s,d)=>s+d.tests,0);
+  const shareOfAll=allTestsSum?Math.round((totalTests/allTestsSum)*100):0;
+  const dateSpan=[...new Set(docs.map(d=>d.date))].sort();
+  const topDoc=[...docs].sort((a,b)=>b.tests-a.tests)[0];
+
+  document.getElementById('cpTitle').textContent=category;
+  const tagEl=document.getElementById('cpTag');
+  tagEl.textContent=CAT_CLASS[category]?category:category;
+  tagEl.className='cat-tag '+(CAT_CLASS[category]||'');
+
+  document.getElementById('cpDesc').textContent=
+    `${category} spans ${docs.length} document${docs.length===1?'':'s'} across ${dateSpan.length} day${dateSpan.length===1?'':'s'} `+
+    `(${dateSpan[0]} to ${dateSpan[dateSpan.length-1]}), contributing ${totalTests.toLocaleString()} tests — `+
+    `${shareOfAll}% of everything logged across Nova Browser's documentation. ${completed} of ${docs.length} document${docs.length===1?'':'s'} `+
+    `${docs.length===1?'is':'are'} marked Completed, together resolving ${totalRoot} root-cause bug${totalRoot===1?'':'s'} and touching `+
+    `${totalFiles} file${totalFiles===1?'':'s'}. The heaviest single session was "${topDoc.title}" with ${topDoc.tests.toLocaleString()} tests.`;
+
+  document.getElementById('cpStats').innerHTML=`
+    <div class="cp-stat glass"><div class="cp-value">${docs.length}</div><div class="cp-label">Documents</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${totalTests.toLocaleString()}</div><div class="cp-label">Total Tests</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${avgTests}</div><div class="cp-label">Avg Tests/Doc</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${totalRoot}</div><div class="cp-label">Root Causes Fixed</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${totalFiles}</div><div class="cp-label">Files Touched</div></div>
+  `;
+
+  document.getElementById('cpTableTitle').textContent=`All ${category} Documents (${docs.length})`;
+  document.getElementById('cpTableBody').innerHTML=docs.map(d=>`
+    <tr style="border-bottom:1px solid rgba(255,255,255,0.03)">
+      <td style="padding:9px 12px"><span class="date-link" data-date="${d.date}">${d.date}</span></td>
+      <td style="padding:9px 12px">${d.title}</td>
+      <td style="padding:9px 12px">${d.tests||'—'}</td>
+      <td style="padding:9px 12px">${d.rootCauses||'—'}</td>
+      <td style="padding:9px 12px">${d.filesModified+d.filesCreated||'—'}</td>
+      <td style="padding:9px 12px"><span class="badge ${d.status.toLowerCase()}" data-status="${d.status}">${d.status}</span></td>
+    </tr>`).join('');
+
+  if(cpChartInstance)cpChartInstance.destroy();
+  cpChartInstance=new Chart(document.getElementById('cpChart'),{
+    type:'bar',
+    data:{labels:docs.map(d=>truncate(d.title,26)),datasets:[{label:'Tests',data:docs.map(d=>d.tests),backgroundColor:(CAT_COLORS[category]||'#00f0ff')+'cc',borderRadius:6,borderSkipped:false}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'}},y:{grid:{display:false},ticks:{font:{size:10}}}}}
+  });
+
+  document.getElementById('categoryPage').classList.add('open');
+  document.body.style.overflow='hidden';
+  if(location.hash!=='#category/'+encodeURIComponent(category))history.pushState({category},'', '#category/'+encodeURIComponent(category));
+  window.scrollTo({top:0});
+}
+
+function closeCategoryPage(){
+  document.getElementById('categoryPage').classList.remove('open');
+  document.body.style.overflow='';
+  if(location.hash.startsWith('#category/'))history.pushState({},'', location.pathname+location.search);
+}
+document.getElementById('cpTableBody').addEventListener('click',e=>{
+  const dl=e.target.closest('.date-link[data-date]');
+  if(dl){closeCategoryPage();openDatePage(dl.dataset.date);return}
+  const sb=e.target.closest('.badge[data-status]');
+  if(sb){closeCategoryPage();openStatusPage(sb.dataset.status)}
+});
+
+document.getElementById('cpBack').addEventListener('click',closeCategoryPage);
+
+/* ---------- Date Detail Page (opens full-screen on clicking any date) ---------- */
+let dpChartInstance=null;
+function formatFullDate(dateStr){
+  const d=new Date(dateStr+'T00:00:00');
+  return d.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+}
+function openDatePage(dateStr){
+  const docs=DOCS.filter(d=>d.date===dateStr).sort((a,b)=>b.tests-a.tests);
+  if(docs.length===0)return;
+  const totalTests=docs.reduce((s,d)=>s+d.tests,0);
+  const totalRoot=docs.reduce((s,d)=>s+d.rootCauses,0);
+  const totalFiles=docs.reduce((s,d)=>s+d.filesModified+d.filesCreated,0);
+  const completed=docs.filter(d=>d.status==='Completed').length;
+  const cats=[...new Set(docs.map(d=>d.category))];
+  const allTestsSum=DOCS.reduce((s,d)=>s+d.tests,0);
+  const shareOfAll=allTestsSum?Math.round((totalTests/allTestsSum)*100):0;
+  const rank=[...dateKeys].sort((a,b)=>DOCS.filter(d=>d.date===b).length-DOCS.filter(d=>d.date===a).length).indexOf(dateStr)+1;
+  const topDoc=docs[0];
+
+  document.getElementById('dpTitle').textContent=formatFullDate(dateStr);
+
+  document.getElementById('dpDesc').textContent=
+    `On ${formatFullDate(dateStr)}, ${docs.length} document${docs.length===1?' was':'s were'} logged across ${cats.length} categor${cats.length===1?'y':'ies'} `+
+    `(${cats.join(', ')}), adding ${totalTests.toLocaleString()} tests — ${shareOfAll}% of everything logged across the whole dataset. `+
+    `This makes it the #${rank} busiest day by document count. ${completed} of ${docs.length} document${docs.length===1?'':'s'} `+
+    `${docs.length===1?'is':'are'} marked Completed, resolving ${totalRoot} root-cause bug${totalRoot===1?'':'s'} and touching ${totalFiles} file${totalFiles===1?'':'s'} in total. `+
+    `The biggest session that day was "${topDoc.title}" with ${topDoc.tests.toLocaleString()} tests.`;
+
+  document.getElementById('dpStats').innerHTML=`
+    <div class="cp-stat glass"><div class="cp-value">${docs.length}</div><div class="cp-label">Documents</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${totalTests.toLocaleString()}</div><div class="cp-label">Total Tests</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${cats.length}</div><div class="cp-label">Categories Touched</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${totalRoot}</div><div class="cp-label">Root Causes Fixed</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${totalFiles}</div><div class="cp-label">Files Touched</div></div>
+  `;
+
+  document.getElementById('dpTableTitle').textContent=`All Documents Logged — ${dateStr} (${docs.length})`;
+  document.getElementById('dpTableBody').innerHTML=docs.map(d=>`
+    <tr style="border-bottom:1px solid rgba(255,255,255,0.03)">
+      <td style="padding:9px 12px">${d.title}</td>
+      <td style="padding:9px 12px"><span class="cat-tag ${CAT_CLASS[d.category]||''}" data-cat="${d.category}">${d.category}</span></td>
+      <td style="padding:9px 12px">${d.tests||'—'}</td>
+      <td style="padding:9px 12px">${d.rootCauses||'—'}</td>
+      <td style="padding:9px 12px">${d.filesModified+d.filesCreated||'—'}</td>
+      <td style="padding:9px 12px"><span class="badge ${d.status.toLowerCase()}" data-status="${d.status}">${d.status}</span></td>
+    </tr>`).join('');
+
+  if(dpChartInstance)dpChartInstance.destroy();
+  dpChartInstance=new Chart(document.getElementById('dpChart'),{
+    type:'bar',
+    data:{labels:docs.map(d=>truncate(d.title,26)),datasets:[{label:'Tests',data:docs.map(d=>d.tests),backgroundColor:docs.map(d=>(CAT_COLORS[d.category]||'#00f0ff')+'cc'),borderRadius:6,borderSkipped:false}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'}},y:{grid:{display:false},ticks:{font:{size:10}}}}}
+  });
+
+  document.getElementById('datePage').classList.add('open');
+  document.body.style.overflow='hidden';
+  if(location.hash!=='#date/'+dateStr)history.pushState({date:dateStr},'', '#date/'+dateStr);
+  window.scrollTo({top:0});
+}
+function closeDatePage(){
+  document.getElementById('datePage').classList.remove('open');
+  document.body.style.overflow='';
+  if(location.hash.startsWith('#date/'))history.pushState({},'', location.pathname+location.search);
+}
+document.getElementById('dpBack').addEventListener('click',closeDatePage);
+document.getElementById('dpTableBody').addEventListener('click',e=>{
+  const tag=e.target.closest('.cat-tag[data-cat]');
+  if(tag){closeDatePage();openCategoryPage(tag.dataset.cat);return}
+  const sb=e.target.closest('.badge[data-status]');
+  if(sb){closeDatePage();openStatusPage(sb.dataset.status)}
+});
+
+/* ---------- Status Detail Page (opens full-screen on clicking any status badge) ---------- */
+let spChartInstance=null;
+function openStatusPage(status){
+  const docs=DOCS.filter(d=>d.status===status).sort((a,b)=>b.tests-a.tests);
+  if(docs.length===0)return;
+  const totalTests=docs.reduce((s,d)=>s+d.tests,0);
+  const totalRoot=docs.reduce((s,d)=>s+d.rootCauses,0);
+  const totalFiles=docs.reduce((s,d)=>s+d.filesModified+d.filesCreated,0);
+  const cats=[...new Set(docs.map(d=>d.category))];
+  const allTestsSum=DOCS.reduce((s,d)=>s+d.tests,0);
+  const shareOfAll=allTestsSum?Math.round((totalTests/allTestsSum)*100):0;
+  const shareOfDocs=Math.round((docs.length/DOCS.length)*100);
+  const topDoc=docs[0];
+
+  document.getElementById('spTitle').textContent=status+' Documents';
+  const badgeEl=document.getElementById('spBadge');
+  badgeEl.textContent=status;
+  badgeEl.className='badge '+status.toLowerCase();
+
+  document.getElementById('spDesc').textContent=
+    `${docs.length} document${docs.length===1?'':'s'} (${shareOfDocs}% of everything logged) ${docs.length===1?'is':'are'} currently marked ${status}, `+
+    `spanning ${cats.length} categor${cats.length===1?'y':'ies'} (${cats.join(', ')}). Together they account for ${totalTests.toLocaleString()} tests `+
+    `(${shareOfAll}% of all tests logged)${status==='Completed'?`, ${totalRoot} resolved root-cause bug${totalRoot===1?'':'s'}, and ${totalFiles} file${totalFiles===1?'':'s'} touched.`:'.'} `+
+    `${status==='Planned'?'These are upcoming sessions that haven\'t started yet.':`The largest single contribution was "${topDoc.title}" with ${topDoc.tests.toLocaleString()} tests.`}`;
+
+  document.getElementById('spStats').innerHTML=`
+    <div class="cp-stat glass"><div class="cp-value">${docs.length}</div><div class="cp-label">Documents</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${totalTests.toLocaleString()}</div><div class="cp-label">Total Tests</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${cats.length}</div><div class="cp-label">Categories</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${totalRoot}</div><div class="cp-label">Root Causes Fixed</div></div>
+    <div class="cp-stat glass"><div class="cp-value">${totalFiles}</div><div class="cp-label">Files Touched</div></div>
+  `;
+
+  document.getElementById('spTableTitle').textContent=`All ${status} Documents (${docs.length})`;
+  document.getElementById('spTableBody').innerHTML=docs.map(d=>`
+    <tr style="border-bottom:1px solid rgba(255,255,255,0.03)">
+      <td style="padding:9px 12px"><span class="date-link" data-date="${d.date}">${d.date}</span></td>
+      <td style="padding:9px 12px">${d.title}</td>
+      <td style="padding:9px 12px"><span class="cat-tag ${CAT_CLASS[d.category]||''}" data-cat="${d.category}">${d.category}</span></td>
+      <td style="padding:9px 12px">${d.tests||'—'}</td>
+      <td style="padding:9px 12px">${d.rootCauses||'—'}</td>
+    </tr>`).join('');
+
+  const catBreakdown=cats.map(c=>({c,t:docs.filter(d=>d.category===c).reduce((s,d)=>s+d.tests,0)})).sort((a,b)=>b.t-a.t);
+  if(spChartInstance)spChartInstance.destroy();
+  spChartInstance=new Chart(document.getElementById('spChart'),{
+    type:'bar',
+    data:{labels:catBreakdown.map(x=>x.c),datasets:[{label:'Tests',data:catBreakdown.map(x=>x.t),backgroundColor:catBreakdown.map(x=>(CAT_COLORS[x.c]||'#00f0ff')+'cc'),borderRadius:6,borderSkipped:false}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'}},y:{grid:{display:false}}}}
+  });
+
+  document.getElementById('statusPage').classList.add('open');
+  document.body.style.overflow='hidden';
+  if(location.hash!=='#status/'+status)history.pushState({status},'', '#status/'+status);
+  window.scrollTo({top:0});
+}
+function closeStatusPage(){
+  document.getElementById('statusPage').classList.remove('open');
+  document.body.style.overflow='';
+  if(location.hash.startsWith('#status/'))history.pushState({},'', location.pathname+location.search);
+}
+document.getElementById('spBack').addEventListener('click',closeStatusPage);
+document.getElementById('spTableBody').addEventListener('click',e=>{
+  const dl=e.target.closest('.date-link[data-date]');
+  if(dl){closeStatusPage();openDatePage(dl.dataset.date);return}
+  const tag=e.target.closest('.cat-tag[data-cat]');
+  if(tag){closeStatusPage();openCategoryPage(tag.dataset.cat)}
+});
+
+window.addEventListener('popstate',()=>{
+  if(!location.hash.startsWith('#category/'))closeCategoryPage();
+  if(!location.hash.startsWith('#date/'))closeDatePage();
+  if(!location.hash.startsWith('#status/'))closeStatusPage();
+});
+(function checkInitialHash(){
+  if(location.hash.startsWith('#category/')){
+    const cat=decodeURIComponent(location.hash.replace('#category/',''));
+    if(DOCS.some(d=>d.category===cat))openCategoryPage(cat);
+  }else if(location.hash.startsWith('#date/')){
+    const dt=decodeURIComponent(location.hash.replace('#date/',''));
+    if(DOCS.some(d=>d.date===dt))openDatePage(dt);
+  }else if(location.hash.startsWith('#status/')){
+    const st=decodeURIComponent(location.hash.replace('#status/',''));
+    if(DOCS.some(d=>d.status===st))openStatusPage(st);
+  }
+})();
+
 /* ---------- Back to top ---------- */
 const backBtn=document.getElementById('backToTop');
 window.addEventListener('scroll',()=>{
@@ -775,16 +1491,324 @@ window.addEventListener('scroll',()=>{
 });
 backBtn.addEventListener('click',()=>window.scrollTo({top:0,behavior:'smooth'}));
 
+/* ---------- Scroll progress bar ---------- */
+const scrollProgressEl=document.getElementById('scrollProgress');
+function updateScrollProgress(){
+  const h=document.documentElement;
+  const scrolled=h.scrollTop;
+  const max=h.scrollHeight-h.clientHeight;
+  scrollProgressEl.style.width=(max>0?(scrolled/max)*100:0)+'%';
+}
+window.addEventListener('scroll',updateScrollProgress);
+updateScrollProgress();
+
+/* ---------- Scrollspy nav highlighting ---------- */
+const navLinks=document.querySelectorAll('#navPills a');
+const spySections=['kpis','todo','charts','heatmap','leaderboard','docs'].map(id=>document.getElementById(id)).filter(Boolean);
+if('IntersectionObserver' in window){
+  const spyObserver=new IntersectionObserver(entries=>{
+    entries.forEach(entry=>{
+      if(entry.isIntersecting){
+        navLinks.forEach(a=>a.classList.toggle('active',a.dataset.nav===entry.target.id));
+      }
+    });
+  },{rootMargin:'-40% 0px -50% 0px',threshold:0});
+  spySections.forEach(sec=>spyObserver.observe(sec));
+}
+
+/* ---------- Command Palette (⌘K / Ctrl+K quick search) ---------- */
+const SECTION_ITEMS=[
+  {type:'section',label:'Overview',icon:'📊',value:'kpis'},
+  {type:'section',label:"Tomorrow's To-Do List",icon:'🌙',value:'todo'},
+  {type:'section',label:'Charts',icon:'📈',value:'charts'},
+  {type:'section',label:'Daily Activity',icon:'🌡',value:'heatmap'},
+  {type:'section',label:'Category Leaderboard',icon:'🏆',value:'leaderboard'},
+  {type:'section',label:'Documents Table',icon:'📄',value:'docs'}
+];
+let cmdkActiveIndex=0;
+let cmdkResults=[];
+
+function cmdkSearch(query){
+  const q=query.trim().toLowerCase();
+  if(!q){
+    return[
+      ...SECTION_ITEMS,
+      ...favorites.slice(0,3).map(f=>{const d=DOCS.find(x=>x.file===f);return d?{type:'doc',label:d.title,meta:'★ Favorite',icon:'📄',value:d.file}:null}).filter(Boolean)
+    ];
+  }
+  const results=[];
+  DOCS.filter(d=>d.title.toLowerCase().includes(q)||d.file.toLowerCase().includes(q)).slice(0,8).forEach(d=>{
+    results.push({type:'doc',label:d.title,meta:d.date+' · '+d.category,icon:'📄',value:d.file});
+  });
+  catKeys.filter(c=>c.toLowerCase().includes(q)).forEach(c=>{
+    results.push({type:'category',label:c,meta:cats[c]+' docs',icon:'🏷',value:c});
+  });
+  dateKeys.filter(dt=>dt.includes(q)).forEach(dt=>{
+    results.push({type:'date',label:dt,meta:dateCounts[dt]+' docs',icon:'📅',value:dt});
+  });
+  ['completed','planned'].filter(s=>s.includes(q)).forEach(s=>{
+    const label=s[0].toUpperCase()+s.slice(1);
+    results.push({type:'status',label:label,meta:'Status',icon:'✅',value:label});
+  });
+  SECTION_ITEMS.filter(s=>s.label.toLowerCase().includes(q)).forEach(s=>results.push(s));
+  return results;
+}
+
+function renderCmdkResults(){
+  const el=document.getElementById('cmdkResults');
+  if(cmdkResults.length===0){
+    el.innerHTML='<div class="cmdk-empty">No matches. Try a document title, category, or date (YYYY-MM-DD).</div>';
+    return;
+  }
+  let lastType=null;
+  const typeLabels={doc:'Documents',category:'Categories',date:'Dates',status:'Status',section:'Sections'};
+  el.innerHTML=cmdkResults.map((r,i)=>{
+    let group='';
+    if(r.type!==lastType){group=`<div class="cmdk-group-label">${typeLabels[r.type]||''}</div>`;lastType=r.type}
+    return group+`<div class="cmdk-item ${i===cmdkActiveIndex?'active':''}" data-idx="${i}"><span class="cmdk-icon">${r.icon}</span><span>${r.label}</span>${r.meta?`<span class="cmdk-meta">${r.meta}</span>`:''}</div>`;
+  }).join('');
+}
+
+function cmdkSelect(r){
+  closeCmdk();
+  if(r.type==='doc'){const d=DOCS.find(x=>x.file===r.value);if(d)openModal(d)}
+  else if(r.type==='category')openCategoryPage(r.value);
+  else if(r.type==='date')openDatePage(r.value);
+  else if(r.type==='status')openStatusPage(r.value);
+  else if(r.type==='section'){const sec=document.getElementById(r.value);if(sec)sec.scrollIntoView({behavior:'smooth',block:'start'})}
+}
+
+function openCmdk(){
+  document.getElementById('cmdkOverlay').classList.add('open');
+  const input=document.getElementById('cmdkInput');
+  input.value='';
+  cmdkActiveIndex=0;
+  cmdkResults=cmdkSearch('');
+  renderCmdkResults();
+  setTimeout(()=>input.focus(),10);
+}
+function closeCmdk(){document.getElementById('cmdkOverlay').classList.remove('open')}
+
+document.getElementById('cmdkOpenBtn').addEventListener('click',openCmdk);
+document.getElementById('cmdkOverlay').addEventListener('click',e=>{if(e.target.id==='cmdkOverlay')closeCmdk()});
+document.getElementById('cmdkInput').addEventListener('input',e=>{
+  cmdkActiveIndex=0;
+  cmdkResults=cmdkSearch(e.target.value);
+  renderCmdkResults();
+});
+document.getElementById('cmdkResults').addEventListener('click',e=>{
+  const item=e.target.closest('.cmdk-item[data-idx]');
+  if(item)cmdkSelect(cmdkResults[+item.dataset.idx]);
+});
+document.getElementById('cmdkInput').addEventListener('keydown',e=>{
+  if(e.key==='ArrowDown'){e.preventDefault();cmdkActiveIndex=Math.min(cmdkActiveIndex+1,cmdkResults.length-1);renderCmdkResults();scrollActiveIntoView()}
+  else if(e.key==='ArrowUp'){e.preventDefault();cmdkActiveIndex=Math.max(cmdkActiveIndex-1,0);renderCmdkResults();scrollActiveIntoView()}
+  else if(e.key==='Enter'){e.preventDefault();if(cmdkResults[cmdkActiveIndex])cmdkSelect(cmdkResults[cmdkActiveIndex])}
+});
+function scrollActiveIntoView(){
+  const active=document.querySelector('.cmdk-item.active');
+  if(active)active.scrollIntoView({block:'nearest'});
+}
+
 /* ---------- Keyboard shortcuts ---------- */
 document.addEventListener('keydown',e=>{
   const active=document.activeElement;
   const typing=active&&(active.tagName==='INPUT'||active.tagName==='SELECT'||active.tagName==='TEXTAREA');
+  if((e.key==='k'||e.key==='K')&&(e.metaKey||e.ctrlKey)){e.preventDefault();openCmdk();return}
   if(e.key==='/'&&!typing){e.preventDefault();document.getElementById('searchInput').focus()}
   else if(e.key==='Escape'){
-    if(document.getElementById('modalOverlay').classList.contains('open')){closeModal()}
+    if(document.getElementById('cmdkOverlay').classList.contains('open')){closeCmdk()}
+    else if(document.getElementById('statusPage').classList.contains('open')){closeStatusPage()}
+    else if(document.getElementById('datePage').classList.contains('open')){closeDatePage()}
+    else if(document.getElementById('categoryPage').classList.contains('open')){closeCategoryPage()}
+    else if(document.getElementById('modalOverlay').classList.contains('open')){closeModal()}
+    else if(document.getElementById('imgLightbox').classList.contains('open')){closeLightbox()}
     else if(typing&&active.id==='searchInput'){active.value='';currentPage=1;renderTable();active.blur()}
   }
 });
+
+/* ---------- Tomorrow's To-Do List (text and/or image, checkbox to cancel) ---------- */
+const TODO_STORAGE_KEY='nova_analytics_todos_v1';
+let todos=[];
+let todoIdSeq=1;
+let pendingImage=null;
+let todoStorageOK=false;
+let todosCelebrated=false;
+
+(function initTodoDateLabel(){
+  const d=new Date();
+  d.setDate(d.getDate()+1);
+  const label=d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+  document.getElementById('todoDateLabel').textContent='Plan for tomorrow — '+label;
+})();
+
+function checkTodoStorage(){
+  try{
+    const testKey='__nova_storage_test__';
+    localStorage.setItem(testKey,'1');
+    localStorage.removeItem(testKey);
+    return true;
+  }catch(err){
+    return false;
+  }
+}
+
+function loadTodos(){
+  todoStorageOK=checkTodoStorage();
+  const hint=document.getElementById('todoStorageHint');
+  if(!todoStorageOK){
+    hint.textContent='⚠ This preview can\'t save between reloads. Download the file and open it directly in your browser to keep your tasks.';
+    return;
+  }
+  try{
+    const raw=localStorage.getItem(TODO_STORAGE_KEY);
+    if(raw){
+      todos=JSON.parse(raw)||[];
+      todoIdSeq=todos.reduce((max,t)=>Math.max(max,t.id||0),0)+1;
+    }
+    hint.textContent='💾 Tasks are saved in this browser — they\'ll still be here next time you open this file.';
+  }catch(err){
+    todos=[];
+    hint.textContent='⚠ Saved tasks could not be read — starting with an empty list.';
+  }
+}
+
+function saveTodos(){
+  if(!todoStorageOK)return;
+  try{
+    localStorage.setItem(TODO_STORAGE_KEY,JSON.stringify(todos));
+    document.getElementById('todoSavedHint').textContent='Last saved '+new Date().toLocaleTimeString();
+  }catch(err){
+    showToast('Could not save tasks (storage full or unavailable)');
+  }
+}
+
+const PRIORITY_RANK={high:0,medium:1,low:2};
+const PRIORITY_LABEL={high:'High priority',medium:'Medium priority',low:'Low priority'};
+
+function launchConfetti(){
+  const colors=['#00f0ff','#a855f7','#34d399','#fbbf24','#f472b6'];
+  for(let i=0;i<60;i++){
+    const piece=document.createElement('div');
+    piece.className='confetti-piece';
+    piece.style.left=Math.random()*100+'vw';
+    piece.style.background=colors[i%colors.length];
+    piece.style.animationDuration=(2+Math.random()*1.5)+'s';
+    piece.style.borderRadius=Math.random()>.5?'50%':'2px';
+    document.body.appendChild(piece);
+    setTimeout(()=>piece.remove(),3600);
+  }
+}
+
+function renderUpNext(){
+  const strip=document.getElementById('upnextStrip');
+  const pending=[...todos].filter(t=>!t.done).sort((a,b)=>(PRIORITY_RANK[a.priority]??1)-(PRIORITY_RANK[b.priority]??1)).slice(0,3);
+  if(pending.length===0){strip.innerHTML='';return}
+  strip.innerHTML='<span style="font-size:.72rem;color:var(--text-muted);align-self:center">Up next:</span>'+pending.map(t=>`<span class="upnext-chip"><span class="priority-dot ${t.priority||'medium'}"></span>${escapeHtml(t.text.length>28?t.text.slice(0,26)+'…':t.text)}</span>`).join('');
+}
+
+function escapeHtml(s){const div=document.createElement('div');div.textContent=s;return div.innerHTML}
+
+document.getElementById('todoImageInput').addEventListener('change',e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  if(!file.type.startsWith('image/')){showToast('Please choose an image file');return}
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    pendingImage={dataUrl:ev.target.result,name:file.name};
+    document.getElementById('todoPreviewImg').src=pendingImage.dataUrl;
+    document.getElementById('todoPreviewName').textContent=file.name;
+    document.getElementById('todoPreview').classList.add('show');
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('todoPreviewRemove').addEventListener('click',()=>{
+  pendingImage=null;
+  document.getElementById('todoImageInput').value='';
+  document.getElementById('todoPreview').classList.remove('show');
+});
+
+function addTodo(){
+  const input=document.getElementById('todoInput');
+  const text=input.value.trim();
+  const priority=document.getElementById('todoPriority').value;
+  if(!text&&!pendingImage){showToast('Add some text or attach an image first');return}
+  todos.push({id:todoIdSeq++,text:text||pendingImage.name,image:pendingImage?pendingImage.dataUrl:null,done:false,priority});
+  input.value='';
+  pendingImage=null;
+  document.getElementById('todoImageInput').value='';
+  document.getElementById('todoPreview').classList.remove('show');
+  renderTodos();
+  saveTodos();
+  showToast('Task added for tomorrow');
+}
+document.getElementById('todoAddBtn').addEventListener('click',addTodo);
+document.getElementById('todoInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addTodo()}});
+
+function renderTodos(){
+  const list=document.getElementById('todoList');
+  if(todos.length===0){
+    list.innerHTML='<li class="todo-empty">No tasks yet — add something for tomorrow above, by text or image.</li>';
+  }else{
+    list.innerHTML=todos.map(t=>`
+      <li class="todo-item ${t.done?'done':''}" data-id="${t.id}">
+        <button class="todo-check ${t.done?'checked':''}" data-action="toggle" title="${t.done?'Mark as not done':'Mark as done'}">${t.done?'✓':''}</button>
+        <span class="priority-dot ${t.priority||'medium'}" title="${PRIORITY_LABEL[t.priority||'medium']}"></span>
+        ${t.image?`<img class="todo-thumb" src="${t.image}" data-action="view" title="Click to view image">`:''}
+        <span class="todo-text">${escapeHtml(t.text)}</span>
+        <button class="todo-del" data-action="delete" title="Delete task">✕</button>
+      </li>`).join('');
+  }
+  const doneCount=todos.filter(t=>t.done).length;
+  document.getElementById('todoDoneCount').textContent=doneCount;
+  document.getElementById('todoTotalCount').textContent=todos.length;
+  renderUpNext();
+  if(todos.length>0&&doneCount===todos.length&&!todosCelebrated){
+    todosCelebrated=true;
+    launchConfetti();
+    showToast('🎉 All tasks for tomorrow are done!');
+  }else if(doneCount<todos.length){
+    todosCelebrated=false;
+  }
+}
+
+document.getElementById('todoList').addEventListener('click',e=>{
+  const btn=e.target.closest('[data-action]');
+  if(!btn)return;
+  const li=e.target.closest('.todo-item');
+  const id=+li.dataset.id;
+  const action=btn.dataset.action;
+  if(action==='toggle'){
+    const t=todos.find(t=>t.id===id);
+    t.done=!t.done;
+    renderTodos();
+    saveTodos();
+  }else if(action==='delete'){
+    todos=todos.filter(t=>t.id!==id);
+    renderTodos();
+    saveTodos();
+    showToast('Task removed');
+  }else if(action==='view'){
+    document.getElementById('imgLightboxImg').src=btn.src;
+    document.getElementById('imgLightbox').classList.add('open');
+  }
+});
+
+document.getElementById('todoClearCompleted').addEventListener('click',()=>{
+  const before=todos.length;
+  todos=todos.filter(t=>!t.done);
+  renderTodos();
+  saveTodos();
+  showToast(before!==todos.length?'Completed tasks cleared':'Nothing to clear');
+});
+
+function closeLightbox(){document.getElementById('imgLightbox').classList.remove('open')}
+document.getElementById('imgLightboxClose').addEventListener('click',closeLightbox);
+document.getElementById('imgLightbox').addEventListener('click',e=>{if(e.target.id==='imgLightbox')closeLightbox()});
+
+loadTodos();
+renderTodos();
 </script>
 </body>
 </html>

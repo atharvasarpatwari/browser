@@ -67,6 +67,14 @@ class MockProcessManager implements IProcessManager {
       crashCount: 1,
     });
   }
+
+  emitExit(processId: string) {
+    const info = this.processes.get(processId);
+    const tabId = info?.tabId;
+    this.processes.delete(processId);
+    if (tabId) this.tabToProcess.delete(tabId);
+    this.bus.emit({ kind: 'processExited', processId, tabId, exitCode: 1 });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -219,6 +227,51 @@ describe('TabProcessManager', () => {
       processManager.emitCrash(processId, new Error('crash'));
 
       expect(tab.state).toBe(TabContextState.Idle);
+    });
+  });
+
+  describe('process exit → tab orphan cleanup', () => {
+    it('destroys the tab when its process exits permanently', async () => {
+      const { tab, processId } = await adapter.createTab();
+
+      processManager.emitExit(processId);
+
+      // Tab should be destroyed, not orphaned
+      expect(adapter.getProcessForTab(tab.id)).toBeNull();
+      expect(adapter.getTabForProcess(processId)).toBeNull();
+      expect(tabManager.getContext(tab.id)).toBeNull();
+    });
+
+    it('emits tabProcessDestroyed on process exit', async () => {
+      const { tab, processId } = await adapter.createTab();
+      const handler = vi.fn();
+      adapter.on('tabProcessDestroyed', handler);
+
+      processManager.emitExit(processId);
+
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'tabProcessDestroyed',
+          tabId: tab.id,
+          processId,
+        }),
+      );
+    });
+
+    it('does not destroy tab when autoDestroyProcess is false', async () => {
+      const noAutoDestroy = new TabProcessManager(processManager, tabManager, {
+        autoSpawnProcess: true,
+        autoDestroyProcess: false,
+        forwardProcessCrashes: true,
+        forwardTabCrashes: true,
+      });
+      const { tab, processId } = await noAutoDestroy.createTab();
+
+      processManager.emitExit(processId);
+
+      // Mapping cleaned up but tab still exists
+      expect(noAutoDestroy.getProcessForTab(tab.id)).toBeNull();
+      expect(tabManager.getContext(tab.id)).not.toBeNull();
     });
   });
 

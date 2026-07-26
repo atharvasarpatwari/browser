@@ -52,6 +52,8 @@ export interface JSFunction {
   isBytecode?: boolean;
   /** Captured upvalue references from parent scopes */
   upvalues?: UpvalueRef[];
+  /** If true, the function runs in strict mode */
+  isStrict?: boolean;
 }
 
 /** Shared mutable reference for closure-captured variables */
@@ -78,18 +80,21 @@ export interface ContinueSignal { type: 'continue'; label?: string }
 export interface ReturnSignal { type: 'return'; value: JSValue }
 /** Throw signal */
 export interface ThrowSignal { type: 'throw'; value: JSValue }
+/** Await signal — used to suspend async function execution */
+export interface AwaitSignal { type: 'await'; promise: JSValue; continuation: (value: JSValue) => JSValue }
 
 export function isBreakSignal(v: unknown): v is BreakSignal { return typeof v === 'object' && v !== null && (v as BreakSignal).type === 'break'; }
 export function isContinueSignal(v: unknown): v is ContinueSignal { return typeof v === 'object' && v !== null && (v as ContinueSignal).type === 'continue'; }
 export function isReturnSignal(v: unknown): v is ReturnSignal { return typeof v === 'object' && v !== null && (v as ReturnSignal).type === 'return'; }
 export function isThrowSignal(v: unknown): v is ThrowSignal { return typeof v === 'object' && v !== null && (v as ThrowSignal).type === 'throw'; }
+export function isAwaitSignal(v: unknown): v is AwaitSignal { return typeof v === 'object' && v !== null && (v as AwaitSignal).type === 'await'; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENVIRONMENT
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class Environment {
-  private bindings = new Map<string, { value: JSValue; kind: 'var' | 'let' | 'const' }>();
+  private bindings = new Map<string, { value: JSValue; kind: 'var' | 'let' | 'const'; __tdz?: boolean }>();
   readonly parent: Environment | null;
 
   constructor(parent: Environment | null = null) {
@@ -110,7 +115,21 @@ export class Environment {
         this.bindings.set(name, { value, kind });
       }
     } else {
-      this.bindings.set(name, { value, kind });
+      // let/const: per ECMAScript § 9.1.1, bindings are created in TDZ state.
+      // They remain uninitialized until the declaration statement is evaluated.
+      this.bindings.set(name, { value, kind, __tdz: true });
+    }
+  }
+
+  /**
+   * Initialize a let/const binding (clears TDZ).
+   * Called when the declaration statement is actually executed.
+   */
+  initialize(name: string, value: JSValue): void {
+    const binding = this.bindings.get(name);
+    if (binding && binding.__tdz) {
+      binding.value = value;
+      binding.__tdz = false;
     }
   }
 
@@ -132,13 +151,26 @@ export class Environment {
 
   /** Set a variable directly (for let/const in current scope) */
   setLocal(name: string, value: JSValue, kind: 'let' | 'const' = 'let'): void {
-    this.bindings.set(name, { value, kind });
+    this.bindings.set(name, { value, kind, __tdz: false });
+  }
+
+  /**
+   * Declare a variable in TDZ (Temporal Dead Zone).
+   * Per ECMAScript § 9.1.1, let/const bindings are uninitialized until
+   * the declaration is evaluated. Accessing them before initialization
+   * throws a ReferenceError.
+   */
+  declareTDZ(name: string, kind: 'let' | 'const'): void {
+    this.bindings.set(name, { value: undefined, kind, __tdz: true });
   }
 
   /** Get a variable value */
   get(name: string): JSValue {
     const binding = this.bindings.get(name);
     if (binding) {
+      if (binding.__tdz) {
+        throw new ReferenceError(`Cannot access '${name}' before initialization`);
+      }
       return binding.value;
     }
     if (this.parent) {
@@ -218,9 +250,20 @@ export function toString(val: JSValue): string {
   if (typeof val === 'bigint') return val.toString() + 'n';
   if (typeof val === 'object' && val !== null) {
     const obj = val as JSObject;
+    if ((obj as any).__type_override === 'symbol') {
+      const desc = (obj as any).symbolDescription ?? '';
+      return `Symbol(${desc})`;
+    }
     if (obj.type === 'array') {
       return getArrayElements(obj).map(e => toString(e)).join(',');
     }
+    const override = (obj as any).__type_override;
+    if (override === 'arraybuffer') return '[object ArrayBuffer]';
+    if (override === 'dataview') return '[object DataView]';
+    if (override === 'sharedarraybuffer') return '[object SharedArrayBuffer]';
+    if (override === 'weakref') return '[object WeakRef]';
+    if (override === 'finalizationregistry') return '[object FinalizationRegistry]';
+    if (typeof override === 'string' && override.endsWith('Array')) return `[object ${override}]`;
   }
   return '[object Object]';
 }
@@ -234,6 +277,7 @@ export function getType(val: JSValue): string {
   if (typeof val === 'object' && val !== null) {
     if ('type' in val) {
       const obj = val as JSObject;
+      if ((obj as any).__type_override === 'symbol') return 'symbol';
       if (obj.type === 'array') return 'object';
       if (obj.type === 'function') return 'function';
       if (obj.type === 'class') return 'function';
@@ -248,12 +292,13 @@ export function getType(val: JSValue): string {
 export function instanceofCheck(left: JSValue, right: JSValue): boolean {
   if (typeof left !== 'object' || left === null) return false;
   if (!right || typeof right !== 'object') return false;
-  const ctor = right as JSFunction;
-  if (!('closure' in ctor)) return false;
-  const ctorName = (ctor as JSFunction).name;
+  const rightObj = right as JSObject;
+  const isNativeFn = 'closure' in right || (rightObj.type === 'function' && rightObj.callable);
+  if (!isNativeFn) return false;
+  const ctorName = ('closure' in right) ? (right as JSFunction).name : (rightObj.properties?.get('name')?.value as string ?? '');
   const leftObj = left as JSObject;
   if (ctorName === 'Array' && leftObj.type === 'array') return true;
-  const ctorProto = ctor.properties?.get('prototype')?.value;
+  const ctorProto = rightObj.properties?.get('prototype')?.value;
   if (!ctorProto || typeof ctorProto !== 'object' || ctorProto === null) return false;
   let proto = leftObj.prototype;
   while (proto) {
@@ -589,7 +634,17 @@ export function createFunction(
   generator = false,
   isBytecode = false,
   upvalues?: UpvalueRef[],
+  isStrict = false,
 ): JSFunction {
+  if (isStrict) {
+    const seen = new Set<string>();
+    for (const p of params) {
+      if (seen.has(p)) {
+        throw new JSError(`SyntaxError: Duplicate parameter name '${p}' in strict mode`);
+      }
+      seen.add(p);
+    }
+  }
   return {
     type: 'closure',
     name,
@@ -602,6 +657,7 @@ export function createFunction(
     isNative: false,
     isBytecode,
     upvalues,
+    isStrict,
   };
 }
 

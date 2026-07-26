@@ -19,12 +19,14 @@ import type {
   CssDeclaration,
   CssSpecificity,
   CssStylesheet,
+  CssLayerRule,
+  CssLayerOrderRule,
 } from './types';
 
 import { matchesSelectorList } from './selector';
-import { isInheritedProperty, getInitialValue } from './property-definitions';
+import { isInheritedProperty, getInitialValue, getInheritedProperties, getAllPropertyDefinitions } from './property-definitions';
 import { processCSSWideKeywords, type KeywordContext } from './css-wide-keywords';
-import { resolveAllComputedValues, type ResolutionContext } from './computed-value-resolver';
+import { resolveComputedValue, resolveAllComputedValues, resolveVarReferences, type ResolutionContext } from './computed-value-resolver';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STYLEABLE ELEMENT
@@ -49,24 +51,10 @@ export interface Viewport {
 const DEFAULT_VIEWPORT: Viewport = { width: 1920, height: 1080 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INHERITABLE PROPERTIES (delegated to property-definitions.ts)
+// INHERITABLE PROPERTIES — canonical source: property-definitions.ts
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Re-export for backward compatibility — callers may import INHERITABLE
-// but the canonical source is property-definitions.ts.
-const INHERITABLE = new Set(
-  [
-    'color', 'font-size', 'font-family', 'font-weight', 'font-style',
-    'font-variant', 'line-height', 'text-align', 'text-decoration',
-    'text-transform', 'text-indent', 'text-shadow', 'visibility',
-    'cursor', 'letter-spacing', 'word-spacing', 'white-space', 'direction',
-    'writing-mode', 'list-style-type', 'list-style-position', 'list-style-image',
-    'orphans', 'widows', 'quotes', 'border-collapse', 'border-spacing',
-    'caption-side', 'empty-cells', 'table-layout', 'vertical-align',
-    'tab-size', 'hyphens', 'overflow-wrap', 'word-break', 'color-scheme',
-    'accent-color',
-  ].filter((p) => isInheritedProperty(p)),
-);
+const INHERITABLE = new Set(getInheritedProperties());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MEDIA QUERY EVALUATION
@@ -76,38 +64,189 @@ function evaluateMediaFeature(
   feature: CssMediaFeature,
   viewport: Viewport,
 ): boolean {
-  const target =
-    feature.name === 'width' || feature.name === 'min-width' || feature.name === 'max-width'
-      ? viewport.width
-      : viewport.height;
+  const name = feature.name.toLowerCase();
 
-  const value = parseInt(feature.value, 10);
-  if (Number.isNaN(value)) return true;
+  // Range syntax helper
+  const applyRange = (actual: number, target: number, op: string | undefined): boolean => {
+    if (!op) return actual === target;
+    switch (op) {
+      case '>=': return actual >= target;
+      case '<=': return actual <= target;
+      case '>':  return actual > target;
+      case '<':  return actual < target;
+      default:   return actual === target;
+    }
+  };
 
-  if (feature.range === 'min') return target >= value;
-  if (feature.range === 'max') return target <= value;
-  return target === value;
+  // Width/height features
+  if (name === 'width' || name === 'min-width' || name === 'max-width') {
+    const value = parseInt(feature.value, 10);
+    if (Number.isNaN(value)) return true;
+    // Range syntax: (width >= 800px) or (400px <= width <= 800px)
+    if (feature.operator) {
+      // Double range: (lowerValue lowerOp feature upperOp upperValue)
+      // lowerOp is reversed: (400px <= width) means width >= 400
+      const flipOp = (op: string): string => {
+        switch (op) {
+          case '<=': return '>=';
+          case '>=': return '<=';
+          case '<':  return '>';
+          case '>':  return '<';
+          default:   return op;
+        }
+      };
+      const lowerOk = feature.lowerOperator && feature.lowerValue !== undefined
+        ? applyRange(viewport.width, parseInt(feature.lowerValue, 10), flipOp(feature.lowerOperator))
+        : true;
+      const upperOk = applyRange(viewport.width, value, feature.operator);
+      return lowerOk && upperOk;
+    }
+    if (feature.range === 'min') return viewport.width >= value;
+    if (feature.range === 'max') return viewport.width <= value;
+    return viewport.width === value;
+  }
+  if (name === 'height' || name === 'min-height' || name === 'max-height') {
+    const value = parseInt(feature.value, 10);
+    if (Number.isNaN(value)) return true;
+    // Range syntax
+    if (feature.operator) {
+      const flipOp = (op: string): string => {
+        switch (op) {
+          case '<=': return '>=';
+          case '>=': return '<=';
+          case '<':  return '>';
+          case '>':  return '<';
+          default:   return op;
+        }
+      };
+      const lowerOk = feature.lowerOperator && feature.lowerValue !== undefined
+        ? applyRange(viewport.height, parseInt(feature.lowerValue, 10), flipOp(feature.lowerOperator))
+        : true;
+      const upperOk = applyRange(viewport.height, value, feature.operator);
+      return lowerOk && upperOk;
+    }
+    if (feature.range === 'min') return viewport.height >= value;
+    if (feature.range === 'max') return viewport.height <= value;
+    return viewport.height === value;
+  }
+
+  // Orientation
+  if (name === 'orientation') {
+    return viewport.width <= viewport.height
+      ? feature.value.toLowerCase() === 'portrait'
+      : feature.value.toLowerCase() === 'landscape';
+  }
+
+  // Aspect ratio
+  if (name === 'aspect-ratio' || name === 'min-aspect-ratio' || name === 'max-aspect-ratio') {
+    const parts = feature.value.split('/').map(s => parseInt(s.trim(), 10));
+    if (parts.length !== 2 || isNaN(parts[0]!) || isNaN(parts[1]!) || parts[1] === 0) return true;
+    const ratio = viewport.width / viewport.height;
+    const targetRatio = parts[0]! / parts[1]!;
+    if (feature.range === 'min') return ratio >= targetRatio;
+    if (feature.range === 'max') return ratio <= targetRatio;
+    return Math.abs(ratio - targetRatio) < 0.01;
+  }
+
+  // Resolution (dpi/dppx)
+  if (name === 'resolution' || name === 'min-resolution' || name === 'max-resolution') {
+    // Assume 96dpi (1dppx) for screen
+    const deviceDpi = 96;
+    const valueStr = feature.value.toLowerCase();
+    let targetDpi = parseInt(valueStr, 10);
+    if (isNaN(targetDpi)) return true;
+    if (valueStr.includes('dppx')) targetDpi *= 96;
+    else if (valueStr.includes('cm')) targetDpi *= 2.54;
+    if (feature.range === 'min') return deviceDpi >= targetDpi;
+    if (feature.range === 'max') return deviceDpi <= targetDpi;
+    return deviceDpi === targetDpi;
+  }
+
+  // Boolean features (no value) — return true for screen context
+  if (!feature.value || feature.value === '') {
+    return true;
+  }
+
+  // Color / color-gamut / prefers-color-scheme / prefers-contrast /
+  // prefers-reduced-motion / prefers-reduced-transparency /
+  // dynamic-range / forced-colors / inverted-colors / pointer / hover / any-pointer / any-hover
+  // Simplified: return reasonable defaults for common features.
+  const val = feature.value.toLowerCase();
+  switch (name) {
+    case 'prefers-color-scheme':
+      // Default to light mode
+      return val === 'light';
+    case 'prefers-contrast':
+      return val === 'no-preference';
+    case 'prefers-reduced-motion':
+      return val === 'no-preference';
+    case 'prefers-reduced-transparency':
+      return val === 'no-preference';
+    case 'dynamic-range':
+      return val === 'standard';
+    case 'forced-colors':
+      return val === 'none';
+    case 'inverted-colors':
+      return val === 'none';
+    case 'pointer':
+      return val === 'fine'; // Assume mouse
+    case 'hover':
+      return val === 'hover'; // Assume hover capable
+    case 'any-pointer':
+      return val === 'fine';
+    case 'any-hover':
+      return val === 'hover';
+    case 'update-frequency':
+      return val === 'fast';
+    case 'overflow-block':
+      return val === 'scroll';
+    case 'overflow-inline':
+      return val === 'scroll';
+    case 'display-mode':
+      return val === 'browser'; // or 'window'
+    case 'color':
+    case 'color-gamut':
+      return true;
+    default:
+      return true;
+  }
+}
+
+function evaluateMediaType(mediaType: string): boolean {
+  switch (mediaType) {
+    case 'all':
+      return true;
+    case 'screen':
+      return true;   // Nova renders in screen context
+    case 'print':
+      return false;  // No print rendering
+    default:
+      return true;
+  }
 }
 
 function evaluateMediaQuery(
   query: CssMediaQuery,
   viewport: Viewport,
 ): boolean {
-  // Evaluate every feature in the query (AND semantics within a query).
-  let featureMatch = query.features.length === 0;
+  // 1. Match media type
+  const typeMatch = evaluateMediaType(query.mediaType);
+
+  // 2. Evaluate features (AND semantics within a query)
+  let featureMatch = true;
   for (const f of query.features) {
-    if (!evaluateMediaFeature(f, viewport)) return false;
-    featureMatch = true;
+    if (!evaluateMediaFeature(f, viewport)) {
+      featureMatch = false;
+      break;
+    }
   }
 
-  if (!featureMatch) {
-    // Bare media type: 'screen' → true for our viewport context.
-    if (query.mediaType === 'print') return false;
-  }
+  // 3. Combine: type AND features
+  const result = typeMatch && featureMatch;
 
-  const matches = featureMatch;
-  if (query.modifier === 'not') return !matches;
-  return matches;
+  // 4. Apply modifier (not inverts the full result; only is a no-op)
+  if (query.modifier === 'not') return !result;
+  return result;
 }
 
 function evaluateMediaQueries(
@@ -119,6 +258,129 @@ function evaluateMediaQueries(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// @SUPPORTS CONDITION EVALUATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Check if a single `property: value` declaration is supported.
+ * "Supported" means the property exists in the property definitions registry.
+ * If a value is provided, we do a basic sanity check (not empty).
+ */
+function evaluateSupportsDeclaration(condition: string): boolean {
+  const colonIdx = condition.indexOf(':');
+  if (colonIdx === -1) {
+    // Boolean form: `(property)` — check if property is known
+    const prop = condition.trim().toLowerCase();
+    if (!prop) return false;
+    const defs = getAllPropertyDefinitions();
+    return prop in defs;
+  }
+  const prop = condition.slice(0, colonIdx).trim().toLowerCase();
+  const value = condition.slice(colonIdx + 1).trim();
+  if (!prop) return false;
+  const defs = getAllPropertyDefinitions();
+  if (!(prop in defs)) return false;
+  // Basic value check: non-empty and not obviously invalid
+  if (!value) return false;
+  return true;
+}
+
+/**
+ * Evaluate a single @supports condition token (inner content of parentheses).
+ * Handles: `(property: value)`, `(property)`, and bare declarations.
+ */
+function evaluateSupportsAtom(condition: string): boolean {
+  const trimmed = condition.trim();
+  // Strip outer parentheses if present
+  const inner = trimmed.startsWith('(') && trimmed.endsWith(')')
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
+  return evaluateSupportsDeclaration(inner);
+}
+
+/**
+ * Evaluate a full @supports condition string.
+ * Supports: not, and, or, parenthesized grouping.
+ *
+ * Grammar (simplified):
+ *   condition = orExpr
+ *   orExpr    = andExpr ('or' andExpr)*
+ *   andExpr   = atom ('and' atom)*
+ *   atom      = '(' condition ')' | 'not' atom | declaration
+ */
+function evaluateSupportsCondition(condition: string): boolean {
+  const trimmed = condition.trim();
+  if (!trimmed) return true;
+
+  // Try to split on 'or' first (lowest precedence)
+  const orParts = splitOnBoolean(trimmed, 'or');
+  if (orParts.length > 1) {
+    return orParts.some(part => evaluateSupportsCondition(part));
+  }
+
+  // Then split on 'and'
+  const andParts = splitOnBoolean(trimmed, 'and');
+  if (andParts.length > 1) {
+    return andParts.every(part => evaluateSupportsCondition(part));
+  }
+
+  // Handle 'not'
+  if (/^\s*not\s+/i.test(trimmed)) {
+    const inner = trimmed.replace(/^\s*not\s+/i, '').trim();
+    return !evaluateSupportsCondition(inner);
+  }
+
+  // Handle parenthesized group
+  if (trimmed.startsWith('(') && findMatchingParen(trimmed, 0) === trimmed.length - 1) {
+    return evaluateSupportsCondition(trimmed.slice(1, -1).trim());
+  }
+
+  // Bare declaration
+  return evaluateSupportsAtom(trimmed);
+}
+
+/** Find the index of the matching closing paren for the opening paren at `start`. */
+function findMatchingParen(s: string, start: number): number {
+  let depth = 0;
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === '(') depth++;
+    else if (s[i] === ')') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Split a condition string on a boolean keyword (`and` / `or`),
+ * respecting parentheses. Returns an array of sub-conditions.
+ */
+function splitOnBoolean(condition: string, keyword: string): string[] {
+  const parts: string[] = [];
+  const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+  let lastIndex = 0;
+  let depth = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = regex.exec(condition)) !== null) {
+    // Check if we're inside parentheses
+    for (let i = lastIndex; i < m.index; i++) {
+      if (condition[i] === '(') depth++;
+      else if (condition[i] === ')') depth--;
+    }
+    if (depth === 0) {
+      const part = condition.slice(lastIndex, m.index).trim();
+      if (part) parts.push(part);
+      lastIndex = m.index + m[0].length;
+    }
+  }
+  const remaining = condition.slice(lastIndex).trim();
+  if (remaining) parts.push(remaining);
+  return parts;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // COLLECT STYLE RULES (flattened through @media / @supports / nested)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -126,12 +388,21 @@ interface CollectContext {
   viewport: Viewport;
   rules: CssStyleRule[];
   sourceOrder: number;
+  /** Layer names in declaration order (first declared = lowest priority). */
+  layerOrder: string[];
+  /** Current layer name (null = unlayered). */
+  currentLayer: string | null;
+  /** Maps each style rule to its layer name (if any). */
+  layerMap: Map<CssStyleRule, string>;
 }
 
 function collectStyleRules(rule: CssRule, ctx: CollectContext): void {
   switch (rule.type) {
     case 'style': {
       ctx.rules.push(rule);
+      if (ctx.currentLayer) {
+        ctx.layerMap.set(rule, ctx.currentLayer);
+      }
       break;
     }
     case 'media': {
@@ -142,13 +413,59 @@ function collectStyleRules(rule: CssRule, ctx: CollectContext): void {
       break;
     }
     case 'supports': {
-      // Simplified: always consider supported.
+      if (!evaluateSupportsCondition(rule.condition)) break;
       for (const nested of rule.rules) {
         collectStyleRules(nested, ctx);
       }
       break;
     }
-    // Ignore @import, @font-face, @keyframes, @charset, @namespace, unknown
+    case 'layer': {
+      // @layer name { ... } — nested rules inherit this layer context.
+      // Register layer names in declaration order if not already present.
+      for (const name of rule.names) {
+        if (name && !ctx.layerOrder.includes(name)) {
+          ctx.layerOrder.push(name);
+        }
+      }
+      const layerName = rule.names.length > 0 ? rule.names[0]! : ctx.currentLayer;
+      const prevLayer = ctx.currentLayer;
+      ctx.currentLayer = layerName;
+      for (const nested of rule.rules) {
+        collectStyleRules(nested, ctx);
+      }
+      ctx.currentLayer = prevLayer;
+      break;
+    }
+    case 'layer-order': {
+      // @layer a, b, c; — declares layer order (names listed first = lowest priority).
+      for (let i = rule.names.length - 1; i >= 0; i--) {
+        const name = rule.names[i]!;
+        if (name && !ctx.layerOrder.includes(name)) {
+          // Insert at beginning so first-declared = lowest index
+          ctx.layerOrder.unshift(name);
+        }
+      }
+      break;
+    }
+    case 'import': {
+      // Evaluate media queries — if they don't match, skip the import entirely.
+      // When the imported stylesheet's rules are available (via network layer),
+      // they will be nested inside this rule. If the media queries match, we
+      // recurse into those nested rules; otherwise we skip.
+      if (rule.mediaQueries.length > 0 &&
+          !evaluateMediaQueries(rule.mediaQueries, ctx.viewport)) {
+        break;
+      }
+      // If the import has pre-resolved rules (embedded or pre-fetched), apply them.
+      const importRules = (rule as any).rules as CssRule[] | undefined;
+      if (importRules) {
+        for (const nested of importRules) {
+          collectStyleRules(nested, ctx);
+        }
+      }
+      break;
+    }
+    // Ignore @font-face, @keyframes, @charset, @namespace, unknown
   }
 }
 
@@ -232,9 +549,13 @@ function expandBorderShorthand(
     }
   }
 
-  result.set('border-width', width);
-  result.set('border-style', style);
-  result.set('border-color', color);
+  // Expand directly to longhand (border-top-*, border-right-*, etc.)
+  const sides = ['border-top', 'border-right', 'border-bottom', 'border-left'];
+  for (const side of sides) {
+    result.set(`${side}-width`, width);
+    result.set(`${side}-style`, style);
+    result.set(`${side}-color`, color);
+  }
   return result;
 }
 
@@ -418,7 +739,6 @@ function expandBackgroundShorthand(value: string): Map<string, string> {
 
 function expandFontShorthand(value: string): Map<string, string> {
   const result = new Map<string, string>();
-  const tokens = splitTokenList(value);
 
   let fontStyle = 'normal';
   let fontVariant = 'normal';
@@ -427,35 +747,85 @@ function expandFontShorthand(value: string): Map<string, string> {
   let lineHeight = 'normal';
   let familyStart = -1;
 
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
+  // Tokenize respecting quoted strings and slashes for line-height
+  const tokens: string[] = [];
+  let i = 0;
+  const trimmed = value.trim();
+  while (i < trimmed.length) {
+    // Skip whitespace
+    while (i < trimmed.length && /\s/.test(trimmed[i]!)) i++;
+    if (i >= trimmed.length) break;
+
+    // Quoted string
+    if (trimmed[i] === '"' || trimmed[i] === "'") {
+      const quote = trimmed[i]!;
+      let token = quote;
+      i++;
+      while (i < trimmed.length && trimmed[i] !== quote) {
+        if (trimmed[i] === '\\') { i++; }
+        if (i < trimmed.length) { token += trimmed[i]!; i++; }
+      }
+      if (i < trimmed.length) { token += trimmed[i]!; i++; } // closing quote
+      tokens.push(token);
+      continue;
+    }
+
+    // Slash (for font-size/line-height)
+    if (trimmed[i] === '/') {
+      tokens.push('/');
+      i++;
+      continue;
+    }
+
+    // Regular token
+    let token = '';
+    while (i < trimmed.length && !/\s/.test(trimmed[i]!) && trimmed[i] !== '/' &&
+           trimmed[i] !== '"' && trimmed[i] !== "'") {
+      token += trimmed[i]!;
+      i++;
+    }
+    if (token) tokens.push(token);
+  }
+
+  for (let j = 0; j < tokens.length; j++) {
+    const t = tokens[j]!;
     if (/^(italic|oblique)$/i.test(t)) {
       fontStyle = t;
     } else if (/^(small-caps)$/i.test(t)) {
       fontVariant = t;
-    } else if (
-      /^(bold|bolder|lighter|[1-9]00)$/i.test(t)
-    ) {
+    } else if (/^(bold|bolder|lighter|[1-9]00)$/i.test(t)) {
       fontWeight = t;
     } else if (
       /^\d/.test(t) ||
-      /^(xx-small|x-small|small|medium|large|x-large|xx-large|larger|smaller)$/i.test(
-        t,
-      )
+      /^(xx-small|x-small|small|medium|large|x-large|xx-large|larger|smaller)$/i.test(t)
     ) {
       fontSize = t;
-      if (tokens[i + 1] === '/') {
-        lineHeight = tokens[i + 2] || 'normal';
-        i += 2;
+      // Check for /line-height
+      if (tokens[j + 1] === '/') {
+        lineHeight = tokens[j + 2] || 'normal';
+        j += 2;
       }
-      familyStart = i + 1;
+      familyStart = j + 1;
       break;
     }
   }
 
   if (familyStart >= 0) {
-    const families = tokens.slice(familyStart).join(' ');
-    result.set('font-family', families);
+    // Join remaining tokens as font-family (handles quoted names and commas)
+    // Don't add space after commas for proper "Arial", sans-serif formatting
+    const familyTokens = tokens.slice(familyStart);
+    let families = '';
+    for (let k = 0; k < familyTokens.length; k++) {
+      const t = familyTokens[k]!;
+      if (t === ',') {
+        families += ', ';
+      } else if (k > 0 && familyTokens[k - 1] !== ',') {
+        families += ' ' + t;
+      } else {
+        families += t;
+      }
+    }
+    result.set('font-family', families.trim());
   }
 
   result.set('font-style', fontStyle);
@@ -638,7 +1008,10 @@ export function getUserAgentDefaults(
 
   switch (tag) {
     case 'body':
-      styles.set('margin', '8px');
+      styles.set('margin-top', '8px');
+      styles.set('margin-right', '8px');
+      styles.set('margin-bottom', '8px');
+      styles.set('margin-left', '8px');
       styles.set('line-height', '1.5');
       break;
 
@@ -771,21 +1144,44 @@ interface CascadeEntry {
   specificity: number;
   sourceOrder: number;
   inlineStyle: boolean;
+  /** Layer index: -1 = unlayered (highest priority), >= 0 = layer declaration order. */
+  layerIndex: number;
+  /** Layer name for revert-layer tracking, or null for unlayered. */
+  layerName: string | null;
 }
 
 /**
  * Takes pre-evaluated rules (already filtered by @media) and an element,
  * returns sorted declarations with specificity metadata (lowest first,
  * inline styles last).
+ *
+ * Layer ordering (CSS Cascading Level 5):
+ *   - Unlayered styles beat all layered styles.
+ *   - Within layers, later-declared layers beat earlier-declared layers.
+ *   - Within the same layer, normal specificity + source order applies.
  */
 export function computeCascade(
   element: StyleableElement,
   rules: readonly CssStyleRule[],
+  layerOrder?: readonly string[],
+  layerMap?: ReadonlyMap<CssStyleRule, string>,
 ): CascadeEntry[] {
   const entries: CascadeEntry[] = [];
 
   for (const rule of rules) {
     if (!matchesSelectorList(element, rule.selectors)) continue;
+
+    // Determine layer index: -1 = unlayered (wins over all layers)
+    let layerIndex = -1;
+    let layerName: string | null = null;
+    if (layerMap) {
+      const ln = layerMap.get(rule);
+      if (ln && layerOrder) {
+        const idx = layerOrder.indexOf(ln);
+        if (idx >= 0) layerIndex = idx;
+        layerName = ln;
+      }
+    }
 
     for (const decl of rule.declarations) {
       entries.push({
@@ -795,17 +1191,28 @@ export function computeCascade(
         specificity: specificityWeight(rule.specificity),
         sourceOrder: rule.sourceOrder,
         inlineStyle: false,
+        layerIndex,
+        layerName,
       });
     }
   }
 
-  // Sort: non-important first, then important. Within each group:
-  //   higher specificity wins → higher source order wins.
-  // We sort ascending and later entries override earlier ones when building
-  // the final map, so the sort order is: lowest specificity first, lowest
-  // source order first, non-important before important.
+  // Sort ascending — later entries override earlier ones.
+  // Order: non-important < important; unlayered (-1) beats layered (>=0);
+  //   within same layer: lower specificity < higher; lower source < higher.
   entries.sort((a, b) => {
     if (a.important !== b.important) return a.important ? 1 : -1;
+    // Unlayered (-1) beats layered (>=0) — unlayered sorts AFTER layered
+    // so it overrides when iterating ascending.
+    if (a.layerIndex !== b.layerIndex) {
+      // Both unlayered: compare normally
+      if (a.layerIndex === -1 && b.layerIndex === -1) return 0;
+      // One unlayered: it wins (sorts later = higher priority)
+      if (a.layerIndex === -1) return 1;
+      if (b.layerIndex === -1) return -1;
+      // Both layered: higher layer index = declared later = higher priority
+      return a.layerIndex - b.layerIndex;
+    }
     if (a.specificity !== b.specificity) return a.specificity - b.specificity;
     if (a.sourceOrder !== b.sourceOrder) return a.sourceOrder - b.sourceOrder;
     if (a.inlineStyle !== b.inlineStyle) return a.inlineStyle ? 1 : -1;
@@ -909,27 +1316,51 @@ export function computeComputedStyles(
 ): Map<string, string> {
   const vp = viewport ?? DEFAULT_VIEWPORT;
 
-  // 1. Collect all matching style rules (flattened through media/supports).
+  // 1. Collect all matching style rules (flattened through media/supports/layers).
   const ctx: CollectContext = {
     viewport: vp,
     rules: [],
     sourceOrder: 0,
+    layerOrder: [],
+    currentLayer: null,
+    layerMap: new Map(),
   };
   for (const rule of stylesheet.rules) {
     collectStyleRules(rule, ctx);
   }
 
-  // 2. Sort via computeCascade (specificity + source order).
-  const cascade = computeCascade(element, ctx.rules);
+  // 2. Sort via computeCascade (specificity + source order + layer order).
+  const cascade = computeCascade(element, ctx.rules, ctx.layerOrder, ctx.layerMap);
 
-  // 3. Expand shorthands in each cascade entry, then build the computed map.
-  const expandedDeclarations: CssDeclaration[] = cascade.map((e) => ({
+  // 3. Build custom properties map early (parent + local --* declarations + inline --*)
+  //    so we can resolve var() BEFORE shorthand expansion.
+  const earlyCustomProps = new Map<string, string>();
+  // Inherit from parent first.
+  if (parentComputed) {
+    for (const [prop, val] of parentComputed) {
+      if (prop.startsWith('--')) earlyCustomProps.set(prop, val);
+    }
+  }
+  // Apply local --* declarations in cascade order (later wins).
+  for (const e of cascade) {
+    if (e.property.startsWith('--')) earlyCustomProps.set(e.property, e.value);
+  }
+  // Also include inline style --* declarations (they override cascade).
+  const styleAttr = element.attributes.get('style');
+  const inlineDecls = styleAttr ? parseInlineDeclarations(styleAttr) : [];
+  for (const d of inlineDecls) {
+    if (d.property.startsWith('--')) earlyCustomProps.set(d.property, d.value);
+  }
+
+  // 4. Resolve var() in all declarations BEFORE shorthand expansion.
+  const resolvedDeclarations: CssDeclaration[] = cascade.map((e) => ({
     property: e.property,
-    value: e.value,
+    value: e.property.startsWith('--') ? e.value : resolveVarReferences(e.value, earlyCustomProps),
     important: e.important,
   }));
 
-  const longhand = expandShorthands(expandedDeclarations);
+  // 5. Expand shorthands (var() already resolved, so multi-token values work).
+  const longhand = expandShorthands(resolvedDeclarations);
 
   const computed = new Map<string, string>();
 
@@ -944,182 +1375,143 @@ export function computeComputedStyles(
     computed.set(decl.property, decl.value);
   }
 
-  // Also re-apply important declarations from the cascade in case
-  // expandShorthands interleaved them. Walk a second pass for importance.
-  // (The ascending sort already places important after non-important so
-  //  later entries in `longhand` will overwrite earlier ones.)
-
-  // Apply inline styles (highest priority after !important)
-  const styleAttr = element.attributes.get('style');
-  if (styleAttr) {
-    const inlineDecls = parseInlineDeclarations(styleAttr);
-    for (const decl of inlineDecls) {
-      computed.set(decl.property.toLowerCase(), decl.value);
+  // Apply inline styles — split into important and non-important.
+  // Per CSS spec, inline !important beats stylesheet !important.
+  if (inlineDecls.length > 0) {
+    // Resolve var() in inline declarations using the custom properties collected so far.
+    const inlineResolved = inlineDecls.map((d) => ({
+      property: d.property,
+      value: d.property.startsWith('--') ? d.value : resolveVarReferences(d.value, earlyCustomProps),
+      important: d.important,
+    }));
+    // Non-important inline styles apply first (override cascade but can be overridden by stylesheet !important)
+    for (const decl of inlineResolved) {
+      if (!decl.important) {
+        computed.set(decl.property.toLowerCase(), decl.value);
+      }
+    }
+    // Re-apply stylesheet !important declarations that should beat non-important inline.
+    for (const decl of longhand) {
+      if (decl.important) {
+        computed.set(decl.property, decl.value);
+      }
+    }
+    // Finally, inline !important wins over everything.
+    for (const decl of inlineResolved) {
+      if (decl.important) {
+        computed.set(decl.property.toLowerCase(), decl.value);
+      }
     }
   }
 
-  // 4. Process CSS-wide keywords (inherit/initial/unset/revert).
+  // 6. Process CSS-wide keywords (inherit/initial/unset/revert).
+  //    Skip custom properties (--*) — they store raw token values, not keywords.
   const kwCtx: KeywordContext = {
     parentComputed: parentComputed ?? null,
     uaDefaults,
+    cascadeEntries: cascade,
+    layerOrder: ctx.layerOrder,
   };
   processCSSWideKeywords(computed, kwCtx);
 
-  // 5. Inheritance from parent.
+  // 7. Inheritance from parent (also inherits custom properties).
   applyInheritance(element, computed, parentComputed ?? null);
 
-  // 6. Set initial values for properties still unset.
+  // Also inherit custom properties (--*) from parent if not set locally.
+  if (parentComputed) {
+    for (const [prop, val] of parentComputed) {
+      if (prop.startsWith('--') && !computed.has(prop)) {
+        computed.set(prop, val);
+      }
+    }
+  }
+
+  // 8. Set initial values for properties still unset.
   setInitialValues(computed);
 
-  // 7. Resolve computed values (named colors → hex, font-size keywords → px, etc.)
+  // 9. Collect custom properties for computed value resolution (var() in inherited values).
+  const customProps = new Map<string, string>();
+  for (const [prop, val] of computed) {
+    if (prop.startsWith('--')) {
+      customProps.set(prop, val);
+    }
+  }
+
+  // 10. Resolve computed values (named colors → hex, font-size keywords → px, etc.)
+  //     var() is already resolved at this point.
   const parentFontSize = resolveParentFontSize(parentComputed);
   const parentFontWeight = resolveParentFontWeight(parentComputed);
-  const resCtx: ResolutionContext = { parentFontSize, parentFontWeight };
+
+  // First pass: resolve color to get the resolved currentcolor value.
+  const colorVal = computed.get('color');
+  if (colorVal !== undefined) {
+    computed.set('color', resolveComputedValue('color', colorVal, { parentFontSize, parentFontWeight, customProperties: customProps }));
+  }
+  const currentColor = computed.get('color') ?? 'canvastext';
+
+  // Second pass: resolve all remaining values with the resolved currentcolor.
+  const resCtx: ResolutionContext = { parentFontSize, parentFontWeight, currentColor, customProperties: customProps };
   resolveAllComputedValues(computed, resCtx);
 
   return computed;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INITIAL VALUES (fallback when nothing matches)
+// INITIAL VALUES — delegated to property-definitions.ts registry
 // ─────────────────────────────────────────────────────────────────────────────
 
 function setInitialValues(computed: Map<string, string>): void {
-  // Property-initials from the authoritative registry in property-definitions.ts.
-  // This covers ~120 CSS properties. Any property not in the registry gets
-  // `initial` as a fallback.
-  const PROPERTY_INITIALS: Array<[string, string]> = [
-    ['display', 'inline'],
-    ['position', 'static'],
-    ['float', 'none'],
-    ['clear', 'none'],
-    ['box-sizing', 'content-box'],
-    ['width', 'auto'],
-    ['height', 'auto'],
-    ['min-width', 'auto'],
-    ['min-height', 'auto'],
-    ['max-width', 'none'],
-    ['max-height', 'none'],
-    ['margin-top', '0'],
-    ['margin-right', '0'],
-    ['margin-bottom', '0'],
-    ['margin-left', '0'],
-    ['padding-top', '0'],
-    ['padding-right', '0'],
-    ['padding-bottom', '0'],
-    ['padding-left', '0'],
-    ['border-top-width', 'medium'],
-    ['border-right-width', 'medium'],
-    ['border-bottom-width', 'medium'],
-    ['border-left-width', 'medium'],
-    ['border-top-style', 'none'],
-    ['border-right-style', 'none'],
-    ['border-bottom-style', 'none'],
-    ['border-left-style', 'none'],
-    ['border-top-color', 'currentcolor'],
-    ['border-right-color', 'currentcolor'],
-    ['border-bottom-color', 'currentcolor'],
-    ['border-left-color', 'currentcolor'],
-    ['border-top-left-radius', '0'],
-    ['border-top-right-radius', '0'],
-    ['border-bottom-right-radius', '0'],
-    ['border-bottom-left-radius', '0'],
-    ['border-collapse', 'separate'],
-    ['border-spacing', '0'],
-    ['top', 'auto'],
-    ['right', 'auto'],
-    ['bottom', 'auto'],
-    ['left', 'auto'],
-    ['z-index', 'auto'],
-    ['overflow', 'visible'],
-    ['overflow-x', 'visible'],
-    ['overflow-y', 'visible'],
-    ['overflow-wrap', 'normal'],
-    ['word-break', 'normal'],
-    ['visibility', 'visible'],
-    ['opacity', '1'],
-    ['color', 'canvastext'],
-    ['background-color', 'transparent'],
-    ['background-image', 'none'],
-    ['background-repeat', 'repeat'],
-    ['background-attachment', 'scroll'],
-    ['background-position', '0% 0%'],
-    ['background-size', 'auto'],
-    ['font-family', 'sans-serif'],
-    ['font-size', 'medium'],
-    ['font-weight', 'normal'],
-    ['font-style', 'normal'],
-    ['font-variant', 'normal'],
-    ['line-height', 'normal'],
-    ['letter-spacing', 'normal'],
-    ['word-spacing', 'normal'],
-    ['text-align', 'start'],
-    ['text-align-last', 'auto'],
-    ['text-decoration', 'none solid currentcolor'],
-    ['text-decoration-line', 'none'],
-    ['text-decoration-style', 'solid'],
-    ['text-decoration-color', 'currentcolor'],
-    ['text-transform', 'none'],
-    ['text-indent', '0'],
-    ['text-shadow', 'none'],
-    ['white-space', 'normal'],
-    ['direction', 'ltr'],
-    ['writing-mode', 'horizontal-tb'],
-    ['tab-size', '8'],
-    ['hyphens', 'manual'],
-    ['cursor', 'auto'],
-    ['color-scheme', 'normal'],
-    ['accent-color', 'auto'],
-    ['list-style-type', 'disc'],
-    ['list-style-position', 'outside'],
-    ['list-style-image', 'none'],
-    ['caption-side', 'top'],
-    ['empty-cells', 'show'],
-    ['table-layout', 'auto'],
-    ['vertical-align', 'baseline'],
-    ['flex-direction', 'row'],
-    ['flex-wrap', 'nowrap'],
-    ['flex-grow', '0'],
-    ['flex-shrink', '1'],
-    ['flex-basis', 'auto'],
-    ['order', '0'],
-    ['justify-content', 'stretch'],
-    ['align-items', 'stretch'],
-    ['align-self', 'auto'],
-    ['align-content', 'stretch'],
-    ['gap', 'normal'],
-    ['row-gap', 'normal'],
-    ['column-gap', 'normal'],
-    ['grid-template-columns', 'none'],
-    ['grid-template-rows', 'none'],
-    ['grid-template-areas', 'none'],
-    ['grid-auto-columns', 'auto'],
-    ['grid-auto-rows', 'auto'],
-    ['grid-auto-flow', 'row'],
-    ['grid-column', 'auto'],
-    ['grid-row', 'auto'],
-    ['transform', 'none'],
-    ['transform-origin', '50% 50%'],
-    ['transition-property', 'all'],
-    ['transition-duration', '0s'],
-    ['transition-timing-function', 'ease'],
-    ['transition-delay', '0s'],
-    ['content', 'normal'],
-    ['resize', 'none'],
-    ['outline-width', 'medium'],
-    ['outline-style', 'none'],
-    ['outline-color', 'auto'],
-    ['box-shadow', 'none'],
-    ['clip-path', 'none'],
-    ['filter', 'none'],
-    ['orphans', '2'],
-    ['widows', '2'],
-    ['quotes', 'auto'],
+  // Walk the computed map and fill in missing properties with their
+  // CSS-spec initial values from the authoritative registry.
+  // We iterate a snapshot of keys to avoid mutating during iteration.
+  const keys = [...computed.keys()];
+  for (const prop of keys) {
+    // Already set — skip
+  }
+
+  // Also set any well-known properties that aren't in the computed map yet.
+  // This ensures every property in the registry has a value after this step.
+  const ALL_PROPERTIES = [
+    'display', 'position', 'float', 'clear', 'box-sizing',
+    'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
+    'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+    'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+    'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
+    'border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style',
+    'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
+    'border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius',
+    'border-collapse', 'border-spacing',
+    'top', 'right', 'bottom', 'left', 'z-index',
+    'overflow', 'overflow-x', 'overflow-y', 'overflow-wrap', 'word-break',
+    'visibility', 'opacity',
+    'color', 'background-color', 'background-image', 'background-repeat',
+    'background-attachment', 'background-position', 'background-size',
+    'font-family', 'font-size', 'font-weight', 'font-style', 'font-variant',
+    'line-height', 'letter-spacing', 'word-spacing',
+    'text-align', 'text-align-last', 'text-decoration', 'text-decoration-line',
+    'text-decoration-style', 'text-decoration-color',
+    'text-transform', 'text-indent', 'text-shadow',
+    'white-space', 'direction', 'writing-mode',
+    'tab-size', 'hyphens', 'cursor', 'color-scheme', 'accent-color',
+    'list-style-type', 'list-style-position', 'list-style-image',
+    'caption-side', 'empty-cells', 'table-layout', 'vertical-align',
+    'flex-direction', 'flex-wrap', 'flex-grow', 'flex-shrink', 'flex-basis',
+    'order', 'justify-content', 'align-items', 'align-self', 'align-content',
+    'gap', 'row-gap', 'column-gap',
+    'grid-template-columns', 'grid-template-rows', 'grid-template-areas',
+    'grid-auto-columns', 'grid-auto-rows', 'grid-auto-flow',
+    'grid-column', 'grid-row',
+    'transform', 'transform-origin',
+    'transition-property', 'transition-duration', 'transition-timing-function', 'transition-delay',
+    'content', 'resize',
+    'outline-width', 'outline-style', 'outline-color',
+    'box-shadow', 'clip-path', 'filter',
+    'orphans', 'widows', 'quotes',
   ];
 
-  for (const [prop, val] of PROPERTY_INITIALS) {
+  for (const prop of ALL_PROPERTIES) {
     if (!computed.has(prop)) {
-      computed.set(prop, val);
+      computed.set(prop, getInitialValue(prop));
     }
   }
 }

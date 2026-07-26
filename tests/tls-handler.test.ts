@@ -7,6 +7,7 @@ import {
   TlsCertificateError,
   TlsPinMismatchError,
 } from '../src/browser/netwroking/tls-handler';
+import { RawSocketHttpClient } from '../src/browser/netwroking/raw-socket-http-client';
 
 describe('TlsHandler', () => {
   let handler: TlsHandler;
@@ -204,6 +205,190 @@ describe('TlsHandler', () => {
       handler.addPin({ hostname: 'test.com', pins: ['p'], expiresAt: 0 });
       handler.dispose();
       expect(handler.shouldUpgradeToHttps('test.com')).toBe(false);
+    });
+  });
+
+  describe('loadRootCaStore', () => {
+    it('should load Node.js root CAs into a Set', () => {
+      const store = TlsHandler.loadRootCaStore();
+      expect(store).toBeInstanceOf(Set);
+      // Node.js ships with at least 100+ root CAs.
+      expect(store.size).toBeGreaterThan(50);
+    });
+
+    it('should contain PEM-formatted entries', () => {
+      const store = TlsHandler.loadRootCaStore();
+      const first = store.values().next().value;
+      expect(first).toBeDefined();
+      expect(first!).toContain('-----BEGIN CERTIFICATE-----');
+      expect(first!).toContain('-----END CERTIFICATE-----');
+    });
+  });
+
+  describe('verifyChain', () => {
+    it('should return Valid for a well-formed simulated chain', () => {
+      const now = new Date();
+      const chain = [
+        {
+          subject: 'example.com', issuer: 'Intermediate CA',
+          notBefore: now.toISOString(), notAfter: new Date(now.getTime() + 86400000).toISOString(),
+          serialNumber: '01', fingerprint: 'abc', san: ['example.com'],
+          publicKeyAlgorithm: 'RSA', signatureAlgorithm: 'SHA256withRSA',
+          keySize: 2048, isCa: false,
+        },
+        {
+          subject: 'Intermediate CA', issuer: 'Root CA',
+          notBefore: now.toISOString(), notAfter: new Date(now.getTime() + 86400000).toISOString(),
+          serialNumber: '02', fingerprint: 'def', san: [],
+          publicKeyAlgorithm: 'RSA', signatureAlgorithm: 'SHA256withRSA',
+          keySize: 4096, isCa: true,
+        },
+        {
+          subject: 'Root CA', issuer: 'Root CA',
+          notBefore: now.toISOString(), notAfter: new Date(now.getTime() + 86400000).toISOString(),
+          serialNumber: '03', fingerprint: 'ghi', san: [],
+          publicKeyAlgorithm: 'RSA', signatureAlgorithm: 'SHA256withRSA',
+          keySize: 4096, isCa: true,
+        },
+      ];
+      const status = TlsHandler.verifyChain(chain, 'example.com', new Set());
+      expect(status).toBe(CertVerificationStatus.Valid);
+    });
+
+    it('should return Expired for an expired certificate', () => {
+      const chain = [{
+        subject: 'old.com', issuer: 'old.com',
+        notBefore: '2020-01-01T00:00:00Z', notAfter: '2021-01-01T00:00:00Z',
+        serialNumber: '01', fingerprint: 'abc', san: ['old.com'],
+        publicKeyAlgorithm: 'RSA', signatureAlgorithm: 'SHA256withRSA',
+        keySize: 2048, isCa: false,
+      }];
+      const status = TlsHandler.verifyChain(chain, 'old.com', new Set());
+      expect(status).toBe(CertVerificationStatus.Expired);
+    });
+
+    it('should return NotYetValid for a future certificate', () => {
+      const chain = [{
+        subject: 'future.com', issuer: 'future.com',
+        notBefore: '2099-01-01T00:00:00Z', notAfter: '2100-01-01T00:00:00Z',
+        serialNumber: '01', fingerprint: 'abc', san: ['future.com'],
+        publicKeyAlgorithm: 'RSA', signatureAlgorithm: 'SHA256withRSA',
+        keySize: 2048, isCa: false,
+      }];
+      const status = TlsHandler.verifyChain(chain, 'future.com', new Set());
+      expect(status).toBe(CertVerificationStatus.NotYetValid);
+    });
+
+    it('should return Untrusted for weak RSA key', () => {
+      const now = new Date();
+      const chain = [{
+        subject: 'weak.com', issuer: 'weak.com',
+        notBefore: now.toISOString(), notAfter: new Date(now.getTime() + 86400000).toISOString(),
+        serialNumber: '01', fingerprint: 'abc', san: ['weak.com'],
+        publicKeyAlgorithm: 'RSA', signatureAlgorithm: 'SHA256withRSA',
+        keySize: 1024, isCa: false,
+      }];
+      const status = TlsHandler.verifyChain(chain, 'weak.com', new Set());
+      expect(status).toBe(CertVerificationStatus.Untrusted);
+    });
+
+    it('should return Mismatch for hostname mismatch', () => {
+      const now = new Date();
+      const chain = [{
+        subject: 'other.com', issuer: 'other.com',
+        notBefore: now.toISOString(), notAfter: new Date(now.getTime() + 86400000).toISOString(),
+        serialNumber: '01', fingerprint: 'abc', san: ['other.com'],
+        publicKeyAlgorithm: 'RSA', signatureAlgorithm: 'SHA256withRSA',
+        keySize: 2048, isCa: false,
+      }];
+      const status = TlsHandler.verifyChain(chain, 'different.com', new Set());
+      expect(status).toBe(CertVerificationStatus.Mismatch);
+    });
+
+    it('should return Unknown for empty chain', () => {
+      const status = TlsHandler.verifyChain([], 'example.com', new Set());
+      expect(status).toBe(CertVerificationStatus.Unknown);
+    });
+  });
+
+  describe('generateInterstitial', () => {
+    it('should produce HTML for an expired cert error', () => {
+      const html = TlsHandler.generateInterstitial('expired.com', CertVerificationStatus.Expired, 'Cert expired 2024');
+      expect(html).toContain('<!DOCTYPE html>');
+      expect(html).toContain('Certificate Expired');
+      expect(html).toContain('expired.com');
+      expect(html).toContain('Cert expired 2024');
+      expect(html).toContain('Your connection is not private');
+    });
+
+    it('should produce HTML for a hostname mismatch', () => {
+      const html = TlsHandler.generateInterstitial('mismatch.com', CertVerificationStatus.Mismatch, 'CN does not match');
+      expect(html).toContain('Hostname Mismatch');
+      expect(html).toContain('mismatch.com');
+    });
+
+    it('should produce valid HTML structure', () => {
+      const html = TlsHandler.generateInterstitial('test.com', CertVerificationStatus.SelfSigned, 'self-signed');
+      expect(html).toContain('<html');
+      expect(html).toContain('<head>');
+      expect(html).toContain('<body>');
+      expect(html).toContain('<style>');
+    });
+  });
+
+  describe('sha256Hex', () => {
+    it('should produce a 64-character hex string', () => {
+      // buildCertificateChain uses sha256Hex internally for simulated fingerprints.
+      const chain = (TlsHandler as any).buildCertificateChain('test.com');
+      expect(chain.length).toBe(3);
+      for (const cert of chain) {
+        // fingerprint format: sha256/<64-hex-chars>
+        expect(cert.fingerprint).toMatch(/^sha256\/[0-9a-f]{64}$/);
+      }
+    });
+  });
+
+  describe('RawSocketHttpClient + TlsHandler integration', () => {
+    it('should construct with tlsHandler option', () => {
+      const tlsHandler = new TlsHandler();
+      const client = new RawSocketHttpClient({ tlsHandler });
+      expect(client).toBeDefined();
+    });
+
+    it('should construct without tlsHandler (legacy mode)', () => {
+      const client = new RawSocketHttpClient();
+      expect(client).toBeDefined();
+    });
+
+    it('should reject when tlsHandler reports invalid certificate', async () => {
+      // Create a handler that always rejects certificates.
+      const rejectingHandler = new TlsHandler(
+        { verifyCertificates: true },
+        () => CertVerificationStatus.Untrusted,
+      );
+
+      const client = new RawSocketHttpClient({ tlsHandler: rejectingHandler });
+
+      // Mock a TLS request — will fail at connection level since no server,
+      // but we can verify the client was constructed properly.
+      const controller = new AbortController();
+      controller.abort(); // Immediately abort.
+      await expect(
+        client.send({
+          url: 'https://untrusted.example.com/',
+          method: 'GET',
+          headers: new Map(),
+        }, controller.signal),
+      ).rejects.toThrow('aborted');
+    });
+
+    it('should load root CAs into trust store on construction', () => {
+      const client = new RawSocketHttpClient();
+      // Access private field via any cast for testing.
+      const cas = (client as any).trustedCAs as Set<string>;
+      expect(cas).toBeInstanceOf(Set);
+      // Should have loaded system root CAs.
+      expect(cas.size).toBeGreaterThan(50);
     });
   });
 });

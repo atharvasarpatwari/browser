@@ -8,6 +8,7 @@ import type { ITrackerBlocker } from '../security/tracker-blocker';
 import type { ICacheManager } from './cache-manager';
 import type { ICorsEngine, CorsRequest } from '../security/cors';
 import { CorsMode, CorsCredentials, CorsBlockedError, CorsViolationError } from '../security/cors';
+import { parseOrigin, isSameOrigin, isSameSite } from '../security/origin-service';
 import { PriorityQueue } from './priority-queue';
 import { BandwidthEstimator } from './bandwidth-estimator';
 
@@ -251,6 +252,50 @@ class ResourceLoader implements IResourceLoader {
             };
           }
           throw err;
+        }
+      }
+
+      // ── CORP (Cross-Origin-Resource-Policy) enforcement ──────────────────
+      if (this.pageOrigin) {
+        const corp = res.headers.get('cross-origin-resource-policy') ?? '';
+        const requestOrigin = parseOrigin(url, this.pageOrigin);
+        const isCrossOrigin = requestOrigin !== this.pageOrigin;
+
+        if (isCrossOrigin && corp) {
+          const corpValue = corp.trim().toLowerCase();
+          if (corpValue === 'same-origin') {
+            this.releaseSlot();
+            return {
+              url,
+              kind: _kind,
+              statusCode: 0,
+              contentType: '',
+              body: '',
+              bodyBinary: null,
+              headers: new Map(),
+              loadedAt: Date.now(),
+              durationMs: Date.now() - start,
+              fromCache: false,
+              error: `CORP violation: resource requires same-origin access but request is cross-origin`,
+            };
+          }
+          if (corpValue === 'same-site' && !isSameSite(this.pageOrigin, requestOrigin)) {
+            this.releaseSlot();
+            return {
+              url,
+              kind: _kind,
+              statusCode: 0,
+              contentType: '',
+              body: '',
+              bodyBinary: null,
+              headers: new Map(),
+              loadedAt: Date.now(),
+              durationMs: Date.now() - start,
+              fromCache: false,
+              error: `CORP violation: resource requires same-site access but request is cross-site`,
+            };
+          }
+          // 'cross-origin' value explicitly allows cross-origin access
         }
       }
 

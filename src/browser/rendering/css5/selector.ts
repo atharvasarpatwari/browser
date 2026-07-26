@@ -185,6 +185,7 @@ function matchesPseudoClass(element: SelectableElement, pseudo: CssPseudoClassSe
       return !matchesSelectorList(element, pseudo.selectors);
     case 'is':
     case 'any':
+    case 'where':
       return matchesSelectorList(element, pseudo.selectors);
     case 'has':
       return matchesHasPseudoClass(element, pseudo.selectors);

@@ -267,3 +267,68 @@ describe('CSS-Wide Keywords — Batch Processing', () => {
     expect(computed.size).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESOLUTION — revert-layer with layer tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('CSS-Wide Keywords — revert-layer with layers', () => {
+  it('revert-layer uses previous layer value', () => {
+    const ctx: KeywordContext = {
+      parentComputed: null,
+      uaDefaults: new Map([['color', '#000000']]),
+      cascadeEntries: [
+        { property: 'color', value: 'red', important: false, layerIndex: 0, layerName: 'base', sourceOrder: 1 },
+        { property: 'color', value: 'blue', important: false, layerIndex: 1, layerName: 'utilities', sourceOrder: 2 },
+      ],
+      layerOrder: ['base', 'utilities'],
+    };
+    // The second entry (blue, layer 1) uses revert-layer, should get red (layer 0)
+    expect(resolveCSSWideKeyword('color', 'revert-layer', ctx)).toBe('red');
+  });
+
+  it('revert-layer in first layer falls back to UA', () => {
+    const ctx: KeywordContext = {
+      parentComputed: null,
+      uaDefaults: new Map([['color', '#000000']]),
+      cascadeEntries: [
+        { property: 'color', value: 'red', important: false, layerIndex: 0, layerName: 'base', sourceOrder: 1 },
+      ],
+      layerOrder: ['base'],
+    };
+    expect(resolveCSSWideKeyword('color', 'revert-layer', ctx)).toBe('#000000');
+  });
+
+  it('revert-layer with no cascade entries falls back to UA', () => {
+    const ctx: KeywordContext = {
+      parentComputed: null,
+      uaDefaults: new Map([['display', 'block']]),
+      cascadeEntries: [],
+      layerOrder: [],
+    };
+    expect(resolveCSSWideKeyword('display', 'revert-layer', ctx)).toBe('block');
+  });
+
+  it('revert-layer without layer context falls back to revert behavior', () => {
+    const ctx: KeywordContext = {
+      parentComputed: null,
+      uaDefaults: new Map([['margin', '8px']]),
+    };
+    expect(resolveCSSWideKeyword('margin', 'revert-layer', ctx)).toBe('8px');
+  });
+
+  it('revert-layer across three layers', () => {
+    const ctx: KeywordContext = {
+      parentComputed: null,
+      uaDefaults: new Map([['color', '#000000']]),
+      cascadeEntries: [
+        { property: 'color', value: 'red', important: false, layerIndex: 0, layerName: 'base', sourceOrder: 1 },
+        { property: 'color', value: 'green', important: false, layerIndex: 1, layerName: 'mid', sourceOrder: 2 },
+        { property: 'color', value: 'blue', important: false, layerIndex: 2, layerName: 'top', sourceOrder: 3 },
+      ],
+      layerOrder: ['base', 'mid', 'top'],
+    };
+    // From top layer, revert-layer should use mid layer's value
+    expect(resolveCSSWideKeyword('color', 'revert-layer', ctx)).toBe('green');
+  });
+});

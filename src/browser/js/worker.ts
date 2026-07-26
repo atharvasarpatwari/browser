@@ -30,6 +30,7 @@ import {
   createHeadersClass, createResponseClass, createRequestClass,
   createAbortControllerClass, createFetchFn,
 } from './fetch-api';
+import { createPromiseConstructor } from './promise';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -231,6 +232,9 @@ export class Worker {
       if (typeof args[0] === 'object' && args[0] !== null) return args[0];
       return createObject(null);
     }));
+
+    // Promise
+    env.setLocal('Promise', createPromiseConstructor(this.eventLoop));
 
     for (const name of ['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError']) {
       env.setLocal(name, createNativeFunction(name, (_this, args) => {

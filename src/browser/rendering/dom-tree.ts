@@ -96,6 +96,7 @@ interface IDomTree extends IDisposable {
   getNodeById(domId: string): DomNode | null;
   getElementById(id: string): DomElement | null;
   getElementsByTagName(tagName: string): readonly DomElement[];
+  getElementsByClassName(names: string): readonly DomElement[];
   querySelector(selector: string): DomElement | null;
   querySelectorAll(selector: string): readonly DomElement[];
   insertBefore(parent: DomElement, newChild: DomNode, referenceChild: DomNode | null): void;
@@ -114,6 +115,12 @@ interface IDomTree extends IDisposable {
   clearDirty(node: DomNode, kind: 'layout' | 'paint'): void;
   clearSubtreeDirty(node: DomNode, kind: 'layout' | 'paint'): void;
   getDocument(): DomDocument | null;
+  /** WHATWG DOM § 4 — parentElement: parent if it's an Element, else null */
+  getParentElement(node: DomNode): DomElement | null;
+  /** WHATWG DOM § 4 — ownerDocument: the Document that owns this node */
+  getOwnerDocument(node: DomNode): DomDocument | null;
+  /** WHATWG DOM § 4 — isConnected: whether node is connected to a document */
+  isConnected(node: DomNode): boolean;
 }
 
 let _domNodeSeq = 0;
@@ -202,6 +209,30 @@ class DomTree implements IDomTree {
     return [...this.nodeIndex.values()].filter(
       (n): n is DomElement => n.nodeType === 'element' && (n as DomElement).tagName === lower,
     );
+  }
+
+  getElementsByClassName(names: string): readonly DomElement[] {
+    const tokens = names.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return [];
+    const root = this.document?.bodyElement ?? this.document?.htmlElement;
+    if (!root) return [];
+    const result: DomElement[] = [];
+    const queue: DomNode[] = [root];
+    while (queue.length > 0) {
+      const node = queue.shift()!;
+      if (node.nodeType === 'element') {
+        const el = node as DomElement;
+        const classAttr = el.attributes.get('class') ?? '';
+        const classSet = new Set(classAttr.split(/\s+/));
+        if (tokens.every(t => classSet.has(t))) {
+          result.push(el);
+        }
+      }
+      for (const child of node.children) {
+        queue.push(child);
+      }
+    }
+    return result;
   }
 
   querySelector(selector: string): DomElement | null {
@@ -371,6 +402,35 @@ class DomTree implements IDomTree {
 
   getDocument(): DomDocument | null {
     return this.document;
+  }
+
+  /** WHATWG DOM § 4.2 — parentElement: the parent if it's an Element, else null */
+  getParentElement(node: DomNode): DomElement | null {
+    const p = node.parent;
+    if (p && p.nodeType === 'element') return p as DomElement;
+    return null;
+  }
+
+  /** WHATWG DOM § 4.2 — ownerDocument: the Document that owns this node, or null for Documents */
+  getOwnerDocument(node: DomNode): DomDocument | null {
+    if (node.nodeType === 'document') return null;
+    let current: DomNode | null = node;
+    while (current) {
+      if (current.nodeType === 'document') return current as DomDocument;
+      current = current.parent;
+    }
+    return null;
+  }
+
+  /** WHATWG DOM § 4.2 — isConnected: whether the node is connected to a document */
+  isConnected(node: DomNode): boolean {
+    if (node.nodeType === 'document') return true;
+    let current: DomNode | null = node;
+    while (current) {
+      if (current.nodeType === 'document') return true;
+      current = current.parent;
+    }
+    return false;
   }
 
   private convertDocument(htmlDoc: HtmlDocument): DomDocument {

@@ -1,0 +1,74 @@
+{
+  "_type": "nova-analytics-backup",
+  "exportedAt": "2026-07-26T04:30:55.781Z",
+  "todos": [
+    {
+      "id": 1,
+      "text": "LocalStorage/SessionStorage/IndexedDB",
+      "image": null,
+      "done": false
+    },
+    {
+      "id": 2,
+      "text": "WebSockets",
+      "image": null,
+      "done": false
+    },
+    {
+      "id": 3,
+      "text": "Web Workers",
+      "image": null,
+      "done": false
+    },
+    {
+      "id": 4,
+      "text": "Geolocation, notifications, etc. (optional)",
+      "image": null,
+      "done": true
+    },
+    {
+      "id": 5,
+      "text": "Same-origin policy",
+      "image": null,
+      "done": false
+    },
+    {
+      "id": 6,
+      "text": "Sandboxing/process isolation",
+      "image": null,
+      "done": false
+    },
+    {
+      "id": 7,
+      "text": "XSS/injection mitigations",
+      "image": null,
+      "done": false
+    },
+    {
+      "id": 8,
+      "text": "Certificate validation",
+      "image": null,
+      "done": false
+    },
+    {
+      "id": 9,
+      "text": "Multi-process vs single-process design",
+      "image": null,
+      "done": true
+    },
+    {
+      "id": 10,
+      "text": "IPC (inter-process communication)",
+      "image": null,
+      "done": false
+    },
+    {
+      "id": 11,
+      "text": "WHATWG/W3C spec adherence",
+      "image": null,
+      "done": false
+    }
+  ],
+  "favorites": [],
+  "notes": {}
+}

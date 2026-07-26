@@ -2,12 +2,22 @@ import type { JSValue, JSObject, JSFunction } from './values';
 import { createObject, createNativeFunction, toString, toNumber, toBoolean } from './values';
 import type { EventLoop } from './event-loop';
 import { createEventDispatcher, fireEvent, clearEventListeners } from './xhr-bindings';
+import type { ICorsEngine, CorsRequest } from '../security/cors';
+import { CorsMode, CorsCredentials } from '../security/cors';
+import { parseOrigin } from '../security/origin-service';
 
 const UNSENT = 0;
 const OPENED = 1;
 const HEADERS_RECEIVED = 2;
 const LOADING = 3;
 const DONE = 4;
+
+/** Headers that XHR must block per the Fetch Standard. */
+const XHR_RESTRICTED_HEADERS = new Set([
+  'host', 'content-length', 'connection', 'transfer-encoding',
+  'keep-alive', 'upgrade', 'te', 'trailer', 'proxy-authorization',
+  'proxy-connection',
+]);
 
 interface XhrState {
   readyState: number;
@@ -26,6 +36,7 @@ interface XhrState {
   aborted: boolean;
   sendFlag: boolean;
   mimeTypeOverride: string | null;
+  pageOrigin: string;
 }
 
 const xhrStates = new WeakMap<JSObject, XhrState>();
@@ -48,7 +59,7 @@ function formatResponseHeaders(headers: Map<string, string>): string {
   return lines.sort().join('\r\n');
 }
 
-function buildXhrInstance(eventLoop: EventLoop): JSObject {
+function buildXhrInstance(eventLoop: EventLoop, corsEngine?: ICorsEngine, pageOrigin?: string): JSObject {
   const obj = createObject(null);
   const state: XhrState = {
     readyState: UNSENT,
@@ -67,6 +78,7 @@ function buildXhrInstance(eventLoop: EventLoop): JSObject {
     aborted: false,
     sendFlag: false,
     mimeTypeOverride: null,
+    pageOrigin: pageOrigin ?? '',
   };
   xhrStates.set(obj, state);
   createEventDispatcher(obj);
@@ -134,6 +146,10 @@ function buildXhrInstance(eventLoop: EventLoop): JSObject {
     }
     const name = toString(args[0] ?? '');
     const value = toString(args[1] ?? '');
+    // Block restricted headers per Fetch Standard
+    if (XHR_RESTRICTED_HEADERS.has(name.toLowerCase())) {
+      throw new TypeError(`Refused to set unsafe header '${name}'`);
+    }
     state.requestHeaders.set(name.toLowerCase(), value);
     return undefined;
   }));
@@ -156,6 +172,48 @@ function buildXhrInstance(eventLoop: EventLoop): JSObject {
     const headersObj: Record<string, string> = {};
     for (const [k, v] of state.requestHeaders) headersObj[k] = v;
 
+    // ── CORS pre-request check ──────────────────────────────────────────
+    let isOpaque = false;
+    const requestOrigin = parseOrigin(state.url, state.pageOrigin);
+    const isCrossOrigin = state.pageOrigin && requestOrigin !== state.pageOrigin;
+
+    if (corsEngine && isCrossOrigin) {
+      const credentials = state.withCredentials ? CorsCredentials.Include : CorsCredentials.SameOrigin;
+      const corsReq: CorsRequest = {
+        url: state.url,
+        origin: state.pageOrigin,
+        method: state.method,
+        headers: new Map(Object.entries(headersObj).map(([k, v]) => [k.toLowerCase(), v])),
+        mode: CorsMode.Cors,
+        credentials,
+      };
+      try {
+        const preCheck = corsEngine.checkRequest(corsReq);
+        // Inject CORS request headers
+        for (const [k, v] of preCheck.requestHeaders) {
+          headersObj[k] = v;
+        }
+        if (preCheck.decision === 'opaque') {
+          isOpaque = true;
+        }
+      } catch {
+        // CORS blocked — fire error
+        state.status = 0;
+        state.statusText = '';
+        obj.properties.set('status', { value: 0, writable: false, enumerable: true, configurable: true });
+        obj.properties.set('statusText', { value: '', writable: false, enumerable: true, configurable: true });
+        setReadyState(obj, state, DONE);
+        fireEvent(obj, 'error');
+        fireEvent(obj, 'loadend');
+        return undefined;
+      }
+    } else if (isCrossOrigin) {
+      // No CORS engine — inject Origin header for best-effort
+      if (!headersObj['origin']) {
+        headersObj['origin'] = state.pageOrigin;
+      }
+    }
+
     const fetchInit: Record<string, unknown> = {
       method: state.method,
       headers: headersObj,
@@ -174,6 +232,34 @@ function buildXhrInstance(eventLoop: EventLoop): JSObject {
         obj.properties.set('status', { value: state.status, writable: false, enumerable: true, configurable: true });
         obj.properties.set('statusText', { value: state.statusText, writable: false, enumerable: true, configurable: true });
 
+        // ── CORS post-response check ──────────────────────────────────
+        if (corsEngine && isCrossOrigin && !isOpaque) {
+          const credentials = state.withCredentials ? CorsCredentials.Include : CorsCredentials.SameOrigin;
+          const corsReq: CorsRequest = {
+            url: state.url,
+            origin: state.pageOrigin,
+            method: state.method,
+            headers: new Map(Object.entries(headersObj).map(([k, v]) => [k.toLowerCase(), v])),
+            mode: CorsMode.Cors,
+            credentials,
+          };
+          const resHeadersMap = new Map<string, string>();
+          response.headers.forEach((value: string, key: string) => {
+            resHeadersMap.set(key.toLowerCase(), value);
+          });
+          try {
+            corsEngine.checkResponse(corsReq, {
+              statusCode: response.status,
+              statusText: response.statusText,
+              headers: resHeadersMap,
+              body: '',
+            });
+          } catch {
+            // CORS violation — make response opaque
+            isOpaque = true;
+          }
+        }
+
         response.headers.forEach((value: string, key: string) => {
           state.responseHeaders.set(key.toLowerCase(), value);
         });
@@ -183,10 +269,18 @@ function buildXhrInstance(eventLoop: EventLoop): JSObject {
         const text = await response.text();
         if (state.aborted) return;
 
-        state.responseText = text;
-        state.response = text;
-        obj.properties.set('responseText', { value: text, writable: false, enumerable: true, configurable: true });
-        obj.properties.set('response', { value: text, writable: false, enumerable: true, configurable: true });
+        // If opaque, hide body from script
+        if (isOpaque) {
+          state.responseText = '';
+          state.response = '';
+          obj.properties.set('responseText', { value: '', writable: false, enumerable: true, configurable: true });
+          obj.properties.set('response', { value: '', writable: false, enumerable: true, configurable: true });
+        } else {
+          state.responseText = text;
+          state.response = text;
+          obj.properties.set('responseText', { value: text, writable: false, enumerable: true, configurable: true });
+          obj.properties.set('response', { value: text, writable: false, enumerable: true, configurable: true });
+        }
 
         setReadyState(obj, state, LOADING);
         setReadyState(obj, state, DONE);
@@ -261,19 +355,19 @@ function buildXhrInstance(eventLoop: EventLoop): JSObject {
   return obj;
 }
 
-export function createXMLHttpRequestClass(eventLoop: EventLoop): JSObject {
+export function createXMLHttpRequestClass(eventLoop: EventLoop, corsEngine?: ICorsEngine, pageOrigin?: string): JSObject {
   const ctor = createObject(null);
   ctor.properties.set('callable', { value: true, writable: false, enumerable: false, configurable: false });
 
   ctor.properties.set('nativeFn', {
     value: createNativeFunction('XMLHttpRequest', (_this, _args) => {
-      return buildXhrInstance(eventLoop);
+      return buildXhrInstance(eventLoop, corsEngine, pageOrigin);
     }),
     writable: false, enumerable: false, configurable: false,
   });
 
   ctor.properties.set('prototype', {
-    value: buildXhrInstance(eventLoop),
+    value: buildXhrInstance(eventLoop, corsEngine, pageOrigin),
     writable: false, enumerable: false, configurable: false,
   });
 

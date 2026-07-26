@@ -66,6 +66,8 @@ import { ResourcePrioritizer } from '../browser/netwroking/resource-prioritizer'
 import { Firewall, applyBaselineRules } from '../browser/netwroking/firewall';
 import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from '../browser/netwroking/networking-setup';
 import { RawSocketHttpClient } from '../browser/netwroking/raw-socket-http-client';
+import { TlsHandler } from '../browser/netwroking/tls-handler';
+import type { ITlsHandler } from '../browser/netwroking/tls-handler';
 
 // Security
 import { CertificateValidator } from '../browser/security/certificate-validator';
@@ -155,6 +157,7 @@ const Tokens = Object.freeze({
   ResourceLoader: Symbol('ResourceLoader'),
   CacheManager: Symbol('CacheManager'),
   CertificateValidator: Symbol('CertificateValidator'),
+  TlsHandler: Symbol('TlsHandler'),
   SandboxManager: Symbol('SandboxManager'),
   PermissionManager: Symbol('PermissionManager'),
   TrackerBlocker: Symbol('TrackerBlocker'),
@@ -379,11 +382,18 @@ class ApplicationBootstrap {
     );
 
     // 5. Networking & Cache
+    c.register<ITlsHandler>(
+      Tokens.TlsHandler,
+      () => new TlsHandler({ useRealTls: true, verifyCertificates: true }),
+      ServiceLifetime.Singleton,
+    );
     c.register<IResourceLoader>(
       Tokens.ResourceLoader,
       (ctx) => {
         const isNode = typeof process !== 'undefined' && typeof globalThis.fetch === 'undefined';
-        const client = isNode ? new RawSocketHttpClient() : undefined;
+        const client = isNode ? new RawSocketHttpClient({
+          tlsHandler: ctx.resolve<ITlsHandler>(Tokens.TlsHandler),
+        }) : undefined;
         const cache = ctx.resolve<ICacheManager>(Tokens.CacheManager);
         const loader = new ResourceLoader(
           client,

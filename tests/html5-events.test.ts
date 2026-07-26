@@ -18,6 +18,7 @@ import {
   getEventListeners,
   type EventListener,
 } from '../src/browser/rendering/html5/events';
+import { attachShadow } from '../src/browser/rendering/html5/shadow';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EVENT BASE CLASS
@@ -557,5 +558,99 @@ describe('Edge cases', () => {
     addEventListener(el, 'mouseover', h2);
     const listeners = getEventListeners(el);
     expect(listeners.length).toBe(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPOSED FLAG (shadow DOM boundary crossing)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('composed flag — shadow DOM boundary crossing', () => {
+  it('non-composed event should stop at shadow root boundary', () => {
+    const doc = createMutableDocument();
+    const host = createMutableElement('div');
+    const inner = createMutableElement('span');
+    appendChild(doc, host);
+    appendChild(host, inner);
+
+    // Attach shadow root with inner child
+    const shadow = attachShadow(host, { mode: 'open' });
+    // Move inner into shadow root
+    appendChild(shadow as any, inner);
+
+    const outerHandler = vi.fn();
+    const innerHandler = vi.fn();
+    addEventListener(host, 'click', outerHandler);
+    addEventListener(inner, 'click', innerHandler);
+
+    // Non-composed: should not reach host listener
+    dispatchEvent(inner, new Event('click', { bubbles: true }));
+    expect(innerHandler).toHaveBeenCalledTimes(1);
+    expect(outerHandler).not.toHaveBeenCalled();
+  });
+
+  it('composed event should cross shadow root boundary', () => {
+    const doc = createMutableDocument();
+    const host = createMutableElement('div');
+    const inner = createMutableElement('span');
+    appendChild(doc, host);
+
+    const shadow = attachShadow(host, { mode: 'open' });
+    appendChild(shadow as any, inner);
+
+    const outerHandler = vi.fn();
+    const innerHandler = vi.fn();
+    addEventListener(host, 'click', outerHandler);
+    addEventListener(inner, 'click', innerHandler);
+
+    // Composed: should reach host listener
+    dispatchEvent(inner, new Event('click', { bubbles: true, composed: true }));
+    expect(innerHandler).toHaveBeenCalledTimes(1);
+    expect(outerHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('non-composed event should capture only within shadow boundary', () => {
+    const doc = createMutableDocument();
+    const host = createMutableElement('div');
+    const inner = createMutableElement('span');
+    appendChild(doc, host);
+
+    const shadow = attachShadow(host, { mode: 'open' });
+    appendChild(shadow as any, inner);
+
+    const order: string[] = [];
+    addEventListener(host, 'click', () => order.push('outer-capture'), { capture: true });
+    addEventListener(inner, 'click', () => order.push('target'));
+
+    dispatchEvent(inner, new Event('click', { bubbles: true }));
+    // Only target fires — outer capture is across shadow boundary
+    expect(order).toEqual(['target']);
+  });
+
+  it('composed event should capture across shadow boundary', () => {
+    const doc = createMutableDocument();
+    const host = createMutableElement('div');
+    const inner = createMutableElement('span');
+    appendChild(doc, host);
+
+    const shadow = attachShadow(host, { mode: 'open' });
+    appendChild(shadow as any, inner);
+
+    const order: string[] = [];
+    addEventListener(host, 'click', () => order.push('outer-capture'), { capture: true });
+    addEventListener(inner, 'click', () => order.push('target'));
+
+    dispatchEvent(inner, new Event('click', { bubbles: true, composed: true }));
+    expect(order).toEqual(['outer-capture', 'target']);
+  });
+
+  it('non-composed event default should be false', () => {
+    const e = new Event('click');
+    expect(e.composed).toBe(false);
+  });
+
+  it('composed flag should be preserved on event object', () => {
+    const e = new Event('click', { composed: true });
+    expect(e.composed).toBe(true);
   });
 });

@@ -443,7 +443,8 @@ export class CssParser {
           this.pos = savedPos;
 
           if (name === 'not') return { type: 'negation', selectors };
-          if (name === 'is' || name === 'any' || name === 'where' || name === 'matches') return { type: 'is', selectors };
+          if (name === 'is' || name === 'any' || name === 'matches') return { type: 'is', selectors };
+          if (name === 'where') return { type: 'where', selectors };
           if (name === 'has') return { type: 'has', selectors };
         }
         return { type: 'structural', name, value: arg };
@@ -483,7 +484,8 @@ export class CssParser {
       this.pos = savedPos;
 
       if (name === 'not') return { type: 'negation', selectors };
-      if (name === 'is' || name === 'any' || name === 'where' || name === 'matches') return { type: 'is', selectors };
+      if (name === 'is' || name === 'any' || name === 'matches') return { type: 'is', selectors };
+      if (name === 'where') return { type: 'where', selectors };
       if (name === 'has') return { type: 'has', selectors };
     }
 
@@ -559,21 +561,29 @@ export class CssParser {
     const preludeText = tokensToText(preludeTokens).trim();
     // Extract URL
     let url = '';
-    const urlMatch = preludeText.match(/^url\((['"]?)(.+?)\1\)/);
+    let afterUrl = preludeText;
+    const urlMatch = preludeText.match(/^url\((['"]?)(.+?)\1\)\s*(.*)/);
     if (urlMatch) {
       url = urlMatch[2]!;
+      afterUrl = urlMatch[3] ?? '';
     } else {
-      const strMatch = preludeText.match(/^(['"])(.+?)\1/);
+      const strMatch = preludeText.match(/^(['"])(.+?)\1\s*(.*)/);
       if (strMatch) {
         url = strMatch[2]!;
+        afterUrl = strMatch[3] ?? '';
       }
     }
     if (!url) return null;
 
+    // Parse media queries from remaining text
+    const mediaQueries = afterUrl.trim()
+      ? parseMediaQueries(afterUrl.trim())
+      : [];
+
     // Consume ;
     if (this.current()?.type === CssTokenType.Semicolon) this.pos++;
 
-    return { type: 'import', url, mediaQueries: [] };
+    return { type: 'import', url, mediaQueries };
   }
 
   private consumeFontFaceRule(): CssFontFaceRule {
@@ -1126,11 +1136,15 @@ function consumeAtRuleFromText(
       return { rule: { type: 'charset', encoding }, end: i };
     }
     if (kw === 'import') {
-      const url = prelude.match(/url\((['"]?)(.+?)\1\)/)?.[2]
-        ?? prelude.match(/^(['"])(.+?)\1/)?.[2]
-        ?? '';
-      if (url) return { rule: { type: 'import', url, mediaQueries: [] }, end: i };
-      return { rule: null, end: i };
+      const urlMatch = prelude.match(/url\((['"]?)(.+?)\1\)\s*(.*)/) ?? prelude.match(/^(['"])(.+?)\1\s*(.*)/);
+      if (!urlMatch) return { rule: null, end: i };
+      const url = urlMatch[2] ?? '';
+      const afterUrl = urlMatch[3] ?? '';
+      if (!url) return { rule: null, end: i };
+      const mediaQueries = afterUrl.trim()
+        ? parseMediaQueries(afterUrl.trim())
+        : [];
+      return { rule: { type: 'import', url, mediaQueries }, end: i };
     }
     if (kw === 'namespace') {
       const parts = prelude.split(/\s+/);
@@ -1564,6 +1578,7 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
             if (innerSelector) {
               if (pseudoName === 'not') pseudoClasses.push({ type: 'negation', selectors: [innerSelector] });
               else if (pseudoName === 'has') pseudoClasses.push({ type: 'has', selectors: [innerSelector] });
+              else if (pseudoName === 'where') pseudoClasses.push({ type: 'where', selectors: [innerSelector] });
               else pseudoClasses.push({ type: 'is', selectors: [innerSelector] });
             }
           } else {
@@ -1661,10 +1676,58 @@ function parseMediaFeature(str: string): CssMediaFeature | null {
   const inner = str.replace(/^\(/, '').replace(/\)$/, '').trim();
   if (!inner) return null;
 
+  // Check for range syntax operators: >=, <=, >, <
+  const rangeOpMatch = inner.match(/^(.+?)\s*(>=|<=|>|<)\s*(.+)$/);
+  if (rangeOpMatch) {
+    const left = rangeOpMatch[1]!.trim();
+    const op = rangeOpMatch[2] as '>=' | '<=' | '>' | '<';
+    const right = rangeOpMatch[3]!.trim();
+
+    // Determine if it's: (feature op value) or (value op feature op value)
+    // Double range: contains a second operator
+    const doubleRangeMatch = inner.match(/^(.+?)\s*(>=|<=|>|<)\s*(\S+)\s*(>=|<=|>|<)\s*(.+)$/);
+    if (doubleRangeMatch) {
+      // Double range: (lowerValue lowerOp feature upperOp upperValue)
+      const lowerValue = doubleRangeMatch[1]!.trim();
+      const lowerOp = doubleRangeMatch[2] as '>=' | '<=' | '>' | '<';
+      const featureName = doubleRangeMatch[3]!.trim();
+      const upperOp = doubleRangeMatch[4] as '>=' | '<=' | '>' | '<';
+      const upperValue = doubleRangeMatch[5]!.trim();
+      return {
+        name: featureName,
+        value: upperValue,
+        range: null,
+        operator: upperOp,
+        lowerValue,
+        lowerOperator: lowerOp,
+      };
+    }
+
+    // Single range: (feature op value) or (value op feature)
+    const leftIsValue = /^\d/.test(left);
+    if (leftIsValue) {
+      // (value op feature) — e.g., (800px < width)
+      return {
+        name: right,
+        value: left,
+        range: null,
+        operator: op === '>' ? '<' : op === '<' ? '>' : op === '>=' ? '<=' : '>=',
+      };
+    }
+    // (feature op value) — e.g., (width >= 800px)
+    return {
+      name: left,
+      value: right,
+      range: null,
+      operator: op,
+    };
+  }
+
+  // Legacy syntax: (name: value)
   const colonIdx = inner.indexOf(':');
   if (colonIdx === -1) {
-    // Shorthand feature like (color)
-    return { name: inner.trim(), value: 'true', range: null };
+    // Boolean feature like (color), (hover) — no value
+    return { name: inner.trim(), value: '', range: null };
   }
 
   const name = inner.slice(0, colonIdx).trim();
@@ -1707,8 +1770,12 @@ function computeCompoundSpecificity(sel: CssCompoundSelector): CssSpecificity {
   a += sel.attributes.length;
 
   for (const pc of sel.pseudoClasses) {
+    if (pc.type === 'where') {
+      // :where() has zero specificity per spec — skip entirely
+      continue;
+    }
     if (pc.type === 'negation' || pc.type === 'is' || pc.type === 'any' || pc.type === 'has') {
-      // :not() specificity = most specific selector in the list
+      // :not() / :is() / :any() specificity = most specific selector in the list
       for (const inner of pc.selectors) {
         const innerSpec = computeSelectorSpecificity(inner);
         if (innerSpec.id > id) id = innerSpec.id;

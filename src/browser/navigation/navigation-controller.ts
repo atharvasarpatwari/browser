@@ -46,6 +46,7 @@
  */
 
 import type { IUrlParser, ParsedUrl } from './url-parser';
+import { isSameOrigin, parseOrigin } from '../security/origin-service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UNIQUE ID
@@ -962,6 +963,96 @@ class NavigationController implements INavigationController {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SOP NAVIGATION GUARD
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Event emitted when a cross-origin navigation is detected. */
+interface CrossOriginNavigationEvent {
+  readonly kind: 'crossOriginNavigation';
+  readonly fromOrigin: string;
+  readonly toOrigin: string;
+  readonly request: NavigationRequest;
+  /** Whether the navigation was allowed (always true — cross-origin navs are allowed per SOP). */
+  readonly allowed: boolean;
+}
+
+type CrossOriginNavigationHandler = (event: CrossOriginNavigationEvent) => void;
+
+/**
+ * Same-Origin Policy guard for the navigation pipeline.
+ *
+ * Checks whether a navigation crosses origin boundaries and:
+ *   1. Logs the cross-origin navigation for audit.
+ *   2. Emits events so OriginIsolator can manage context switches.
+ *   3. Allows the navigation (cross-origin navigations are valid — they just
+ *      require a new browsing context).
+ *
+ * Per the HTML spec, SOP does not BLOCK cross-origin navigations — it only
+ * restricts what the new page can access from the old page's DOM/storage.
+ */
+class SopNavigationGuard implements INavigationGuard {
+  readonly name = 'SopNavigationGuard';
+  private currentOrigin = '';
+  private readonly handlers = new Set<CrossOriginNavigationHandler>();
+  private readonly events: CrossOriginNavigationEvent[] = [];
+
+  /** Set the current page origin before guard checks. */
+  setCurrentOrigin(origin: string): void {
+    this.currentOrigin = origin;
+  }
+
+  /** Get the current page origin. */
+  getCurrentOrigin(): string {
+    return this.currentOrigin;
+  }
+
+  async canNavigate(request: NavigationRequest): Promise<boolean> {
+    // Always allow navigation — SOP doesn't block cross-origin navigations.
+    // It only tracks them for context isolation purposes.
+    const targetOrigin = parseOrigin(request.url, this.currentOrigin);
+
+    if (this.currentOrigin && targetOrigin && !isSameOrigin(this.currentOrigin, targetOrigin)) {
+      const event: CrossOriginNavigationEvent = {
+        kind: 'crossOriginNavigation',
+        fromOrigin: this.currentOrigin,
+        toOrigin: targetOrigin,
+        request,
+        allowed: true,
+      };
+      this.events.push(event);
+      this.emit(event);
+    }
+
+    return true;
+  }
+
+  blockedReason(request: NavigationRequest): string {
+    return `Navigation to '${request.url}' crosses origin boundaries.`;
+  }
+
+  /** Subscribe to cross-origin navigation events. */
+  on(handler: CrossOriginNavigationHandler): void {
+    this.handlers.add(handler);
+  }
+
+  /** Unsubscribe from cross-origin navigation events. */
+  off(handler: CrossOriginNavigationHandler): void {
+    this.handlers.delete(handler);
+  }
+
+  /** Get all recorded cross-origin navigation events. */
+  getEvents(): readonly CrossOriginNavigationEvent[] {
+    return [...this.events];
+  }
+
+  private emit(event: CrossOriginNavigationEvent): void {
+    for (const handler of this.handlers) {
+      try { handler(event); } catch { /* handler errors must not break the guard */ }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -973,6 +1064,7 @@ export {
   NavigationType,
   NavigationBlockedError,
   NoEntryError,
+  SopNavigationGuard,
 };
 
 export type {
@@ -991,4 +1083,6 @@ export type {
   HashChangedEvent,
   CanGoBackChangedEvent,
   CanGoForwardChangedEvent,
+  CrossOriginNavigationEvent,
+  CrossOriginNavigationHandler,
 };

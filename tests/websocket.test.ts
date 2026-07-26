@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { runJS, createGlobalEnv } from '../src/browser/js/index';
+import { runJS, createGlobalEnv, createObject } from '../src/browser/js/index';
 import { EventLoop } from '../src/browser/js/event-loop';
 import { setPlatformWebSocketFactory } from '../src/browser/js/websocket-api';
 
@@ -38,7 +38,7 @@ class MockWebSocket {
   onerror: ((ev: any) => void) | null = null;
   onclose: ((ev: any) => void) | null = null;
   private _listeners = new Map<string, Set<(ev: any) => void>>();
-  private _sent: string[] = [];
+  private _sent: (string | ArrayBufferLike | ArrayBufferView)[] = [];
 
   constructor(url: string, protocols?: string | string[]) {
     this.url = url;
@@ -52,7 +52,7 @@ class MockWebSocket {
     if (this.readyState !== MockWebSocket.OPEN) {
       throw new Error("The WebSocket is not open.");
     }
-    this._sent.push(typeof data === 'string' ? data : String(data));
+    this._sent.push(data);
   }
 
   close(code?: number, reason?: string): void {
@@ -73,13 +73,13 @@ class MockWebSocket {
     this._listeners.get(type)?.delete(handler);
   }
 
-  _simulateMessage(data: string): void { this._emit('message', { type: 'message', data }); }
+  _simulateMessage(data: string | any): void { this._emit('message', { type: 'message', data }); }
   _simulateError(): void { this._emit('error', { type: 'error' }); }
   _simulateClose(code: number, reason: string, wasClean: boolean): void {
     this.readyState = MockWebSocket.CLOSED;
     this._emit('close', { type: 'close', code, reason, wasClean });
   }
-  _getSent(): string[] { return [...this._sent]; }
+  _getSent(): (string | ArrayBufferLike | ArrayBufferView)[] { return [...this._sent]; }
 
   private _emit(type: string, ev: any): void {
     const handler = this[`on${type}` as keyof MockWebSocket] as ((ev: any) => void) | null;
@@ -340,5 +340,184 @@ describe('WebSocket API', () => {
 
     expect(runInEnv(`closeReason;`, env, eventLoop).value).toBe('Custom reason');
     expect(runInEnv(`wasClean;`, env, eventLoop).value).toBe(true);
+  });
+
+  // ── Binary send tests ────────────────────────────────────────────────
+
+  it('should send ArrayBuffer data as binary', async () => {
+    runInEnv(`
+      var ws = new WebSocket('ws://localhost:8080');
+    `, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    runInEnv(`
+      ws.send({ __type_override: 'arraybuffer', __buffer: { raw: true } });
+    `, env, eventLoop);
+
+    const sent = mockWs!._getSent();
+    expect(sent.length).toBe(1);
+    expect(typeof sent[0]).not.toBe('string');
+  });
+
+  it('should send TypedArray data as its underlying buffer', async () => {
+    runInEnv(`
+      var ws = new WebSocket('ws://localhost:8080');
+    `, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    runInEnv(`
+      ws.send({ __type_override: 'uint8array', __buffer: { raw: true } });
+    `, env, eventLoop);
+
+    const sent = mockWs!._getSent();
+    expect(sent.length).toBe(1);
+    expect(typeof sent[0]).not.toBe('string');
+  });
+
+  it('should send strings as text', async () => {
+    runInEnv(`
+      var ws = new WebSocket('ws://localhost:8080');
+    `, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    runInEnv(`ws.send('hello');`, env, eventLoop);
+    expect(mockWs!._getSent()).toContain('hello');
+  });
+
+  // ── Binary receive tests ────────────────────────────────────────────
+
+  it('should receive binary data as ArrayBuffer when binaryType is arraybuffer', async () => {
+    runInEnv(`
+      var ws = new WebSocket('ws://localhost:8080');
+      var receivedType = '';
+      var receivedData = null;
+      ws.binaryType = 'arraybuffer';
+      ws.onmessage = function(ev) { receivedData = ev.data; receivedType = typeof ev.data; };
+    `, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    const buf = new ArrayBuffer(4);
+    const binaryObj = createObject(null);
+    binaryObj.properties.set('__binaryData', { value: true, writable: false, enumerable: false, configurable: false });
+    binaryObj.properties.set('__buffer', { value: buf, writable: false, enumerable: false, configurable: false });
+    mockWs!._simulateMessage(binaryObj);
+    eventLoop.drainMicrotasks();
+
+    const r = runInEnv(`receivedType;`, env, eventLoop);
+    expect(r.value).toBe('object');
+  });
+
+  it('should receive binary data as-is when binaryType is blob', async () => {
+    runInEnv(`
+      var ws = new WebSocket('ws://localhost:8080');
+      var receivedData = null;
+      ws.binaryType = 'blob';
+      ws.onmessage = function(ev) { receivedData = ev.data; };
+    `, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    const buf = new ArrayBuffer(4);
+    const binaryObj = createObject(null);
+    binaryObj.properties.set('__binaryData', { value: true, writable: false, enumerable: false, configurable: false });
+    binaryObj.properties.set('__buffer', { value: buf, writable: false, enumerable: false, configurable: false });
+    mockWs!._simulateMessage(binaryObj);
+    eventLoop.drainMicrotasks();
+
+    const r = runInEnv(`typeof receivedData;`, env, eventLoop);
+    expect(r.value).toBe('object');
+  });
+
+  // ── Close code validation tests ─────────────────────────────────────
+
+  it('should throw DOMException SyntaxError for invalid close code 1005', async () => {
+    runInEnv(`var ws = new WebSocket('ws://localhost:8080');`, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    const r = runInEnv(`ws.close(1005);`, env, eventLoop);
+    expect(r.error).toBeDefined();
+    expect(r.error?.message).toContain('not allowed');
+  });
+
+  it('should throw DOMException SyntaxError for close code 1-999', async () => {
+    runInEnv(`var ws = new WebSocket('ws://localhost:8080');`, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    const r = runInEnv(`ws.close(500);`, env, eventLoop);
+    expect(r.error).toBeDefined();
+    expect(r.error?.message).toContain('not allowed');
+  });
+
+  it('should accept valid close code 1000', async () => {
+    runInEnv(`var ws = new WebSocket('ws://localhost:8080');`, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    const r = runInEnv(`ws.close(1000);`, env, eventLoop);
+    expect(r.error).toBeUndefined();
+  });
+
+  it('should accept valid close code 3000', async () => {
+    runInEnv(`var ws = new WebSocket('ws://localhost:8080');`, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    const r = runInEnv(`ws.close(3000);`, env, eventLoop);
+    expect(r.error).toBeUndefined();
+  });
+
+  it('should accept valid close code 4999', async () => {
+    runInEnv(`var ws = new WebSocket('ws://localhost:8080');`, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    const r = runInEnv(`ws.close(4999);`, env, eventLoop);
+    expect(r.error).toBeUndefined();
+  });
+
+  it('should throw DOMException SyntaxError for close code 5000', async () => {
+    runInEnv(`var ws = new WebSocket('ws://localhost:8080');`, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    const r = runInEnv(`ws.close(5000);`, env, eventLoop);
+    expect(r.error).toBeDefined();
+    expect(r.error?.message).toContain('not allowed');
+  });
+
+  it('should throw DOMException SyntaxError for close reason too long', async () => {
+    runInEnv(`var ws = new WebSocket('ws://localhost:8080');`, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    const longReason = 'x'.repeat(124);
+    const r = runInEnv(`ws.close(1000, '${longReason}');`, env, eventLoop);
+    expect(r.error).toBeDefined();
+    expect(r.error?.message).toContain('too long');
+  });
+
+  it('should accept close with no code', async () => {
+    runInEnv(`var ws = new WebSocket('ws://localhost:8080');`, env, eventLoop);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    eventLoop.drainMicrotasks();
+
+    const r = runInEnv(`ws.close();`, env, eventLoop);
+    expect(r.error).toBeUndefined();
+  });
+
+  // ── Protocol deduplication test ─────────────────────────────────────
+
+  it('should handle protocol array passed to constructor', async () => {
+    runInEnv(`
+      var ws = new WebSocket('ws://localhost:8080', ['chat', 'binary']);
+    `, env, eventLoop);
+    expect(mockWs).toBeDefined();
+    expect(runInEnv(`typeof ws;`, env, eventLoop).value).toBe('object');
   });
 });
