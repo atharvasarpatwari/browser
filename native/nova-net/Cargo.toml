@@ -1,0 +1,35 @@
+[package]
+name = "nova-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Nova Browser — native networking (DNS, TLS, HTTP)"
+
+[features]
+default = ["dns"]
+dns = []
+tls = ["rustls", "webpki-roots"]
+http = ["tls"]
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+log.workspace = true
+
+# DNS resolution (pure Rust, no C deps)
+hickory-resolver = { version = "0.24", default-features = false, features = ["tokio-runtime"] }
+hickory-proto = { version = "0.24", default-features = false, features = ["tokio-runtime"] }
+
+# TLS (optional, requires C compiler for ring/aws-lc-rs)
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+rustls-pki-types = { version = "1", features = ["std"], optional = true }
+webpki-roots = { version = "0.26", optional = true }
+
+# HTTP
+http = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+serde_json.workspace = true

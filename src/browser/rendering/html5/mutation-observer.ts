@@ -374,7 +374,7 @@ export function clearAllRegistrations(): void {
  * Called automatically from `fireMutation()` for childList mutations.
  */
 function sanitizeAddedNode(node: HtmlNode): void {
-  if (node.nodeType !== NodeType.ELEMENT) return;
+  if (node.nodeType !== NodeType.Element) return;
   const el = node as HtmlElement;
   const attrs = el.attributes as unknown as Map<string, string>;
 

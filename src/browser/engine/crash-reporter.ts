@@ -20,6 +20,9 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
+import { randomUUID } from 'crypto';
+import { writeFileSync, mkdirSync, readdirSync, readFileSync, unlinkSync, existsSync } from 'fs';
+import { join } from 'path';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -87,6 +90,75 @@ const DEFAULT_CRASH_REPORTER_CONFIG: CrashReporterConfig = {
   logReports: true,
   logSummaries: false,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENHANCED CRASH REPORTER TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Minidump file written to disk for crash analysis. */
+interface MinidumpFile {
+  readonly id: string;
+  readonly timestamp: number;
+  readonly filePath: string;
+  readonly sizeBytes: number;
+  readonly crashId: string;
+}
+
+/** Configuration for crash upload service. */
+interface CrashUploadConfig {
+  /** Whether upload is enabled */
+  enabled: boolean;
+  /** Endpoint URL to upload crash reports */
+  endpointUrl: string;
+  /** How often to flush pending uploads (ms) */
+  flushIntervalMs: number;
+  /** Maximum retry attempts per upload */
+  maxRetries: number;
+  /** API key for authentication (optional) */
+  apiKey?: string;
+}
+
+/** Session info collected alongside crash reports. */
+interface CrashSessionInfo {
+  /** Browser version */
+  browserVersion: string;
+  /** Operating system */
+  platform: string;
+  /** Architecture */
+  arch: string;
+  /** Total system memory (bytes) */
+  totalMemoryBytes: number;
+  /** Active tab count at crash time */
+  activeTabCount: number;
+  /** Memory used by browser process (bytes) */
+  processMemoryBytes: number;
+  /** Session duration (ms) */
+  sessionDurationMs: number;
+}
+
+/** Enhanced crash reporter configuration. */
+interface EnhancedCrashReporterConfig extends CrashReporterConfig {
+  /** Directory to write minidump files */
+  minidumpDir: string;
+  /** Maximum minidump files to retain */
+  maxMinidumps: number;
+  /** Crash upload configuration */
+  upload: CrashUploadConfig;
+  /** Session info provider (called at crash time) */
+  sessionInfoProvider?: () => CrashSessionInfo;
+  /** Crash frequency threshold: if crashes exceed this per window, emit alert */
+  crashFrequencyAlertThreshold: number;
+}
+
+type CrashReporterEvent =
+  | { type: 'crash-reported'; report: CrashReport }
+  | { type: 'minidump-written'; minidump: MinidumpFile }
+  | { type: 'upload-started'; crashId: string }
+  | { type: 'upload-completed'; crashId: string }
+  | { type: 'upload-failed'; crashId: string; error: string }
+  | { type: 'frequency-alert'; crashesInWindow: number; threshold: number };
+
+type CrashReporterEventHandler = (event: CrashReporterEvent) => void;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REPORT BUILDER
@@ -180,6 +252,18 @@ interface ICrashReporter extends IDisposable {
   clearReports(): void;
   /** Get the reporter configuration. */
   getConfig(): CrashReporterConfig;
+  /** Write a minidump file for a crash report */
+  writeMinidump(report: CrashReport, data: Buffer): MinidumpFile | undefined;
+  /** Get all minidump files */
+  getMinidumps(): readonly MinidumpFile[];
+  /** Delete a specific minidump */
+  deleteMinidump(id: string): boolean;
+  /** Flush pending crash uploads */
+  flushUploads(): Promise<number>;
+  /** Subscribe to crash reporter events */
+  onEvent(handler: CrashReporterEventHandler): () => void;
+  /** Get session info at time of crash */
+  getSessionInfo(): CrashSessionInfo | undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -188,11 +272,29 @@ interface ICrashReporter extends IDisposable {
 
 class CrashReporter implements ICrashReporter {
   private config: CrashReporterConfig;
+  private enhancedConfig: EnhancedCrashReporterConfig;
   private readonly reports: CrashReport[] = [];
   private reportCount = 0;
+  private minidumps: MinidumpFile[] = [];
+  private handlers: CrashReporterEventHandler[] = [];
+  private pendingUploads: CrashReport[] = [];
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(config?: Partial<CrashReporterConfig>) {
+  constructor(config?: Partial<EnhancedCrashReporterConfig>) {
     this.config = { ...DEFAULT_CRASH_REPORTER_CONFIG, ...config };
+    this.enhancedConfig = {
+      ...DEFAULT_CRASH_REPORTER_CONFIG,
+      minidumpDir: '/tmp/nova-crashes',
+      maxMinidumps: 50,
+      upload: { enabled: false, endpointUrl: '', flushIntervalMs: 30_000, maxRetries: 3 },
+      crashFrequencyAlertThreshold: 10,
+      ...config,
+    } as EnhancedCrashReporterConfig;
+    if (this.enhancedConfig.upload.enabled && this.enhancedConfig.upload.endpointUrl) {
+      this.flushTimer = setInterval(() => {
+        this.flushUploads().catch(() => {});
+      }, this.enhancedConfig.upload.flushIntervalMs);
+    }
   }
 
   report(report: CrashReport): void {
@@ -211,6 +313,24 @@ class CrashReporter implements ICrashReporter {
         `[CrashReporter:${report.source}:${report.severity}] ` +
         `Phase "${report.phase}"${tabInfo}${urlInfo}: ${report.error.message}`,
       );
+    }
+
+    // Emit event
+    this.emitEvent({ type: 'crash-reported', report });
+
+    // Queue for upload if enabled
+    if (this.enhancedConfig.upload.enabled) {
+      this.pendingUploads.push(report);
+    }
+
+    // Check frequency alert
+    const summary = this.getSummary();
+    if (summary.crashesPerMinute * this.config.frequencyWindowMs / 60_000 > this.enhancedConfig.crashFrequencyAlertThreshold) {
+      this.emitEvent({
+        type: 'frequency-alert',
+        crashesInWindow: Math.round(summary.crashesPerMinute * this.config.frequencyWindowMs / 60_000),
+        threshold: this.enhancedConfig.crashFrequencyAlertThreshold,
+      });
     }
   }
 
@@ -278,9 +398,129 @@ class CrashReporter implements ICrashReporter {
     return { ...this.config };
   }
 
+  writeMinidump(report: CrashReport, data: Buffer): MinidumpFile | undefined {
+    try {
+      const dir = this.enhancedConfig.minidumpDir;
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+
+      const id = randomUUID();
+      const filename = `minidump-${report.id}-${id}.dmp`;
+      const filePath = join(dir, filename);
+      writeFileSync(filePath, data);
+
+      const minidump: MinidumpFile = {
+        id,
+        timestamp: Date.now(),
+        filePath,
+        sizeBytes: data.length,
+        crashId: report.id,
+      };
+
+      this.minidumps.push(minidump);
+
+      // Trim old minidumps
+      if (this.minidumps.length > this.enhancedConfig.maxMinidumps) {
+        const old = this.minidumps.splice(0, this.minidumps.length - this.enhancedConfig.maxMinidumps);
+        for (const m of old) {
+          try { unlinkSync(m.filePath); } catch {}
+        }
+      }
+
+      this.emitEvent({ type: 'minidump-written', minidump });
+      return minidump;
+    } catch {
+      return undefined;
+    }
+  }
+
+  getMinidumps(): readonly MinidumpFile[] {
+    return [...this.minidumps];
+  }
+
+  deleteMinidump(id: string): boolean {
+    const idx = this.minidumps.findIndex(m => m.id === id);
+    if (idx < 0) return false;
+    const [removed] = this.minidumps.splice(idx, 1);
+    try { unlinkSync(removed.filePath); } catch {}
+    return true;
+  }
+
+  async flushUploads(): Promise<number> {
+    if (!this.enhancedConfig.upload.enabled) return 0;
+    if (this.pendingUploads.length === 0) return 0;
+
+    const toUpload = [...this.pendingUploads];
+    this.pendingUploads = [];
+    let uploaded = 0;
+
+    for (const report of toUpload) {
+      this.emitEvent({ type: 'upload-started', crashId: report.id });
+      try {
+        const resp = await fetch(this.enhancedConfig.upload.endpointUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(this.enhancedConfig.upload.apiKey ? { 'Authorization': `Bearer ${this.enhancedConfig.upload.apiKey}` } : {}),
+          },
+          body: JSON.stringify({
+            id: report.id,
+            timestamp: report.timestamp,
+            source: report.source,
+            severity: report.severity,
+            phase: report.phase,
+            url: report.url,
+            tabId: report.tabId,
+            errorMessage: report.error.message,
+            stackTrace: report.stackTrace,
+            context: report.context,
+            sessionInfo: this.getSessionInfo(),
+          }),
+        });
+        if (resp.ok) {
+          uploaded++;
+          this.emitEvent({ type: 'upload-completed', crashId: report.id });
+        } else {
+          this.emitEvent({ type: 'upload-failed', crashId: report.id, error: `HTTP ${resp.status}` });
+          this.pendingUploads.push(report); // re-queue
+        }
+      } catch (err: any) {
+        this.emitEvent({ type: 'upload-failed', crashId: report.id, error: err.message });
+        this.pendingUploads.push(report); // re-queue
+      }
+    }
+
+    return uploaded;
+  }
+
+  onEvent(handler: CrashReporterEventHandler): () => void {
+    this.handlers.push(handler);
+    return () => {
+      const idx = this.handlers.indexOf(handler);
+      if (idx >= 0) this.handlers.splice(idx, 1);
+    };
+  }
+
+  getSessionInfo(): CrashSessionInfo | undefined {
+    return this.enhancedConfig.sessionInfoProvider?.();
+  }
+
   dispose(): void {
     this.reports.length = 0;
     this.reportCount = 0;
+    this.minidumps.length = 0;
+    this.pendingUploads.length = 0;
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
+  }
+
+  private emitEvent(event: CrashReporterEvent): void {
+    for (const handler of this.handlers) {
+      try { handler(event); } catch {}
+    }
   }
 }
 
@@ -301,4 +541,10 @@ export type {
   CrashSummary,
   CrashSource,
   CrashSeverity,
+  MinidumpFile,
+  CrashUploadConfig,
+  CrashSessionInfo,
+  EnhancedCrashReporterConfig,
+  CrashReporterEvent,
+  CrashReporterEventHandler,
 };

@@ -15,13 +15,12 @@ import { createObject, createNativeFunction, toString, toNumber } from './values
 import type { JSObject, Environment } from './values';
 import {
   NovaLocalStorage,
-  NovaSessionStorage,
   InMemoryStorageBackend,
   DiskStorageBackend,
   type IStorage,
   type IStorageBackend,
 } from '../storage/local-storage';
-import { NovaSessionStorage as SessionStorageImpl } from '../storage/session-storage';
+import { NovaSessionStorage, NovaSessionStorage as SessionStorageImpl } from '../storage/session-storage';
 import {
   IDBFactory,
   IDBDatabase,

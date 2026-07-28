@@ -1,0 +1,35 @@
+# native/.cargo/config.toml
+#
+# Build configuration for Nova native crates.
+#
+# sccache: set RUSTC_WRAPPER=sccache to enable compilation caching.
+#   - CI: handled by Mozilla-Actions/sccache-action + GHA cache backend
+#   - Local: install sccache then set env var:
+#       export RUSTC_WRAPPER="sccache"   (Linux/macOS)
+#       set RUSTC_WRAPPER=sccache        (Windows)
+#   - Or uncomment the [env] section below to make it persistent.
+#
+
+[build]
+# Target directory shared across workspace members
+target-dir = "../target"
+
+# Uncomment to make sccache the default for local builds:
+# [env]
+# RUSTC_WRAPPER = "sccache"
+
+[profile.dev]
+# Fast dev builds — incremental compilation
+incremental = true
+
+[profile.dev.package."*"]
+# Optimize dependencies in dev builds for usable test performance
+opt-level = 2
+
+[profile.release]
+# LTO + no incremental for smallest/fastest release binaries
+lto = true
+opt-level = 3
+strip = "symbols"
+incremental = false
+codegen-units = 1

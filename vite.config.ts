@@ -10,6 +10,13 @@ export default defineConfig({
   publicDir: 'public',
   server: {
     port: 5173,
+    fs: {
+      allow: [
+        '.',
+        './native',
+        './src/native',
+      ],
+    },
   },
   resolve: {
     alias: {
@@ -21,6 +28,13 @@ export default defineConfig({
       input: {
         main: __dirname + '/index.html',
       },
+      external: [
+        'module',
+        'dns',
+        'https',
+        'http',
+        'util',
+      ],
     },
   },
   optimizeDeps: {

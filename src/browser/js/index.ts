@@ -20,6 +20,11 @@ import { createWebSocketClass } from './websocket-api';
 import { createWorkerConstructor } from './worker';
 import { createTypedArrayConstructors } from './typed-arrays';
 import { bindStorageAPIs } from './web-storage-bindings';
+import {
+  bindWebAPIs, createPerformanceObject, createFullscreenAPIMethods,
+  createTreeWalkerObject, createNodeIteratorObject, createSelectionObject,
+  createRangeObject,
+} from './web-apis';
 import type { CspResourceEnforcer } from '../security/csp-resource-enforcer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
 
@@ -1687,19 +1692,22 @@ export function createGlobalEnv(
     return clone(args[0]);
   }));
 
-  // performance.now()
-  const perfObj = createObject(null);
-  perfObj.properties.set('now', {
-    value: createNativeFunction('now', () => performance.now()),
-    writable: true, enumerable: true, configurable: true,
-  });
-  env.setLocal('performance', perfObj);
+  // performance (full API — mark, measure, getEntries)
+  env.setLocal('performance', createPerformanceObject());
 
   // navigator (minimal)
   const navObj = createObject(null);
   navObj.properties.set('userAgent', { value: 'NovaBrowser/1.0', writable: false, enumerable: true, configurable: false });
   navObj.properties.set('language', { value: 'en-US', writable: false, enumerable: true, configurable: false });
   navObj.properties.set('platform', { value: 'Nova', writable: false, enumerable: true, configurable: false });
+  // navigator.vibrate()
+  navObj.properties.set('vibrate', {
+    value: createNativeFunction('vibrate', (_this, args) => {
+      // Vibration requires hardware; accept the call but return false (not supported)
+      return false;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
   env.setLocal('navigator', navObj);
 
   // DOM binding
@@ -1831,6 +1839,46 @@ export function createGlobalEnv(
 
   // Storage APIs (localStorage, sessionStorage, indexedDB)
   bindStorageAPIs(env, { origin: pageOrigin ?? 'https://localhost' });
+
+  // Fullscreen API (methods on Element via global)
+  const fullscreen = createFullscreenAPIMethods();
+  env.setLocal('fullscreenElement', fullscreen.fullscreenElement);
+
+  // Selection API — window.getSelection()
+  const selectionObj = createSelectionObject();
+  windowObj.properties.set('getSelection', {
+    value: createNativeFunction('getSelection', () => selectionObj),
+    writable: true, enumerable: true, configurable: true,
+  });
+  env.setLocal('getSelection', createNativeFunction('getSelection', () => selectionObj));
+
+  // document.createRange()
+  docBinding.properties.set('createRange', {
+    value: createNativeFunction('createRange', () => createRangeObject()),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // document.createTreeWalker()
+  docBinding.properties.set('createTreeWalker', createTreeWalkerObject());
+
+  // document.createNodeIterator()
+  docBinding.properties.set('createNodeIterator', createNodeIteratorObject());
+
+  // document.elementFromPoint / elementsFromPoint
+  docBinding.properties.set('elementFromPoint', {
+    value: createNativeFunction('elementFromPoint', (_this, args) => {
+      // In a real browser, this hits the layout engine; return null for now
+      return null;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  docBinding.properties.set('elementsFromPoint', {
+    value: createNativeFunction('elementsFromPoint', () => createArray([])),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // Bind all Web APIs (crypto, BroadcastChannel, streams, WASM, WebGPU, WebXR, etc.)
+  bindWebAPIs(env, docBinding);
 
   return env;
 }

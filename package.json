@@ -6,24 +6,40 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc",
+    "build": "npm run native:build && tsc",
     "build:web": "vite build",
     "preview": "vite preview --port 4173",
     "start": "vite preview --port 4173",
     "android": "cap android",
     "build:android": "vite build && cap sync android",
+    "build:android:full": "npm run native:build:android && vite build && cap sync android",
     "open:android": "cap open android",
     "watch": "tsc --watch",
-    "clean": "rimraf dist coverage",
+    "clean": "rimraf dist coverage native/target",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:native": "cargo test --workspace --manifest-path native/Cargo.toml",
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",
     "format": "prettier --check src/ tests/",
     "format:fix": "prettier --write src/ tests/",
-    "benchmark": "tsx src/benchmark/run.ts"
+    "benchmark": "tsx src/benchmark/run.ts",
+    "native:build": "cargo build --release -p nova-bindings --manifest-path native/Cargo.toml",
+    "native:build:dev": "cargo build -p nova-bindings --manifest-path native/Cargo.toml",
+    "native:build:linux-x64": "cargo build --release --lib --manifest-path native/Cargo.toml --target x86_64-unknown-linux-gnu --features dns,tls,http",
+    "native:build:linux-arm64": "cargo build --release --lib --manifest-path native/Cargo.toml --target aarch64-unknown-linux-gnu --features dns,tls,http",
+    "native:build:darwin-x64": "cargo build --release --lib --manifest-path native/Cargo.toml --target x86_64-apple-darwin --features dns,tls,http",
+    "native:build:darwin-arm64": "cargo build --release --lib --manifest-path native/Cargo.toml --target aarch64-apple-darwin --features dns,tls,http",
+    "native:build:win-x64": "cargo build --release --lib --manifest-path native/Cargo.toml --target x86_64-pc-windows-msvc --features dns",
+    "native:build:android": "cargo ndk -t arm64-v8a build --release -p nova-bindings --manifest-path native/Cargo.toml",
+    "native:build:wasm": "wasm-pack build --target web -p nova-net native/nova-net",
+    "native:dist:linux-x64": "npm run native:build:linux-x64 && mkdir -p native/dist/linux-x64-x64 && cp native/target/x86_64-unknown-linux-gnu/release/libnova_bindings.so native/dist/linux-x64-x64/nova_bindings.node",
+    "native:dist": "npm run native:dist:linux-x64",
+    "native:test": "cargo test --workspace --manifest-path native/Cargo.toml",
+    "native:bench": "cargo bench --workspace --manifest-path native/Cargo.toml",
+    "native:clean": "cargo clean --manifest-path native/Cargo.toml"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
@@ -47,6 +63,6 @@
     "prettier": "^3.2.0",
     "rimraf": "^5.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
+    "vitest": "^4.1.10"
   }
 }

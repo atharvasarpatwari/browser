@@ -394,31 +394,36 @@ describe('MutationObserver sanitization', () => {
   });
 
   it('should strip on* attributes from added nodes', () => {
-    const nodes = parseFragment('<img src="x" onerror="alert(1)">');
-    const img = nodes[0];
+    const img = {
+      nodeType: NodeType.Element,
+      tagName: 'img',
+      attributes: new Map([['src', 'x'], ['onerror', 'alert(1)']]),
+      children: [],
+    };
 
-    // The node should have onerror before sanitization
-    expect((img as any).attributes.has('onerror')).toBe(true);
+    expect(img.attributes.has('onerror')).toBe(true);
 
-    // Create a dummy target
     const targetNodes = parseFragment('<div></div>');
     const target = targetNodes[0];
 
     fireMutation({
       target,
       type: 'childList',
-      addedNodes: [img],
+      addedNodes: [img as any],
     });
 
-    // After sanitization via fireMutation, the onerror should be stripped
-    expect((img as any).attributes.has('onerror')).toBe(false);
+    expect(img.attributes.has('onerror')).toBe(false);
   });
 
   it('should strip javascript: URLs from added node attributes', () => {
-    const nodes = parseFragment('<a href="javascript:alert(1)">Click</a>');
-    const a = nodes[0];
+    const a = {
+      nodeType: NodeType.Element,
+      tagName: 'a',
+      attributes: new Map([['href', 'javascript:alert(1)'], ['class', 'link']]),
+      children: [],
+    };
 
-    expect((a as any).attributes.has('href')).toBe(true);
+    expect(a.attributes.has('href')).toBe(true);
 
     const targetNodes = parseFragment('<div></div>');
     const target = targetNodes[0];
@@ -426,15 +431,20 @@ describe('MutationObserver sanitization', () => {
     fireMutation({
       target,
       type: 'childList',
-      addedNodes: [a],
+      addedNodes: [a as any],
     });
 
-    expect((a as any).attributes.has('href')).toBe(false);
+    expect(a.attributes.has('href')).toBe(false);
+    expect(a.attributes.has('class')).toBe(true);
   });
 
   it('should sanitize style attributes on added nodes', () => {
-    const nodes = parseFragment('<p style="color: red; expression(alert(1))">Text</p>');
-    const p = nodes[0];
+    const p = {
+      nodeType: NodeType.Element,
+      tagName: 'p',
+      attributes: new Map([['style', 'color: red; expression(alert(1))']]),
+      children: [],
+    };
 
     const targetNodes = parseFragment('<div></div>');
     const target = targetNodes[0];
@@ -442,17 +452,33 @@ describe('MutationObserver sanitization', () => {
     fireMutation({
       target,
       type: 'childList',
-      addedNodes: [p],
+      addedNodes: [p as any],
     });
 
-    const style = (p as any).attributes.get('style') ?? '';
+    const style = p.attributes.get('style') ?? '';
     expect(style).not.toContain('expression');
     expect(style).toContain('color: red');
   });
 
   it('should recurse into nested added nodes', () => {
-    const nodes = parseFragment('<div><div><p onclick="evil()">Nested</p></div></div>');
-    const outerDiv = nodes[0];
+    const innerP = {
+      nodeType: NodeType.Element,
+      tagName: 'p',
+      attributes: new Map([['onclick', 'evil()']]),
+      children: [],
+    };
+    const innerDiv = {
+      nodeType: NodeType.Element,
+      tagName: 'div',
+      attributes: new Map(),
+      children: [innerP as any],
+    };
+    const outerDiv = {
+      nodeType: NodeType.Element,
+      tagName: 'div',
+      attributes: new Map(),
+      children: [innerDiv as any],
+    };
 
     const targetNodes = parseFragment('<div></div>');
     const target = targetNodes[0];
@@ -460,17 +486,14 @@ describe('MutationObserver sanitization', () => {
     fireMutation({
       target,
       type: 'childList',
-      addedNodes: [outerDiv],
+      addedNodes: [outerDiv as any],
     });
 
-    // Recurse and check: find the <p> inside
-    const innerDiv = (outerDiv as any).children[0];
-    const p = innerDiv.children[0];
-    expect(p.attributes.has('onclick')).toBe(false);
+    expect(innerP.attributes.has('onclick')).toBe(false);
   });
 
   it('should pass through non-childList mutations unchanged', () => {
-    const target = { nodeType: NodeType.ELEMENT, attributes: new Map() };
+    const target = { nodeType: NodeType.Element, attributes: new Map() };
     const opts: MutationFireOptions = {
       target: target as any,
       type: 'attributes',
