@@ -7,6 +7,9 @@
 
 import { describe, it, expect } from 'vitest';
 import { HtmlParser } from '../src/browser/rendering/html-parser';
+import { DomTree } from '../src/browser/rendering/dom-tree';
+import { createGlobalEnv, runJS } from '../src/browser/js/index';
+import { EventLoop } from '../src/browser/js/event-loop';
 
 function parse(html: string) {
   return new HtmlParser().parse(html);
@@ -879,5 +882,83 @@ describe('Error Recovery — Complex Scenarios', () => {
     expect(r.document.errors.length).toBeGreaterThan(0);
     // "after" text should still be parsed
     expect(r.document.bodyElement).not.toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// document.write() / document.open()
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('document.write() and document.open()', () => {
+  it('parser.write() appends HTML to current stream state', () => {
+    const parser = new HtmlParser();
+    parser.parse('<div>initial</div>');
+    parser.write('<span>appended</span>');
+    const doc = parser.getCurrentDocument();
+    expect(doc.bodyElement).not.toBeNull();
+    const bodyKids = doc.bodyElement!.children as any[];
+    const tags = bodyKids.map(c => c.tagName);
+    expect(tags).toContain('div');
+    expect(tags).toContain('span');
+  });
+
+  it('parser.write() can inject multiple elements', () => {
+    const parser = new HtmlParser();
+    parser.parse('<p>hello</p>');
+    parser.write('<ul><li>a</li><li>b</li></ul>');
+    const doc = parser.getCurrentDocument();
+    const bodyKids = doc.bodyElement!.children as any[];
+    expect(bodyKids.length).toBeGreaterThanOrEqual(2);
+    expect(bodyKids[bodyKids.length - 1].tagName).toBe('ul');
+  });
+
+  it('parser.open() clears the document', () => {
+    const parser = new HtmlParser();
+    parser.parse('<div>content</div>');
+    parser.open();
+    const doc = parser.getCurrentDocument();
+    expect(doc.bodyElement).toBeNull();
+    expect(doc.children.length).toBe(0);
+  });
+
+  it('document.write() via JS adds content to live DOM', () => {
+    const parser = new HtmlParser();
+    const domTree = new DomTree();
+    const parseResult = parser.parse('<div id="before">before</div>');
+    const doc = domTree.buildFromHtml(parseResult.document);
+    const eventLoop = new EventLoop();
+
+    const env = createGlobalEnv(doc, domTree, eventLoop, undefined, undefined, undefined, undefined, undefined, parser);
+
+    const result = runJS('document.write("<span id=\\"after\\">after</span>")', {
+      document: doc, domTree, eventLoop, globalEnv: env, htmlParser: parser,
+    });
+
+    expect(result.error).toBeUndefined();
+    const el = domTree.getElementById('after');
+    expect(el).not.toBeNull();
+    expect(el!.tagName).toBe('span');
+  });
+
+  it('document.write() after document.open() replaces content', () => {
+    const parser = new HtmlParser();
+    const domTree = new DomTree();
+    const parseResult = parser.parse('<div id="old">old</div>');
+    const doc = domTree.buildFromHtml(parseResult.document);
+    const eventLoop = new EventLoop();
+
+    const env = createGlobalEnv(doc, domTree, eventLoop, undefined, undefined, undefined, undefined, undefined, parser);
+
+    const result = runJS('document.open(); document.write("<p id=\\"new\\">new</p>");', {
+      document: doc, domTree, eventLoop, globalEnv: env, htmlParser: parser,
+    });
+
+    expect(result.error).toBeUndefined();
+    const oldEl = domTree.getElementById('old');
+    expect(oldEl).toBeNull();
+
+    const newEl = domTree.getElementById('new');
+    expect(newEl).not.toBeNull();
+    expect(newEl!.tagName).toBe('p');
   });
 });

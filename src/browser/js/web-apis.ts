@@ -627,64 +627,419 @@ export function createPerformanceObserverConstructor() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DOM TREE HELPERS (for Range and Selection API)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function domGetParent(node: JSValue): JSObject | null {
+  if (typeof node !== 'object' || node === null) return null;
+  const p = (node as JSObject).properties.get('parentNode')?.value;
+  return (typeof p === 'object' && p !== null) ? p as JSObject : null;
+}
+
+function domGetChildNodes(node: JSValue): JSObject | null {
+  if (typeof node !== 'object' || node === null) return null;
+  return (node as JSObject).properties.get('childNodes')?.value as JSObject ?? null;
+}
+
+function domGetFirstChild(node: JSValue): JSObject | null {
+  if (typeof node !== 'object' || node === null) return null;
+  return (node as JSObject).properties.get('firstChild')?.value as JSObject ?? null;
+}
+
+function domGetLastChild(node: JSValue): JSObject | null {
+  if (typeof node !== 'object' || node === null) return null;
+  return (node as JSObject).properties.get('lastChild')?.value as JSObject ?? null;
+}
+
+function domGetNextSibling(node: JSValue): JSObject | null {
+  if (typeof node !== 'object' || node === null) return null;
+  return (node as JSObject).properties.get('nextSibling')?.value as JSObject ?? null;
+}
+
+function domGetPreviousSibling(node: JSValue): JSObject | null {
+  if (typeof node !== 'object' || node === null) return null;
+  return (node as JSObject).properties.get('previousSibling')?.value as JSObject ?? null;
+}
+
+function domGetNodeType(node: JSValue): string {
+  if (typeof node !== 'object' || node === null) return '';
+  const v = (node as JSObject).properties.get('nodeType')?.value;
+  return typeof v === 'string' ? v : '';
+}
+
+function domGetTextContent(node: JSValue): string {
+  if (typeof node !== 'object' || node === null) return '';
+  const obj = node as JSObject;
+  const tc = obj.properties.get('textContent')?.value;
+  if (typeof tc === 'string') return tc;
+  const data = obj.properties.get('data')?.value;
+  if (typeof data === 'string') return data;
+  const text = obj.properties.get('text')?.value;
+  if (typeof text === 'string') return text;
+  return '';
+}
+
+function domSetTextContent(node: JSValue, text: string): void {
+  if (typeof node !== 'object' || node === null) return;
+  const obj = node as JSObject;
+  const tcProp = obj.properties.get('textContent');
+  if (tcProp) {
+    obj.properties.set('textContent', { value: text, writable: true, enumerable: true, configurable: true });
+  }
+  const dataProp = obj.properties.get('data');
+  if (dataProp) {
+    obj.properties.set('data', { value: text, writable: true, enumerable: true, configurable: true });
+  }
+  const textProp = obj.properties.get('text');
+  if (textProp) {
+    obj.properties.set('text', { value: text, writable: true, enumerable: true, configurable: true });
+  }
+}
+
+function domGetChildIndex(node: JSValue): number {
+  const parent = domGetParent(node);
+  if (!parent) return 0;
+  const children = domGetChildNodes(parent);
+  if (!children) return 0;
+  const len = Number(children.properties.get('length')?.value ?? 0);
+  for (let i = 0; i < len; i++) {
+    const child = children.properties.get(String(i))?.value;
+    if (child === node) return i;
+  }
+  return 0;
+}
+
+function domGetAncestors(node: JSValue): JSObject[] {
+  const result: JSObject[] = [];
+  let current = node;
+  while (typeof current === 'object' && current !== null) {
+    result.push(current as JSObject);
+    current = domGetParent(current);
+  }
+  return result;
+}
+
+function domGetCommonAncestor(nodeA: JSValue, nodeB: JSValue): JSObject | null {
+  if (typeof nodeA !== 'object' || nodeA === null) return null;
+  if (typeof nodeB !== 'object' || nodeB === null) return null;
+  if (nodeA === nodeB) return nodeA as JSObject;
+  const ancA = domGetAncestors(nodeA);
+  const ancB = domGetAncestors(nodeB);
+  let common: JSObject | null = null;
+  for (let i = ancA.length - 1, j = ancB.length - 1; i >= 0 && j >= 0; i--, j--) {
+    if (ancA[i] === ancB[j]) common = ancA[i];
+    else break;
+  }
+  return common;
+}
+
+function domComparePosition(nodeA: JSObject, offsetA: number, nodeB: JSObject, offsetB: number): number {
+  if (nodeA === nodeB) {
+    if (offsetA < offsetB) return -1;
+    if (offsetA > offsetB) return 1;
+    return 0;
+  }
+  const ancA = domGetAncestors(nodeA);
+  const ancB = domGetAncestors(nodeB);
+  let commonIdx = -1;
+  for (let i = ancA.length - 1, j = ancB.length - 1; i >= 0 && j >= 0; i--, j--) {
+    if (ancA[i] === ancB[j]) commonIdx = i;
+    else break;
+  }
+  if (commonIdx < 0) return 0;
+  const common = ancA[commonIdx]!;
+  const childA = commonIdx > 0 ? ancA[commonIdx - 1]! : nodeA;
+  const childB = commonIdx > 0 ? ancB[commonIdx - 1]! : nodeB;
+  const children = domGetChildNodes(common);
+  if (!children) return 0;
+  const len = Number(children.properties.get('length')?.value ?? 0);
+  let idxA = -1, idxB = -1;
+  for (let i = 0; i < len; i++) {
+    const c = children.properties.get(String(i))?.value;
+    if (c === childA) idxA = i;
+    if (c === childB) idxB = i;
+  }
+  if (idxA < idxB) return -1;
+  if (idxA > idxB) return 1;
+  return 0;
+}
+
+function domGetNodeLength(node: JSObject): number {
+  const nt = domGetNodeType(node);
+  if (nt === 'text' || nt === 'comment') {
+    return domGetTextContent(node).length;
+  }
+  const children = domGetChildNodes(node);
+  if (!children) return 0;
+  return Number(children.properties.get('length')?.value ?? 0);
+}
+
+function domGetChildAt(node: JSObject, index: number): JSValue {
+  const children = domGetChildNodes(node);
+  if (!children) return undefined;
+  return children.properties.get(String(index))?.value;
+}
+
+function domRemoveChild(parent: JSObject, child: JSObject): void {
+  const rm = parent.properties.get('removeChild')?.value;
+  if (rm && typeof rm === 'object' && (rm as any).nativeFn) {
+    (rm as any).nativeFn(parent, [child]);
+  }
+}
+
+function domInsertBefore(parent: JSObject, newChild: JSObject, refChild: JSObject | null): void {
+  const ins = parent.properties.get('insertBefore')?.value;
+  if (ins && typeof ins === 'object' && (ins as any).nativeFn) {
+    (ins as any).nativeFn(parent, [newChild, refChild]);
+  }
+}
+
+function domAppendChild(parent: JSObject, child: JSObject): void {
+  const app = parent.properties.get('appendChild')?.value;
+  if (app && typeof app === 'object' && (app as any).nativeFn) {
+    (app as any).nativeFn(parent, [child]);
+  }
+}
+
+function domCloneNode(node: JSObject, deep: boolean): JSObject | null {
+  const cl = node.properties.get('cloneNode')?.value;
+  if (cl && typeof cl === 'object' && (cl as any).nativeFn) {
+    const result = (cl as any).nativeFn(node, [deep]);
+    return (typeof result === 'object' && result !== null) ? result as JSObject : null;
+  }
+  return null;
+}
+
+function domCreateElement(tagName: string): JSObject | null {
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SELECTION API
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function createSelectionObject() {
   const selObj = createObject(null);
   (selObj as any).__type_override = 'selection';
-  selObj.properties.set('anchorNode', { value: undefined, writable: true, enumerable: true, configurable: true });
-  selObj.properties.set('anchorOffset', { value: 0, writable: true, enumerable: true, configurable: true });
-  selObj.properties.set('focusNode', { value: undefined, writable: true, enumerable: true, configurable: true });
-  selObj.properties.set('focusOffset', { value: 0, writable: true, enumerable: true, configurable: true });
-  selObj.properties.set('isCollapsed', { value: true, writable: true, enumerable: true, configurable: true });
-  selObj.properties.set('rangeCount', { value: 0, writable: true, enumerable: true, configurable: true });
-  selObj.properties.set('type', { value: 'None', writable: true, enumerable: true, configurable: true });
-  selObj.properties.set('text', { value: '', writable: true, enumerable: true, configurable: true });
+  const state: any = {
+    anchorNode: undefined as JSValue,
+    anchorOffset: 0,
+    focusNode: undefined as JSValue,
+    focusOffset: 0,
+  };
+
+  function updateSelProps(): void {
+    const isCollapsed = state.anchorNode === state.focusNode && state.anchorOffset === state.focusOffset;
+    const hasRange = state.anchorNode !== undefined;
+    selObj.properties.set('anchorNode', { value: state.anchorNode, writable: false, enumerable: true, configurable: true });
+    selObj.properties.set('anchorOffset', { value: state.anchorOffset, writable: false, enumerable: true, configurable: true });
+    selObj.properties.set('focusNode', { value: state.focusNode, writable: false, enumerable: true, configurable: true });
+    selObj.properties.set('focusOffset', { value: state.focusOffset, writable: false, enumerable: true, configurable: true });
+    selObj.properties.set('isCollapsed', { value: isCollapsed, writable: false, enumerable: true, configurable: true });
+    selObj.properties.set('rangeCount', { value: hasRange ? 1 : 0, writable: false, enumerable: true, configurable: true });
+    selObj.properties.set('type', { value: hasRange ? (isCollapsed ? 'Caret' : 'Range') : 'None', writable: false, enumerable: true, configurable: true });
+    let text = '';
+    if (hasRange && state.anchorNode && typeof state.anchorNode === 'object') {
+      const tc = (state.anchorNode as JSObject).properties.get('textContent')?.value;
+      if (typeof tc === 'string') text = tc;
+    }
+    selObj.properties.set('text', { value: text, writable: false, enumerable: true, configurable: true });
+  }
+
+  updateSelProps();
 
   selObj.properties.set('getRangeAt', {
     value: createNativeFunction('getRangeAt', (_this, args) => {
       const idx = toNumber(args[0]);
-      if (idx === 0) {
-        const rangeObj = createRangeObject();
-        return rangeObj;
+      if (idx !== 0) {
+        const err = createObject(null);
+        err.properties.set('name', { value: 'IndexSizeError', writable: true, enumerable: true, configurable: true });
+        err.properties.set('message', { value: 'Index out of range', writable: true, enumerable: true, configurable: true });
+        throw err;
       }
-      return createObject(null);
+      const range = createRangeObject();
+      if (state.anchorNode) {
+        const setStart = range.properties.get('setStart')!.value as any;
+        const setEnd = range.properties.get('setEnd')!.value as any;
+        setStart.nativeFn(range, [state.anchorNode, state.anchorOffset]);
+        setEnd.nativeFn(range, [state.focusNode, state.focusOffset]);
+      }
+      return range;
     }),
     writable: true, enumerable: true, configurable: true,
   });
   selObj.properties.set('addRange', {
-    value: createNativeFunction('addRange', () => undefined),
+    value: createNativeFunction('addRange', (_this, args) => {
+      const range = args[0];
+      if (typeof range !== 'object' || range === null) return undefined;
+      const sc = (range as JSObject).properties.get('startContainer')?.value;
+      const so = Number((range as JSObject).properties.get('startOffset')?.value ?? 0);
+      const ec = (range as JSObject).properties.get('endContainer')?.value;
+      const eo = Number((range as JSObject).properties.get('endOffset')?.value ?? 0);
+      state.anchorNode = sc;
+      state.anchorOffset = so;
+      state.focusNode = ec;
+      state.focusOffset = eo;
+      updateSelProps();
+      return undefined;
+    }),
     writable: true, enumerable: true, configurable: true,
   });
   selObj.properties.set('removeRange', {
-    value: createNativeFunction('removeRange', () => undefined),
+    value: createNativeFunction('removeRange', () => {
+      state.anchorNode = undefined;
+      state.anchorOffset = 0;
+      state.focusNode = undefined;
+      state.focusOffset = 0;
+      updateSelProps();
+      return undefined;
+    }),
     writable: true, enumerable: true, configurable: true,
   });
   selObj.properties.set('removeAllRanges', {
-    value: createNativeFunction('removeAllRanges', () => undefined),
+    value: createNativeFunction('removeAllRanges', () => {
+      state.anchorNode = undefined;
+      state.anchorOffset = 0;
+      state.focusNode = undefined;
+      state.focusOffset = 0;
+      updateSelProps();
+      return undefined;
+    }),
     writable: true, enumerable: true, configurable: true,
   });
   selObj.properties.set('collapse', {
     value: createNativeFunction('collapse', (_this, args) => {
-      selObj.properties.set('anchorNode', { value: args[0], writable: true, enumerable: true, configurable: true });
-      selObj.properties.set('focusNode', { value: args[0], writable: true, enumerable: true, configurable: true });
-      selObj.properties.set('isCollapsed', { value: true, writable: true, enumerable: true, configurable: true });
+      const node = args[0];
+      const offset = args.length > 1 ? toNumber(args[1]) : 0;
+      state.anchorNode = node;
+      state.anchorOffset = offset;
+      state.focusNode = node;
+      state.focusOffset = offset;
+      updateSelProps();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  selObj.properties.set('collapseToStart', {
+    value: createNativeFunction('collapseToStart', () => {
+      state.focusNode = state.anchorNode;
+      state.focusOffset = state.anchorOffset;
+      updateSelProps();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  selObj.properties.set('collapseToEnd', {
+    value: createNativeFunction('collapseToEnd', () => {
+      state.anchorNode = state.focusNode;
+      state.anchorOffset = state.focusOffset;
+      updateSelProps();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  selObj.properties.set('extend', {
+    value: createNativeFunction('extend', (_this, args) => {
+      const node = args[0];
+      const offset = args.length > 1 ? toNumber(args[1]) : 0;
+      state.focusNode = node;
+      state.focusOffset = offset;
+      updateSelProps();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  selObj.properties.set('setBaseAndExtent', {
+    value: createNativeFunction('setBaseAndExtent', (_this, args) => {
+      state.anchorNode = args[0];
+      state.anchorOffset = toNumber(args[1]);
+      state.focusNode = args[2];
+      state.focusOffset = toNumber(args[3]);
+      updateSelProps();
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
   });
   selObj.properties.set('selectAllChildren', {
-    value: createNativeFunction('selectAllChildren', () => undefined),
+    value: createNativeFunction('selectAllChildren', (_this, args) => {
+      const node = args[0];
+      if (typeof node !== 'object' || node === null) return undefined;
+      state.anchorNode = node;
+      state.anchorOffset = 0;
+      state.focusNode = node;
+      state.focusOffset = domGetNodeLength(node as JSObject);
+      updateSelProps();
+      return undefined;
+    }),
     writable: true, enumerable: true, configurable: true,
   });
   selObj.properties.set('deleteFromDocument', {
-    value: createNativeFunction('deleteFromDocument', () => undefined),
+    value: createNativeFunction('deleteFromDocument', () => {
+      if (!state.anchorNode || typeof state.anchorNode !== 'object') return undefined;
+      const range = createRangeObject();
+      const setStart = range.properties.get('setStart')!.value as any;
+      const setEnd = range.properties.get('setEnd')!.value as any;
+      setStart.nativeFn(range, [state.anchorNode, state.anchorOffset]);
+      setEnd.nativeFn(range, [state.focusNode, state.focusOffset]);
+      const del = range.properties.get('deleteContents')!.value as any;
+      if (del && typeof del === 'object' && (del as any).nativeFn) {
+        (del as any).nativeFn(range, []);
+      }
+      state.anchorNode = undefined;
+      state.anchorOffset = 0;
+      state.focusNode = undefined;
+      state.focusOffset = 0;
+      updateSelProps();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  selObj.properties.set('containsNode', {
+    value: createNativeFunction('containsNode', (_this, args) => {
+      const node = args[0];
+      if (!state.anchorNode || typeof node !== 'object' || node === null) return false;
+      return domComparePosition(
+        state.anchorNode as JSObject, state.anchorOffset,
+        node as JSObject, 0,
+      ) <= 0 && domComparePosition(
+        node as JSObject, 0,
+        state.focusNode as JSObject, state.focusOffset,
+      ) <= 0;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  selObj.properties.set('empty', {
+    value: createNativeFunction('empty', () => {
+      state.anchorNode = undefined;
+      state.anchorOffset = 0;
+      state.focusNode = undefined;
+      state.focusOffset = 0;
+      updateSelProps();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  selObj.properties.set('setPosition', {
+    value: createNativeFunction('setPosition', (_this, args) => {
+      const node = args[0];
+      const offset = args.length > 1 ? toNumber(args[1]) : 0;
+      state.anchorNode = node;
+      state.anchorOffset = offset;
+      state.focusNode = node;
+      state.focusOffset = offset;
+      updateSelProps();
+      return undefined;
+    }),
     writable: true, enumerable: true, configurable: true,
   });
   selObj.properties.set('toString', {
     value: createNativeFunction('toString', (_this) => {
-      return toString(selObj.properties.get('text')?.value ?? '');
+      let text = '';
+      if (state.anchorNode && typeof state.anchorNode === 'object') {
+        const tc = (state.anchorNode as JSObject).properties.get('textContent')?.value;
+        if (typeof tc === 'string') text = tc;
+      }
+      return text;
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -699,70 +1054,450 @@ export function createSelectionObject() {
 export function createRangeObject() {
   const rangeObj = createObject(null);
   (rangeObj as any).__type_override = 'range';
-  rangeObj.properties.set('startContainer', { value: undefined, writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('startOffset', { value: 0, writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('endContainer', { value: undefined, writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('endOffset', { value: 0, writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('collapsed', { value: true, writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('commonAncestorContainer', { value: undefined, writable: true, enumerable: true, configurable: true });
+  const state: any = {
+    startContainer: undefined as JSValue,
+    startOffset: 0,
+    endContainer: undefined as JSValue,
+    endOffset: 0,
+  };
+
+  function getSC(): JSObject | null {
+    return (typeof state.startContainer === 'object' && state.startContainer !== null) ? state.startContainer as JSObject : null;
+  }
+  function getEC(): JSObject | null {
+    return (typeof state.endContainer === 'object' && state.endContainer !== null) ? state.endContainer as JSObject : null;
+  }
+
+  const syncProps = (): void => {
+    const collapsed = state.startContainer === state.endContainer && state.startOffset === state.endOffset;
+    let common = state.startContainer;
+    if (state.startContainer !== undefined && state.endContainer !== undefined && state.startContainer !== state.endContainer) {
+      common = domGetCommonAncestor(state.startContainer, state.endContainer);
+    }
+    rangeObj.properties.set('startContainer', { value: state.startContainer, writable: false, enumerable: true, configurable: true });
+    rangeObj.properties.set('startOffset', { value: state.startOffset, writable: false, enumerable: true, configurable: true });
+    rangeObj.properties.set('endContainer', { value: state.endContainer, writable: false, enumerable: true, configurable: true });
+    rangeObj.properties.set('endOffset', { value: state.endOffset, writable: false, enumerable: true, configurable: true });
+    rangeObj.properties.set('collapsed', { value: collapsed, writable: false, enumerable: true, configurable: true });
+    rangeObj.properties.set('commonAncestorContainer', { value: common, writable: false, enumerable: true, configurable: true });
+  };
+  (rangeObj as any).__syncProps = syncProps;
+  syncProps();
+
+  function afterMutate(): void { syncProps(); }
 
   rangeObj.properties.set('setStart', {
     value: createNativeFunction('setStart', (_t, a) => {
-      rangeObj.properties.set('startContainer', { value: a[0], writable: true, enumerable: true, configurable: true });
-      rangeObj.properties.set('startOffset', { value: toNumber(a[1]), writable: true, enumerable: true, configurable: true });
+      state.startContainer = a[0];
+      state.startOffset = toNumber(a[1]);
+      afterMutate();
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
   });
   rangeObj.properties.set('setEnd', {
     value: createNativeFunction('setEnd', (_t, a) => {
-      rangeObj.properties.set('endContainer', { value: a[0], writable: true, enumerable: true, configurable: true });
-      rangeObj.properties.set('endOffset', { value: toNumber(a[1]), writable: true, enumerable: true, configurable: true });
+      state.endContainer = a[0];
+      state.endOffset = toNumber(a[1]);
+      afterMutate();
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
   });
-  rangeObj.properties.set('setStartBefore', { value: createNativeFunction('setStartBefore', () => undefined), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('setStartAfter', { value: createNativeFunction('setStartAfter', () => undefined), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('setEndBefore', { value: createNativeFunction('setEndBefore', () => undefined), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('setEndAfter', { value: createNativeFunction('setEndAfter', () => undefined), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('selectNode', { value: createNativeFunction('selectNode', () => undefined), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('selectNodeContents', { value: createNativeFunction('selectNodeContents', () => undefined), writable: true, enumerable: true, configurable: true });
+  rangeObj.properties.set('setStartBefore', {
+    value: createNativeFunction('setStartBefore', (_t, a) => {
+      const node = a[0];
+      const parent = domGetParent(node);
+      if (!parent) { afterMutate(); return undefined; }
+      state.startContainer = parent;
+      state.startOffset = domGetChildIndex(node);
+      afterMutate();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('setStartAfter', {
+    value: createNativeFunction('setStartAfter', (_t, a) => {
+      const node = a[0];
+      const parent = domGetParent(node);
+      if (!parent) { afterMutate(); return undefined; }
+      state.startContainer = parent;
+      state.startOffset = domGetChildIndex(node) + 1;
+      afterMutate();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('setEndBefore', {
+    value: createNativeFunction('setEndBefore', (_t, a) => {
+      const node = a[0];
+      const parent = domGetParent(node);
+      if (!parent) { afterMutate(); return undefined; }
+      state.endContainer = parent;
+      state.endOffset = domGetChildIndex(node);
+      afterMutate();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('setEndAfter', {
+    value: createNativeFunction('setEndAfter', (_t, a) => {
+      const node = a[0];
+      const parent = domGetParent(node);
+      if (!parent) { afterMutate(); return undefined; }
+      state.endContainer = parent;
+      state.endOffset = domGetChildIndex(node) + 1;
+      afterMutate();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('selectNode', {
+    value: createNativeFunction('selectNode', (_t, a) => {
+      const node = a[0];
+      const parent = domGetParent(node);
+      if (!parent) { afterMutate(); return undefined; }
+      state.startContainer = parent;
+      state.startOffset = domGetChildIndex(node);
+      state.endContainer = parent;
+      state.endOffset = state.startOffset + 1;
+      afterMutate();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('selectNodeContents', {
+    value: createNativeFunction('selectNodeContents', (_t, a) => {
+      const node = a[0];
+      if (typeof node !== 'object' || node === null) { afterMutate(); return undefined; }
+      state.startContainer = node;
+      state.startOffset = 0;
+      state.endContainer = node;
+      state.endOffset = domGetNodeLength(node as JSObject);
+      afterMutate();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
   rangeObj.properties.set('collapse', {
     value: createNativeFunction('collapse', (_t, a) => {
       const toStart = toBoolean(a[0]);
       if (toStart) {
-        rangeObj.properties.set('endContainer', { value: rangeObj.properties.get('startContainer')?.value, writable: true, enumerable: true, configurable: true });
-        rangeObj.properties.set('endOffset', { value: rangeObj.properties.get('startOffset')?.value ?? 0, writable: true, enumerable: true, configurable: true });
+        state.endContainer = state.startContainer;
+        state.endOffset = state.startOffset;
       } else {
-        rangeObj.properties.set('startContainer', { value: rangeObj.properties.get('endContainer')?.value, writable: true, enumerable: true, configurable: true });
-        rangeObj.properties.set('startOffset', { value: rangeObj.properties.get('endOffset')?.value ?? 0, writable: true, enumerable: true, configurable: true });
+        state.startContainer = state.endContainer;
+        state.startOffset = state.endOffset;
       }
+      afterMutate();
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
   });
-  rangeObj.properties.set('cloneContents', { value: createNativeFunction('cloneContents', () => createObject(null)), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('deleteContents', { value: createNativeFunction('deleteContents', () => undefined), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('extractContents', { value: createNativeFunction('extractContents', () => createObject(null)), writable: true, enumerable: true, configurable: true });
+  rangeObj.properties.set('cloneContents', {
+    value: createNativeFunction('cloneContents', () => {
+      const docFrag = createObject(null);
+      (docFrag as any).__type_override = 'documentfragment';
+      const appendChild = docFrag.properties.get('appendChild')?.value;
+      if (state.startContainer === state.endContainer && state.startOffset === state.endOffset) {
+        return docFrag;
+      }
+      if (state.startContainer === state.endContainer) {
+        const sc = getSC();
+        if (!sc) return docFrag;
+        const nt = domGetNodeType(sc);
+        if (nt === 'text' || nt === 'comment') {
+          const text = domGetTextContent(sc);
+          const cloned = domCloneNode(sc, false);
+          if (cloned) {
+            domSetTextContent(cloned, text.slice(state.startOffset, state.endOffset));
+            if (appendChild && typeof appendChild === 'object' && (appendChild as any).nativeFn) {
+              (appendChild as any).nativeFn(docFrag, [cloned]);
+            }
+          }
+          return docFrag;
+        }
+        const children = domGetChildNodes(sc);
+        if (!children) return docFrag;
+        const len = Number(children.properties.get('length')?.value ?? 0);
+        for (let i = state.startOffset; i < state.endOffset && i < len; i++) {
+          const child = children.properties.get(String(i))?.value;
+          if (typeof child === 'object' && child !== null) {
+            const cl = domCloneNode(child as JSObject, true);
+            if (cl && appendChild && typeof appendChild === 'object' && (appendChild as any).nativeFn) {
+              (appendChild as any).nativeFn(docFrag, [cl]);
+            }
+          }
+        }
+        return docFrag;
+      }
+      return docFrag;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('deleteContents', {
+    value: createNativeFunction('deleteContents', () => {
+      if (state.startContainer === state.endContainer && state.startOffset === state.endOffset) { afterMutate(); return undefined; }
+      if (state.startContainer === state.endContainer) {
+        const sc = getSC();
+        if (!sc) { afterMutate(); return undefined; }
+        const nt = domGetNodeType(sc);
+        if (nt === 'text' || nt === 'comment') {
+          const text = domGetTextContent(sc);
+          const newText = text.slice(0, state.startOffset) + text.slice(state.endOffset);
+          domSetTextContent(sc, newText);
+          state.endOffset = state.startOffset;
+          afterMutate();
+          return undefined;
+        }
+        const children = domGetChildNodes(sc);
+        if (!children) { afterMutate(); return undefined; }
+        const toRemove: JSObject[] = [];
+        const len = Number(children.properties.get('length')?.value ?? 0);
+        for (let i = state.startOffset; i < state.endOffset && i < len; i++) {
+          const child = children.properties.get(String(i))?.value;
+          if (typeof child === 'object' && child !== null) toRemove.push(child as JSObject);
+        }
+        for (const c of toRemove) {
+          domRemoveChild(sc, c);
+        }
+        afterMutate();
+        return undefined;
+      }
+      afterMutate();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('extractContents', {
+    value: createNativeFunction('extractContents', () => {
+      const docFrag = createObject(null);
+      (docFrag as any).__type_override = 'documentfragment';
+      const appendChild = docFrag.properties.get('appendChild')?.value;
+      if (state.startContainer === state.endContainer && state.startOffset === state.endOffset) { afterMutate(); return docFrag; }
+      if (state.startContainer === state.endContainer) {
+        const sc = getSC();
+        if (!sc) { afterMutate(); return docFrag; }
+        const nt = domGetNodeType(sc);
+        if (nt === 'text' || nt === 'comment') {
+          const text = domGetTextContent(sc);
+          const extracted = text.slice(state.startOffset, state.endOffset);
+          const newText = text.slice(0, state.startOffset) + text.slice(state.endOffset);
+          const cloned = domCloneNode(sc, false);
+          if (cloned) {
+            domSetTextContent(cloned, extracted);
+            if (appendChild && typeof appendChild === 'object' && (appendChild as any).nativeFn) {
+              (appendChild as any).nativeFn(docFrag, [cloned]);
+            }
+          }
+          domSetTextContent(sc, newText);
+          state.endOffset = state.startOffset;
+          afterMutate();
+          return docFrag;
+        }
+        const children = domGetChildNodes(sc);
+        if (!children) { afterMutate(); return docFrag; }
+        const toRemove: JSObject[] = [];
+        const len = Number(children.properties.get('length')?.value ?? 0);
+        for (let i = state.startOffset; i < state.endOffset && i < len; i++) {
+          const child = children.properties.get(String(i))?.value;
+          if (typeof child === 'object' && child !== null) {
+            toRemove.push(child as JSObject);
+          }
+        }
+        for (const c of toRemove) {
+          const cl = domCloneNode(c, true);
+          if (cl && appendChild && typeof appendChild === 'object' && (appendChild as any).nativeFn) {
+            (appendChild as any).nativeFn(docFrag, [cl]);
+          }
+          domRemoveChild(sc, c);
+        }
+        state.endOffset = state.startOffset;
+        afterMutate();
+        return docFrag;
+      }
+      afterMutate();
+      return docFrag;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
   rangeObj.properties.set('cloneRange', {
     value: createNativeFunction('cloneRange', () => {
       const clone = createRangeObject();
-      for (const [k, desc] of rangeObj.properties) {
-        clone.properties.set(k, { value: desc.value, writable: true, enumerable: true, configurable: true });
+      const cloneState = (clone as any).__rangeState;
+      if (cloneState) {
+        cloneState.startContainer = state.startContainer;
+        cloneState.startOffset = state.startOffset;
+        cloneState.endContainer = state.endContainer;
+        cloneState.endOffset = state.endOffset;
       }
+      if ((clone as any).__syncProps) { (clone as any).__syncProps(); }
       return clone;
     }),
     writable: true, enumerable: true, configurable: true,
   });
-  rangeObj.properties.set('detach', { value: createNativeFunction('detach', () => undefined), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('isPointInRange', { value: createNativeFunction('isPointInRange', () => false), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('intersectsNode', { value: createNativeFunction('intersectsNode', () => false), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('compareBoundaryPoints', { value: createNativeFunction('compareBoundaryPoints', () => 0), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('insertNode', { value: createNativeFunction('insertNode', () => undefined), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('surroundContents', { value: createNativeFunction('surroundContents', () => undefined), writable: true, enumerable: true, configurable: true });
-  rangeObj.properties.set('createContextualFragment', { value: createNativeFunction('createContextualFragment', () => createObject(null)), writable: true, enumerable: true, configurable: true });
+  rangeObj.properties.set('detach', {
+    value: createNativeFunction('detach', () => undefined),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('isPointInRange', {
+    value: createNativeFunction('isPointInRange', (_t, a) => {
+      const node = a[0];
+      const offset = toNumber(a[1]);
+      if (typeof node !== 'object' || node === null) return false;
+      if (!state.startContainer || !state.endContainer) return false;
+      const sc = getSC(); const ec = getEC();
+      if (!sc || !ec) return false;
+      const startCmp = domComparePosition(sc, state.startOffset, node as JSObject, offset);
+      const endCmp = domComparePosition(node as JSObject, offset, ec, state.endOffset);
+      return startCmp <= 0 && endCmp <= 0;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('intersectsNode', {
+    value: createNativeFunction('intersectsNode', (_t, a) => {
+      const node = a[0];
+      if (typeof node !== 'object' || node === null) return false;
+      if (!state.startContainer || !state.endContainer) return false;
+      const sc = getSC(); const ec = getEC();
+      if (!sc || !ec) return false;
+      const parent = domGetParent(node);
+      if (!parent) return false;
+      const idx = domGetChildIndex(node);
+      const before = domComparePosition(sc, state.startOffset, node as JSObject, 0);
+      const after = domComparePosition(node as JSObject, 0, ec, state.endOffset);
+      return before <= 0 && after <= 0;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('compareBoundaryPoints', {
+    value: createNativeFunction('compareBoundaryPoints', (_t, a) => {
+      const how = toNumber(a[0]);
+      const sourceRange = a[1] as JSObject;
+      if (!sourceRange) return 0;
+      const srcSC = sourceRange.properties.get('startContainer')?.value;
+      const srcSO = Number(sourceRange.properties.get('startOffset')?.value ?? 0);
+      const srcEC = sourceRange.properties.get('endContainer')?.value;
+      const srcEO = Number(sourceRange.properties.get('endOffset')?.value ?? 0);
+      const sc = getSC(); const ec = getEC();
+      if (!sc || !ec) return 0;
+      if (!srcSC || !srcEC) return 0;
+      switch (how) {
+        case 0: return domComparePosition(sc, state.startOffset, srcSC as JSObject, srcSO); // START_TO_START
+        case 1: return domComparePosition(sc, state.startOffset, srcEC as JSObject, srcEO); // START_TO_END
+        case 2: return domComparePosition(ec, state.endOffset, srcSC as JSObject, srcSO); // END_TO_START
+        case 3: return domComparePosition(ec, state.endOffset, srcEC as JSObject, srcEO); // END_TO_END
+        default: return 0;
+      }
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('comparePoint', {
+    value: createNativeFunction('comparePoint', (_t, a) => {
+      const node = a[0];
+      const offset = toNumber(a[1]);
+      if (!state.startContainer || !state.endContainer) return 0;
+      const sc = getSC(); const ec = getEC();
+      if (!sc || !ec) return 0;
+      if (typeof node !== 'object' || node === null) return 0;
+      const beforeStart = domComparePosition(node as JSObject, offset, sc, state.startOffset);
+      if (beforeStart < 0) return -1;
+      const afterEnd = domComparePosition(ec, state.endOffset, node as JSObject, offset);
+      if (afterEnd < 0) return 1;
+      return 0;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('insertNode', {
+    value: createNativeFunction('insertNode', (_t, a) => {
+      const newNode = a[0];
+      if (typeof newNode !== 'object' || newNode === null) { afterMutate(); return undefined; }
+      if (!state.startContainer) { afterMutate(); return undefined; }
+      const sc = getSC();
+      if (!sc) { afterMutate(); return undefined; }
+      const nt = domGetNodeType(sc);
+      if (nt === 'text' || nt === 'comment') {
+        const parent = domGetParent(sc);
+        if (!parent) { afterMutate(); return undefined; }
+        const idx = domGetChildIndex(sc);
+        const text = domGetTextContent(sc);
+        if (state.startOffset > 0 && state.startOffset < text.length) {
+          const afterText = text.slice(state.startOffset);
+          domSetTextContent(sc, text.slice(0, state.startOffset));
+          const afterNode = domCloneNode(sc, false);
+          if (afterNode) {
+            domSetTextContent(afterNode, afterText);
+            domInsertBefore(parent, afterNode, domGetNextSibling(sc));
+          }
+        }
+        domInsertBefore(parent, newNode as JSObject, domGetNextSibling(sc));
+        state.startContainer = parent;
+        state.startOffset = idx;
+        afterMutate();
+        return undefined;
+      }
+      domInsertBefore(sc, newNode as JSObject, domGetChildAt(sc, state.startOffset) as JSObject | null);
+      afterMutate();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('surroundContents', {
+    value: createNativeFunction('surroundContents', (_t, a) => {
+      const newParent = a[0];
+      if (typeof newParent !== 'object' || newParent === null) { afterMutate(); return undefined; }
+      if (!state.startContainer || !state.endContainer) { afterMutate(); return undefined; }
+      const sc = getSC(); const ec = getEC();
+      if (!sc || !ec) { afterMutate(); return undefined; }
+      if (sc !== ec) { afterMutate(); return undefined; }
+      const nt = domGetNodeType(sc);
+      if (nt === 'text' || nt === 'comment') { afterMutate(); return undefined; }
+      const children = domGetChildNodes(sc);
+      if (!children) { afterMutate(); return undefined; }
+      const toMove: JSObject[] = [];
+      const len = Number(children.properties.get('length')?.value ?? 0);
+      for (let i = state.startOffset; i < state.endOffset && i < len; i++) {
+        const child = children.properties.get(String(i))?.value;
+        if (typeof child === 'object' && child !== null) toMove.push(child as JSObject);
+      }
+      for (const c of toMove) {
+        domRemoveChild(sc, c);
+        domAppendChild(newParent as JSObject, c);
+      }
+      domInsertBefore(sc, newParent as JSObject, domGetChildAt(sc, state.startOffset) as JSObject | null);
+      state.startContainer = sc;
+      state.startOffset = domGetChildIndex(newParent as JSObject);
+      state.endContainer = sc;
+      state.endOffset = state.startOffset + 1;
+      afterMutate();
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('createContextualFragment', {
+    value: createNativeFunction('createContextualFragment', () => {
+      const frag = createObject(null);
+      (frag as any).__type_override = 'documentfragment';
+      return frag;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  rangeObj.properties.set('toString', {
+    value: createNativeFunction('toString', () => {
+      if (!state.startContainer || !state.endContainer) return '';
+      if (state.startContainer === state.endContainer) {
+        const nt = domGetNodeType(state.startContainer as JSObject);
+        if (nt === 'text' || nt === 'comment') {
+          return domGetTextContent(state.startContainer as JSObject).slice(state.startOffset, state.endOffset);
+        }
+        return '';
+      }
+      return '';
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
 
+  (rangeObj as any).__rangeState = state;
   return rangeObj;
 }
 

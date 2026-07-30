@@ -280,7 +280,7 @@ export class AnimationTimeline {
     });
   }
 
-  private tick(now: number): void {
+  tick(now: number): void {
     if (!this._isRunning) return;
 
     const time = this._startTime !== null ? now - this._startTime : 0;

@@ -36,6 +36,7 @@ import type {
   CssCharsetRule,
   CssNamespaceRule,
   CssSupportsRule,
+  CssContainerRule,
 } from './types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,17 +155,20 @@ export class CssParser {
     // Strip comments first
     const cleaned = stripComments(css);
 
+    // Pre-process CSS nesting (flatten nested rules)
+    const flattened = flattenCSSNesting(cleaned);
+
     const rules: CssRule[] = [];
     let i = 0;
 
-    while (i < cleaned.length) {
+    while (i < flattened.length) {
       // Skip whitespace
-      while (i < cleaned.length && isWhitespace(cleaned[i]!)) i++;
-      if (i >= cleaned.length) break;
+      while (i < flattened.length && isWhitespace(flattened[i]!)) i++;
+      if (i >= flattened.length) break;
 
       // At-rule
-      if (cleaned[i] === '@') {
-        const { rule, end } = consumeAtRuleFromText(cleaned, i, this.sourceOrder);
+      if (flattened[i] === '@') {
+        const { rule, end } = consumeAtRuleFromText(flattened, i, this.sourceOrder);
         i = end;
         if (rule) {
           this.sourceOrder++;
@@ -174,7 +178,7 @@ export class CssParser {
       }
 
       // Qualified rule
-      const { rule, end } = consumeQualifiedRuleFromText(cleaned, i, this.sourceUrl, this.sourceOrder);
+      const { rule, end } = consumeQualifiedRuleFromText(flattened, i, this.sourceUrl, this.sourceOrder);
       i = end;
       if (rule) {
         this.sourceOrder++;
@@ -538,6 +542,8 @@ export class CssParser {
         return this.consumeNamespaceRule(prelude);
       case 'supports':
         return this.consumeSupportsRule();
+      case 'container':
+        return this.consumeContainerRule(prelude);
       default:
         this.skipAtRuleBody();
         return { type: 'unknown', atKeyword: keyword, prelude: tokensToText(prelude), body: '' };
@@ -667,6 +673,27 @@ export class CssParser {
     }
 
     return { type: 'supports', condition, rules: [] };
+  }
+
+  private consumeContainerRule(preludeTokens: CssToken[]): CssContainerRule {
+    const prelude = tokensToText(preludeTokens).trim();
+    // @container [<name>] <query>
+    let name = '';
+    let query = prelude;
+    // If the prelude starts with an ident that isn't a query keyword, treat it as a container name
+    const firstWord = prelude.split(/\s+/)[0] ?? '';
+    if (firstWord && !/^(\(|not|\d|and|or|width|height|min-|max-|inline-size|block-size|aspect-ratio|orientation)/i.test(firstWord)) {
+      name = firstWord;
+      query = prelude.slice(name.length).trim();
+    }
+
+    if (this.current()?.type === CssTokenType.CurlyBracketOpen) {
+      this.pos++;
+      const rules = this.consumeRuleListUntilCloseBrace();
+      return { type: 'container', name, query, rules };
+    }
+
+    return { type: 'container', name, query, rules: [] };
   }
 
   private skipAtRuleBody(): void {
@@ -1091,6 +1118,299 @@ function consumeStringLiteral(css: string, start: number): { value: string; end:
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CSS NESTING — flatten nested rules by prepending parent selectors
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Replace the & nesting selector with the parent selector string.
+ * If no & is present, prepend the parent selector with a descendant combinator.
+ */
+function resolveNestingSelector(nestedSelector: string, parentSelector: string): string {
+  if (nestedSelector.includes('&')) {
+    // Replace & with parent selector. Handle cases like:
+    //   & .foo → parent .foo
+    //   &.foo  → parent.foo
+    //   & > .foo → parent > .foo
+    return nestedSelector.replace(/&/g, parentSelector);
+  }
+  // Implicit nesting: prepend parent with descendant combinator
+  // Handle leading combinators like > .foo → parent > .foo
+  const trimmed = nestedSelector.trim();
+  if (/^[>+~]/.test(trimmed)) {
+    return `${parentSelector} ${trimmed}`;
+  }
+  return `${parentSelector} ${trimmed}`;
+}
+
+/**
+ * Split a CSS block body into declarations and nested rule blocks.
+ * Returns declarations text and an array of { selector, body } for nested rules.
+ */
+function splitNestedBlock(body: string): { declarations: string; nestedRules: { selector: string; body: string }[] } {
+  const declarations: string[] = [];
+  const nestedRules: { selector: string; body: string }[] = [];
+  let i = 0;
+  let currentDecl = '';
+  let inString: string | null = null;
+  let depth = 0;
+
+  while (i < body.length) {
+    const ch = body[i]!;
+
+    // Handle string boundaries
+    if (inString) {
+      if (ch === '\\') { currentDecl += ch; i++; if (i < body.length) { currentDecl += body[i]!; i++; } continue; }
+      if (ch === inString) inString = null;
+      currentDecl += ch;
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { inString = ch; currentDecl += ch; i++; continue; }
+
+    // Track paren depth (for functions like calc(), url(), etc.)
+    // We only care about brace depth for nesting detection
+    if (ch === '(') { depth++; currentDecl += ch; i++; continue; }
+    if (ch === ')') { depth--; currentDecl += ch; i++; continue; }
+
+    // Inside parens, treat everything as part of the current declaration
+    if (depth > 0) { currentDecl += ch; i++; continue; }
+
+    // At top level (depth === 0):
+    if (ch === '{') {
+      // Start of a nested rule
+      const nestedSelector = currentDecl.trim();
+      currentDecl = '';
+      // Find matching closing brace
+      let braceDepth = 1;
+      let j = i + 1;
+      let nestedBody = '';
+      let nestedInString: string | null = null;
+      while (j < body.length && braceDepth > 0) {
+        const nc = body[j]!;
+        if (nestedInString) {
+          if (nc === '\\') { nestedBody += nc; j++; if (j < body.length) { nestedBody += body[j]!; j++; } continue; }
+          if (nc === nestedInString) nestedInString = null;
+          nestedBody += nc;
+          j++;
+          continue;
+        }
+        if (nc === '"' || nc === "'") { nestedInString = nc; nestedBody += nc; j++; continue; }
+        if (nc === '{') { braceDepth++; nestedBody += nc; j++; continue; }
+        if (nc === '}') {
+          braceDepth--;
+          if (braceDepth === 0) break;
+          nestedBody += nc;
+          j++;
+          continue;
+        }
+        nestedBody += nc;
+        j++;
+      }
+      if (nestedSelector.trim()) {
+        nestedRules.push({ selector: nestedSelector.trim(), body: nestedBody });
+      }
+      i = j + 1;
+      continue;
+    }
+
+    if (ch === ';') {
+      if (currentDecl.trim()) declarations.push(currentDecl.trim());
+      currentDecl = '';
+      i++;
+      continue;
+    }
+
+    currentDecl += ch;
+    i++;
+  }
+
+  if (currentDecl.trim()) declarations.push(currentDecl.trim());
+
+  return { declarations: declarations.join(';'), nestedRules };
+}
+
+/**
+ * Flatten CSS nesting in a stylesheet text.
+ * Converts nested rules into flat rules by prepending parent selectors.
+ */
+function flattenCSSNesting(css: string): string {
+  const result: string[] = [];
+  let i = 0;
+  let inString: string | null = null;
+
+  while (i < css.length) {
+    const ch = css[i]!;
+
+    // Handle string boundaries at top level
+    if (inString) {
+      if (ch === '\\') { result.push(ch); i++; if (i < css.length) { result.push(css[i]!); i++; } continue; }
+      if (ch === inString) inString = null;
+      result.push(ch);
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { inString = ch; result.push(ch); i++; continue; }
+
+    // At-rule — pass through as-is (nesting inside at-rules is handled recursively by the parser)
+    if (ch === '@') {
+      // Copy until the matching { or ;
+      let atRule = '';
+      let braceDepth = 0;
+      let atInString: string | null = null;
+      while (i < css.length) {
+        const ac = css[i]!;
+        if (atInString) {
+          if (ac === '\\') { atRule += ac; i++; if (i < css.length) { atRule += css[i]!; i++; } continue; }
+          if (ac === atInString) atInString = null;
+          atRule += ac;
+          i++;
+          continue;
+        }
+        if (ac === '"' || ac === "'") { atInString = ac; atRule += ac; i++; continue; }
+        if (ac === '{') {
+          braceDepth++;
+          atRule += ac;
+          i++;
+          // Find matching }
+          let innerStr: string | null = null;
+          while (i < css.length && braceDepth > 0) {
+            const ic = css[i]!;
+            if (innerStr) {
+              if (ic === '\\') { atRule += ic; i++; if (i < css.length) { atRule += css[i]!; i++; } continue; }
+              if (ic === innerStr) innerStr = null;
+              atRule += ic;
+              i++;
+              continue;
+            }
+            if (ic === '"' || ic === "'") { innerStr = ic; atRule += ic; i++; continue; }
+            if (ic === '{') { braceDepth++; atRule += ic; i++; continue; }
+            if (ic === '}') {
+              braceDepth--;
+              if (braceDepth === 0) { atRule += ic; i++; break; }
+              atRule += ic;
+              i++;
+              continue;
+            }
+            atRule += ic;
+            i++;
+          }
+          continue;
+        }
+        if (ac === ';') {
+          atRule += ac;
+          i++;
+          break;
+        }
+        atRule += ac;
+        i++;
+      }
+      result.push(atRule);
+      continue;
+    }
+
+    // Qualified rule: selector { ... }
+    // Skip whitespace and check if the next non-whitespace char is '@' — 
+    // if so, this is actually an @-rule, not a qualified rule.
+    let skipIdx = i;
+    while (skipIdx < css.length && isWhitespace(css[skipIdx]!)) skipIdx++;
+    if (skipIdx < css.length && css[skipIdx] === '@') {
+      i = skipIdx;
+      continue;
+    }
+    // Find the opening brace
+    let selectorText = '';
+    let braceStart = -1;
+    let selInString: string | null = null;
+    let startPos = i;
+    while (i < css.length) {
+      const sc = css[i]!;
+      if (selInString) {
+        if (sc === '\\') { selectorText += sc; i++; if (i < css.length) { selectorText += css[i]!; i++; } continue; }
+        if (sc === selInString) selInString = null;
+        selectorText += sc;
+        i++;
+        continue;
+      }
+      if (sc === '"' || sc === "'") { selInString = sc; selectorText += sc; i++; continue; }
+      if (sc === '{') { braceStart = i; break; }
+      if (sc === ';') {
+        // Unexpected semicolon — just output and continue
+        result.push(selectorText + ';');
+        i++;
+        selectorText = '';
+        startPos = i;
+        break;
+      }
+      selectorText += sc;
+      i++;
+    }
+
+    if (braceStart === -1) {
+      if (selectorText) result.push(selectorText);
+      break;
+    }
+
+    // Find matching }
+    let braceDepth = 1;
+    let j = braceStart + 1;
+    let blockBody = '';
+    let blockInString: string | null = null;
+    while (j < css.length && braceDepth > 0) {
+      const bc = css[j]!;
+      if (blockInString) {
+        if (bc === '\\') { blockBody += bc; j++; if (j < css.length) { blockBody += css[j]!; j++; } continue; }
+        if (bc === blockInString) blockInString = null;
+        blockBody += bc;
+        j++;
+        continue;
+      }
+      if (bc === '"' || bc === "'") { blockInString = bc; blockBody += bc; j++; continue; }
+      if (bc === '{') { braceDepth++; blockBody += bc; j++; continue; }
+      if (bc === '}') {
+        braceDepth--;
+        if (braceDepth === 0) break;
+        blockBody += bc;
+        j++;
+        continue;
+      }
+      blockBody += bc;
+      j++;
+    }
+
+    // Check for nested rules
+    const { declarations, nestedRules } = splitNestedBlock(blockBody);
+
+    if (nestedRules.length === 0) {
+      // No nesting — output as-is
+      result.push(selectorText);
+      result.push('{');
+      result.push(blockBody);
+      result.push('}');
+    } else {
+      // Output the parent rule with only its declarations
+      if (declarations) {
+        result.push(selectorText);
+        result.push('{');
+        result.push(declarations);
+        result.push('}');
+      }
+
+      // Output desugared nested rules (recursively flattened)
+      for (const nr of nestedRules) {
+        const resolvedSelector = resolveNestingSelector(nr.selector, selectorText.trim());
+        const nestedCss = `${resolvedSelector} { ${nr.body} }`;
+        const recursivelyFlattened = flattenCSSNesting(nestedCss);
+        result.push(recursivelyFlattened);
+      }
+    }
+
+    i = j + 1;
+  }
+
+  return result.join('');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AT-RULE TEXT PARSING
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1200,6 +1520,20 @@ function consumeAtRuleFromText(
         const subParser = new CssParser();
         const { rules } = subParser.parseStylesheetRobust(subCss);
         return { rule: { type: 'layer', names, rules }, end: blockEnd };
+      }
+      case 'container': {
+        // @container [name] (query) { ... }
+        let name = '';
+        let query = prelude;
+        const firstWord = prelude.split(/\s+/)[0] ?? '';
+        if (firstWord && !/^(\(|not|\d|and|or|width|height|min-|max-|inline-size|block-size|aspect-ratio|orientation)/i.test(firstWord)) {
+          name = firstWord;
+          query = prelude.slice(name.length).trim();
+        }
+        const subCss = stripComments(blockBody);
+        const subParser = new CssParser();
+        const { rules } = subParser.parseStylesheetRobust(subCss);
+        return { rule: { type: 'container', name, query, rules }, end: blockEnd };
       }
       default:
         return { rule: { type: 'unknown', atKeyword: kw, prelude, body: blockBody }, end: blockEnd };

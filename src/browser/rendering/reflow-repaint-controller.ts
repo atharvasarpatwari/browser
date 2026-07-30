@@ -14,6 +14,7 @@ import type { ILayoutEngine } from './layout-engine';
 import type { IPaintEngine } from './paint-engine';
 import type { LayerCompositor } from './compositing/layer-compositor';
 import type { LayerTree } from './compositing/layer-tree';
+import { AnimationTimeline } from './compositing/animation-engine';
 
 // ─── TYPES ──────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,8 @@ export class ReflowRepaintController {
   private lastCompositedImageData: ImageData | null = null;
   /** Optional callback for incremental style recalc before layout. */
   private _styleRecalcCallback: (() => void) | null = null;
+  /** Animation timeline for ticking active animations each frame. */
+  private _animationTimeline: AnimationTimeline = new AnimationTimeline();
 
   constructor(
     private layoutEngine: ILayoutEngine,
@@ -154,22 +157,25 @@ export class ReflowRepaintController {
     this.processing = true;
 
     try {
-      // 0. Incremental style recalc (resolves _dirtyStyle before layout)
+      // 0. Tick animations so animated values are current before style recalc
+      this._animationTimeline.tick(performance.now());
+
+      // 1. Incremental style recalc (resolves _dirtyStyle before layout)
       if (this._styleRecalcCallback) {
         this._styleRecalcCallback();
       }
 
-      // 1. Incremental layout — returns the layout damage tracker
+      // 2. Incremental layout — returns the layout damage tracker
       const layoutDamage = this.layoutEngine.layoutIncremental(
         this.document,
         this.domTree,
         { width: this.viewportWidth, height: this.viewportHeight },
       );
 
-      // 2. Incremental paint — uses layout damage to know what to repaint
+      // 3. Incremental paint — uses layout damage to know what to repaint
       this.paintEngine.paintIncremental(this.document, layoutDamage);
 
-      // 3. If a layer compositor is available, use layer-based compositing
+      // 4. If a layer compositor is available, use layer-based compositing
       if (this.layerCompositor) {
         const layerTree = (this.paintEngine as { getLayerTree?(): import('./compositing/layer-tree').LayerTree | null }).getLayerTree?.();
         if (layerTree) {
@@ -177,7 +183,7 @@ export class ReflowRepaintController {
         }
       }
 
-      // 4. Clear paint damage after successful paint
+      // 5. Clear paint damage after successful paint
       this.paintDamage.clear();
     } finally {
       this.processing = false;
@@ -201,6 +207,11 @@ export class ReflowRepaintController {
     }
   }
 
+  /** Get the animation timeline for this controller. */
+  get animationTimeline(): AnimationTimeline {
+    return this._animationTimeline;
+  }
+
   /** Release all resources. After dispose(), the controller must not be reused. */
   dispose(): void {
     this.cancelFrame();
@@ -209,5 +220,6 @@ export class ReflowRepaintController {
     this.document = null;
     this.processing = false;
     this.lastCompositedImageData = null;
+    this._animationTimeline.dispose();
   }
 }

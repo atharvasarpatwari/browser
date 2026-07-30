@@ -181,6 +181,14 @@ const PROPERTIES: Record<string, PropertyDef> = {
   'transition-timing-function': { inherited: false, initialValue: 'ease' },
   'transition-delay':   { inherited: false, initialValue: '0s' },
   'animation':          { inherited: false, initialValue: 'none 0s ease 0s 1 normal none running' },
+  'animation-name':     { inherited: false, initialValue: 'none' },
+  'animation-duration': { inherited: false, initialValue: '0s' },
+  'animation-timing-function': { inherited: false, initialValue: 'ease' },
+  'animation-delay':    { inherited: false, initialValue: '0s' },
+  'animation-iteration-count': { inherited: false, initialValue: '1' },
+  'animation-direction':{ inherited: false, initialValue: 'normal' },
+  'animation-fill-mode':{ inherited: false, initialValue: 'none' },
+  'animation-play-state':{ inherited: false, initialValue: 'running' },
 
   // ── Misc ───────────────────────────────────────────────────────────────
   'content':            { inherited: false, initialValue: 'normal' },
@@ -212,6 +220,11 @@ const PROPERTIES: Record<string, PropertyDef> = {
   'page-break-after':   { inherited: false, initialValue: 'auto' },
   'page-break-inside':  { inherited: false, initialValue: 'auto' },
 
+  // ── Container Queries ──────────────────────────────────────────────────
+  'container-type':     { inherited: false, initialValue: 'normal' },
+  'container-name':     { inherited: false, initialValue: 'none' },
+  'container':          { inherited: false, initialValue: 'none' },
+
   // ── Quotes ─────────────────────────────────────────────────────────────
   'quotes':             { inherited: true,  initialValue: 'auto' },
 };
@@ -241,9 +254,11 @@ const SHORTHAND_LONGHANDS: Record<string, string[]> = {
   'grid-area':         ['grid-row-start', 'grid-column-start', 'grid-row-end', 'grid-column-end'],
   'overflow':          ['overflow-x', 'overflow-y'],
   'transition':        ['transition-property', 'transition-duration', 'transition-timing-function', 'transition-delay'],
+  'animation':         ['animation-name', 'animation-duration', 'animation-timing-function', 'animation-delay', 'animation-iteration-count', 'animation-direction', 'animation-fill-mode', 'animation-play-state'],
   'text-decoration':   ['text-decoration-line', 'text-decoration-style', 'text-decoration-color'],
   'border-collapse':   ['border-collapse'],
   'gap':               ['row-gap', 'column-gap'],
+  'container':         ['container-type', 'container-name'],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

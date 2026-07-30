@@ -335,7 +335,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
           continue;
         }
       }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl });
+      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser });
       if (result2.error) {
         console.error(
           `[ScriptEngine] Error executing blocking script: ${result2.error.message}`,
@@ -353,7 +353,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
           continue;
         }
       }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl });
+      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser });
       if (result2.error) {
         console.error(
           `[ScriptEngine] Error executing defer script: ${result2.error.message}`,
@@ -372,7 +372,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
         }
       }
       // Fire and forget — async scripts don't block rendering
-      runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl });
+      runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser });
       void el; // used only for categorization
     }
   }

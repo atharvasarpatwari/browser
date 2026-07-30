@@ -613,7 +613,8 @@ class TreeBuilder implements TreeBuilderContext {
   // RESET
   // ─────────────────────────────────────────────────────────────────────────
 
-  private reset(baseUrl: string): void {
+  /** document.open() — reset the parser state and clear the document. */
+  open(): void {
     this.insertionMode        = Im.INITIAL;
     this.originalInsertionMode = Im.IN_BODY;
     this.openElements         = new OpenElements();
@@ -623,13 +624,30 @@ class TreeBuilder implements TreeBuilderContext {
     this.framesetOk           = true;
     this.formElement          = null;
     this.resources            = [];
-    this.baseUrl              = baseUrl;
     this.htmlElement          = null;
     this.headElement          = null;
     this.bodyElement          = null;
     this.metaCharset          = null;
     this.pendingRawText       = '';
     this.scriptingEnabled     = false;
+  }
+
+  /** Expose the current document (used by HtmlParser for document.write re-wiring). */
+  getCurrentDocument(): HtmlDocument {
+    this.document.htmlElement = this.htmlElement;
+    this.document.headElement = this.headElement;
+    this.document.bodyElement = this.bodyElement;
+    this.document.hasDoctype = this.document.doctype !== null;
+    this.document.declaredCharset = this.metaCharset;
+    this.document.metaCharset = this.metaCharset;
+    this.document.firstChild = this.document.children[0] ?? null;
+    this.document.lastChild = this.document.children.length > 0 ? this.document.children[this.document.children.length - 1] : null;
+    return this.document;
+  }
+
+  private reset(baseUrl: string): void {
+    this.open();
+    this.baseUrl = baseUrl;
   }
 }
 

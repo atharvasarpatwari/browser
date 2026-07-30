@@ -1,0 +1,99 @@
+{
+  "open": 12,
+  "resolved": 87,
+  "critical": 3,
+  "medium": 8,
+  "low": 15,
+  "recent": [
+    {
+      "id": "RC-001",
+      "title": "CSS cascade ordering regression in @layer",
+      "file": "src/browser/rendering/css5/cascade.ts",
+      "severity": "critical",
+      "status": "resolved",
+      "date": "2026-07-25",
+      "rootCause": "Layer ordering not respecting source order when layers have same specificity"
+    },
+    {
+      "id": "RC-002",
+      "title": "Memory leak in AnimationTimeline",
+      "file": "src/browser/rendering/compositing/animation-engine.ts",
+      "severity": "medium",
+      "status": "open",
+      "date": "2026-07-30",
+      "rootCause": "Animation instances not removed from timeline set on cancel"
+    },
+    {
+      "id": "RC-003",
+      "title": "Flexbox cross-size miscalculation",
+      "file": "src/browser/rendering/layout/flex-layout.ts",
+      "severity": "critical",
+      "status": "open",
+      "date": "2026-07-29",
+      "rootCause": "Min-content contribution not respecting aspect-ratio constraint"
+    },
+    {
+      "id": "RC-004",
+      "title": "Positioned elements ignore containing block clipping",
+      "file": "src/browser/rendering/layout/positioned-layout.ts",
+      "severity": "medium",
+      "status": "resolved",
+      "date": "2026-07-28",
+      "rootCause": "Overflow clip not propagated to absolute/fixed descendants"
+    },
+    {
+      "id": "RC-005",
+      "title": "WebSocket binary frame corruption",
+      "file": "src/browser/networking/websocket.ts",
+      "severity": "high",
+      "status": "resolved",
+      "date": "2026-07-26",
+      "rootCause": "Buffer offset not advanced after reading frame header length"
+    },
+    {
+      "id": "RC-006",
+      "title": "Tokenizer fails on CSS custom property with '--' prefix",
+      "file": "src/browser/rendering/css5/tokenizer.ts",
+      "severity": "low",
+      "status": "resolved",
+      "date": "2026-07-30",
+      "rootCause": "Token dispatch not handling double-dash before consuming ident"
+    },
+    {
+      "id": "RC-007",
+      "title": "Content-Encoding decompression returns corrupted binary",
+      "file": "src/browser/networking/http-client.ts",
+      "severity": "critical",
+      "status": "resolved",
+      "date": "2026-07-30",
+      "rootCause": "String-based concatenation corrupting binary data in decompression pipeline"
+    },
+    {
+      "id": "RC-008",
+      "title": "IPC handler duplicates responses on reconnect",
+      "file": "src/browser/ipc/transport.ts",
+      "severity": "medium",
+      "status": "resolved",
+      "date": "2026-07-26",
+      "rootCause": "Handler map not cleared on transport disconnect event"
+    },
+    {
+      "id": "RC-009",
+      "title": "Canvas arc with zero radius throws incorrectly",
+      "file": "src/browser/rendering/canvas2d.ts",
+      "severity": "low",
+      "status": "resolved",
+      "date": "2026-07-25",
+      "rootCause": "Arc radius validation not following Canvas spec for zero-radius edge case"
+    },
+    {
+      "id": "RC-010",
+      "title": "Extension host permission regex too restrictive",
+      "file": "src/browser/extensions/permissions.ts",
+      "severity": "medium",
+      "status": "resolved",
+      "date": "2026-07-29",
+      "rootCause": "Regex requiring subdomain pattern even for exact host matches"
+    }
+  ]
+}

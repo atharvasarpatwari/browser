@@ -111,6 +111,15 @@ interface IHtmlParser {
    * or <meta charset> prescan.
    */
   parseBytes(data: Uint8Array, options?: ParseBytesOptions): HtmlParseResult;
+
+  /** Write HTML into the current parser stream (document.write). */
+  write(html: string): void;
+
+  /** Clear the document and reset parser state (document.open). */
+  open(): void;
+
+  /** Get the current document state (used for DOM rebuild after write). */
+  getCurrentDocument(): HtmlDocument;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +148,27 @@ class HtmlParser implements IHtmlParser {
       return document.bodyElement.children as readonly HtmlNode[];
     }
     return document.children as readonly HtmlNode[];
+  }
+
+  /**
+   * document.write() — append HTML to the current parser stream.
+   * Must be called after an initial parse() to keep the parser state.
+   */
+  write(html: string): void {
+    const tokens = this.tokenizer.tokenize(html);
+    for (const token of tokens) {
+      this.treeBuilder.processToken(token);
+    }
+  }
+
+  /** document.open() — clear the document and reset the parser state. */
+  open(): void {
+    this.treeBuilder.open();
+  }
+
+  /** Get the current document from the tree builder (post-write). */
+  getCurrentDocument(): HtmlDocument {
+    return this.treeBuilder.getCurrentDocument() as HtmlDocument;
   }
 
   parseBytes(data: Uint8Array, options?: ParseBytesOptions): HtmlParseResult {

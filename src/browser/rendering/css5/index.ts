@@ -23,6 +23,7 @@ export type {
   CssCharsetRule,
   CssNamespaceRule,
   CssSupportsRule,
+  CssContainerRule,
   CssUnknownRule,
   CssMediaQuery,
   CssMediaFeature,

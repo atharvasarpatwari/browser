@@ -21,6 +21,8 @@ import type {
   CssStylesheet,
   CssLayerRule,
   CssLayerOrderRule,
+  CssContainerRule,
+  CssKeyframesRule,
 } from './types';
 
 import { matchesSelectorList } from './selector';
@@ -356,6 +358,96 @@ function findMatchingParen(s: string, start: number): number {
  * Split a condition string on a boolean keyword (`and` / `or`),
  * respecting parentheses. Returns an array of sub-conditions.
  */
+// ─────────────────────────────────────────────────────────────────────────────
+// @CONTAINER QUERY EVALUATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Evaluate a container query condition string.
+ * Supports: (min-width: Npx), (max-width: Npx), (width > Npx), 
+ *           not, and, or operators.
+ * Uses viewport dimensions as a fallback when container dimensions are unknown.
+ */
+function evaluateContainerQuery(query: string, viewport: Viewport): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return true;
+
+  // Handle 'not'
+  if (/^\s*not\s+/i.test(trimmed)) {
+    return !evaluateContainerQuery(trimmed.replace(/^\s*not\s+/i, '').trim(), viewport);
+  }
+
+  // Split on 'or' (lowest precedence)
+  const orParts = splitOnKeyword(trimmed, 'or');
+  if (orParts.length > 1) {
+    return orParts.some(part => evaluateContainerQuery(part.trim(), viewport));
+  }
+
+  // Split on 'and'
+  const andParts = splitOnKeyword(trimmed, 'and');
+  if (andParts.length > 1) {
+    return andParts.every(part => evaluateContainerQuery(part.trim(), viewport));
+  }
+
+  // Strip outer parentheses
+  const inner = trimmed.startsWith('(') && findMatchingParen(trimmed, 0) === trimmed.length - 1
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
+
+  // Parse size feature: (min-width: Npx), (width >= Npx), etc.
+  const featureMatch = inner.match(/^\s*(min-|max-)?(width|height|inline-size|block-size|aspect-ratio)\s*(:\s*|>=?|<=?)\s*(.+?)\s*$/i);
+  if (!featureMatch) return true;
+
+  const prefix = (featureMatch[1] ?? '').toLowerCase();
+  const feature = featureMatch[2]!.toLowerCase();
+  const op = featureMatch[3]!.trim();
+  const rawValue = featureMatch[4]!;
+
+  const value = parseFloat(rawValue);
+  if (isNaN(value)) return true;
+
+  const dim = (feature === 'width' || feature === 'inline-size') ? viewport.width : viewport.height;
+
+  if (op === ':') {
+    // Traditional syntax: (min-width: 700px)
+    if (prefix === 'min-') return dim >= value;
+    if (prefix === 'max-') return dim <= value;
+    return dim === value;
+  }
+
+  // Range syntax: (width >= 700px)
+  switch (op) {
+    case '>=': return dim >= value;
+    case '<=': return dim <= value;
+    case '>':  return dim > value;
+    case '<':  return dim < value;
+    default:   return true;
+  }
+}
+
+function splitOnKeyword(condition: string, keyword: string): string[] {
+  const parts: string[] = [];
+  const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+  let lastIndex = 0;
+  let depth = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = regex.exec(condition)) !== null) {
+    for (let i = lastIndex; i < m.index; i++) {
+      if (condition[i] === '(') depth++;
+      else if (condition[i] === ')') depth--;
+    }
+    if (depth === 0) {
+      const part = condition.slice(lastIndex, m.index).trim();
+      if (part) parts.push(part);
+      lastIndex = m.index + m[0].length;
+    }
+  }
+  const remaining = condition.slice(lastIndex).trim();
+  if (remaining) parts.push(remaining);
+  return parts;
+}
+
 function splitOnBoolean(condition: string, keyword: string): string[] {
   const parts: string[] = [];
   const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
@@ -394,6 +486,8 @@ interface CollectContext {
   currentLayer: string | null;
   /** Maps each style rule to its layer name (if any). */
   layerMap: Map<CssStyleRule, string>;
+  /** Collected @keyframes rules indexed by name. */
+  keyframes: Map<string, CssKeyframesRule>;
 }
 
 function collectStyleRules(rule: CssRule, ctx: CollectContext): void {
@@ -436,6 +530,13 @@ function collectStyleRules(rule: CssRule, ctx: CollectContext): void {
       ctx.currentLayer = prevLayer;
       break;
     }
+    case 'container': {
+      if (!evaluateContainerQuery(rule.query, ctx.viewport)) return;
+      for (const nested of rule.rules) {
+        collectStyleRules(nested, ctx);
+      }
+      break;
+    }
     case 'layer-order': {
       // @layer a, b, c; — declares layer order (names listed first = lowest priority).
       for (let i = rule.names.length - 1; i >= 0; i--) {
@@ -465,7 +566,11 @@ function collectStyleRules(rule: CssRule, ctx: CollectContext): void {
       }
       break;
     }
-    // Ignore @font-face, @keyframes, @charset, @namespace, unknown
+    case 'keyframes': {
+      ctx.keyframes.set(rule.name, rule);
+      break;
+    }
+    // Ignore @font-face, @charset, @namespace, unknown
   }
 }
 
@@ -836,6 +941,81 @@ function expandFontShorthand(value: string): Map<string, string> {
   return result;
 }
 
+function expandAnimationShorthand(value: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const tokens = splitTokenList(value);
+  if (tokens.length === 0) return result;
+
+  // animation: name duration timing-function delay iteration-count direction fill-mode play-state
+  // The only required value is the animation-name; everything else is optional and positional.
+  // We use a simple heuristic: known keywords are matched to their property.
+  let name = 'none', duration = '0s', timing = 'ease', delay = '0s';
+  let iteration = '1', direction = 'normal', fill = 'none', playState = 'running';
+  let parsedDuration = false, parsedTiming = false, parsedDelay = false;
+  let parsedIteration = false, parsedDirection = false, parsedFill = false, parsedPlayState = false;
+
+  for (const t of tokens) {
+    const tl = t.toLowerCase();
+    // Directions
+    if (!parsedDirection && /^(normal|reverse|alternate|alternate-reverse)$/i.test(t)) {
+      direction = tl === 'alternate' ? 'alternate' : tl;
+      parsedDirection = true;
+      continue;
+    }
+    // Fill modes
+    if (!parsedFill && /^(none|forwards|backwards|both)$/i.test(t)) {
+      fill = tl;
+      parsedFill = true;
+      continue;
+    }
+    // Play state
+    if (!parsedPlayState && /^(running|paused)$/i.test(t)) {
+      playState = tl;
+      parsedPlayState = true;
+      continue;
+    }
+    // Timing functions
+    if (!parsedTiming && /^(ease|ease-in|ease-out|ease-in-out|linear|step-start|step-end|cubic-bezier|steps)/i.test(t)) {
+      timing = t;
+      parsedTiming = true;
+      continue;
+    }
+    // Durations/delays (time values with s or ms)
+    if (/^[\d.]+(ms|s)$/i.test(t)) {
+      if (!parsedDuration) {
+        duration = t;
+        parsedDuration = true;
+        continue;
+      }
+      if (!parsedDelay) {
+        delay = t;
+        parsedDelay = true;
+        continue;
+      }
+    }
+    // Iteration count (numbers, including infinite)
+    if (!parsedIteration && /^(\d+(\.\d+)?|infinite)$/i.test(t)) {
+      iteration = t;
+      parsedIteration = true;
+      continue;
+    }
+    // Fallback: treat as animation-name (first unrecognized token)
+    if (name === 'none') {
+      name = t;
+    }
+  }
+
+  result.set('animation-name', name);
+  result.set('animation-duration', duration);
+  result.set('animation-timing-function', timing);
+  result.set('animation-delay', delay);
+  result.set('animation-iteration-count', iteration);
+  result.set('animation-direction', direction);
+  result.set('animation-fill-mode', fill);
+  result.set('animation-play-state', playState);
+  return result;
+}
+
 function expandListStyleShorthand(value: string): Map<string, string> {
   const result = new Map<string, string>();
   const tokens = splitTokenList(value);
@@ -891,6 +1071,8 @@ export function expandShorthands(
       expanded = expandFontShorthand(decl.value);
     } else if (prop === 'list-style') {
       expanded = expandListStyleShorthand(decl.value);
+    } else if (prop === 'animation') {
+      expanded = expandAnimationShorthand(decl.value);
     }
 
     if (expanded && expanded.size > 0) {
@@ -1324,6 +1506,7 @@ export function computeComputedStyles(
     layerOrder: [],
     currentLayer: null,
     layerMap: new Map(),
+    keyframes: new Map(),
   };
   for (const rule of stylesheet.rules) {
     collectStyleRules(rule, ctx);
@@ -1460,6 +1643,24 @@ export function computeComputedStyles(
 // INITIAL VALUES — delegated to property-definitions.ts registry
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Collect all @keyframes rules from a stylesheet into a name-indexed map.
+ */
+export function collectKeyframes(stylesheet: CssStylesheet): Map<string, CssKeyframesRule> {
+  const keyframes = new Map<string, CssKeyframesRule>();
+  function walk(rules: readonly CssRule[]): void {
+    for (const rule of rules) {
+      if (rule.type === 'keyframes') {
+        keyframes.set(rule.name, rule);
+      } else if (rule.type === 'media' || rule.type === 'supports' || rule.type === 'layer' || rule.type === 'container') {
+        walk((rule as any).rules ?? []);
+      }
+    }
+  }
+  walk(stylesheet.rules);
+  return keyframes;
+}
+
 function setInitialValues(computed: Map<string, string>): void {
   // Walk the computed map and fill in missing properties with their
   // CSS-spec initial values from the authoritative registry.
@@ -1503,6 +1704,8 @@ function setInitialValues(computed: Map<string, string>): void {
     'grid-column', 'grid-row',
     'transform', 'transform-origin',
     'transition-property', 'transition-duration', 'transition-timing-function', 'transition-delay',
+    'animation-name', 'animation-duration', 'animation-timing-function', 'animation-delay',
+    'animation-iteration-count', 'animation-direction', 'animation-fill-mode', 'animation-play-state',
     'content', 'resize',
     'outline-width', 'outline-style', 'outline-color',
     'box-shadow', 'clip-path', 'filter',

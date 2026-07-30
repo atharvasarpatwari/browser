@@ -22,6 +22,7 @@
 import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from './request-manager';
 import type { ITlsHandler } from './tls-handler';
 import { CertVerificationStatus, TlsCertificateError } from './tls-handler';
+import { ContentDecoder } from './content-encoding';
 
 export class RawSocketError extends Error {
   constructor(message: string) {
@@ -48,34 +49,33 @@ export class RawSocketTimeoutError extends RawSocketError {
 // CHUNKED TRANSFER DECODER
 // ─────────────────────────────────────────────────────────────────────────────
 
-function decodeChunkedBody(raw: string): string {
-  const result: string[] = [];
+function decodeChunkedBody(raw: Buffer): Buffer {
+  const result: Buffer[] = [];
   let pos = 0;
 
   while (pos < raw.length) {
-    // Find chunk size line (hex size\r\n)
     const sizeLineEnd = raw.indexOf('\r\n', pos);
     if (sizeLineEnd === -1) break;
 
-    const sizeStr = raw.substring(pos, sizeLineEnd).trim();
+    const sizeStr = raw.subarray(pos, sizeLineEnd).toString('utf-8').trim();
     const chunkSize = parseInt(sizeStr, 16);
 
     if (isNaN(chunkSize) || chunkSize < 0) break;
-    if (chunkSize === 0) break; // Terminal chunk
+    if (chunkSize === 0) break;
 
     const dataStart = sizeLineEnd + 2;
     const dataEnd = dataStart + chunkSize;
 
     if (dataEnd > raw.length) {
-      result.push(raw.substring(dataStart));
+      result.push(Buffer.from(raw.subarray(dataStart)));
       break;
     }
 
-    result.push(raw.substring(dataStart, dataEnd));
-    pos = dataEnd + 2; // Skip trailing \r\n
+    result.push(Buffer.from(raw.subarray(dataStart, dataEnd)));
+    pos = dataEnd + 2;
   }
 
-  return result.join('');
+  return Buffer.concat(result);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,10 +86,12 @@ class RawSocketHttpClient implements IHttpClient {
   private readonly defaultTimeoutMs: number;
   private readonly tlsHandler?: ITlsHandler;
   private readonly trustedCAs: Set<string>;
+  private readonly contentDecoder: ContentDecoder;
 
   constructor(options?: { defaultTimeoutMs?: number; tlsHandler?: ITlsHandler }) {
     this.defaultTimeoutMs = options?.defaultTimeoutMs ?? 30_000;
     this.tlsHandler = options?.tlsHandler;
+    this.contentDecoder = new ContentDecoder();
 
     // Load system trust store once.
     let cas = new Set<string>();
@@ -124,8 +126,10 @@ class RawSocketHttpClient implements IHttpClient {
       'Connection: close',
     ];
 
-    for (const [key, value] of request.headers) {
-      headerLines.push(`${key}: ${value}`);
+    if (request.headers) {
+      for (const [key, value] of request.headers) {
+        headerLines.push(`${key}: ${value}`);
+      }
     }
 
     if (request.body !== undefined) {
@@ -227,10 +231,10 @@ class RawSocketHttpClient implements IHttpClient {
       });
 
       socket.on('end', () => {
-        finish(() => {
+        finish(async () => {
           try {
-            const rawResponse = Buffer.concat(chunks).toString('utf-8');
-            const result = this.parseHttpResponse(rawResponse, request.url);
+            const rawResponse = Buffer.concat(chunks);
+            const result = await this.parseHttpResponse(rawResponse, request.url);
             resolve(result);
           } catch (err) {
             reject(err instanceof Error ? err : new RawSocketError(String(err)));
@@ -240,14 +244,15 @@ class RawSocketHttpClient implements IHttpClient {
     });
   }
 
-  private parseHttpResponse(raw: string, requestUrl: string): HttpResponseSpec {
-    const headerEndIdx = raw.indexOf('\r\n\r\n');
+  private async parseHttpResponse(raw: Buffer, requestUrl: string): Promise<HttpResponseSpec> {
+    const separator = Buffer.from('\r\n\r\n');
+    const headerEndIdx = raw.indexOf(separator);
     if (headerEndIdx === -1) {
       throw new RawSocketError('Invalid HTTP response: no header/body separator found');
     }
 
-    const headerSection = raw.substring(0, headerEndIdx);
-    let bodyRaw = raw.substring(headerEndIdx + 4);
+    const headerSection = raw.subarray(0, headerEndIdx).toString('utf-8');
+    let bodyRaw = Buffer.from(raw.subarray(headerEndIdx + 4));
 
     const headerLines = headerSection.split('\r\n');
 
@@ -281,12 +286,32 @@ class RawSocketHttpClient implements IHttpClient {
       || contentType.startsWith('audio/')
       || contentType.startsWith('video/');
 
-    let body = bodyRaw;
+    let body = '';
     let bodyBinary: Uint8Array | null = null;
 
-    if (isBinary) {
-      body = '';
-      bodyBinary = Buffer.from(bodyRaw, 'utf-8');
+    // Decompress if Content-Encoding is present
+    const contentEncoding = headers.get('content-encoding');
+    if (contentEncoding && contentEncoding.trim().toLowerCase() !== 'identity') {
+      try {
+        const decoded = await this.contentDecoder.decode(contentEncoding, bodyRaw);
+        if (isBinary) {
+          bodyBinary = new Uint8Array(decoded);
+        } else {
+          body = decoded.toString('utf-8');
+        }
+      } catch {
+        if (isBinary) {
+          bodyBinary = new Uint8Array(bodyRaw);
+        } else {
+          body = bodyRaw.toString('utf-8');
+        }
+      }
+    } else {
+      if (isBinary) {
+        bodyBinary = new Uint8Array(bodyRaw);
+      } else {
+        body = bodyRaw.toString('utf-8');
+      }
     }
 
     return {

@@ -165,6 +165,9 @@ export class CompositorThread {
     const startTime = performance.now();
 
     try {
+      // Tick animations first so animated values are up to date for this frame
+      this._animationTimeline.tick(performance.now());
+
       for (const container of snapshot.scrollContainers) {
         this._scrollCompositor.registerContainer(container);
       }

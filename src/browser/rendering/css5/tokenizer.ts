@@ -101,8 +101,9 @@ export class CssTokenizer {
         continue;
       }
 
-      // Function or ident (including backslash-escaped identifiers)
-      if (this.isIdentStart(ch) || ch === '\\' || (ch === '-' && this.peek(1) !== undefined && this.isIdentStart(this.peek(1)!))) {
+      // Function or ident (including backslash-escaped identifiers and -- prefix)
+      if (this.isIdentStart(ch) || ch === '\\' ||
+          (ch === '-' && this.peek(1) !== undefined && (this.isIdentStart(this.peek(1)!) || this.peek(1) === '-'))) {
         this.consumeIdentOrFunction();
         continue;
       }

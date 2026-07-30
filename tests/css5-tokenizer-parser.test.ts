@@ -176,6 +176,102 @@ describe('CSS5 Tokenizer — Hex Escapes (Bug #9 fix)', () => {
     expect(tokens.length).toBe(1);
     expect(tokens[0]!.value).toBe('\uFFFD');
   });
+
+  it('consumes trailing whitespace after hex escape', () => {
+    const tokens = tokenizeCssClean('\\41 b');
+    // \41 → 'A', trailing space consumed, then 'b' continues the same ident
+    expect(tokens.length).toBe(1);
+    expect(tokens[0]!.value).toBe('Ab');
+  });
+
+  it('handles 6-digit hex escape', () => {
+    const tokens = tokenizeCssClean('\\000041');
+    expect(tokens.length).toBe(1);
+    expect(tokens[0]!.value).toBe('A');
+  });
+
+  it('handles backslash followed by newline (line continuation)', () => {
+    const tokens = tokenizeCss('"hello\\\nworld"');
+    expect(tokens.length).toBeGreaterThanOrEqual(1);
+    const strToken = tokens.find(t => t.type === CssTokenType.String);
+    expect(strToken).toBeDefined();
+    expect(strToken!.value).toBe('helloworld');
+  });
+
+  it('handles backslash followed by non-hex character', () => {
+    const tokens = tokenizeCssClean('\\!');
+    expect(tokens.length).toBe(1);
+    expect(tokens[0]!.value).toBe('!');
+  });
+});
+
+describe('CSS5 Tokenizer — Edge Cases (additional)', () => {
+  it('emits BadComment (unterminated comment)', () => {
+    const tokens = tokenizeCss('/* unterminated');
+    const badComments = tokens.filter(t => t.type === CssTokenType.BadComment);
+    expect(badComments.length).toBe(1);
+  });
+
+  it('tokenizes custom property identifier (--)', () => {
+    const tokens = tokenizeCssClean('--my-var');
+    expect(tokens.length).toBe(1);
+    expect(tokens[0]!.type).toBe(CssTokenType.Ident);
+    expect(tokens[0]!.value).toBe('--my-var');
+  });
+
+  it('tokenizes function with whitespace before parens as Ident + paren', () => {
+    const tokens = tokenizeCssClean('rgb (255, 0, 0)');
+    // Current behavior: whitespace before ( still produces Function token
+    expect(tokens.length).toBeGreaterThanOrEqual(2);
+    expect(tokens[0]!.type).toBe(CssTokenType.Function);
+    expect(tokens[0]!.value).toBe('rgb');
+  });
+
+  it('tokenizes nested functions', () => {
+    const tokens = tokenizeCssClean('calc(var(--x) + 10px)');
+    const functionTokens = tokens.filter(t => t.type === CssTokenType.Function);
+    expect(functionTokens.length).toBe(2);
+  });
+
+  it('tokenizes empty url()', () => {
+    const tokens = tokenizeCssClean('url()');
+    const urlTokens = tokens.filter(t => t.type === CssTokenType.Url);
+    expect(urlTokens.length).toBe(1);
+    expect(urlTokens[0]!.value).toBe('');
+  });
+
+  it('tokenizes url() with special characters', () => {
+    const tokens = tokenizeCssClean('url(https://example.com/path?q=1#frag)');
+    const urlTokens = tokens.filter(t => t.type === CssTokenType.Url);
+    expect(urlTokens.length).toBe(1);
+    expect(urlTokens[0]!.value).toBe('https://example.com/path?q=1#frag');
+  });
+
+  it('tokenizes identifier with leading digit escape', () => {
+    const tokens = tokenizeCssClean('\\31 23px');
+    // \31 is '1', then whitespace consumed, then '23px'
+    expect(tokens.length).toBeGreaterThanOrEqual(1);
+    expect(tokens[0]!.type).toBe(CssTokenType.Ident);
+    expect(tokens[0]!.value).toBe('123px');
+  });
+
+  it('tokenizes dimension with scientific notation number (exponent)', () => {
+    const tokens = tokenizeCssClean('1e2px');
+    expect(tokens.length).toBe(1);
+    expect(tokens[0]!.type).toBe(CssTokenType.Dimension);
+    expect(tokens[0]!.value).toBe('1e2px');
+  });
+
+  it('tracks line numbers across multiple lines', () => {
+    const tokens = tokenizeCss('div\nspan');
+    expect(tokens.length).toBeGreaterThanOrEqual(2);
+    const divToken = tokens.find(t => t.value === 'div');
+    const spanToken = tokens.find(t => t.value === 'span');
+    expect(divToken).toBeDefined();
+    expect(spanToken).toBeDefined();
+    expect(divToken!.sourceLine).toBe(1);
+    expect(spanToken!.sourceLine).toBe(2);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

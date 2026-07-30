@@ -59,6 +59,8 @@ import {
   GatewayCategory,
   type ProxyConfig,
 }                                         from './gateway-protocols';
+import { ContentDecoder, ACCEPT_ENCODING } from './content-encoding';
+import { HttpAuthenticator, AuthScheme }    from './http-auth';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENUMS
@@ -94,6 +96,8 @@ interface RequestOptions {
   readonly headers?: ReadonlyMap<string, string>;
   readonly body?: string;
   readonly timeoutMs?: number;
+  /** Credentials for HTTP authentication (Basic, Digest, NTLM, Bearer). */
+  readonly auth?: { readonly username: string; readonly password: string };
 }
 
 /** Raw result of one completed HTTP exchange (after following redirects). */
@@ -132,10 +136,21 @@ interface IHttpClient {
  * validate every hop against BLOCKED_PROTOCOLS.
  */
 class FetchHttpClient implements IHttpClient {
+  private readonly contentDecoder: ContentDecoder;
+
+  constructor() {
+    this.contentDecoder = new ContentDecoder();
+  }
+
   async send(request: HttpRequestSpec, signal: AbortSignal): Promise<HttpResponseSpec> {
     const headersInit: Record<string, string> = {};
     for (const [key, value] of request.headers) {
       headersInit[key] = value;
+    }
+
+    // Advertise compression support
+    if (!headersInit['accept-encoding']) {
+      headersInit['accept-encoding'] = ACCEPT_ENCODING;
     }
 
     const init: RequestInit = {
@@ -174,6 +189,25 @@ class FetchHttpClient implements IHttpClient {
       }
     } else {
       body = await FetchHttpClient.safeReadText(res);
+    }
+
+    // Decompress if Content-Encoding is present
+    const contentEncoding = headers.get('content-encoding');
+    if (contentEncoding && contentEncoding.trim().toLowerCase() !== 'identity') {
+      try {
+        const sourceData = bodyBinary ? Buffer.from(bodyBinary) : Buffer.from(body, 'utf-8');
+        const decoded = await this.contentDecoder.decodeFromString(contentEncoding, sourceData.toString('utf-8'));
+        const decodedStr = decoded.toString('utf-8');
+        if (isBinary) {
+          body = '';
+          bodyBinary = new Uint8Array(decoded);
+        } else {
+          body = decodedStr;
+          bodyBinary = null;
+        }
+      } catch {
+        // If decompression fails, use the raw body
+      }
     }
 
     return {
@@ -710,6 +744,7 @@ class RequestManager implements IRequestManager {
   private readonly bus:    RequestEventBus;
   private retryPolicy:     RetryPolicy;
   private readonly maxRedirects: number;
+  private readonly authenticator: HttpAuthenticator;
 
   constructor(
     client: IHttpClient = new FetchHttpClient(),
@@ -721,6 +756,7 @@ class RequestManager implements IRequestManager {
     this.bus          = new RequestEventBus();
     this.retryPolicy  = options?.retryPolicy  ?? new ExponentialBackoffRetryPolicy();
     this.maxRedirects = options?.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+    this.authenticator = new HttpAuthenticator();
   }
 
   // ── IPageLoader ────────────────────────────────────────────────────────────
@@ -745,12 +781,14 @@ class RequestManager implements IRequestManager {
     let currentUrl  = options.url;
     const chain: string[] = [];
     let attempt     = 0;
+    let authHeader: string | null = null;
+    let authRetried = false;
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
       this.throwIfExternallyAborted(externalSignal, currentUrl);
 
-      const spec = this.buildRequestSpec(options, currentUrl);
+      const spec = this.buildRequestSpec(options, currentUrl, authHeader);
       const { signal: timeoutSignal, cancel } = createTimeoutSignal(spec.timeoutMs);
       const combined = combineSignals(externalSignal, timeoutSignal);
 
@@ -826,6 +864,27 @@ class RequestManager implements IRequestManager {
         continue; // redirects don't count against the retry budget
       }
 
+      // ── HTTP Authentication (401/407)? ──────────────────────────────────
+      if ((res.statusCode === 401 || res.statusCode === 407) && !authRetried && options.auth) {
+        const challengeHeader = res.headers.get(
+          res.statusCode === 401 ? 'www-authenticate' : 'proxy-authenticate'
+        );
+        if (challengeHeader && this.authenticator.canHandle(challengeHeader)) {
+          const challenge = this.authenticator.parseChallenge(challengeHeader);
+          if (challenge) {
+            authHeader = this.authenticator.generateResponse(
+              challenge,
+              { username: options.auth.username, password: options.auth.password },
+              options.method ?? HttpMethod.GET,
+              currentUrl,
+            );
+            authRetried = true;
+            // Retry with auth header — does not count against retry budget
+            continue;
+          }
+        }
+      }
+
       // ── Retryable error status? ─────────────────────────────────────────
       if (this.retryPolicy.shouldRetry(attempt + 1, res.statusCode, false)) {
         attempt++;
@@ -865,7 +924,7 @@ class RequestManager implements IRequestManager {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
-  private buildRequestSpec(options: RequestOptions, url: string): HttpRequestSpec {
+  private buildRequestSpec(options: RequestOptions, url: string, authHeader?: string | null): HttpRequestSpec {
     const headers = new Map<string, string>(options.headers ?? []);
 
     if (!headers.has('user-agent')) {
@@ -873,6 +932,9 @@ class RequestManager implements IRequestManager {
     }
     if (!headers.has('accept')) {
       headers.set('accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
+    }
+    if (authHeader && !headers.has('authorization')) {
+      headers.set('authorization', authHeader);
     }
 
     return {

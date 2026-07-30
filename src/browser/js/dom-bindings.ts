@@ -1,4 +1,5 @@
 import type { DomDocument, DomElement, DomNode, DomTextNode, IDomTree } from '../rendering/dom-tree';
+import { Animation, AnimationTimeline, KeyframeEffect, createAnimation, type Keyframe, type KeyframeEffectOptions } from '../rendering/compositing/animation-engine';
 import {
   type JSValue, type JSObject, type JSFunction,
   createObject, createArray, createNativeFunction,
@@ -281,6 +282,197 @@ export function createDocumentBinding(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const elementCache = new WeakMap<DomElement, JSObject>();
+
+// ── Animation Registry ─────────────────────────────────────────────────────
+// Maps element domId → active Animation[] for getAnimations().
+const elementAnimations = new Map<string, Animation[]>();
+
+function getElementAnimations(domId: string): Animation[] {
+  let list = elementAnimations.get(domId);
+  if (!list) {
+    list = [];
+    elementAnimations.set(domId, list);
+  }
+  return list;
+}
+
+/**
+ * Parse a JS keyframes argument into Keyframe[].
+ * Supports: array of { offset?, ...props } and property-indexed { prop: [from, to], offset: [0, 1] } forms.
+ */
+function parseKeyframesArg(kfArg: JSValue): Keyframe[] {
+  if (!kfArg || typeof kfArg !== 'object') return [];
+  const obj = kfArg as JSObject;
+
+  // Array form: [{ opacity: 0, offset: 0 }, { opacity: 1, offset: 1 }]
+  if (obj.type === 'array' || Array.isArray(obj)) {
+    const arr = Array.isArray(obj) ? obj : [];
+    const len = !Array.isArray(obj) ? Number(obj.properties.get('length')?.value ?? 0) : obj.length;
+    const result: Keyframe[] = [];
+    for (let i = 0; i < len; i++) {
+      const item = Array.isArray(obj) ? (obj as any)[i] : obj.properties.get(String(i))?.value;
+      if (!item || typeof item !== 'object') continue;
+      const itemObj = item as JSObject;
+      const props: Record<string, string> = {};
+      let offset = i / Math.max(len - 1, 1);
+      for (const [k, desc] of itemObj.properties) {
+        if (k === 'offset') {
+          const o = Number(desc.value);
+          if (!isNaN(o)) offset = o;
+        } else if (k !== 'easing') {
+          props[k] = String(desc.value);
+        }
+      }
+      const easing = itemObj.properties.get('easing')?.value;
+      result.push({ offset, properties: props, easing: easing !== undefined ? String(easing) : undefined });
+    }
+    return result;
+  }
+
+  // Property-indexed form: { opacity: [0, 1], transform: ['scale(1)', 'scale(2)'], offset: [0, 1] }
+  const result: Keyframe[] = [];
+  const allProps = new Set<string>();
+  const propValues = new Map<string, JSValue[]>();
+  let offsets: number[] = [];
+  for (const [k, desc] of obj.properties) {
+    if (k === 'offset') {
+      const arr = desc.value;
+      if (typeof arr === 'object' && arr !== null) {
+        const aLen = Number((arr as JSObject).properties.get('length')?.value ?? 0);
+        for (let i = 0; i < aLen; i++) {
+          const v = (arr as JSObject).properties.get(String(i))?.value;
+          const n = Number(v);
+          if (!isNaN(n)) offsets.push(n);
+        }
+      }
+    } else if (k === 'easing') {
+      // skip
+    } else {
+      allProps.add(k);
+      const arr = desc.value;
+      if (typeof arr === 'object' && arr !== null) {
+        const vals: JSValue[] = [];
+        const aLen = Number((arr as JSObject).properties.get('length')?.value ?? 0);
+        for (let i = 0; i < aLen; i++) {
+          vals.push((arr as JSObject).properties.get(String(i))?.value);
+        }
+        propValues.set(k, vals);
+      }
+    }
+  }
+  if (allProps.size === 0) return result;
+  const numKeyframes = Math.max(...[...propValues.values()].map(v => v.length), offsets.length, 2);
+  for (let i = 0; i < numKeyframes; i++) {
+    const props: Record<string, string> = {};
+    for (const p of allProps) {
+      const vals = propValues.get(p);
+      if (vals && i < vals.length) props[p] = String(vals[i]);
+    }
+    const offset = i < offsets.length ? offsets[i] : i / Math.max(numKeyframes - 1, 1);
+    result.push({ offset, properties: props });
+  }
+  return result;
+}
+
+/**
+ * Parse a JS options argument into KeyframeEffectOptions.
+ * Supports number (duration) or object with duration/delay/etc.
+ */
+function parseAnimationOptions(optionsArg: JSValue): KeyframeEffectOptions {
+  if (optionsArg === undefined || optionsArg === null) return { duration: 1000 };
+  if (typeof optionsArg === 'number') return { duration: optionsArg };
+  if (typeof optionsArg !== 'object') return { duration: 1000 };
+  const obj = optionsArg as JSObject;
+  const readProp = (name: string, def: any): any => {
+    const desc = obj.properties.get(name)?.value;
+    return desc !== undefined ? desc : def;
+  };
+  return {
+    duration: Number(readProp('duration', 1000)),
+    delay: Number(readProp('delay', 0)),
+    endDelay: Number(readProp('endDelay', 0)),
+    iterations: Number(readProp('iterations', 1)),
+    iterationStart: Number(readProp('iterationStart', 0)),
+    direction: readProp('direction', 'normal') as any,
+    fill: readProp('fill', 'none') as any,
+    easing: readProp('easing', 'linear') as string,
+  };
+}
+
+// ── Shared animation timeline for JS-created animations ──
+const jsAnimationTimeline = new AnimationTimeline();
+
+/**
+ * Create a JSObject wrapper around a real Animation engine instance.
+ */
+export function wrapAnimation(anim: Animation): JSObject {
+  const obj = createObject(null);
+
+  const syncProps = () => {
+    obj.properties.set('playState', { value: anim.playState, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('playbackRate', { value: 1, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('currentTime', { value: anim.currentTime, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('startTime', { value: anim.currentTime, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('finished', { value: anim.finished, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('pending', { value: anim.pending, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('onfinish', { value: obj.properties.get('onfinish')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('oncancel', { value: obj.properties.get('oncancel')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('onremove', { value: obj.properties.get('onremove')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
+  };
+
+  syncProps();
+
+  // Wire finish callback
+  const prevOnFinish = anim.onFinish;
+  anim.onFinish = (evt) => {
+    const cb = obj.properties.get('onfinish')?.value;
+    if (typeof cb === 'object' && cb !== null && (cb as any).type === 'closure') {
+      callJSFunction(cb as JSFunction, obj, []);
+    }
+    if (prevOnFinish) prevOnFinish(evt);
+    syncProps();
+  };
+
+  anim.onCancel = (evt) => {
+    const cb = obj.properties.get('oncancel')?.value;
+    if (typeof cb === 'object' && cb !== null && (cb as any).type === 'closure') {
+      callJSFunction(cb as JSFunction, obj, []);
+    }
+    syncProps();
+  };
+
+  obj.properties.set('play', {
+    value: createNativeFunction('play', () => { anim.start(); syncProps(); return obj; }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('pause', {
+    value: createNativeFunction('pause', () => { anim.pause(); syncProps(); return obj; }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('finish', {
+    value: createNativeFunction('finish', () => { anim.finish(); syncProps(); return undefined; }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('cancel', {
+    value: createNativeFunction('cancel', () => { anim.cancel(); syncProps(); return undefined; }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('reverse', {
+    value: createNativeFunction('reverse', () => { anim.reverse(); syncProps(); return obj; }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('commitStyles', {
+    value: createNativeFunction('commitStyles', () => undefined),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('updatePlaybackRate', {
+    value: createNativeFunction('updatePlaybackRate', () => undefined),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  (obj as any).__animation = anim;
+  return obj;
+}
 
 function getAttr(el: DomElement, name: string): string | undefined {
   return el.attributes.get(name);
@@ -824,6 +1016,49 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       }),
     });
   }
+
+  // ── Web Animations API: animate() ──
+  obj.properties.set('animate', {
+    value: createNativeFunction('animate', (_this, args) => {
+      const kfArg = args[0];
+      const optsArg = args[1];
+      const keyframes = parseKeyframesArg(kfArg);
+      const options = parseAnimationOptions(optsArg);
+      if (keyframes.length === 0) {
+        // Return a finished animation for empty keyframes
+        const emptyEffect = new KeyframeEffect(el.domId, [{ offset: 0, properties: {} }], { duration: 0 });
+        const emptyAnim = new Animation(emptyEffect, jsAnimationTimeline);
+        emptyAnim.finish();
+        return wrapAnimation(emptyAnim);
+      }
+      const effect = new KeyframeEffect(el.domId, keyframes, options);
+      const anim = new Animation(effect, jsAnimationTimeline);
+      anim.start();
+      // Track by element for getAnimations()
+      getElementAnimations(el.domId).push(anim);
+      // Clean up when finished
+      const origFinish = anim.onFinish;
+      anim.onFinish = (evt) => {
+        const list = elementAnimations.get(el.domId);
+        if (list) {
+          const idx = list.indexOf(anim);
+          if (idx >= 0) list.splice(idx, 1);
+        }
+        if (origFinish) origFinish(evt);
+      };
+      return wrapAnimation(anim);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // ── Web Animations API: getAnimations() ──
+  obj.properties.set('getAnimations', {
+    value: createNativeFunction('getAnimations', () => {
+      const anims = elementAnimations.get(el.domId) ?? [];
+      return createArray(anims.filter(a => a.playState !== 'idle' && a.playState !== 'finished').map(a => wrapAnimation(a)));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
 
   return obj;
 }

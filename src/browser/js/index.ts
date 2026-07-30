@@ -4,7 +4,8 @@ import type { INavigationController } from '../navigation/navigation-controller'
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
-import { createDocumentBinding } from './dom-bindings';
+import { createDocumentBinding, wrapElement } from './dom-bindings';
+import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
@@ -72,6 +73,8 @@ export interface RunJSOptions {
   scriptEnforcer?: CspScriptEnforcer;
   /** Optional page origin for CSP enforcement. */
   pageOrigin?: string;
+  /** Optional HtmlParser for document.write()/document.open() support. */
+  htmlParser?: IHtmlParser;
 }
 
 export interface RunJSResult {
@@ -90,7 +93,7 @@ export interface RunJSResult {
  * It lexes, parses, and executes the source with full DOM bindings.
  */
 export function runJS(source: string, options: RunJSOptions): RunJSResult {
-  const { document: doc, domTree, eventLoop = new EventLoop(), globalEnv, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin } = options;
+  const { document: doc, domTree, eventLoop = new EventLoop(), globalEnv, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin, htmlParser } = options;
 
   try {
     // 1. Lex (lazy — parser pulls tokens on demand for template interpolation support)
@@ -101,7 +104,7 @@ export function runJS(source: string, options: RunJSOptions): RunJSResult {
     const program = parser.parse();
 
     // 3. Execute
-    const env = globalEnv ?? createGlobalEnv(doc, domTree, eventLoop, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin);
+    const env = globalEnv ?? createGlobalEnv(doc, domTree, eventLoop, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin, htmlParser);
     const interpreter = new Interpreter(env, eventLoop);
     const value = interpreter.run(program);
 
@@ -124,6 +127,7 @@ export function createGlobalEnv(
   resourceEnforcer?: CspResourceEnforcer,
   scriptEnforcer?: CspScriptEnforcer,
   pageOrigin?: string,
+  htmlParser?: IHtmlParser,
 ): Environment {
   const env = new Environment(null);
 
@@ -1713,6 +1717,38 @@ export function createGlobalEnv(
   // DOM binding
   const docBinding = createDocumentBinding(doc, domTree);
   env.setLocal('document', docBinding);
+
+  // document.write() / document.open() — requires an HtmlParser
+  if (htmlParser) {
+    docBinding.properties.set('write', {
+      value: createNativeFunction('write', (_this, args) => {
+        const str = toString(args[0]);
+        htmlParser.write(str);
+        const updatedDoc = htmlParser.getCurrentDocument() as HtmlDocument;
+        const newDoc = domTree.buildFromHtml(updatedDoc);
+        docBinding.properties.set('body', {
+          value: newDoc.bodyElement ? wrapElement(newDoc.bodyElement, domTree) : null,
+          writable: true, enumerable: true, configurable: true,
+        });
+        docBinding.properties.set('documentElement', {
+          value: newDoc.htmlElement ? wrapElement(newDoc.htmlElement, domTree) : null,
+          writable: true, enumerable: true, configurable: true,
+        });
+        return undefined;
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    docBinding.properties.set('open', {
+      value: createNativeFunction('open', () => {
+        htmlParser.open();
+        const newDoc = domTree.buildFromHtml(htmlParser.getCurrentDocument() as HtmlDocument);
+        docBinding.properties.set('body', { value: null, writable: true, enumerable: true, configurable: true });
+        docBinding.properties.set('documentElement', { value: null, writable: true, enumerable: true, configurable: true });
+        return undefined;
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+  }
 
   // window — the global scope object (like browser window)
   const windowObj = createObject(null);

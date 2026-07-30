@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analysis Report Monitor — Nova Browser</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container" id="app">
+
+    <header class="app-header">
+      <div class="app-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 4-6"/><circle cx="18" cy="6" r="1"/>
+        </svg>
+        Analysis Report Monitor
+      </div>
+      <div class="header-actions">
+        <div class="column-toggle-menu">
+          <button class="btn" onclick="toggleColumnMenu()">&#9776; Columns</button>
+          <div class="column-dropdown" id="columnMenu" style="display:none"></div>
+        </div>
+        <div class="export-menu">
+          <button class="btn" onclick="toggleExportMenu()">&#8595; Export</button>
+          <div class="export-dropdown" id="exportMenu" style="display:none">
+            <button onclick="exportCSV()">Export CSV</button>
+            <button onclick="exportJSON()">Export JSON</button>
+            <button onclick="window.print()">Print PDF</button>
+          </div>
+        </div>
+        <button class="btn-icon" onclick="toggleFullscreen()" title="Fullscreen">&#9974;</button>
+        <button class="btn-icon" onclick="toggleTheme()" id="themeToggle" title="Toggle theme">&#9788;</button>
+        <button class="btn-icon" onclick="loadAll()" title="Refresh">&#8635;</button>
+      </div>
+    </header>
+
+    <div class="stats-grid" id="statsGrid"></div>
+
+    <div class="root-causes-grid" id="rootCausesGrid"></div>
+
+    <div class="code-quality-grid" id="qualityGrid"></div>
+
+    <div class="charts-grid" id="chartsGrid">
+      <div class="chart-card"><h3>Daily Commit Activity</h3><canvas id="dailyChart"></canvas></div>
+      <div class="chart-card"><h3>Category Distribution</h3><canvas id="categoryChart"></canvas></div>
+      <div class="chart-card"><h3>Files Modified Per Day</h3><canvas id="filesChart"></canvas></div>
+      <div class="chart-card"><h3>Language Distribution</h3><canvas id="langChart"></canvas></div>
+    </div>
+
+    <div class="controls-bar">
+      <div class="search-box">
+        <span class="search-icon">&#8981;</span>
+        <input type="text" id="searchInput" placeholder="Search commits, messages, authors..." oninput="debouncedSearch()">
+      </div>
+      <select id="filterCategory" onchange="loadCommits()">
+        <option value="">All Categories</option>
+        <option value="PLAN">Plan</option>
+        <option value="FEATURE">Feature</option>
+        <option value="BUG FIX">Bug Fix</option>
+        <option value="TEST">Test</option>
+        <option value="HTML">HTML</option>
+        <option value="CSS">CSS</option>
+        <option value="JAVASCRIPT">JavaScript</option>
+        <option value="TYPESCRIPT">TypeScript</option>
+        <option value="CPP">C++</option>
+        <option value="RUST">Rust</option>
+        <option value="SECURITY">Security</option>
+        <option value="PERFORMANCE">Performance</option>
+        <option value="DOCUMENTATION">Documentation</option>
+        <option value="REFACTOR">Refactor</option>
+        <option value="CI/CD">CI/CD</option>
+      </select>
+      <select id="filterStatus" onchange="loadCommits()">
+        <option value="">All Status</option>
+        <option value="Planned">Planned</option>
+        <option value="In Progress">In Progress</option>
+        <option value="Completed">Completed</option>
+        <option value="Failed">Failed</option>
+      </select>
+      <select id="filterAuthor" onchange="loadCommits()">
+        <option value="">All Authors</option>
+      </select>
+      <select id="filterBranch" onchange="loadCommits()">
+        <option value="">All Branches</option>
+      </select>
+    </div>
+
+    <div class="table-wrapper" id="tableWrapper">
+      <div class="table-scroll">
+        <table id="commitTable">
+          <thead id="tableHead"></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+      <div class="loading-skeleton" id="skeleton" style="display:none">
+        <div class="skeleton-row"><div class="skeleton-cell" style="width:30px"></div><div class="skeleton-cell" style="width:80px"></div><div class="skeleton-cell" style="width:200px"></div><div class="skeleton-cell" style="width:100px"></div><div class="skeleton-cell" style="width:60px"></div><div class="skeleton-cell" style="width:60px"></div><div class="skeleton-cell" style="width:40px"></div><div class="skeleton-cell" style="width:40px"></div><div class="skeleton-cell" style="width:80px"></div></div>
+        <div class="skeleton-row"><div class="skeleton-cell" style="width:30px"></div><div class="skeleton-cell" style="width:80px"></div><div class="skeleton-cell" style="width:200px"></div><div class="skeleton-cell" style="width:100px"></div><div class="skeleton-cell" style="width:60px"></div><div class="skeleton-cell" style="width:60px"></div><div class="skeleton-cell" style="width:40px"></div><div class="skeleton-cell" style="width:40px"></div><div class="skeleton-cell" style="width:80px"></div></div>
+        <div class="skeleton-row"><div class="skeleton-cell" style="width:30px"></div><div class="skeleton-cell" style="width:80px"></div><div class="skeleton-cell" style="width:200px"></div><div class="skeleton-cell" style="width:100px"></div><div class="skeleton-cell" style="width:60px"></div><div class="skeleton-cell" style="width:60px"></div><div class="skeleton-cell" style="width:40px"></div><div class="skeleton-cell" style="width:40px"></div><div class="skeleton-cell" style="width:80px"></div></div>
+        <div class="skeleton-row"><div class="skeleton-cell" style="width:30px"></div><div class="skeleton-cell" style="width:80px"></div><div class="skeleton-cell" style="width:200px"></div><div class="skeleton-cell" style="width:100px"></div><div class="skeleton-cell" style="width:60px"></div><div class="skeleton-cell" style="width:60px"></div><div class="skeleton-cell" style="width:40px"></div><div class="skeleton-cell" style="width:40px"></div><div class="skeleton-cell" style="width:80px"></div></div>
+      </div>
+      <div class="empty-state" id="emptyState" style="display:none">
+        <div class="empty-icon">&#128196;</div>
+        <h3>No Commits Found</h3>
+        <p>No commits match the current filters. Try adjusting your search criteria.</p>
+      </div>
+      <div class="error-state" id="errorState" style="display:none">
+        <div class="error-icon">&#9888;</div>
+        <h3>Connection Error</h3>
+        <p>Could not connect to the backend server. Make sure the API is running.</p>
+      </div>
+      <div class="pagination" id="pagination">
+        <div class="rows-select">
+          Rows: <select id="rowsPerPage" onchange="loadCommits()">
+            <option value="10">10</option>
+            <option value="25" selected>25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+        <div class="page-controls">
+          <span id="pageInfo">Page 1 of 1</span>
+          <button onclick="prevPage()" id="prevBtn">&#9664; Prev</button>
+          <button onclick="nextPage()" id="nextBtn">Next &#9654;</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modalOverlay" class="modal-overlay" style="display:none" onclick="closeModal(event)">
+      <div class="modal" id="modalContent" onclick="event.stopPropagation()">
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+        <h2 id="modalTitle">Commit Details</h2>
+        <div class="commit-detail" id="modalBody"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

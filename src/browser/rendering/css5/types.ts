@@ -179,6 +179,13 @@ export interface CssLayerOrderRule {
   readonly names: readonly string[];        // @layer a, b, c;
 }
 
+export interface CssContainerRule {
+  readonly type: 'container';
+  readonly name: string;                    // container name, empty for anonymous
+  readonly query: string;                   // e.g. "(min-width: 700px)"
+  readonly rules: readonly CssRule[];
+}
+
 export interface CssUnknownRule {
   readonly type: 'unknown';
   readonly atKeyword: string;
@@ -197,6 +204,7 @@ export type CssRule =
   | CssSupportsRule
   | CssLayerRule
   | CssLayerOrderRule
+  | CssContainerRule
   | CssUnknownRule;
 
 // ─────────────────────────────────────────────────────────────────────────────
