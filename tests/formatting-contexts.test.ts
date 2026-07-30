@@ -49,10 +49,14 @@ function elem(tagName: string, display?: string): DomElement {
 describe('classifyDisplay', () => {
   it('should classify block-level displays as block', () => {
     expect(classifyDisplay('block')).toBe('block');
-    expect(classifyDisplay('table')).toBe('block');
-    expect(classifyDisplay('table-row')).toBe('block');
-    expect(classifyDisplay('table-cell')).toBe('block');
     expect(classifyDisplay('flow-root')).toBe('block');
+  });
+
+  it('should classify table displays as table', () => {
+    expect(classifyDisplay('table')).toBe('table');
+    expect(classifyDisplay('inline-table')).toBe('table');
+    expect(classifyDisplay('table-row')).toBe('table');
+    expect(classifyDisplay('table-cell')).toBe('table');
   });
 
   it('should classify list-item as block', () => {

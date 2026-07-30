@@ -29,7 +29,7 @@
 
 import type { IDisposable } from '../../app/dependency-container';
 import type { IResourceLoader } from '../netwroking/resource-loader';
-import type { IDomTree, DomNode, DomElement, DomDocument } from '../rendering/dom-tree';
+import type { IDomTree, DomNode, DomElement, DomDocument, UsedStyle } from '../rendering/dom-tree';
 import type { ICssParser, CssRule } from '../rendering/css-parser';
 import type { ILayoutEngine } from '../rendering/layout-engine';
 import type { IPaintEngine } from '../rendering/paint-engine';
@@ -46,6 +46,7 @@ import { CssParser } from '../rendering/css-parser';
 import { LazyLoader } from '../rendering/lazy-loader';
 import { ResourcePrioritizer } from '../netwroking/resource-prioritizer';
 import { computeComputedStyles } from '../rendering/css5/cascade';
+import { buildUsedStyle } from '../rendering/css5/used-style';
 import { runJS } from '../js/index';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
@@ -117,6 +118,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 4. Extract and compute CSS styles
     const rules = cssParser.extractStylesFromDocument(htmlDoc);
+    this._lastRules = rules;
     this.applyComputedStyles(rules);
 
     // 5. Execute scripts: inline synchronously, external fetched via ResourceLoader
@@ -142,6 +144,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Walks the DOM tree, builds a StyleableElement mirror for CSS5 selector
    * matching, and applies computed styles to every element so the layout /
    * paint engines can consume them via node.computedStyle.
+   *
+   * Also builds a UsedStyle object for each element with pixel-resolved
+   * box-model values for faster layout.
    */
   private applyComputedStyles(rules: readonly CssRule[]): void {
     const { domTree, cssParser } = this.deps;
@@ -151,11 +156,97 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // Build a CSS5 stylesheet from legacy CssRule[] (reparse selectors once).
     const stylesheet = this.buildCss5Stylesheet(cssParser, rules);
 
+    // Determine container dimensions for percentage-based used-style resolution.
+    const bodyEl = doc.bodyElement;
+    const containerWidth = bodyEl?.layoutBox?.width ?? 1920;
+    const containerHeight = bodyEl?.layoutBox?.height ?? 1080;
+
     // Pass 1: Build StyleableElement tree mirroring the DOM tree.
     const rootStyleables = this.buildStyleableTree(doc.children, null);
 
     // Pass 2: Compute and apply styles top-down.
-    this.applyStylesRecursive(doc.children, rootStyleables, stylesheet, null);
+    this.applyStylesRecursive(doc.children, rootStyleables, stylesheet, null, containerWidth, containerHeight);
+  }
+
+  /**
+   * Incremental style recalc: walks only elements with _dirtyStyle flag,
+   * recomputes their computed styles and used styles, and clears the flag.
+   */
+  private recalcStylesIncremental(): void {
+    const { domTree, cssParser } = this.deps;
+    const doc = domTree.getDocument();
+    if (!doc) return;
+
+    const bodyEl = doc.bodyElement;
+    const containerWidth = bodyEl?.layoutBox?.width ?? 1920;
+    const containerHeight = bodyEl?.layoutBox?.height ?? 1080;
+
+    const dirtyNodes = this.collectDirtyNodes(doc);
+    if (dirtyNodes.length === 0) return;
+
+    // Build a fresh stylesheet (rules may have changed).
+    const legacyParser = cssParser;
+    const stylesheet = this.buildCss5Stylesheet(legacyParser, this._lastRules);
+    if (!this._lastStylesheet) this._lastStylesheet = stylesheet;
+
+    for (const el of dirtyNodes) {
+      const parentComputed = el.parent?.nodeType === 'element'
+        ? (el.parent as DomElement).computedStyle as Map<string, string> | undefined
+        : undefined;
+
+      const styleable = this.buildSingleStyleable(el);
+      const computed = computeComputedStyles(
+        styleable,
+        stylesheet,
+        undefined,
+        parentComputed,
+      );
+      domTree.setComputedStyle(el, computed);
+
+      const usedStyle = buildUsedStyle(computed, containerWidth, containerHeight, 16);
+      domTree.setUsedStyle(el, usedStyle);
+
+      domTree.clearDirty(el, 'style');
+    }
+  }
+
+  private _lastRules: readonly CssRule[] = [];
+  private _lastStylesheet: Css5Stylesheet | null = null;
+
+  /**
+   * Collect all elements with _dirtyStyle === true in the DOM tree.
+   */
+  private collectDirtyNodes(doc: DomDocument): DomElement[] {
+    const result: DomElement[] = [];
+    const walk = (nodes: readonly DomNode[]): void => {
+      for (const n of nodes) {
+        if (n.nodeType === 'element') {
+          const el = n as DomElement;
+          if (el._dirtyStyle) result.push(el);
+          walk(el.children);
+        }
+      }
+    };
+    walk(doc.children);
+    return result;
+  }
+
+  /**
+   * Build a single StyleableElement wrapper for an element (for incremental recalc).
+   */
+  private buildSingleStyleable(el: DomElement): StyleableElement {
+    const children: StyleableElement[] = el.children
+      .filter((c): c is DomElement => c.nodeType === 'element')
+      .map(c => this.buildSingleStyleable(c));
+    const parentStyleable = el.parent?.nodeType === 'element'
+      ? this.buildSingleStyleable(el.parent as DomElement)
+      : null;
+    return {
+      tagName: el.tagName,
+      attributes: el.attributes,
+      parent: parentStyleable,
+      children,
+    };
   }
 
   /**
@@ -378,6 +469,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
     styleables: readonly StyleableElement[],
     stylesheet: Css5Stylesheet,
     parentComputed: Map<string, string> | null,
+    containerWidth: number,
+    containerHeight: number,
   ): void {
     const { domTree } = this.deps;
     let i = 0;
@@ -394,12 +487,18 @@ class PageRenderer implements IPageRenderer, IDisposable {
       );
       domTree.setComputedStyle(el, computed);
 
+      // Build used style for faster layout
+      const used = buildUsedStyle(computed, containerWidth, containerHeight, 16);
+      domTree.setUsedStyle(el, used);
+
       // Recurse into children with this element's computed styles as parent.
       this.applyStylesRecursive(
         el.children,
         styleable.children,
         stylesheet,
         computed,
+        containerWidth,
+        containerHeight,
       );
     }
   }

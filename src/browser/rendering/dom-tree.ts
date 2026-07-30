@@ -10,6 +10,7 @@ interface DomNode {
   readonly nodeType: DomNodeType;
   readonly parent: DomNode | null;
   readonly children: DomNode[];
+  _dirtyStyle: boolean;
   _dirtyLayout: boolean;
   _dirtyPaint: boolean;
 }
@@ -19,6 +20,7 @@ interface DomElement extends DomNode {
   readonly tagName: string;
   readonly attributes: ReadonlyMap<string, string>;
   computedStyle: ReadonlyMap<string, string> | null;
+  usedStyle: UsedStyle | null;
   layoutBox: LayoutBox | null;
   /** Decoded image data (populated after lazy load completes). */
   imageData: ImageData | null;
@@ -68,6 +70,55 @@ interface LayoutBox {
 }
 
 /**
+ * Pixel-resolved used style values derived from computed style.
+ * These values are resolved to absolute pixels at style resolution time
+ * so the layout engine can read them without re-resolving.
+ */
+interface UsedStyle {
+  readonly display: string;
+  readonly position: string;
+  readonly boxSizing: string;
+  readonly marginTop: number;
+  readonly marginRight: number;
+  readonly marginBottom: number;
+  readonly marginLeft: number;
+  readonly paddingTop: number;
+  readonly paddingRight: number;
+  readonly paddingBottom: number;
+  readonly paddingLeft: number;
+  readonly borderTopWidth: number;
+  readonly borderRightWidth: number;
+  readonly borderBottomWidth: number;
+  readonly borderLeftWidth: number;
+  readonly borderTopStyle: string;
+  readonly borderRightStyle: string;
+  readonly borderBottomStyle: string;
+  readonly borderLeftStyle: string;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly minWidth: number;
+  readonly minHeight: number;
+  readonly maxWidth: number | null;
+  readonly maxHeight: number | null;
+  readonly fontSize: number;
+  readonly lineHeight: number | 'normal';
+  readonly fontWeight: number;
+  readonly fontFamily: string;
+  readonly color: string;
+  readonly backgroundColor: string;
+  readonly textAlign: string;
+  readonly verticalAlign: string;
+  readonly float: string;
+  readonly clear: string;
+  readonly overflowX: string;
+  readonly overflowY: string;
+  readonly zIndex: number | 'auto';
+  readonly opacity: number;
+  readonly visibility: string;
+  readonly boxShadow: string;
+}
+
+/**
  * A positioned text segment for rendering.
  * Stored on LayoutBox by the layout engine for the paint engine to consume.
  */
@@ -106,14 +157,15 @@ interface IDomTree extends IDisposable {
   removeAttribute(element: DomElement, name: string): void;
   setTextContent(node: DomElement | DomTextNode, text: string): void;
   setComputedStyle(element: DomElement, style: ReadonlyMap<string, string>): void;
+  setUsedStyle(element: DomElement, used: UsedStyle): void;
   setLayoutBox(element: DomElement, box: LayoutBox): void;
   getMutations(): readonly DomMutation[];
   clearMutations(): void;
   processMutations(): void;
-  markDirty(node: DomNode, kind: 'layout' | 'paint'): void;
-  markSubtreeDirty(node: DomNode, kind: 'layout' | 'paint'): void;
-  clearDirty(node: DomNode, kind: 'layout' | 'paint'): void;
-  clearSubtreeDirty(node: DomNode, kind: 'layout' | 'paint'): void;
+  markDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void;
+  markSubtreeDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void;
+  clearDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void;
+  clearSubtreeDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void;
   getDocument(): DomDocument | null;
   /** WHATWG DOM § 4 — parentElement: parent if it's an Element, else null */
   getParentElement(node: DomNode): DomElement | null;
@@ -324,6 +376,10 @@ class DomTree implements IDomTree {
     this.mutations.push({ type: 'styleChanged', targetDomId: element.domId, data: {} });
   }
 
+  setUsedStyle(element: DomElement, used: UsedStyle): void {
+    element.usedStyle = used;
+  }
+
   setLayoutBox(element: DomElement, box: LayoutBox): void {
     element.layoutBox = box;
   }
@@ -346,8 +402,19 @@ class DomTree implements IDomTree {
     this.mutations.length = 0;
   }
 
-  markDirty(node: DomNode, kind: 'layout' | 'paint'): void {
-    if (kind === 'layout') {
+  markDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void {
+    if (kind === 'style') {
+      if (node._dirtyStyle) return;
+      node._dirtyStyle = true;
+      node._dirtyLayout = true;
+      node._dirtyPaint = true;
+      let p = node.parent;
+      while (p) {
+        p._dirtyLayout = true;
+        p._dirtyPaint = true;
+        p = p.parent;
+      }
+    } else if (kind === 'layout') {
       if (node._dirtyLayout) return;
       node._dirtyLayout = true;
       node._dirtyPaint = true;
@@ -370,11 +437,15 @@ class DomTree implements IDomTree {
     }
   }
 
-  markSubtreeDirty(node: DomNode, kind: 'layout' | 'paint'): void {
+  markSubtreeDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void {
     const stack: DomNode[] = [node];
     while (stack.length > 0) {
       const n = stack.pop()!;
-      if (kind === 'layout') {
+      if (kind === 'style') {
+        n._dirtyStyle = true;
+        n._dirtyLayout = true;
+        n._dirtyPaint = true;
+      } else if (kind === 'layout') {
         n._dirtyLayout = true;
         n._dirtyPaint = true;
       } else {
@@ -385,16 +456,18 @@ class DomTree implements IDomTree {
     this.markDirty(node, kind);
   }
 
-  clearDirty(node: DomNode, kind: 'layout' | 'paint'): void {
-    if (kind === 'layout') node._dirtyLayout = false;
+  clearDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void {
+    if (kind === 'style') node._dirtyStyle = false;
+    else if (kind === 'layout') node._dirtyLayout = false;
     else node._dirtyPaint = false;
   }
 
-  clearSubtreeDirty(node: DomNode, kind: 'layout' | 'paint'): void {
+  clearSubtreeDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void {
     const stack: DomNode[] = [node];
     while (stack.length > 0) {
       const n = stack.pop()!;
-      if (kind === 'layout') n._dirtyLayout = false;
+      if (kind === 'style') n._dirtyStyle = false;
+      else if (kind === 'layout') n._dirtyLayout = false;
       else n._dirtyPaint = false;
       for (const c of n.children) stack.push(c);
     }
@@ -491,12 +564,14 @@ class DomTree implements IDomTree {
         parent,
         children: [],
         computedStyle: null,
+        usedStyle: null,
         layoutBox: null,
         imageData: null,
         naturalWidth: 0,
         naturalHeight: 0,
         loadingState,
         willChange: null,
+        _dirtyStyle: true,
         _dirtyLayout: true,
         _dirtyPaint: true,
       };
@@ -513,6 +588,7 @@ class DomTree implements IDomTree {
           parent: domEl,
           children: [],
           text: el.rawContent,
+          _dirtyStyle: true,
           _dirtyLayout: true,
           _dirtyPaint: true,
         };
@@ -533,6 +609,7 @@ class DomTree implements IDomTree {
         parent,
         children: [],
         text: textNode.text,
+        _dirtyStyle: true,
         _dirtyLayout: true,
         _dirtyPaint: true,
       };
@@ -559,4 +636,4 @@ class DomTree implements IDomTree {
 }
 
 export { DomTree };
-export type { IDomTree, DomDocument, DomNode, DomElement, DomTextNode, DomMutation, DomMutationType, LayoutBox, TextRun };
+export type { IDomTree, DomDocument, DomNode, DomElement, DomTextNode, DomMutation, DomMutationType, LayoutBox, UsedStyle, TextRun };

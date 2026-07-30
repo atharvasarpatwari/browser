@@ -13,6 +13,8 @@ export type FormattingContextType =
   | 'inline-flex'
   | 'grid'
   | 'inline-grid'
+  | 'table'
+  | 'inline-table'
   | 'none';
 
 /** Classifies a display value into its formatting role. */
@@ -29,12 +31,20 @@ export function classifyDisplay(display: string): FormattingContextType {
     case 'inline-grid':
       return 'inline-grid';
     case 'block':
-    case 'table':
-    case 'table-row':
-    case 'table-cell':
     case 'list-item':
     case 'flow-root':
       return 'block';
+    case 'table':
+    case 'inline-table':
+    case 'table-row':
+    case 'table-cell':
+    case 'table-row-group':
+    case 'table-header-group':
+    case 'table-footer-group':
+    case 'table-column':
+    case 'table-column-group':
+    case 'table-caption':
+      return 'table';
     case 'inline-block':
       return 'inline-block';
     default:
@@ -49,8 +59,15 @@ export function isBlockLevel(display: string): boolean {
     case 'flex':
     case 'grid':
     case 'table':
+    case 'inline-table':
     case 'table-row':
+    case 'table-column':
+    case 'table-row-group':
+    case 'table-header-group':
+    case 'table-footer-group':
+    case 'table-column-group':
     case 'table-cell':
+    case 'table-caption':
     case 'list-item':
     case 'flow-root':
     case 'inline-block':

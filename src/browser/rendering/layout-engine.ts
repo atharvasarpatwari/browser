@@ -22,6 +22,14 @@ import {
 } from './formatting/grid-context';
 import type { GridItem, GridPlacement, GridAxisAlign, GridSelfAlign } from './formatting/grid-context';
 import type { LineBox } from './formatting/types';
+import {
+  TableFormattingContext,
+  generateAnonymousTableBoxes,
+  classifyTableChild,
+} from './formatting/table-context';
+import {
+  MultiColumnFormattingContext,
+} from './formatting/multi-column-context';
 
 interface LayoutConfig {
   readonly viewportWidth: number;
@@ -81,6 +89,12 @@ class LayoutEngine implements ILayoutEngine {
   /** Current float context for the active block formatting context. */
   private floatContext: FloatContext | null = null;
 
+  /** Multi-column contexts keyed by domId. */
+  private multiColumnContexts = new Map<string, MultiColumnFormattingContext>();
+
+  /** Scrollable containers keyed by domId. */
+  private scrollContainers = new Map<string, import('./compositing/scroll-compositor').ScrollableContainer>();
+
   constructor(config?: Partial<LayoutConfig>) {
     this.config = { ...DEFAULT_LAYOUT_CONFIG, ...config };
     this.rootFontSize = this.config.defaultFontSize;
@@ -92,6 +106,8 @@ class LayoutEngine implements ILayoutEngine {
     this.layoutBoxes.clear();
     this.elementPositions.length = 0;
     this.positionedQueue.length = 0;
+    this.multiColumnContexts.clear();
+    this.scrollContainers.clear();
 
     if (document.bodyElement) {
       this.layoutNode(document.bodyElement, 0, 0, this.config.viewportWidth, this.config.defaultFontSize, domTree);
@@ -221,14 +237,30 @@ class LayoutEngine implements ILayoutEngine {
     const paddingBottom = resolve('padding-bottom', style.get('padding') ?? '0');
     const paddingLeft   = resolve('padding-left',   style.get('padding') ?? '0');
 
-    const borderTop    = this.parseBorderWidth(style.get('border-top-width') ?? '0');
-    const borderRight  = this.parseBorderWidth(style.get('border-right-width') ?? '0');
-    const borderBottom = this.parseBorderWidth(style.get('border-bottom-width') ?? '0');
-    const borderLeft   = this.parseBorderWidth(style.get('border-left-width') ?? '0');
+    const borderTop    = this.resolveBorder(style, 'top');
+    const borderRight  = this.resolveBorder(style, 'right');
+    const borderBottom = this.resolveBorder(style, 'bottom');
+    const borderLeft   = this.resolveBorder(style, 'left');
 
     // ── Resolve width ─────────────────────────────────────────────────────
     const boxSizing = style.get('box-sizing') ?? 'content-box';
     const specWidth = style.get('width');
+    const specHeight = style.get('height');
+
+    // Parse aspect-ratio
+    const rawAspectRatio = style.get('aspect-ratio') ?? 'auto';
+    let aspectRatio: number | null = null;
+    if (rawAspectRatio !== 'auto') {
+      const parts = rawAspectRatio.split('/');
+      if (parts.length === 2) {
+        const w = parseFloat(parts[0]);
+        const h = parseFloat(parts[1]);
+        if (w > 0 && h > 0) aspectRatio = w / h;
+      } else {
+        const n = parseFloat(rawAspectRatio);
+        if (n > 0) aspectRatio = n;
+      }
+    }
 
     let borderWidthBox: number;
     if (specWidth && specWidth !== 'auto') {
@@ -239,12 +271,20 @@ class LayoutEngine implements ILayoutEngine {
         borderWidthBox = specified + paddingLeft + paddingRight + borderLeft + borderRight;
         borderWidthBox = Math.min(borderWidthBox, availableWidth);
       }
+    } else if (aspectRatio != null && specHeight && specHeight !== 'auto') {
+      // Compute width from height × aspect-ratio
+      const hContent = resolve('height', '0') - paddingTop - paddingBottom - borderTop - borderBottom;
+      const wContent = hContent * aspectRatio;
+      if (boxSizing === 'border-box') {
+        borderWidthBox = Math.min(wContent + paddingLeft + paddingRight + borderLeft + borderRight, availableWidth);
+      } else {
+        borderWidthBox = Math.min(wContent + paddingLeft + paddingRight + borderLeft + borderRight, availableWidth);
+      }
     } else {
       borderWidthBox = availableWidth;
     }
 
     // ── Resolve height ────────────────────────────────────────────────────
-    const specHeight = style.get('height');
     let specifiedContentHeight: number;
     if (specHeight && specHeight !== 'auto') {
       if (boxSizing === 'border-box') {
@@ -252,6 +292,10 @@ class LayoutEngine implements ILayoutEngine {
       } else {
         specifiedContentHeight = resolve('height', '0');
       }
+    } else if (aspectRatio != null && specWidth && specWidth !== 'auto') {
+      // Compute height from width / aspect-ratio
+      const wContent = borderWidthBox - paddingLeft - paddingRight - borderLeft - borderRight;
+      specifiedContentHeight = wContent / aspectRatio;
     } else {
       specifiedContentHeight = 0;
     }
@@ -260,8 +304,8 @@ class LayoutEngine implements ILayoutEngine {
     const posX = x + marginLeft;
     const posY = y + marginTop;
 
-    // ── Content area dimensions ───────────────────────────────────────────
-    const contentWidth  = borderWidthBox - paddingLeft - paddingRight - borderLeft - borderRight;
+    // ── Content area dimensions (box-sizing aware) ────────────────────────
+    const contentWidth  = Math.max(0, borderWidthBox - paddingLeft - paddingRight - borderLeft - borderRight);
 
     // ── Register element BEFORE children so it appears at a lower index.
     // getElementAtPoint iterates from the end (deepest/last-rendered first),
@@ -296,10 +340,40 @@ class LayoutEngine implements ILayoutEngine {
       childY = this.layoutFlexContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
     } else if (fmtType === 'grid' || fmtType === 'inline-grid') {
       childY = this.layoutGridContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
+    } else if (fmtType === 'table' || fmtType === 'inline-table') {
+      childY = this.layoutTableContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
     } else if (isBlock) {
       childY = this.layoutBlockChildren(node, contentX, contentY, contentWidth, fontSize, domTree);
     } else {
       childY = this.layoutInlineChildren(node, contentX, contentY, contentWidth, fontSize, domTree);
+    }
+
+    // Check for multi-column layout (applies to any block formatting context)
+    const colCountRaw = style.get('column-count');
+    const colWidthRaw = style.get('column-width');
+    const hasColumns = (colCountRaw && colCountRaw !== 'auto') || (colWidthRaw && colWidthRaw !== 'auto');
+    if (hasColumns) {
+      const colGap = resolve('column-gap', '0');
+      const colRuleW = this.parseBorderWidth(style.get('column-rule-width') ?? 'medium');
+      let colCount = 1;
+      let colWidthVal = 0;
+      if (colCountRaw && colCountRaw !== 'auto') colCount = parseInt(colCountRaw, 10) || 1;
+      if (colWidthRaw && colWidthRaw !== 'auto') colWidthVal = resolve('column-width', '0');
+      const mcCtx = new MultiColumnFormattingContext({
+        columnCount: colCount,
+        columnWidth: colWidthVal,
+        columnGap: colGap,
+        columnRuleWidth: colRuleW,
+        columnRuleStyle: style.get('column-rule-style') ?? 'none',
+        columnRuleColor: style.get('column-rule-color') ?? 'currentcolor',
+        availableWidth: contentWidth,
+        availableHeight: null,
+        fontSize,
+      });
+      const contentH = childY - contentY;
+      mcCtx.resolve(contentH);
+      this.multiColumnContexts.set(node.domId, mcCtx);
+      box.height = Math.max(box.height, mcCtx.getTotalHeight() + paddingTop + paddingBottom + borderTop + borderBottom);
     }
 
     // ── Compute content height ────────────────────────────────────────────
@@ -307,6 +381,36 @@ class LayoutEngine implements ILayoutEngine {
 
     // ── Update LayoutBox with final height ───────────────────────────────
     box.height = contentHeight + paddingTop + paddingBottom + borderTop + borderBottom;
+
+    // ── Handle overflow: create scrollable container if needed ────────────
+    const overflowX = style.get('overflow-x') ?? style.get('overflow') ?? 'visible';
+    const overflowY = style.get('overflow-y') ?? style.get('overflow') ?? 'visible';
+    if (overflowX === 'scroll' || overflowX === 'auto' || overflowY === 'scroll' || overflowY === 'auto') {
+      const clientW = box.width - paddingLeft - paddingRight - borderLeft - borderRight;
+      const clientH = box.height - paddingTop - paddingBottom - borderTop - borderBottom;
+      const contentW = contentWidth;
+      const contentH = contentHeight;
+      const scrollW = Math.max(clientW, contentW);
+      const scrollH = Math.max(clientH, contentH);
+      const ox = overflowX === 'scroll' || (overflowX === 'auto' && contentW > clientW) ? 'scroll' : 'visible';
+      const oy = overflowY === 'scroll' || (overflowY === 'auto' && contentH > clientH) ? 'scroll' : 'visible';
+      if (ox !== 'visible' || oy !== 'visible') {
+        const sc: import('./compositing/scroll-compositor').ScrollableContainer = {
+          id: 'scroll-' + node.domId,
+          elementId: node.domId,
+          scrollX: 0,
+          scrollY: 0,
+          scrollWidth: scrollW,
+          scrollHeight: scrollH,
+          clientWidth: clientW,
+          clientHeight: clientH,
+          overflowX: ox as 'visible' | 'hidden' | 'scroll' | 'auto',
+          overflowY: oy as 'visible' | 'hidden' | 'scroll' | 'auto',
+          onScroll: null,
+        };
+        this.scrollContainers.set(node.domId, sc);
+      }
+    }
 
     // Write back to DOM tree so paint-engine can read it.
     if (domTree) {
@@ -471,10 +575,10 @@ class LayoutEngine implements ILayoutEngine {
     const paddingBottom = resolve('padding-bottom', elStyle.get('padding') ?? '0');
     const paddingLeft   = resolve('padding-left',   elStyle.get('padding') ?? '0');
 
-    const borderTop    = this.parseBorderWidth(elStyle.get('border-top-width') ?? '0');
-    const borderRight  = this.parseBorderWidth(elStyle.get('border-right-width') ?? '0');
-    const borderBottom = this.parseBorderWidth(elStyle.get('border-bottom-width') ?? '0');
-    const borderLeft   = this.parseBorderWidth(elStyle.get('border-left-width') ?? '0');
+    const borderTop    = this.resolveBorder(elStyle, 'top');
+    const borderRight  = this.resolveBorder(elStyle, 'right');
+    const borderBottom = this.resolveBorder(elStyle, 'bottom');
+    const borderLeft   = this.resolveBorder(elStyle, 'left');
 
     // Resolve width — floated elements shrink-wrap
     const boxSizing = elStyle.get('box-sizing') ?? 'content-box';
@@ -615,6 +719,123 @@ class LayoutEngine implements ILayoutEngine {
 
     const totalHeight = ifc.finalize();
     return startY + Math.max(totalHeight, this.resolveLineHeight(new Map(), parentFontSize));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TABLE FORMATTING CONTEXT
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private layoutTableContainer(
+    parent: DomElement,
+    contentX: number,
+    contentY: number,
+    availableWidth: number,
+    parentFontSize: number,
+    domTree?: IDomTree,
+  ): number {
+    const style = parent.computedStyle ?? new Map();
+    const fontSize = this.resolveFontSize(style, parentFontSize);
+
+    const resolve = (prop: string, fallback: string): number =>
+      this.resolveLength(style.get(prop) ?? fallback, fontSize, availableWidth);
+
+    const tableLayout = (style.get('table-layout') ?? 'auto') as 'auto' | 'fixed';
+    const borderCollapse = (style.get('border-collapse') ?? 'separate') as 'separate' | 'collapse';
+    const bs = resolve('border-spacing', '0');
+    const borderSpacing = bs > 0 ? bs : 0;
+    const captionSide = (style.get('caption-side') ?? 'top') as 'top' | 'bottom';
+
+    const tblCtx = new TableFormattingContext({
+      tableLayout,
+      borderCollapse,
+      borderSpacing,
+      captionSide,
+      availableWidth,
+      fontSize,
+    });
+
+    const anonChildren = generateAnonymousTableBoxes(parent.children);
+
+    const rowGroups: DomElement[] = [];
+    const captions: DomElement[] = [];
+
+    for (const child of anonChildren) {
+      if (child.nodeType !== 'element') continue;
+      const el = child as DomElement;
+      if (!el.computedStyle) el.computedStyle = new Map();
+      const display = el.computedStyle.get('display') ?? 'inline';
+      const role = classifyTableChild(display);
+      if (role === 'caption') {
+        captions.push(el);
+      } else if (role === 'row-group' || role === 'row') {
+        rowGroups.push(el);
+      }
+    }
+
+    tblCtx.addCaptions(captions);
+
+    for (const rg of rowGroups) {
+      const rgChildren = rg.computedStyle?.get('display') === 'table-row' ? [rg] : rg.children;
+      for (const child of rgChildren) {
+        if (child.nodeType !== 'element') continue;
+        const rowEl = child as DomElement;
+        if (!rowEl.computedStyle) rowEl.computedStyle = new Map();
+        const rowDisplay = rowEl.computedStyle.get('display') ?? 'inline';
+        if (classifyTableChild(rowDisplay) !== 'row') continue;
+        const cells: Array<{ element: DomElement; row: number; col: number; rowspan: number; colspan: number; box: LayoutBox; contentWidth: number; contentHeight: number }> = [];
+        let col = 0;
+        for (const cellChild of rowEl.children) {
+          if (cellChild.nodeType !== 'element') continue;
+          const cellEl = cellChild as DomElement;
+          if (!cellEl.computedStyle) cellEl.computedStyle = new Map();
+          const cellDisplay = cellEl.computedStyle.get('display') ?? 'inline';
+          if (classifyTableChild(cellDisplay) !== 'cell') continue;
+          const colspan = parseInt(cellEl.attributes.get('colspan') ?? '1', 10) || 1;
+          const rowspan = parseInt(cellEl.attributes.get('rowspan') ?? '1', 10) || 1;
+          cells.push({
+            element: cellEl,
+            row: 0,
+            col,
+            rowspan,
+            colspan,
+            box: {
+              x: 0, y: 0, width: 0, height: 0,
+              marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0,
+              paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0,
+              borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
+            },
+            contentWidth: 0,
+            contentHeight: 0,
+          });
+          col += colspan;
+        }
+        tblCtx.addRow(cells);
+      }
+    }
+
+    tblCtx.resolve(
+      (value: string, fallback: string) => this.resolveLength(value, fontSize, availableWidth),
+    );
+
+    tblCtx.layoutCells(
+      contentX,
+      contentY,
+      (cellEl: DomElement, x: number, y: number, w: number, h: number) => {
+        const cellBox: LayoutBox = {
+          x, y,
+          width: w, height: h,
+          marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0,
+          paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0,
+          borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
+        };
+        this.layoutBoxes.set(cellEl.domId, cellBox);
+        this.elementPositions.push({ element: cellEl, box: cellBox });
+        if (domTree) domTree.setLayoutBox(cellEl, cellBox);
+        this.layoutNode(cellEl, x, y, w, fontSize, domTree);
+      },
+    );
+
+    return contentY + tblCtx.getTotalHeight();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1482,6 +1703,20 @@ class LayoutEngine implements ILayoutEngine {
     return this.resolveLength(value, this.rootFontSize, 0);
   }
 
+  /**
+   * Resolve border-width respecting border-style: if the style is 'none' or
+   * 'hidden', the width is 0 regardless of the specified width value.
+   */
+  private resolveBorder(style: ReadonlyMap<string, string>, side: 'top' | 'right' | 'bottom' | 'left'): number {
+    // Check the per-side style first, then fall back to the shorthand
+    const perSide = style.get(`border-${side}-style`);
+    const shorthand = style.get('border-style');
+    const styleVal = perSide ?? shorthand ?? 'none';
+    if (styleVal === 'none' || styleVal === 'hidden') return 0;
+    const w = style.get(`border-${side}-width`) ?? style.get('border-width') ?? 'medium';
+    return this.parseBorderWidth(w);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // POSITIONED ELEMENTS
   // ─────────────────────────────────────────────────────────────────────────
@@ -1644,6 +1879,18 @@ class LayoutEngine implements ILayoutEngine {
     this.layoutBoxes.clear();
     this.elementPositions.length = 0;
     this.positionedQueue.length = 0;
+    this.multiColumnContexts.clear();
+    this.scrollContainers.clear();
+  }
+
+  /** Expose the scroll container map for integration with the scroll compositor. */
+  getScrollContainers(): ReadonlyMap<string, import('./compositing/scroll-compositor').ScrollableContainer> {
+    return this.scrollContainers;
+  }
+
+  /** Get the multi-column context for a given element, if any. */
+  getMultiColumnContext(domId: string): MultiColumnFormattingContext | undefined {
+    return this.multiColumnContexts.get(domId);
   }
 }
 

@@ -133,6 +133,7 @@ describe('LayoutEngine', () => {
       applyStyles(tree, doc.bodyElement!, { display: 'block', margin: '0' });
       applyStyles(tree, tree.getElementById('d')!, {
         margin: '0',
+        'border-style': 'solid',
         'border-top-width': '2',
         'border-right-width': '3',
         'border-bottom-width': '4',
@@ -152,6 +153,7 @@ describe('LayoutEngine', () => {
       applyStyles(tree, doc.bodyElement!, { display: 'block', margin: '0' });
       applyStyles(tree, tree.getElementById('d')!, {
         margin: '0',
+        'border-style': 'solid',
         'border-top-width': 'thin',
         'border-right-width': 'medium',
         'border-bottom-width': 'thick',
@@ -171,6 +173,7 @@ describe('LayoutEngine', () => {
       applyStyles(tree, doc.bodyElement!, { display: 'block', margin: '0' });
       applyStyles(tree, tree.getElementById('d')!, {
         margin: '0',
+        'border-style': 'solid',
         'border-top-width': '2',
         'border-bottom-width': '4',
         height: '100',
@@ -196,6 +199,8 @@ describe('LayoutEngine', () => {
         'padding-right': '10',
         'border-left-width': '2',
         'border-right-width': '2',
+        'border-left-style': 'solid',
+        'border-right-style': 'solid',
         'box-sizing': 'content-box',
       });
       const engine = new LayoutEngine({ viewportWidth: 1000, viewportHeight: 800, defaultFontSize: 16 });
@@ -215,6 +220,8 @@ describe('LayoutEngine', () => {
         'padding-right': '10',
         'border-left-width': '2',
         'border-right-width': '2',
+        'border-left-style': 'solid',
+        'border-right-style': 'solid',
         'box-sizing': 'border-box',
       });
       const engine = new LayoutEngine({ viewportWidth: 1000, viewportHeight: 800, defaultFontSize: 16 });
@@ -234,6 +241,8 @@ describe('LayoutEngine', () => {
         'padding-bottom': '5',
         'border-top-width': '2',
         'border-bottom-width': '2',
+        'border-top-style': 'solid',
+        'border-bottom-style': 'solid',
         'box-sizing': 'border-box',
       });
       const engine = new LayoutEngine({ viewportWidth: 1000, viewportHeight: 800, defaultFontSize: 16 });
@@ -575,6 +584,7 @@ describe('LayoutEngine', () => {
         margin: '0',
         'padding-top': '10',
         'padding-left': '10',
+        'border-style': 'solid',
         'border-top-width': '2',
         'border-left-width': '3',
       });

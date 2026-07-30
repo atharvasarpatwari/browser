@@ -10,9 +10,16 @@
 
 import type { PaintCommand } from '../paint-engine';
 import { Rasterizer } from '../rasterizer';
-import { CompositingLayer } from './compositing-layer';
+import { CompositingLayer, type LayerBounds } from './compositing-layer';
 import { LayerTree } from './layer-tree';
 import { TileGrid } from './tile-grid';
+import { compositeBuffer } from '../blend-modes';
+import type { BlendMode } from '../blend-modes';
+import { parseGradient, isGradientValue } from '../css-gradients';
+import { parseBorders } from '../borders-enhanced';
+import { parseBoxShadow, parseTextShadow } from '../shadows';
+import { parseFilter } from '../css-filters';
+import { parseClipPath } from '../clip-mask';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -249,27 +256,49 @@ export class LayerCompositor {
       if (layer.isEmpty()) continue;
       if (!layer.softwareBuffer && !layer.tiles) continue;
 
+      // Apply transform (handle translation component)
+      let destX = layer.bounds.x;
+      let destY = layer.bounds.y;
+      if (layer.transformMatrix) {
+        destX += layer.transformMatrix.m41;
+        destY += layer.transformMatrix.m42;
+      }
+      destX -= layer.scrollOffset.x;
+      destY -= layer.scrollOffset.y;
+
       // Skip off-screen layers if tile culling is enabled
       if (this.config.enableTileCulling) {
         const viewport = { x: 0, y: 0, width: this.config.width, height: this.config.height };
-        if (!layer.isVisuallyContained(viewport)) continue;
+        const translatedBounds: LayerBounds = { x: destX, y: destY, width: layer.bounds.width, height: layer.bounds.height };
+        if (!this.isLayerInViewport(translatedBounds, viewport)) continue;
       }
 
       const srcBuf = layer.softwareBuffer ?? layer.tiles?.flattenToBuffer();
       if (!srcBuf) continue;
 
       const opacity = layer.isGrouped ? layer.groupOpacity : 1;
+      const blendMode = layer.sourceElement.computedStyle?.get('mix-blend-mode');
       this.alphaCompositeDstOverSrc(
         this.framebuffer,
         this.config.width,
         srcBuf,
         layer.bounds.width,
         layer.bounds.height,
-        layer.bounds.x,
-        layer.bounds.y,
+        destX,
+        destY,
         opacity,
+        blendMode,
       );
     }
+  }
+
+  private isLayerInViewport(bounds: LayerBounds, viewport: { x: number; y: number; width: number; height: number }): boolean {
+    return !(
+      bounds.x + bounds.width < viewport.x ||
+      bounds.x > viewport.x + viewport.width ||
+      bounds.y + bounds.height < viewport.y ||
+      bounds.y > viewport.y + viewport.height
+    );
   }
 
   /**
@@ -288,8 +317,17 @@ export class LayerCompositor {
     dstX: number,
     dstY: number,
     opacity: number,
+    blendMode?: string,
   ): void {
     const dstHeight = dst.length / (dstWidth * 4);
+
+    if (blendMode && blendMode !== 'normal' && blendMode !== 'source-over') {
+      const dstImg = new ImageData(new Uint8ClampedArray(dst), dstWidth, dstHeight);
+      const srcImg = new ImageData(new Uint8ClampedArray(src), srcWidth, srcHeight);
+      compositeBuffer(dstImg, srcImg, blendMode as BlendMode, 0, 0);
+      for (let i = 0; i < dst.length; i++) dst[i] = dstImg.data[i];
+      return;
+    }
 
     // Clip source to framebuffer bounds
     const clippedX = Math.max(0, dstX);
@@ -398,60 +436,115 @@ export class LayerCompositor {
     if (!box || box.width === 0 || box.height === 0) return;
 
     const style = el.computedStyle ?? new Map();
+    const bx = box.x + box.borderLeft;
+    const by = box.y + box.borderTop;
+    const bw = box.width - box.borderLeft - box.borderRight;
+    const bh = box.height - box.borderTop - box.borderBottom;
 
-    // Background
+    // Background (enhanced with gradients)
     const bgColor = style.get('background-color') ?? style.get('background') ?? 'transparent';
-    if (bgColor !== 'transparent') {
+    const bgImage = style.get('background-image') ?? 'none';
+
+    if (isGradientValue(bgImage)) {
+      const grad = parseGradient(bgImage);
+      if (grad) {
+        out.push({ type: 'setFillGradient', params: [grad, bx, by, bw, bh] });
+      } else {
+        out.push({ type: 'setFillStyle', params: [bgColor] });
+        out.push({ type: 'fillRect', params: [bx, by, bw, bh] });
+      }
+    } else if (bgImage && bgImage !== 'none' && bgImage.startsWith('url(')) {
       out.push({ type: 'setFillStyle', params: [bgColor] });
-      out.push({
-        type: 'fillRect',
-        params: [
-          box.x + box.borderLeft,
-          box.y + box.borderTop,
-          box.width - box.borderLeft - box.borderRight,
-          box.height - box.borderTop - box.borderBottom,
-        ],
-      });
+      out.push({ type: 'fillRect', params: [bx, by, bw, bh] });
+    } else if (bgColor !== 'transparent') {
+      out.push({ type: 'setFillStyle', params: [bgColor] });
+      out.push({ type: 'fillRect', params: [bx, by, bw, bh] });
     }
 
-    // Borders
-    this.paintBorders(out, box, style);
+    // Outset box shadows
+    const bsVal = style.get('box-shadow');
+    if (bsVal && bsVal !== 'none') {
+      const shadows = parseBoxShadow(bsVal);
+      for (const shadow of shadows) {
+        if (!shadow.inset) {
+          out.push({ type: 'applyBoxShadow', params: [shadow, bx, by, bw, bh] });
+        }
+      }
+    }
 
-    // Text runs
+    // Borders (enhanced)
+    const borderInfo = parseBorders(style, box.width, box.height);
+    const hasAnyBorder = borderInfo.top.width > 0 || borderInfo.right.width > 0 ||
+      borderInfo.bottom.width > 0 || borderInfo.left.width > 0;
+    if (hasAnyBorder) {
+      const borderColor = style.get('border-color') ?? style.get('border-top-color') ?? '#000000';
+      const topS = [
+        { w: borderInfo.top.width, x: box.x, y: box.y, rw: box.width, rh: borderInfo.top.width },
+        { w: borderInfo.bottom.width, x: box.x, y: box.y + box.height - borderInfo.bottom.width, rw: box.width, rh: borderInfo.bottom.width },
+        { w: borderInfo.left.width, x: box.x, y: box.y + borderInfo.top.width, rw: borderInfo.left.width, rh: box.height - borderInfo.top.width - borderInfo.bottom.width },
+        { w: borderInfo.right.width, x: box.x + box.width - borderInfo.right.width, y: box.y + borderInfo.top.width, rw: borderInfo.right.width, rh: box.height - borderInfo.top.width - borderInfo.bottom.width },
+      ];
+      const hasRadius = borderInfo.radius.topLeft.w > 0 || borderInfo.radius.topRight.w > 0 ||
+        borderInfo.radius.bottomLeft.w > 0 || borderInfo.radius.bottomRight.w > 0;
+      if (hasRadius) {
+        out.push({ type: 'setBorderRadius', params: [borderInfo.radius, box.x, box.y, box.width, box.height] });
+      }
+      for (const s of topS) {
+        if (s.w <= 0) continue;
+        out.push({ type: 'setFillStyle', params: [borderColor] });
+        out.push({ type: 'fillRect', params: [s.x, s.y, s.rw, s.rh] });
+      }
+    }
+
+    // Text runs with text-shadow
+    const textShadowVal = style.get('text-shadow');
+    const textShadows = textShadowVal ? parseTextShadow(textShadowVal) : [];
     if (box.textRuns && box.textRuns.length > 0) {
       for (const run of box.textRuns) {
         const weight = run.fontWeight ?? 'normal';
+        if (textShadows.length > 0) {
+          for (const ts of textShadows) {
+            out.push({ type: 'applyTextShadow', params: [ts, run.text, run.x, run.y, run.color, `${weight} ${run.fontSize}px ${run.fontFamily}`] });
+          }
+        }
         out.push({ type: 'setFillStyle', params: [run.color] });
         out.push({ type: 'setFont', params: [`${weight} ${run.fontSize}px ${run.fontFamily}`] });
         out.push({ type: 'fillText', params: [run.text, run.x, run.y] });
       }
     }
-  }
 
-  /**
-   * Paint borders as fillRect commands.
-   */
-  private paintBorders(
-    out: PaintCommand[],
-    box: { x: number; y: number; width: number; height: number; borderTop: number; borderRight: number; borderBottom: number; borderLeft: number },
-    style: ReadonlyMap<string, string>,
-  ): void {
-    const hasBorders = [box.borderTop, box.borderRight, box.borderBottom, box.borderLeft].some(w => w > 0);
-    if (!hasBorders) return;
+    // Inset box shadows
+    if (bsVal && bsVal !== 'none') {
+      const shadows = parseBoxShadow(bsVal);
+      for (const shadow of shadows) {
+        if (shadow.inset) {
+          out.push({ type: 'applyBoxShadow', params: [shadow, bx, by, bw, bh] });
+        }
+      }
+    }
 
-    const borderColor = style.get('border-color') ?? style.get('border-top-color') ?? '#000000';
+    // Filter effects
+    const filterVal = style.get('filter');
+    if (filterVal && filterVal !== 'none') {
+      const filters = parseFilter(filterVal);
+      if (filters.length > 0) {
+        out.push({ type: 'applyFilterList', params: [filters, box.x, box.y, box.width, box.height] });
+      }
+    }
 
-    const sides = [
-      { w: box.borderTop, x: box.x, y: box.y, rw: box.width, rh: box.borderTop },
-      { w: box.borderBottom, x: box.x, y: box.y + box.height - box.borderBottom, rw: box.width, rh: box.borderBottom },
-      { w: box.borderLeft, x: box.x, y: box.y + box.borderTop, rw: box.borderLeft, rh: box.height - box.borderTop - box.borderBottom },
-      { w: box.borderRight, x: box.x + box.width - box.borderRight, y: box.y + box.borderTop, rw: box.borderRight, rh: box.height - box.borderTop - box.borderBottom },
-    ];
+    // Clip-path
+    const clipPathVal = style.get('clip-path');
+    if (clipPathVal && clipPathVal !== 'none') {
+      const clipInfo = parseClipPath(clipPathVal);
+      if (clipInfo.shape.type !== 'none') {
+        out.push({ type: 'applyClipShape', params: [clipInfo.shape, box.x, box.y, box.width, box.height] });
+      }
+    }
 
-    for (const s of sides) {
-      if (s.w <= 0) continue;
-      out.push({ type: 'setFillStyle', params: [borderColor] });
-      out.push({ type: 'fillRect', params: [s.x, s.y, s.rw, s.rh] });
+    // Blend mode
+    const blendModeVal = style.get('mix-blend-mode');
+    if (blendModeVal) {
+      out.push({ type: 'setBlendMode', params: [blendModeVal] });
     }
   }
 
@@ -478,6 +571,30 @@ export class LayerCompositor {
         const [img, x, y, w, h] = cmd.params as [unknown, number, number, number, number];
         return { type: cmd.type, params: [img, x + offsetX, y + offsetY, w, h] };
       }
+      if (cmd.type === 'setFillGradient') {
+        const [grad, gx, gy, gw, gh] = cmd.params as [unknown, number, number, number, number];
+        return { type: cmd.type, params: [grad, gx + offsetX, gy + offsetY, gw, gh] };
+      }
+      if (cmd.type === 'applyBoxShadow') {
+        const [shadow, sx, sy, sw, sh] = cmd.params as [unknown, number, number, number, number];
+        return { type: cmd.type, params: [shadow, sx + offsetX, sy + offsetY, sw, sh] };
+      }
+      if (cmd.type === 'applyTextShadow') {
+        const [ts, text, tx, ty, color, fontStr] = cmd.params as [unknown, string, number, number, string, string];
+        return { type: cmd.type, params: [ts, text, tx + offsetX, ty + offsetY, color, fontStr] };
+      }
+      if (cmd.type === 'applyFilterList') {
+        const [filters, fx, fy, fw, fh] = cmd.params as [unknown, number, number, number, number];
+        return { type: cmd.type, params: [filters, fx + offsetX, fy + offsetY, fw, fh] };
+      }
+      if (cmd.type === 'applyClipShape') {
+        const [shape, cx, cy, cw, ch] = cmd.params as [unknown, number, number, number, number];
+        return { type: cmd.type, params: [shape, cx + offsetX, cy + offsetY, cw, ch] };
+      }
+      if (cmd.type === 'setBorderRadius') {
+        const [rad, rx, ry, rw, rh] = cmd.params as [unknown, number, number, number, number];
+        return { type: cmd.type, params: [rad, rx + offsetX, ry + offsetY, rw, rh] };
+      }
       return cmd;
     });
   }
@@ -493,13 +610,20 @@ export class LayerCompositor {
     return commands.filter(cmd => {
       if (cmd.type === 'fillRect' || cmd.type === 'clearRect' || cmd.type === 'strokeRect') {
         const [x, y, w, h] = cmd.params as [number, number, number, number];
-        // Reject if entirely outside tile
         if (x + w <= 0 || y + h <= 0 || x >= tileW || y >= tileH) return false;
         return true;
       }
       if (cmd.type === 'fillText' || cmd.type === 'strokeText') {
         const [, x, y] = cmd.params as [string, number, number];
         return x >= -100 && x <= tileW + 100 && y >= -100 && y <= tileH + 100;
+      }
+      if (cmd.type === 'setFillGradient') {
+        const [, gx, gy, gw, gh] = cmd.params as [unknown, number, number, number, number];
+        return gx + gw > 0 && gy + gh > 0 && gx < tileW && gy < tileH;
+      }
+      if (cmd.type === 'applyBoxShadow') {
+        const [, sx, sy, sw, sh] = cmd.params as [unknown, number, number, number, number];
+        return sx + sw > 0 && sy + sh > 0 && sx < tileW && sy < tileH;
       }
       return true;
     });

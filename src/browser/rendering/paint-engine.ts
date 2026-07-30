@@ -8,11 +8,19 @@ import {
   type StackingContext,
   type PaintCmd,
 } from './formatting/stacking';
+import { buildRenderObject, sortByPaintOrder, type RenderObject } from './render-tree';
 import { Rasterizer } from './rasterizer';
 import { GpuRasterizer } from './gpu/gpu-rasterizer';
 import { LayerCompositor } from './compositing/layer-compositor';
 import { LayerTree } from './compositing/layer-tree';
 import { LayerPromoter } from './compositing/layer-promoter';
+import { parseGradient, isGradientValue } from './css-gradients';
+import { parseBackgrounds } from './enhanced-backgrounds';
+import { parseBorders, parseBorderRadius, renderBorderSide } from './borders-enhanced';
+import { parseBoxShadow, parseTextShadow } from './shadows';
+import { parseFilter } from './css-filters';
+import { parseClipPath, parseMask } from './clip-mask';
+import type { BlendMode } from './blend-modes';
 
 type PaintCommandType =
   | 'clearRect' | 'fillRect' | 'strokeRect'
@@ -21,7 +29,11 @@ type PaintCommandType =
   | 'fill' | 'stroke' | 'setFillStyle'
   | 'setStrokeStyle' | 'setLineWidth'
   | 'setFont' | 'setTextAlign'
-  | 'save' | 'restore' | 'clip' | 'setGlobalAlpha';
+  | 'save' | 'restore' | 'clip' | 'setGlobalAlpha'
+  | 'setFillGradient' | 'setBlendMode'
+  | 'applyBoxShadow' | 'applyTextShadow'
+  | 'applyFilterList' | 'applyClipShape' | 'setBorderRadius'
+  | 'applyMask';
 
 interface PaintCommand {
   readonly type: PaintCommandType;
@@ -100,6 +112,7 @@ class PaintEngine implements IPaintEngine {
   private readonly layers: PaintLayer[] = [];
   private readonly eventListeners = new Map<PaintEventType, Set<(e: PaintEventUnion) => void>>();
   private stackingTree: StackingContext | null = null;
+  private renderTree: RenderObject | null = null;
   private readonly elementCommands = new Map<DomElement, PaintCommand[]>();
   private rasterizer: Rasterizer | GpuRasterizer;
 
@@ -123,6 +136,7 @@ class PaintEngine implements IPaintEngine {
     if (!root) return;
 
     this.stackingTree = buildStackingContextTree(root);
+    this.renderTree = buildRenderObject(root);
 
     // Build compositing layer tree from stacking context
     if (this.layerCompositor) {
@@ -161,6 +175,7 @@ class PaintEngine implements IPaintEngine {
     if (!root) return paintDamage;
 
     this.stackingTree = buildStackingContextTree(root);
+    this.renderTree = buildRenderObject(root);
 
     const allElements: DomElement[] = [];
     this.collectElements(root, allElements);
@@ -344,23 +359,113 @@ class PaintEngine implements IPaintEngine {
     const layoutBox: LayoutBox | null = (node as { layoutBox: LayoutBox | null }).layoutBox ?? null;
 
     if (layoutBox && layoutBox.width > 0 && layoutBox.height > 0) {
-      // ── Background (content + padding area) ─────────────────────────────
+      const bx = layoutBox.x + layoutBox.borderLeft;
+      const by = layoutBox.y + layoutBox.borderTop;
+      const bw = layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight;
+      const bh = layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom;
+
+      // ── Background (enhanced with gradients + multi-layer) ────────────
       const bgColor = style.get('background-color') ?? style.get('background') ?? 'transparent';
-      if (bgColor !== 'transparent') {
-        commands.push({ type: 'setFillStyle', params: [bgColor] });
-        commands.push({
-          type: 'fillRect',
-          params: [
-            layoutBox.x + layoutBox.borderLeft,
-            layoutBox.y + layoutBox.borderTop,
-            layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight,
-            layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom,
-          ],
-        });
+      const bgImage = style.get('background-image') ?? 'none';
+      const bgSize = style.get('background-size') ?? 'auto';
+      const bgPos = style.get('background-position') ?? '0% 0%';
+
+      let bgX = bx, bgY = by, bgW = bw, bgH = bh;
+      if (bgSize !== 'auto') {
+        const sizeParts = bgSize.split(/\s+/);
+        if (sizeParts[0] && sizeParts[0] !== 'auto') {
+          if (sizeParts[0].endsWith('%')) bgW = bw * parseFloat(sizeParts[0]) / 100;
+          else bgW = parseFloat(sizeParts[0]) || bw;
+        }
+        if (sizeParts[1]) {
+          if (sizeParts[1].endsWith('%')) bgH = bh * parseFloat(sizeParts[1]) / 100;
+          else bgH = parseFloat(sizeParts[1]) || bh;
+        }
+      }
+      if (bgPos !== '0% 0%') {
+        const posParts = bgPos.split(/\s+/);
+        if (posParts[0] && posParts[0].endsWith('%')) bgX = bx + (bw - bgW) * parseFloat(posParts[0]) / 100;
+        if (posParts[1] && posParts[1].endsWith('%')) bgY = by + (bh - bgH) * parseFloat(posParts[1]) / 100;
       }
 
-      // ── Borders ─────────────────────────────────────────────────────────
-      this.paintBorders(commands, layoutBox, style);
+      if (isGradientValue(bgImage)) {
+        const grad = parseGradient(bgImage);
+        if (grad) {
+          commands.push({ type: 'setFillGradient', params: [grad, bgX, bgY, bgW, bgH] });
+        } else {
+          commands.push({ type: 'setFillStyle', params: [bgColor] });
+          commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
+        }
+      } else if (bgImage && bgImage !== 'none' && bgImage.startsWith('url(')) {
+        commands.push({ type: 'setFillStyle', params: [bgColor] });
+        commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
+      } else if (bgColor !== 'transparent') {
+        commands.push({ type: 'setFillStyle', params: [bgColor] });
+        commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
+      }
+
+      // ── Overflow clip rect (apply before borders/content) ────────────
+      const overflowX = style.get('overflow-x') ?? style.get('overflow') ?? 'visible';
+      const overflowY = style.get('overflow-y') ?? overflowX;
+      if (overflowX === 'hidden' || overflowX === 'scroll' || overflowX === 'auto' ||
+          overflowY === 'hidden' || overflowY === 'scroll' || overflowY === 'auto') {
+        const cx = layoutBox.x + layoutBox.borderLeft + layoutBox.paddingLeft;
+        const cy = layoutBox.y + layoutBox.borderTop + layoutBox.paddingTop;
+        const cw = layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight - layoutBox.paddingLeft - layoutBox.paddingRight;
+        const ch = layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom - layoutBox.paddingTop - layoutBox.paddingBottom;
+        if (cw > 0 && ch > 0) {
+          commands.push({ type: 'clip', params: [cx, cy, cw, ch] });
+        }
+      }
+
+      // ── Box shadow (rendered before borders, behind element) ──────────
+      const boxShadowVal = style.get('box-shadow');
+      if (boxShadowVal && boxShadowVal !== 'none') {
+        const shadows = parseBoxShadow(boxShadowVal);
+        for (const shadow of shadows) {
+          if (!shadow.inset) {
+            commands.push({ type: 'applyBoxShadow', params: [shadow, bx, by, bw, bh] });
+          }
+        }
+      }
+
+      // ── Borders (enhanced with radius, per-side colors, dashed/dotted) ─
+      const borderInfo = parseBorders(style, layoutBox.width, layoutBox.height);
+      const hasAnyBorder = borderInfo.top.width > 0 || borderInfo.right.width > 0 ||
+        borderInfo.bottom.width > 0 || borderInfo.left.width > 0;
+      if (hasAnyBorder) {
+        const borderSides: { w: number; x: number; y: number; rw: number; rh: number; color: string; style: string }[] = [
+          { w: borderInfo.top.width, x: layoutBox.x, y: layoutBox.y, rw: layoutBox.width, rh: borderInfo.top.width, color: colorToString(borderInfo.top.color), style: borderInfo.top.style },
+          { w: borderInfo.bottom.width, x: layoutBox.x, y: layoutBox.y + layoutBox.height - borderInfo.bottom.width, rw: layoutBox.width, rh: borderInfo.bottom.width, color: colorToString(borderInfo.bottom.color), style: borderInfo.bottom.style },
+          { w: borderInfo.left.width, x: layoutBox.x, y: layoutBox.y + borderInfo.top.width, rw: borderInfo.left.width, rh: layoutBox.height - borderInfo.top.width - borderInfo.bottom.width, color: colorToString(borderInfo.left.color), style: borderInfo.left.style },
+          { w: borderInfo.right.width, x: layoutBox.x + layoutBox.width - borderInfo.right.width, y: layoutBox.y + borderInfo.top.width, rw: borderInfo.right.width, rh: layoutBox.height - borderInfo.top.width - borderInfo.bottom.width, color: colorToString(borderInfo.right.color), style: borderInfo.right.style },
+        ];
+        const hasRadius = borderInfo.radius.topLeft.w > 0 || borderInfo.radius.topRight.w > 0 ||
+          borderInfo.radius.bottomLeft.w > 0 || borderInfo.radius.bottomRight.w > 0;
+        if (hasRadius) {
+          commands.push({ type: 'setBorderRadius', params: [borderInfo.radius, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
+        }
+        for (const s of borderSides) {
+          if (s.w <= 0) continue;
+          if (s.style === 'dashed' || s.style === 'dotted') {
+            commands.push({ type: 'setFillStyle', params: [s.color] });
+            const dashLen = s.style === 'dotted' ? s.w : s.w * 3;
+            const gapLen = s.w * 2;
+            const isHoriz = s.rw > s.rh;
+            const total = isHoriz ? s.rw : s.rh;
+            for (let start = 0; start < total; start += dashLen + gapLen) {
+              const segW = isHoriz ? Math.min(dashLen, total - start) : s.rw;
+              const segH = isHoriz ? s.rh : Math.min(dashLen, total - start);
+              const segX = isHoriz ? s.x + start : s.x;
+              const segY = isHoriz ? s.y : s.y + start;
+              commands.push({ type: 'fillRect', params: [segX, segY, segW, segH] });
+            }
+          } else {
+            commands.push({ type: 'setFillStyle', params: [s.color] });
+            commands.push({ type: 'fillRect', params: [s.x, s.y, s.rw, s.rh] });
+          }
+        }
+      }
 
       // ── Image (lazy-loaded or eager) ────────────────────────────────────
       if (node.imageData && node.loadingState === 'loaded') {
@@ -426,8 +531,15 @@ class PaintEngine implements IPaintEngine {
       // ── Text runs (actual text content from inline formatting context) ───
       const textRuns = layoutBox.textRuns;
       if (textRuns && textRuns.length > 0) {
+        const textShadowVal = style.get('text-shadow');
+        const textShadows = textShadowVal ? parseTextShadow(textShadowVal) : [];
         for (const run of textRuns) {
           const weight = run.fontWeight ?? 'normal';
+          if (textShadows.length > 0) {
+            for (const ts of textShadows) {
+              commands.push({ type: 'applyTextShadow', params: [ts, run.text, run.x, run.y, run.color, `${weight} ${run.fontSize}px ${run.fontFamily}`] });
+            }
+          }
           commands.push({ type: 'setFillStyle', params: [run.color] });
           commands.push({ type: 'setFont', params: [`${weight} ${run.fontSize}px ${run.fontFamily}`] });
           commands.push({
@@ -435,6 +547,49 @@ class PaintEngine implements IPaintEngine {
             params: [run.text, run.x, run.y],
           });
         }
+      }
+
+      // ── Inset box shadows (after content) ─────────────────────────────
+      if (boxShadowVal && boxShadowVal !== 'none') {
+        const shadows = parseBoxShadow(boxShadowVal);
+        for (const shadow of shadows) {
+          if (shadow.inset) {
+            commands.push({ type: 'applyBoxShadow', params: [shadow, bx, by, bw, bh] });
+          }
+        }
+      }
+
+      // ── Filter effects ──────────────────────────────────────────────
+      const filterVal = style.get('filter');
+      if (filterVal && filterVal !== 'none') {
+        const filters = parseFilter(filterVal);
+        if (filters.length > 0) {
+          commands.push({ type: 'applyFilterList', params: [filters, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
+        }
+      }
+
+      // ── Clip-path ──────────────────────────────────────────────────
+      const clipPathVal = style.get('clip-path');
+      if (clipPathVal && clipPathVal !== 'none') {
+        const clipInfo = parseClipPath(clipPathVal);
+        if (clipInfo.shape.type !== 'none') {
+          commands.push({ type: 'applyClipShape', params: [clipInfo.shape, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
+        }
+      }
+
+      // ── Mask-image ────────────────────────────────────────────────
+      const maskImage = style.get('mask-image');
+      if (maskImage && maskImage !== 'none') {
+        const maskInfo = parseMask(maskImage);
+        if (maskInfo.length > 0 && maskInfo[0].image !== 'none') {
+          commands.push({ type: 'applyMask', params: [maskInfo, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
+        }
+      }
+
+      // ── Blend mode ─────────────────────────────────────────────────
+      const blendModeVal = style.get('mix-blend-mode');
+      if (blendModeVal) {
+        commands.push({ type: 'setBlendMode', params: [blendModeVal] });
       }
 
       // ── Debug outer border (border box outline) ─────────────────────────
@@ -513,36 +668,11 @@ class PaintEngine implements IPaintEngine {
     this.emit({ kind: 'layerPainted', layerId: layer.id, commandCount: commands.length });
   }
 
-  /**
-   * Paints solid borders on all four sides of the border box.
-   */
-  private paintBorders(commands: PaintCommand[], box: LayoutBox, style: ReadonlyMap<string, string>): void {
-    const borderWidths = [box.borderTop, box.borderRight, box.borderBottom, box.borderLeft];
-    const hasBorders = borderWidths.some(w => w > 0);
-    if (!hasBorders) return;
-
-    const borderColor = style.get('border-color')
-      ?? style.get('border-top-color')
-      ?? '#000000';
-
-    const sides: Array<{ width: number; x: number; y: number; w: number; h: number }> = [
-      { width: box.borderTop, x: box.x, y: box.y, w: box.width, h: box.borderTop },
-      { width: box.borderBottom, x: box.x, y: box.y + box.height - box.borderBottom, w: box.width, h: box.borderBottom },
-      { width: box.borderLeft, x: box.x, y: box.y + box.borderTop, w: box.borderLeft, h: box.height - box.borderTop - box.borderBottom },
-      { width: box.borderRight, x: box.x + box.width - box.borderRight, y: box.y + box.borderTop, w: box.borderRight, h: box.height - box.borderTop - box.borderBottom },
-    ];
-
-    for (const side of sides) {
-      if (side.width <= 0) continue;
-      commands.push({ type: 'setFillStyle', params: [borderColor] });
-      commands.push({ type: 'fillRect', params: [side.x, side.y, side.w, side.h] });
-    }
-  }
-
   dispose(): void {
     this.layers.length = 0;
     this.elementCommands.clear();
     this.stackingTree = null;
+    this.renderTree = null;
     this.eventListeners.clear();
     this.layerTree?.dispose();
     this.layerTree = null;
@@ -615,7 +745,7 @@ class PaintEngine implements IPaintEngine {
   }
 }
 
-// ── Helpers (kept for backward compat in flat layer mode) ────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────
 
 function getZIndex(element: DomElement): number {
   const style = element.computedStyle ?? new Map();
@@ -623,6 +753,11 @@ function getZIndex(element: DomElement): number {
   if (!zRaw || zRaw === 'auto') return 0;
   const z = parseInt(zRaw, 10);
   return isNaN(z) ? 0 : z;
+}
+
+/** Convert RGBA object to CSS rgba() string */
+function colorToString(c: { r: number; g: number; b: number; a: number }): string {
+  return `rgba(${c.r | 0},${c.g | 0},${c.b | 0},${c.a})`;
 }
 
 export { PaintEngine, DEFAULT_PAINT_CONFIG };

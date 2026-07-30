@@ -121,7 +121,7 @@ h3{font-family:var(--font-head)}
 .kpi-row .kpi:nth-child(3){animation-delay:.14s}.kpi-row .kpi:nth-child(4){animation-delay:.2s}
 .kpi-row .kpi:nth-child(5){animation-delay:.26s}
 
-.kpi-row.secondary{grid-template-columns:repeat(4,1fr);margin-bottom:32px}
+.kpi-row.secondary{grid-template-columns:repeat(5,1fr);margin-bottom:32px}
 .kpi-row.secondary .kpi{padding:18px 16px}
 .kpi-row.secondary .value{font-size:1.5rem}
 .spark{width:100%;height:28px;display:block;margin-top:6px}
@@ -230,6 +230,7 @@ h3{font-family:var(--font-head)}
 .changelog-entry{display:flex;align-items:center;gap:12px;padding:9px 16px;cursor:pointer;transition:background .15s;border-top:1px solid rgba(255,255,255,0.03)}
 .changelog-entry:hover{background:rgba(0,240,255,0.04)}
 .changelog-hash{font-family:'Courier New',monospace;font-size:.72rem;color:var(--text-muted);flex:none;width:62px}
+.changelog-time{font-family:'Courier New',monospace;font-size:.72rem;color:var(--text-muted);flex:none;width:64px}
 .changelog-prefix{font-family:'Courier New',monospace;font-size:.72rem;font-weight:700;flex:none;padding:1px 7px;border-radius:5px}
 .changelog-prefix.feat{background:rgba(52,211,153,0.14);color:var(--green)}
 .changelog-prefix.fix{background:rgba(248,113,113,0.14);color:var(--red)}
@@ -242,7 +243,28 @@ h3{font-family:var(--font-head)}
 .changelog-stat-add{color:var(--green)}
 .changelog-stat-fix{color:var(--red)}
 .changelog-stat-files{color:var(--text-muted)}
-@media(max-width:700px){.changelog-entry-stats{display:none}.changelog-hash{display:none}}
+.changelog-toolbar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.changelog-toolbar input{flex:1;min-width:200px;background:rgba(255,255,255,0.06);border:1px solid var(--glass-border);color:var(--text);padding:9px 14px;border-radius:var(--radius-sm);font-size:.83rem;outline:none;transition:border-color .2s}
+.changelog-toolbar input:focus{border-color:var(--cyan)}
+.changelog-filters{display:flex;gap:6px;flex-wrap:wrap}
+.changelog-filter-chip{background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:var(--text-dim);font-family:'Courier New',monospace;font-size:.72rem;font-weight:700;padding:6px 12px;border-radius:999px;cursor:pointer;transition:all .15s}
+.changelog-filter-chip:hover{border-color:var(--cyan);color:var(--text)}
+.changelog-filter-chip.active{background:var(--cyan);color:#00141a;border-color:var(--cyan)}
+.changelog-meta{font-size:.75rem;color:var(--text-muted);margin-bottom:14px}
+.changelog-meta b{color:var(--cyan)}
+.changelog-day-relative{font-size:.7rem;color:var(--text-muted)}
+.changelog-author{font-size:.72rem;color:var(--text-muted)}
+.changelog-author b{color:var(--text-dim);font-weight:600}
+.changelog-copy-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:.72rem;flex:none;padding:2px 4px;border-radius:4px;transition:color .15s}
+.changelog-copy-btn:hover{color:var(--cyan)}
+.changelog-empty{padding:28px;text-align:center;color:var(--text-muted);font-size:.85rem}
+.changelog-breakdown{display:flex;height:8px;border-radius:6px;overflow:hidden;margin-bottom:10px;background:rgba(255,255,255,0.04)}
+.changelog-breakdown-seg{height:100%;transition:opacity .15s}
+.changelog-breakdown-seg:hover{opacity:.75}
+.changelog-breakdown-legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;font-size:.7rem;color:var(--text-dim)}
+.changelog-breakdown-legend span{display:inline-flex;align-items:center;gap:5px}
+.changelog-breakdown-legend .dot{width:8px;height:8px;border-radius:50%;flex:none}
+@media(max-width:700px){.changelog-entry-stats{display:none}.changelog-hash{display:none}.changelog-time{display:none}}
 
 .table-section{animation:fadeInUp .6s ease;padding:28px;margin-top:20px}
 .table-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
@@ -337,6 +359,10 @@ mark{background:rgba(0,240,255,.35);color:inherit;border-radius:3px;padding:0 1p
 .notes-box textarea{width:100%;background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:var(--text);border-radius:var(--radius-sm);padding:10px 12px;font-size:.82rem;font-family:inherit;resize:vertical;min-height:64px;outline:none;transition:border-color .2s}
 .notes-box textarea:focus{border-color:var(--cyan)}
 .notes-saved{font-size:.65rem;color:var(--text-muted);margin-top:4px;text-align:right}
+.shortcuts-grid{display:flex;flex-direction:column;gap:2px;margin-top:18px}
+.shortcut-row{display:flex;justify-content:space-between;align-items:center;padding:10px 4px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:.85rem;color:var(--text-dim)}
+.shortcut-row:last-child{border-bottom:none}
+.shortcut-row kbd{margin-left:4px}
 
 .pagination{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:18px;flex-wrap:wrap}
 .pagination button{background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:var(--text);padding:6px 12px;border-radius:8px;font-size:.78rem;cursor:pointer;transition:background .15s}
@@ -418,6 +444,7 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   <button class="tbtn accent" id="backupBtn">💾 Backup Data</button>
   <label class="tbtn accent" for="restoreInput">⬆ Restore Data<input type="file" id="restoreInput" accept="application/json" class="hidden-file-input"></label>
   <button class="tbtn" id="resetFiltersBtn">↺ Reset Filters</button>
+  <button class="tbtn" id="shortcutsBtn">⌨ Shortcuts</button>
 </div>
 
 <div class="kpi-row" id="kpis">
@@ -441,6 +468,12 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
     <div class="label">Busiest Day <span class="info" title="The date with the highest number of documents logged.">i</span></div>
     <svg class="spark" id="sparkBusy"></svg>
   </div>
+  <div class="kpi purple glass">
+    <span class="icon">😴</span>
+    <div class="value" id="kpiLaziest">—</div>
+    <div class="label">Laziest Day <span class="info" title="The date with the lowest activity — fewest documents logged (ties broken by fewest tests added).">i</span></div>
+    <svg class="spark" id="sparkLazy"></svg>
+  </div>
   <div class="kpi green glass">
     <span class="icon">✅</span>
     <div class="value" id="kpiCompletion">—</div>
@@ -458,6 +491,11 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 <div class="insights-card glass">
   <h3>💡 Auto-Generated Insights</h3>
   <ul id="insightsList"></ul>
+</div>
+
+<div class="insights-card glass">
+  <h3>⚡ Efficiency Highlights</h3>
+  <ul id="efficiencyList"></ul>
 </div>
 
 <div class="todo-section glass" id="todo">
@@ -516,6 +554,8 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   <div class="chart-card glass" data-chart-id="specCompliance"><div class="chart-head"><h3>📐 Spec Compliance</h3><button class="expand-btn" data-expand="specCompliance" title="Expand">⛶</button></div><canvas id="specCompliance"></canvas></div>
   <div class="chart-card glass full" data-chart-id="filesChart"><div class="chart-head"><h3>🗂 Files Modified vs Created</h3><button class="expand-btn" data-expand="filesChart" title="Expand">⛶</button></div><canvas id="filesChart"></canvas></div>
   <div class="chart-card glass chart-card-narrow" data-chart-id="statusPie"><div class="chart-head"><h3>🥧 Status Breakdown</h3><button class="expand-btn" data-expand="statusPie" title="Expand">⛶</button></div><canvas id="statusPie"></canvas></div>
+  <div class="chart-card glass" data-chart-id="filesVsTests"><div class="chart-head"><h3>🔬 Files Touched vs Tests Added</h3><button class="expand-btn" data-expand="filesVsTests" title="Expand">⛶</button></div><canvas id="filesVsTests"></canvas></div>
+  <div class="chart-card glass" data-chart-id="sessionSize"><div class="chart-head"><h3>📏 Session Size Distribution</h3><button class="expand-btn" data-expand="sessionSize" title="Expand">⛶</button></div><canvas id="sessionSize"></canvas></div>
 </div>
 
 <div class="heat-section glass" id="heatmap">
@@ -546,6 +586,21 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
     <h3>📜 Daily Changelog</h3>
     <p class="changelog-sub">Documentation activity grouped by day — like a git log for this project's docs. Click a day to open its full detail page, or a commit line to open that document.</p>
   </div>
+  <div class="changelog-breakdown" id="changelogBreakdown"></div>
+  <div class="changelog-toolbar">
+    <input type="text" id="changelogSearch" placeholder="Search commit messages...">
+    <div class="changelog-filters" id="changelogFilters">
+      <button class="changelog-filter-chip active" data-type="">All</button>
+      <button class="changelog-filter-chip" data-type="feat">feat</button>
+      <button class="changelog-filter-chip" data-type="fix">fix</button>
+      <button class="changelog-filter-chip" data-type="test">test</button>
+      <button class="changelog-filter-chip" data-type="docs">docs</button>
+      <button class="changelog-filter-chip" data-type="plan">plan</button>
+    </div>
+    <button class="tbtn" id="changelogSortBtn">↓ Newest First</button>
+    <button class="tbtn" id="changelogExportBtn">⬇ Export .md</button>
+  </div>
+  <div class="changelog-meta" id="changelogMeta"></div>
   <div id="changelogList"></div>
 </div>
 
@@ -559,6 +614,7 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
       <span>To</span><input type="date" id="dateTo">
     </div>
     <label class="fav-toggle"><input type="checkbox" id="favOnlyToggle"> ★ Favorites only</label>
+    <button class="tbtn" id="copyLinkBtn">🔗 Copy Link</button>
     <div class="col-dropdown">
       <button class="tbtn" id="colDropdownBtn">⚙ Columns</button>
       <div class="col-menu" id="colMenu"></div>
@@ -591,7 +647,7 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 
 <footer>
   Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-07-22 (refreshed)
-  <div class="kbd-hint">Press <kbd>/</kbd> to search · <kbd>Esc</kbd> to clear · <kbd>★</kbd> to favorite · click a row for details</div>
+  <div class="kbd-hint">Press <kbd>/</kbd> to search · <kbd>Ctrl</kbd>+<kbd>K</kbd> for quick search · <kbd>?</kbd> for all shortcuts · click a row for details</div>
 </footer>
 
 <button class="back-to-top" id="backToTop" title="Back to top">↑</button>
@@ -683,6 +739,25 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
     </div>
     <div class="cmdk-results" id="cmdkResults"></div>
     <div class="cmdk-hint"><span><kbd>↑↓</kbd> navigate</span><span><kbd>↵</kbd> select</span><span><kbd>esc</kbd> close</span></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="shortcutsOverlay">
+  <div class="modal">
+    <button class="modal-close" id="shortcutsClose">✕</button>
+    <h2>⌨ Keyboard Shortcuts</h2>
+    <div class="shortcuts-grid">
+      <div class="shortcut-row"><span>Open this shortcuts panel</span><kbd>?</kbd></div>
+      <div class="shortcut-row"><span>Focus document search</span><kbd>/</kbd></div>
+      <div class="shortcut-row"><span>Open quick search</span><kbd>Ctrl</kbd>+<kbd>K</kbd></div>
+      <div class="shortcut-row"><span>Close any panel / modal / overlay</span><kbd>Esc</kbd></div>
+      <div class="shortcut-row"><span>Navigate quick search results</span><kbd>↑</kbd><kbd>↓</kbd></div>
+      <div class="shortcut-row"><span>Select quick search result</span><kbd>Enter</kbd></div>
+      <div class="shortcut-row"><span>Open a category</span>click any category tag</div>
+      <div class="shortcut-row"><span>Open a day's activity</span>click any date</div>
+      <div class="shortcut-row"><span>Open a status breakdown</span>click a status badge</div>
+      <div class="shortcut-row"><span>Toggle a favorite</span>click the ★ in the table</div>
+    </div>
   </div>
 </div>
 
@@ -789,6 +864,12 @@ const CHARTS={};
 
 /* ---------- theme ---------- */
 const html=document.documentElement;
+(function applySystemTheme(){
+  if(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches){
+    html.setAttribute('data-theme','light');
+    document.getElementById('themeLabel').textContent='Dark Mode';
+  }
+})();
 document.getElementById('themeToggle').addEventListener('click',()=>{
   const isLight=html.getAttribute('data-theme')==='light';
   html.setAttribute('data-theme',isLight?'dark':'light');
@@ -807,8 +888,8 @@ function showToast(msg){
 }
 
 /* ---------- Chart.js global defaults ---------- */
-Chart.defaults.color='#94a3b8';
-Chart.defaults.borderColor='rgba(255,255,255,0.06)';
+Chart.defaults.color=html.getAttribute('data-theme')==='light'?'#4b5468':'#94a3b8';
+Chart.defaults.borderColor=html.getAttribute('data-theme')==='light'?'rgba(15,15,40,0.08)':'rgba(255,255,255,0.06)';
 Chart.defaults.font.family='Inter,system-ui,sans-serif';
 Chart.defaults.font.size=11;
 Chart.defaults.plugins.legend.labels.usePointStyle=true;
@@ -872,6 +953,48 @@ CHARTS.filesChart=new Chart(document.getElementById('filesChart'),{type:'bar',da
 const statusCounts={Completed:0,Planned:0};DOCS.forEach(d=>statusCounts[d.status]=(statusCounts[d.status]||0)+1);
 CHARTS.statusPie=new Chart(document.getElementById('statusPie'),{type:'pie',data:{labels:Object.keys(statusCounts),datasets:[{data:Object.values(statusCounts),backgroundColor:['rgba(52,211,153,0.75)','rgba(251,191,36,0.75)'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,onHover:(e,els)=>{e.native.target.style.cursor=els.length?'pointer':'default'},onClick:(e,els)=>{if(els.length)openStatusPage(Object.keys(statusCounts)[els[0].index])},plugins:{legend:{position:'bottom'}}}});
 
+/* ---------- Files Touched vs Tests Added (scatter, bubble size = root causes) ---------- */
+const scatterDocs=DOCS.filter(d=>(d.filesModified+d.filesCreated)>0||d.tests>0);
+CHARTS.filesVsTests=new Chart(document.getElementById('filesVsTests'),{
+  type:'bubble',
+  data:{datasets:catKeys.map(cat=>({
+    label:cat,
+    data:scatterDocs.filter(d=>d.category===cat).map(d=>({x:d.filesModified+d.filesCreated,y:d.tests,r:4+Math.min(d.rootCauses*2,14),_doc:d})),
+    backgroundColor:(CAT_COLORS[cat]||'#00f0ff')+'aa',
+    borderColor:CAT_COLORS[cat]||'#00f0ff',
+    borderWidth:1
+  }))},
+  options:{
+    responsive:true,maintainAspectRatio:false,
+    onHover:(e,els)=>{e.native.target.style.cursor=els.length?'pointer':'default'},
+    onClick:(e,els)=>{if(els.length){const pt=CHARTS.filesVsTests.data.datasets[els[0].datasetIndex].data[els[0].index];if(pt&&pt._doc)openModal(pt._doc)}},
+    plugins:{
+      legend:{position:'right',labels:{padding:10,font:{size:10}}},
+      tooltip:{callbacks:{label:ctx=>{const d=ctx.raw._doc;return `${d.title}: ${d.filesModified+d.filesCreated} files, ${d.tests} tests, ${d.rootCauses} root causes`}}}
+    },
+    scales:{
+      x:{title:{display:true,text:'Files Touched',color:'#94a3b8',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'}},
+      y:{title:{display:true,text:'Tests Added',color:'#94a3b8',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'}}
+    }
+  }
+});
+
+/* ---------- Session Size Distribution (histogram of tests-per-session buckets) ---------- */
+const SIZE_BUCKETS=[
+  {label:'0',test:t=>t===0},
+  {label:'1-25',test:t=>t>=1&&t<=25},
+  {label:'26-50',test:t=>t>=26&&t<=50},
+  {label:'51-100',test:t=>t>=51&&t<=100},
+  {label:'101-200',test:t=>t>=101&&t<=200},
+  {label:'200+',test:t=>t>200}
+];
+const bucketCounts=SIZE_BUCKETS.map(b=>DOCS.filter(d=>b.test(d.tests)).length);
+CHARTS.sessionSize=new Chart(document.getElementById('sessionSize'),{
+  type:'bar',
+  data:{labels:SIZE_BUCKETS.map(b=>b.label+' tests'),datasets:[{label:'Documents',data:bucketCounts,backgroundColor:'rgba(168,85,247,0.7)',borderRadius:6,borderSkipped:false}]},
+  options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:5}}}}
+});
+
 /* ---------- Chart expand/maximize ---------- */
 document.querySelectorAll('.expand-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{
@@ -927,6 +1050,18 @@ const busiestDate=dateKeys.reduce((a,b)=>dateCounts[a]>=dateCounts[b]?a:b);
 document.getElementById('kpiBusiest').textContent=busiestDate.slice(5)+' ('+dateCounts[busiestDate]+')';
 drawSpark('sparkBusy',dateKeys.map(k=>dateCounts[k]),'#f472b6');
 
+const testsByDate=k=>DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.tests,0);
+const laziestDate=dateKeys.reduce((a,b)=>{
+  if(dateCounts[a]!==dateCounts[b])return dateCounts[a]<dateCounts[b]?a:b;
+  return testsByDate(a)<=testsByDate(b)?a:b;
+});
+document.getElementById('kpiLaziest').textContent=laziestDate.slice(5)+' ('+dateCounts[laziestDate]+')';
+drawSpark('sparkLazy',dateKeys.map(k=>dateCounts[k]),'#a855f7');
+document.getElementById('kpiLaziest').closest('.kpi').style.cursor='pointer';
+document.getElementById('kpiLaziest').closest('.kpi').addEventListener('click',()=>openDatePage(laziestDate));
+document.getElementById('kpiBusiest').closest('.kpi').style.cursor='pointer';
+document.getElementById('kpiBusiest').closest('.kpi').addEventListener('click',()=>openDatePage(busiestDate));
+
 const completionRate=Math.round((statusCounts.Completed/(DOCS.length))*100);
 document.getElementById('kpiCompletion').textContent=completionRate+'%';
 let runningComplete=0,runningTotal=0;
@@ -944,13 +1079,45 @@ drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)
   const topTestDoc=[...DOCS].sort((a,b)=>b.tests-a.tests)[0];
   const plannedCount=DOCS.filter(d=>d.status==='Planned').length;
   const zeroCoverage=DOCS.filter(d=>d.tests===0&&d.status==='Completed').length;
+  const sortedDates=[...dateKeys].sort();
+  let longestStreak=1,currentRun=1;
+  for(let i=1;i<sortedDates.length;i++){
+    const prev=new Date(sortedDates[i-1]+'T00:00:00');
+    const cur=new Date(sortedDates[i]+'T00:00:00');
+    const diffDays=Math.round((cur-prev)/86400000);
+    if(diffDays===1){currentRun++;longestStreak=Math.max(longestStreak,currentRun)}else{currentRun=1}
+  }
+  const lastActiveDate=sortedDates[sortedDates.length-1];
   const items=[
     `<b>${topCatByTests.k}</b> leads all categories with <b>${topCatByTests.t.toLocaleString()}</b> tests contributed.`,
     `<b>${topTestDoc.title}</b> added the most tests in a single session (<b>${topTestDoc.tests.toLocaleString()}</b>).`,
     `<b>${topRootCauseDoc.title}</b> resolved the most root causes in one session (<b>${topRootCauseDoc.rootCauses}</b>).`,
     `<b>${busiestDate}</b> was the busiest day with <b>${dateCounts[busiestDate]}</b> documents logged.`,
     `<b>${plannedCount}</b> document${plannedCount===1?'':'s'} still ${plannedCount===1?'is':'are'} in the Planned stage, awaiting implementation.`,
-    `<b>${zeroCoverage}</b> completed sessions currently ship with no automated test coverage recorded.`
+    `<b>${zeroCoverage}</b> completed sessions currently ship with no automated test coverage recorded.`,
+    `Longest streak of consecutive active days: <b>${longestStreak}</b> day${longestStreak===1?'':'s'}.`,
+    `Last logged activity was <b>${relativeDays(lastActiveDate)}</b> (${lastActiveDate}).`
+  ];
+  list.innerHTML=items.map(t=>`<li>${t}</li>`).join('');
+})();
+
+(function buildEfficiency(){
+  const list=document.getElementById('efficiencyList');
+  const withFiles=DOCS.filter(d=>(d.filesModified+d.filesCreated)>0);
+  const ratio=d=>d.tests/(d.filesModified+d.filesCreated);
+  const mostEfficient=[...withFiles].sort((a,b)=>ratio(b)-ratio(a))[0];
+  const riskiest=[...DOCS].filter(d=>d.status==='Completed'&&(d.filesModified+d.filesCreated)>=3&&d.tests===0).sort((a,b)=>(b.filesModified+b.filesCreated)-(a.filesModified+a.filesCreated))[0];
+  const totalFilesAll=DOCS.reduce((s,d)=>s+d.filesModified+d.filesCreated,0);
+  const totalTestsAll=DOCS.reduce((s,d)=>s+d.tests,0);
+  const avgRatio=(totalTestsAll/totalFilesAll).toFixed(1);
+  const zeroTestDocs=DOCS.filter(d=>d.tests===0).length;
+  const heavyRootCause=[...DOCS].sort((a,b)=>(b.rootCauses/(b.filesModified+b.filesCreated||1))-(a.rootCauses/(a.filesModified+a.filesCreated||1)))[0];
+  const items=[
+    `<b>${mostEfficient.title}</b> is the most test-efficient session: <b>${ratio(mostEfficient).toFixed(1)}</b> tests per file touched.`,
+    `Across the whole project, the average is <b>${avgRatio}</b> tests added per file touched.`,
+    riskiest?`<b>${riskiest.title}</b> touched <b>${riskiest.filesModified+riskiest.filesCreated}</b> files but shipped with zero recorded tests — worth a second look.`:`No completed session with 3+ files touched shipped with zero tests — good coverage discipline.`,
+    `<b>${zeroTestDocs}</b> of <b>${DOCS.length}</b> documents recorded no test count at all (docs-only or planning entries).`,
+    `<b>${heavyRootCause.title}</b> had the highest root-cause density relative to files touched — a concentrated bug-fixing session.`
   ];
   list.innerHTML=items.map(t=>`<li>${t}</li>`).join('');
 })();
@@ -1005,6 +1172,7 @@ document.getElementById('leaderBody').addEventListener('click',e=>{
 });
 
 /* ---------- Daily Changelog (git-log style view of daily activity) ---------- */
+const CHANGELOG_AUTHOR='Atharva Sarpatwari';
 function fakeHash(str){
   let h=0;
   for(let i=0;i<str.length;i++){h=(h<<5)-h+str.charCodeAt(i);h|=0}
@@ -1017,11 +1185,45 @@ function commitPrefix(d){
   if(d.tests>0)return'test';
   return'docs';
 }
+function relativeDays(dateStr){
+  const then=new Date(dateStr+'T00:00:00');
+  const now=new Date();
+  const diffMs=now.setHours(0,0,0,0)-then.setHours(0,0,0,0);
+  const days=Math.round(diffMs/86400000);
+  if(days<=0)return'today';
+  if(days===1)return'yesterday';
+  return days+' days ago';
+}
+function fakeMinutesOfDay(str){
+  let h=0;
+  for(let i=0;i<str.length;i++){h=(h<<3)-h+str.charCodeAt(i)+7;h|=0}
+  return 540+(Math.abs(h)%870);
+}
+function fakeTime(str){
+  const minutes=fakeMinutesOfDay(str);
+  const hh24=Math.floor(minutes/60),mm=minutes%60;
+  const ampm=hh24>=12?'PM':'AM';
+  let hh12=hh24%12;if(hh12===0)hh12=12;
+  return`${hh12}:${String(mm).padStart(2,'0')} ${ampm}`;
+}
+let changelogFilterType='';
+let changelogQuery='';
+let changelogSortDesc=true;
+function getFilteredChangelogDays(){
+  const q=changelogQuery.trim().toLowerCase();
+  const days=[...dateKeys].sort((a,b)=>changelogSortDesc?b.localeCompare(a):a.localeCompare(b));
+  return days.map(dateStr=>{
+    let docsOfDay=DOCS.filter(d=>d.date===dateStr).sort((a,b)=>fakeMinutesOfDay(a.file)-fakeMinutesOfDay(b.file));
+    if(changelogFilterType)docsOfDay=docsOfDay.filter(d=>commitPrefix(d)===changelogFilterType);
+    if(q)docsOfDay=docsOfDay.filter(d=>d.title.toLowerCase().includes(q)||d.category.toLowerCase().includes(q));
+    return{dateStr,docsOfDay};
+  }).filter(g=>g.docsOfDay.length>0);
+}
 function buildChangelog(){
   const el=document.getElementById('changelogList');
-  const daysDesc=[...dateKeys].sort((a,b)=>b.localeCompare(a));
-  el.innerHTML=daysDesc.map(dateStr=>{
-    const docsOfDay=DOCS.filter(d=>d.date===dateStr).sort((a,b)=>b.tests-a.tests);
+  let shownCommits=0;
+  const dayBlocks=getFilteredChangelogDays().map(({dateStr,docsOfDay})=>{
+    shownCommits+=docsOfDay.length;
     const totalTests=docsOfDay.reduce((s,d)=>s+d.tests,0);
     const totalRoot=docsOfDay.reduce((s,d)=>s+d.rootCauses,0);
     const cats=[...new Set(docsOfDay.map(d=>d.category))];
@@ -1029,8 +1231,11 @@ function buildChangelog(){
     const entries=docsOfDay.map(d=>{
       const prefix=commitPrefix(d);
       const filesTotal=d.filesModified+d.filesCreated;
+      const hash=fakeHash(d.file);
       return `<div class="changelog-entry" data-file="${d.file}">
-        <span class="changelog-hash">${fakeHash(d.file)}</span>
+        <button class="changelog-copy-btn" data-hash="${hash}" title="Copy commit hash">📋</button>
+        <span class="changelog-hash">${hash}</span>
+        <span class="changelog-time">${fakeTime(d.file)}</span>
         <span class="changelog-prefix ${prefix}">${prefix}</span>
         <span class="changelog-msg"><span class="cl-scope">(${d.category.toLowerCase()}):</span> ${d.title}</span>
         <span class="changelog-entry-stats">
@@ -1044,6 +1249,7 @@ function buildChangelog(){
       <div class="changelog-day-header" data-date="${dateStr}">
         <span class="changelog-day-date">${dateStr}</span>
         <span class="changelog-day-weekday">${weekday}</span>
+        <span class="changelog-day-relative">${relativeDays(dateStr)}</span>
         <span class="changelog-day-stats">
           <span class="changelog-chip">${docsOfDay.length} commit${docsOfDay.length===1?'':'s'}</span>
           <span class="changelog-chip">+${totalTests.toLocaleString()} tests</span>
@@ -1053,14 +1259,82 @@ function buildChangelog(){
       </div>
       <div class="changelog-entries">${entries}</div>
     </div>`;
-  }).join('');
+  }).filter(Boolean).join('');
+
+  el.innerHTML=dayBlocks||'<div class="changelog-empty">No commits match your search or filter.</div>';
+  document.getElementById('changelogMeta').innerHTML=`<span class="changelog-author">Showing <b>${shownCommits}</b> commit${shownCommits===1?'':'s'} by <b>${CHANGELOG_AUTHOR}</b></span>`;
 }
 buildChangelog();
 document.getElementById('changelogList').addEventListener('click',e=>{
+  const copyBtn=e.target.closest('.changelog-copy-btn[data-hash]');
+  if(copyBtn){
+    navigator.clipboard.writeText(copyBtn.dataset.hash).then(()=>showToast('Copied '+copyBtn.dataset.hash)).catch(()=>showToast('Could not copy — clipboard unavailable'));
+    return;
+  }
   const dayHeader=e.target.closest('.changelog-day-header[data-date]');
   if(dayHeader){openDatePage(dayHeader.dataset.date);return}
   const entry=e.target.closest('.changelog-entry[data-file]');
   if(entry){const doc=DOCS.find(d=>d.file===entry.dataset.file);if(doc)openModal(doc)}
+});
+document.getElementById('changelogSearch').addEventListener('input',e=>{
+  changelogQuery=e.target.value;
+  buildChangelog();
+});
+document.getElementById('changelogFilters').addEventListener('click',e=>{
+  const chip=e.target.closest('.changelog-filter-chip');
+  if(!chip)return;
+  changelogFilterType=chip.dataset.type;
+  document.querySelectorAll('.changelog-filter-chip').forEach(c=>c.classList.remove('active'));
+  chip.classList.add('active');
+  buildChangelog();
+});
+
+const PREFIX_COLOR={feat:'#34d399',fix:'#f87171',test:'#60a5fa',docs:'#a855f7',plan:'#fbbf24'};
+function buildChangelogBreakdown(){
+  const counts={feat:0,fix:0,test:0,docs:0,plan:0};
+  DOCS.forEach(d=>{counts[commitPrefix(d)]++});
+  const total=DOCS.length;
+  const bar=document.getElementById('changelogBreakdown');
+  bar.innerHTML=Object.keys(counts).filter(k=>counts[k]>0).map(k=>
+    `<div class="changelog-breakdown-seg" style="width:${(counts[k]/total*100).toFixed(2)}%;background:${PREFIX_COLOR[k]}" title="${k}: ${counts[k]} commits"></div>`
+  ).join('');
+  const legendEl=document.createElement('div');
+  legendEl.className='changelog-breakdown-legend';
+  legendEl.innerHTML=Object.keys(counts).filter(k=>counts[k]>0).map(k=>
+    `<span><span class="dot" style="background:${PREFIX_COLOR[k]}"></span>${k} (${counts[k]})</span>`
+  ).join('');
+  bar.insertAdjacentElement('afterend',legendEl);
+}
+buildChangelogBreakdown();
+
+document.getElementById('changelogSortBtn').addEventListener('click',()=>{
+  changelogSortDesc=!changelogSortDesc;
+  document.getElementById('changelogSortBtn').innerHTML=changelogSortDesc?'↓ Newest First':'↑ Oldest First';
+  buildChangelog();
+});
+
+document.getElementById('changelogExportBtn').addEventListener('click',()=>{
+  const groups=getFilteredChangelogDays();
+  if(groups.length===0){showToast('Nothing to export — clear your filters');return}
+  let md=`# Daily Changelog\n\n_Generated from Nova Browser documentation analytics — ${groups.reduce((s,g)=>s+g.docsOfDay.length,0)} commits by ${CHANGELOG_AUTHOR}._\n\n`;
+  groups.forEach(({dateStr,docsOfDay})=>{
+    const weekday=new Date(dateStr+'T00:00:00').toLocaleDateString('en-US',{weekday:'long'});
+    md+=`## ${dateStr} (${weekday})\n\n`;
+    docsOfDay.forEach(d=>{
+      const prefix=commitPrefix(d);
+      const filesTotal=d.filesModified+d.filesCreated;
+      md+=`- \`${fakeHash(d.file)}\` ${fakeTime(d.file)} — **${prefix}(${d.category.toLowerCase()})**: ${d.title}`;
+      const stats=[];
+      if(d.tests)stats.push(`+${d.tests} tests`);
+      if(d.rootCauses)stats.push(`${d.rootCauses} fix${d.rootCauses===1?'':'es'}`);
+      if(filesTotal)stats.push(`${filesTotal} files`);
+      if(stats.length)md+=` _(${stats.join(', ')})_`;
+      md+='\n';
+    });
+    md+='\n';
+  });
+  downloadBlob(md,'nova-browser-changelog.md','text/markdown');
+  showToast('Changelog exported as Markdown');
 });
 
 /* ---------- Favorites (bookmarked documents) ---------- */
@@ -1246,6 +1520,58 @@ document.getElementById('copyMdBtn').addEventListener('click',async()=>{
   }catch(err){
     downloadBlob(md,'nova-browser-docs-analytics.md','text/markdown');
     showToast('Clipboard unavailable — downloaded .md instead');
+  }
+});
+
+/* ---------- Shareable filtered view links ---------- */
+function hydrateTableFromURL(){
+  const p=new URLSearchParams(location.search);
+  if(!p.toString())return;
+  if(p.has('q'))document.getElementById('searchInput').value=p.get('q');
+  if(p.has('cat'))catSel.value=p.get('cat');
+  if(p.has('status'))document.getElementById('statusFilter').value=p.get('status');
+  if(p.has('from'))document.getElementById('dateFrom').value=p.get('from');
+  if(p.has('to'))document.getElementById('dateTo').value=p.get('to');
+  if(p.get('fav')==='1')document.getElementById('favOnlyToggle').checked=true;
+  if(p.has('sort')){
+    const[col,dir]=p.get('sort').split(':');
+    if(col){
+      currentSort={col,dir:dir==='desc'?'desc':'asc'};
+      const th=document.querySelector(`#mainTable thead th[data-col="${col}"]`);
+      if(th){
+        document.querySelectorAll('#mainTable thead th').forEach(t=>t.classList.remove('sorted'));
+        th.classList.add('sorted');
+        th.querySelector('.sort-arrow').textContent=currentSort.dir==='asc'?'▲':'▼';
+      }
+    }
+  }
+  if(p.has('page'))currentPage=Math.max(1,parseInt(p.get('page'),10)||1);
+  showToast('Loaded a shared view');
+}
+hydrateTableFromURL();
+
+document.getElementById('copyLinkBtn').addEventListener('click',async()=>{
+  const p=new URLSearchParams();
+  const q=document.getElementById('searchInput').value.trim();
+  const cat=catSel.value;
+  const status=document.getElementById('statusFilter').value;
+  const from=document.getElementById('dateFrom').value;
+  const to=document.getElementById('dateTo').value;
+  const fav=document.getElementById('favOnlyToggle').checked;
+  if(q)p.set('q',q);
+  if(cat)p.set('cat',cat);
+  if(status)p.set('status',status);
+  if(from)p.set('from',from);
+  if(to)p.set('to',to);
+  if(fav)p.set('fav','1');
+  p.set('sort',currentSort.col+':'+currentSort.dir);
+  if(currentPage>1)p.set('page',String(currentPage));
+  const url=location.origin+location.pathname+'?'+p.toString()+location.hash;
+  try{
+    await navigator.clipboard.writeText(url);
+    showToast('Link copied — filters included');
+  }catch(err){
+    showToast('Could not copy — clipboard unavailable');
   }
 });
 
@@ -1740,13 +2066,21 @@ function scrollActiveIntoView(){
 }
 
 /* ---------- Keyboard shortcuts ---------- */
+function openShortcuts(){document.getElementById('shortcutsOverlay').classList.add('open')}
+function closeShortcuts(){document.getElementById('shortcutsOverlay').classList.remove('open')}
+document.getElementById('shortcutsBtn').addEventListener('click',openShortcuts);
+document.getElementById('shortcutsClose').addEventListener('click',closeShortcuts);
+document.getElementById('shortcutsOverlay').addEventListener('click',e=>{if(e.target.id==='shortcutsOverlay')closeShortcuts()});
+
 document.addEventListener('keydown',e=>{
   const active=document.activeElement;
   const typing=active&&(active.tagName==='INPUT'||active.tagName==='SELECT'||active.tagName==='TEXTAREA');
   if((e.key==='k'||e.key==='K')&&(e.metaKey||e.ctrlKey)){e.preventDefault();openCmdk();return}
+  if(e.key==='?'&&!typing){e.preventDefault();openShortcuts();return}
   if(e.key==='/'&&!typing){e.preventDefault();document.getElementById('searchInput').focus()}
   else if(e.key==='Escape'){
-    if(document.getElementById('cmdkOverlay').classList.contains('open')){closeCmdk()}
+    if(document.getElementById('shortcutsOverlay').classList.contains('open')){closeShortcuts()}
+    else if(document.getElementById('cmdkOverlay').classList.contains('open')){closeCmdk()}
     else if(document.getElementById('statusPage').classList.contains('open')){closeStatusPage()}
     else if(document.getElementById('datePage').classList.contains('open')){closeDatePage()}
     else if(document.getElementById('categoryPage').classList.contains('open')){closeCategoryPage()}

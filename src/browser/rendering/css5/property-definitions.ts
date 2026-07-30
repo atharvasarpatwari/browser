@@ -38,6 +38,7 @@ const PROPERTIES: Record<string, PropertyDef> = {
   'min-height':         { inherited: false, initialValue: 'auto' },
   'max-width':          { inherited: false, initialValue: 'none' },
   'max-height':         { inherited: false, initialValue: 'none' },
+  'aspect-ratio':       { inherited: false, initialValue: 'auto' },
 
   // ── Margins ────────────────────────────────────────────────────────────
   'margin-top':         { inherited: false, initialValue: '0' },
@@ -193,6 +194,16 @@ const PROPERTIES: Record<string, PropertyDef> = {
   'clip-path':          { inherited: false, initialValue: 'none' },
   'filter':             { inherited: false, initialValue: 'none' },
   'backdrop-filter':    { inherited: false, initialValue: 'none' },
+
+  // ── Multi-column ────────────────────────────────────────────────────
+  'column-count':       { inherited: false, initialValue: 'auto' },
+  'column-width':       { inherited: false, initialValue: 'auto' },
+  'column-gap':         { inherited: false, initialValue: 'normal' },
+  'column-rule-width':  { inherited: false, initialValue: 'medium' },
+  'column-rule-style':  { inherited: false, initialValue: 'none' },
+  'column-rule-color':  { inherited: false, initialValue: 'currentcolor' },
+  'column-fill':        { inherited: false, initialValue: 'balance' },
+  'column-span':        { inherited: false, initialValue: 'none' },
 
   // ── Paged Media ────────────────────────────────────────────────────────
   'orphans':            { inherited: true,  initialValue: '2' },

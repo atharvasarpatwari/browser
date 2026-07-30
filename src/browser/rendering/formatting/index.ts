@@ -80,3 +80,20 @@ export {
   type StackingContext,
   type PaintCmd,
 } from './stacking';
+
+export {
+  TableFormattingContext,
+  generateAnonymousTableBoxes,
+  classifyTableChild,
+  type TableCell,
+  type TableRow,
+  type ResolvedColumn,
+  type TableLayoutType,
+  type TableFormattingContextOptions,
+} from './table-context';
+
+export {
+  MultiColumnFormattingContext,
+  type ColumnBox,
+  type MultiColumnOptions,
+} from './multi-column-context';

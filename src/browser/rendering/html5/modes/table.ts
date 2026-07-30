@@ -30,17 +30,14 @@ export function handleInTable(ctx: TreeBuilderContext, token: Token): void {
         case 'tbody':
         case 'tfoot':
         case 'thead':
-          ctx.popCurrentNodeUntil('table');
           ctx.setMode(Im.IN_TABLE_BODY);
           ctx.processToken(token);
           return;
         case 'tr':
-          ctx.popCurrentNodeUntil('table');
           ctx.setMode(Im.IN_TABLE_BODY);
           ctx.processToken(token);
           return;
         case 'td': case 'th':
-          ctx.popCurrentNodeUntil('table');
           ctx.setMode(Im.IN_ROW);
           ctx.processToken(token);
           return;
@@ -202,12 +199,22 @@ export function handleInTableBody(ctx: TreeBuilderContext, token: Token): void {
       switch (token.tagName) {
         case 'tr':
           ctx.generateImpliedEndTags();
+          // Auto-insert <tbody> if no table body element exists in scope
+          if (!ctx.isInTableScope('tbody') && !ctx.isInTableScope('thead') && !ctx.isInTableScope('tfoot')) {
+            const tbodyToken: Token = { kind: 'open', tagName: 'tbody', attrs: new Map(), offset: token.offset };
+            ctx.insertHTMLElement(tbodyToken);
+          }
           ctx.insertHTMLElement(token);
           ctx.setMode(Im.IN_ROW);
           return;
         case 'th': case 'td':
           ctx.parseError(token);
           ctx.generateImpliedEndTags();
+          // Auto-insert <tbody> if no table body element exists in scope
+          if (!ctx.isInTableScope('tbody') && !ctx.isInTableScope('thead') && !ctx.isInTableScope('tfoot')) {
+            const tbodyToken: Token = { kind: 'open', tagName: 'tbody', attrs: new Map(), offset: token.offset };
+            ctx.insertHTMLElement(tbodyToken);
+          }
           {
             const trToken: Token = { ...token, tagName: 'tr' };
             ctx.processToken(trToken);
@@ -217,7 +224,9 @@ export function handleInTableBody(ctx: TreeBuilderContext, token: Token): void {
         case 'caption': case 'col': case 'colgroup':
         case 'tbody': case 'tfoot': case 'thead':
           if (!ctx.isInTableScope(token.tagName!)) {
-            ctx.parseError(token);
+            // Not in scope: this is the initial insertion (reprocessed from handleInTable).
+            // Insert the element directly into the table structure.
+            ctx.insertHTMLElement(token);
             return;
           }
           ctx.generateImpliedEndTags();

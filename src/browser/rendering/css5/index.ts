@@ -81,3 +81,9 @@ export {
   resolveBorderWidthKeyword,
 } from './computed-value-resolver';
 export type { ResolutionContext } from './computed-value-resolver';
+
+// StyleSheet
+export { StyleSheet } from './stylesheet';
+
+// UsedStyle
+export { buildUsedStyle } from './used-style';

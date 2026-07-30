@@ -53,6 +53,8 @@ export class ReflowRepaintController {
   private processing = false;
   private layerCompositor: LayerCompositor | null = null;
   private lastCompositedImageData: ImageData | null = null;
+  /** Optional callback for incremental style recalc before layout. */
+  private _styleRecalcCallback: (() => void) | null = null;
 
   constructor(
     private layoutEngine: ILayoutEngine,
@@ -75,6 +77,17 @@ export class ReflowRepaintController {
   setViewport(width: number, height: number): void {
     this.viewportWidth = width;
     this.viewportHeight = height;
+  }
+
+  // ── Style Recalc ──────────────────────────────────────────────────
+
+  /**
+   * Set a callback that performs incremental style recalculation.
+   * Called once per processFrame() before incremental layout, so dirty
+   * styles are resolved before layout consumes them.
+   */
+  setStyleRecalcCallback(cb: (() => void) | null): void {
+    this._styleRecalcCallback = cb;
   }
 
   // ── Invalidation ──────────────────────────────────────────────────
@@ -141,6 +154,11 @@ export class ReflowRepaintController {
     this.processing = true;
 
     try {
+      // 0. Incremental style recalc (resolves _dirtyStyle before layout)
+      if (this._styleRecalcCallback) {
+        this._styleRecalcCallback();
+      }
+
       // 1. Incremental layout — returns the layout damage tracker
       const layoutDamage = this.layoutEngine.layoutIncremental(
         this.document,
