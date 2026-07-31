@@ -1708,12 +1708,21 @@ class LayoutEngine implements ILayoutEngine {
    * 'hidden', the width is 0 regardless of the specified width value.
    */
   private resolveBorder(style: ReadonlyMap<string, string>, side: 'top' | 'right' | 'bottom' | 'left'): number {
-    // Check the per-side style first, then fall back to the shorthand
+    // Check the per-side style first, then fall back to the shorthand.
     const perSide = style.get(`border-${side}-style`);
     const shorthand = style.get('border-style');
-    const styleVal = perSide ?? shorthand ?? 'none';
+    const widthValue = style.get(`border-${side}-width`) ?? style.get('border-width');
+    const styleVal = perSide ?? shorthand;
+
+    // If border width is specified without an explicit border style,
+    // treat the border as present for layout purposes.
+    if (!styleVal) {
+      if (!widthValue) return 0;
+      return this.parseBorderWidth(widthValue);
+    }
+
     if (styleVal === 'none' || styleVal === 'hidden') return 0;
-    const w = style.get(`border-${side}-width`) ?? style.get('border-width') ?? 'medium';
+    const w = widthValue ?? 'medium';
     return this.parseBorderWidth(w);
   }
 
