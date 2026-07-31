@@ -1,7 +1,7 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { ITabManager } from '../../browser/tabs/tab-manager';
-import type { IDesktopLayout } from '../layout/desktop-layout';
-import type { IMobileLayout } from '../layout/mobile-layout';
+import type { IDesktopLayout, DesktopLayoutAreas } from '../layout/desktop-layout';
+import type { IMobileLayout, MobileLayoutAreas } from '../layout/mobile-layout';
 import type { IAddressBar } from '../components/address-bar/address-bar';
 import type { ITabStrip } from '../components/tab-strip/tab-strip';
 import type { IBookmarkBar } from '../components/bookmark-bar/bookmark-bar';
@@ -118,6 +118,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private settingsService: ISettingsService | null = null;
   private navigationBridge: INavigationBridge | null = null;
   private navigationFetcher: NavigationFetcher | null = null;
+  private pipelineController: INavigationController | null = null;
+  private localController: INavigationController | null = null;
+  private readonly onBridgeUrlNavigated = () => { this.syncAll(); };
 
   // DI-injected services
   private browserEngine: IBrowserEngine | null = null;
@@ -164,10 +167,26 @@ class BrowserWindowPage implements IBrowserWindowPage {
     }
     this.layout.attach(this.container);
 
+    const areas = (isMobile
+      ? (this.layout as IMobileLayout).areas
+      : (this.layout as IDesktopLayout).areas) as DesktopLayoutAreas & MobileLayoutAreas;
+
     this.tabManager = new TabManager();
     this.contextManager = new TabContextManager();
     this.tabSessionBridge = new TabSessionBridge(this.tabManager, this.contextManager);
     this.tabPersistence = new TabPersistenceManager(new MemoryStore());
+    this.tabPersistence.startAutoSave(this.tabManager);
+    const savedTabs = this.tabPersistence.restoreTabs();
+    if (savedTabs && savedTabs.tabs.length > 0) {
+      for (const tabState of savedTabs.tabs) {
+        const tab = this.tabManager.createTab(tabState.url, tabState.pinned);
+        if (tabState.title) tab.setTitle(tabState.title);
+        if (tabState.groupId) tab.setGroupId(tabState.groupId);
+      }
+      if (savedTabs.activeTabId && this.tabManager.getTab(savedTabs.activeTabId)) {
+        this.tabManager.activateTab(savedTabs.activeTabId);
+      }
+    }
     this.trackerBlocker = new TrackerBlocker();
     this.adBlocker = new AdBlocker();
     this.toolbar = new Toolbar();
@@ -177,7 +196,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.statusBar = new StatusBar();
 
     if (isMobile) {
-      const areas = (this.layout as IMobileLayout).areas;
       // Mobile: attach address bar to mobile header slot, content to content area
       if (areas.addressBar) {
         this.addressBarView = new AddressBarView(this.addressBar);
@@ -191,7 +209,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.statusBarView.attach(areas.statusBar);
       }
     } else {
-      const areas = (this.layout as IDesktopLayout).areas;
       if (areas.toolbar) {
         this.toolbarView = new ToolbarView(this.toolbar);
         this.toolbarView.attach(areas.toolbar);
@@ -207,23 +224,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
               break;
             case 'tabClosed':
               this.tabManager?.removeTab(e.tabId);
-              if (this.tabManager && this.tabManager.count === 0) {
-    this.tabPersistence.startAutoSave(this.tabManager);
-
-    const saved = this.tabPersistence.restoreTabs();
-    if (saved && saved.tabs.length > 0) {
-      for (const tabState of saved.tabs) {
-        const tab = this.tabManager.createTab(tabState.url, tabState.pinned);
-        if (tabState.title) tab.setTitle(tabState.title);
-        if (tabState.groupId) tab.setGroupId(tabState.groupId);
-      }
-      if (saved.activeTabId && this.tabManager.getTab(saved.activeTabId)) {
-        this.tabManager.activateTab(saved.activeTabId);
-      }
-    } else {
-      this.tabManager.createTab();
-    }
-              }
               this.syncAll();
               break;
             case 'newTabRequested':
@@ -269,26 +269,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.tabManager.on('tabRemoved', () => this.syncAll());
     this.tabManager.on('tabActivated', () => this.syncAll());
 
-    // Use DI-provided NavigationController if available, otherwise create one.
-    const navController = this.navController ?? new NavigationController(this.parser);
-    this.navigationBridge = new NavigationBridge(
-      navController,
-      this.tabManager,
-      this.addressBar,
-      this.toolbar,
-      this.statusBar,
-    );
-
-    // Wire NavigationFetcher to bridge engine events → content renderer.
-    if (this.browserEngine && this.paintEngine) {
-      this.navigationFetcher = new NavigationFetcher(
-        this.browserEngine,
-        this.contentRenderer!,
-        this.paintEngine,
-        navController,
-      );
-      this.navigationFetcher.start();
-    }
+    // Use DI-provided NavigationController when available (wired to the engine,
+    // history service and CSP guards); otherwise fall back to a local controller.
+    // The pipeline is re-synced when DI setters deliver services after mount().
+    this.syncNavigationPipeline();
 
     // Wire toolbar events through the bridge (shield + bookmark remain local).
     this.toolbar.on('shieldToggle', (e) => {
@@ -317,7 +301,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
       onStop: () => this.stop(),
     });
 
-    this.tabManager.createTab();
+    if (!savedTabs) this.tabManager.createTab();
 
     if (areas.content) {
       this.contentArea = areas.content;
@@ -951,6 +935,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private syncAll(): void {
     this.tabStrip?.syncWithManager();
     this.tabStripView?.update(this.tabStrip!.state);
+    this.addressBarView?.update(this.addressBar!.state);
     this.syncToolbar();
     this.syncBookmarkBar();
   }
@@ -965,35 +950,78 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setBrowserEngine(engine: IBrowserEngine): void {
     this.browserEngine = engine;
-    this.tryCreateNavigationFetcher();
+    this.syncNavigationPipeline();
   }
 
   setNavigationController(controller: INavigationController): void {
     this.navController = controller;
+    this.syncNavigationPipeline();
   }
 
   setPaintEngine(engine: IPaintEngine): void {
     this.paintEngine = engine;
-    this.tryCreateNavigationFetcher();
+    this.syncNavigationPipeline();
   }
 
   /**
-   * Lazily create the NavigationFetcher once both browserEngine and paintEngine
-   * are available. This fixes the boot-order issue where mount() runs before
-   * DI setters are called.
+   * Build (or rebuild) the navigation pipeline — NavigationBridge +
+   * NavigationFetcher — around the DI-provided NavigationController.
+   *
+   * The DI controller is wired to the BrowserEngine (which fetches on
+   * navigationCommitted), the history service and CSP guards. mount() runs
+   * before the DI setters, so it creates the pipeline with a local fallback
+   * controller; once setNavigationController delivers the real controller we
+   * dispose the stale pipeline and rebuild it so navigation events actually
+   * reach the engine.
    */
-  private tryCreateNavigationFetcher(): void {
-    if (this.navigationFetcher) return;
-    if (!this.browserEngine || !this.paintEngine) return;
-    if (!this.contentRenderer) return;
-    const navController = this.navController ?? new NavigationController(this.parser);
-    this.navigationFetcher = new NavigationFetcher(
-      this.browserEngine,
-      this.contentRenderer,
-      this.paintEngine,
-      navController,
-    );
-    this.navigationFetcher.start();
+  private syncNavigationPipeline(): void {
+    const controller = this.navController ?? (this.localController ??= new NavigationController(this.parser));
+    const hasBridge = !!this.navigationBridge;
+    const needsFetcher = !!(this.browserEngine && this.paintEngine && this.contentRenderer);
+
+    // Same controller and pipeline is complete — nothing to do.
+    if (this.pipelineController === controller && hasBridge) {
+      if (needsFetcher && !this.navigationFetcher) {
+        this.navigationFetcher = new NavigationFetcher(
+          this.browserEngine!,
+          this.contentRenderer!,
+          this.paintEngine!,
+          controller,
+        );
+        this.navigationFetcher.start();
+      }
+      return;
+    }
+
+    // Controller changed: dispose the stale pipeline before rebuilding.
+    this.navigationFetcher?.dispose();
+    this.navigationFetcher = null;
+    this.navigationBridge?.dispose();
+    this.navigationBridge = null;
+    this.pipelineController = controller;
+
+    if (this.tabManager && this.addressBar && this.toolbar) {
+      this.navigationBridge = new NavigationBridge(
+        controller,
+        this.tabManager,
+        this.addressBar,
+        this.toolbar,
+        this.statusBar,
+      );
+      // Re-render tab strip / toolbar / address bar after every successful
+      // navigation (bridge-driven navigations bypass tabManager events).
+      this.navigationBridge.on('urlNavigated', this.onBridgeUrlNavigated);
+    }
+
+    if (needsFetcher) {
+      this.navigationFetcher = new NavigationFetcher(
+        this.browserEngine!,
+        this.contentRenderer!,
+        this.paintEngine!,
+        controller,
+      );
+      this.navigationFetcher.start();
+    }
   }
 
   setDownloadManager(manager: IDownloadManager): void {

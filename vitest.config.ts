@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     globals: true,
     include: ['tests/**/*.test.ts', 'tests/**/*.spec.ts'],
-    exclude: ['node_modules', 'dist', 'coverage'],
+    exclude: ['node_modules', 'dist', 'coverage', 'tests/e2e/**'],
     setupFiles: ['tests/setup-gpu.ts'],
     coverage: {
       provider: 'v8',

@@ -304,7 +304,8 @@ function matchRule(url: string): RuleMatch | null {
   for (const rule of DEFAULT_RULES) {
     const ruleDomain = rule.domain.toLowerCase();
     if (ruleDomain.includes('/')) {
-      if (hostname + path === ruleDomain || hostname + path.includes(ruleDomain)) {
+      const urlWithPath = hostname + path;
+      if (urlWithPath === ruleDomain || urlWithPath.includes(ruleDomain)) {
         return { rule, domain: rule.domain };
       }
     } else if (matchesDomain(hostname, ruleDomain)) {

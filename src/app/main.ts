@@ -218,6 +218,7 @@ class ConfigLoader {
 
   load(): AppConfig {
     return {
+      ...DEFAULT_CONFIG,
       version: this.string('APP_VERSION', DEFAULT_CONFIG.version),
       debug: this.boolean('DEBUG', DEFAULT_CONFIG.debug),
       maxTabs: this.integer('MAX_TABS', DEFAULT_CONFIG.maxTabs),

@@ -7,6 +7,7 @@ const __dirname = dirname(__filename)
 
 export default defineConfig({
   root: '.',
+  base: './',
   publicDir: 'public',
   server: {
     port: 5173,

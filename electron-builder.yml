@@ -1,0 +1,29 @@
+appId: com.nova.browser
+productName: Nova Browser
+copyright: "© 2026 Nova Browser"
+directories:
+  output: release
+  buildResources: build
+files:
+  - electron/**
+  - dist/index.html
+  - dist/assets/**
+  - "!node_modules/**"
+asar: true
+npmRebuild: false
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.png
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Nova Browser
+  artifactName: "${productName} Setup ${version}.${ext}"
+electronDownload:
+  cache: null

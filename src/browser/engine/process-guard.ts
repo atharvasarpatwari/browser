@@ -67,6 +67,10 @@ const DEFAULT_PROCESS_GUARD_CONFIG: ProcessGuardConfig = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface IProcessGuard extends IDisposable {
+  /** Install error handlers when the service lifecycle initializes. */
+  initialize(): Promise<void>;
+  /** Remove error handlers when the service lifecycle shuts down. */
+  shutdown(): Promise<void>;
   /** Manually record an error. */
   recordError(error: Error, severity?: ErrorSeverity, context?: string): void;
   /** Get the error history. */
@@ -159,6 +163,16 @@ class ProcessGuard implements IProcessGuard {
 
   getConfig(): ProcessGuardConfig {
     return { ...this.config };
+  }
+
+  async initialize(): Promise<void> {
+    if (this.config.installHandlers) {
+      this.install();
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    this.uninstall();
   }
 
   install(): void {

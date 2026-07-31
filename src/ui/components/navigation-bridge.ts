@@ -194,7 +194,10 @@ class NavigationBridge implements INavigationBridge {
   private _searchMode = false;
   private _searchQuery = '';
 
-  private disposables: IDisposable[] = [];
+  private readonly toolbarHandler: (e: ToolbarEventUnion) => void;
+  private readonly addressBarHandler: (e: AddressBarEventUnion) => void;
+  private readonly navHandler: (e: NavigationEvent) => void;
+  private readonly tabManagerHandler: () => void;
 
   constructor(
     nav: INavigationController,
@@ -210,6 +213,89 @@ class NavigationBridge implements INavigationBridge {
     this.toolbar = toolbar;
     this.statusBar = statusBar ?? null;
     this.config = { ...DEFAULT_BRIDGE_CONFIG, ...config };
+
+    this.toolbarHandler = (e: ToolbarEventUnion) => {
+      switch (e.kind) {
+        case 'back': this.goBack(); break;
+        case 'forward': this.goForward(); break;
+        case 'reload': this.reload(); break;
+        case 'stop': this.stop(); break;
+      }
+    };
+
+    this.addressBarHandler = (e: AddressBarEventUnion) => {
+      // Guard: skip if the bridge itself triggered the event via setValue().
+      if (this._navigating) return;
+      switch (e.kind) {
+        case 'navigate':
+          void this.navigate((e as { readonly url: string }).url);
+          break;
+        case 'search':
+          void this.navigate((e as { readonly query: string }).query);
+          break;
+        case 'reload':
+          this.reload();
+          break;
+        case 'stop':
+          this.stop();
+          break;
+      }
+    };
+
+    this.navHandler = (e: NavigationEvent) => {
+      switch (e.kind) {
+        case 'navigationStarted':
+          this._setLoading(true);
+          this.addressBar.setLoading(true);
+          this.toolbar.setLoading(true);
+          this.bus.emit({ kind: 'navigationStarted', url: e.request.url });
+          break;
+
+        case 'navigationCommitted': {
+          this._currentUrl = e.entry.url;
+          const wasNavigating = this._navigating;
+          this._navigating = true;
+          this.addressBar.setValue(e.entry.url);
+          this._navigating = wasNavigating;
+          this._updateSecureState(e.entry.url);
+          break;
+        }
+
+        case 'navigationCompleted':
+          this._setLoading(false);
+          this.addressBar.setLoading(false);
+          this.toolbar.setLoading(false);
+          this._syncToolbarState();
+          this.bus.emit({ kind: 'navigationCompleted', url: e.entry.url, elapsedMs: e.elapsedMs });
+          break;
+
+        case 'navigationFailed':
+          this._setLoading(false);
+          this.addressBar.setLoading(false);
+          this.toolbar.setLoading(false);
+          this.bus.emit({ kind: 'navigationFailed', url: e.request.url, error: e.error });
+          break;
+
+        case 'navigationStopped':
+          this._setLoading(false);
+          this.addressBar.setLoading(false);
+          this.toolbar.setLoading(false);
+          break;
+
+        case 'canGoBackChanged':
+        case 'canGoForwardChanged':
+          this._syncToolbarState();
+          this.bus.emit({
+            kind: 'historyChanged',
+            canGoBack: this.nav.canGoBack(),
+            canGoForward: this.nav.canGoForward(),
+            historyLength: this.nav.historyLength,
+          });
+          break;
+      }
+    };
+
+    this.tabManagerHandler = () => { this.syncFromActiveTab(); };
 
     this.wireToolbarEvents();
     this.wireAddressBarEvents();
@@ -471,118 +557,38 @@ class NavigationBridge implements INavigationBridge {
   // ── Private: wire toolbar ──────────────────────────────────────────────────
 
   private wireToolbarEvents(): void {
-    const handler = (e: ToolbarEventUnion) => {
-      switch (e.kind) {
-        case 'back': this.goBack(); break;
-        case 'forward': this.goForward(); break;
-        case 'reload': this.reload(); break;
-        case 'stop': this.stop(); break;
-      }
-    };
-    this.toolbar.on('back', handler);
-    this.toolbar.on('forward', handler);
-    this.toolbar.on('reload', handler);
-    this.toolbar.on('stop', handler);
+    this.toolbar.on('back', this.toolbarHandler);
+    this.toolbar.on('forward', this.toolbarHandler);
+    this.toolbar.on('reload', this.toolbarHandler);
+    this.toolbar.on('stop', this.toolbarHandler);
   }
 
   // ── Private: wire address bar ──────────────────────────────────────────────
 
   private wireAddressBarEvents(): void {
-    const handler = (e: AddressBarEventUnion) => {
-      // Guard: skip if the bridge itself triggered the event via setValue().
-      if (this._navigating) return;
-      switch (e.kind) {
-        case 'navigate':
-          void this.navigate((e as { readonly url: string }).url);
-          break;
-        case 'search':
-          void this.navigate((e as { readonly query: string }).query);
-          break;
-        case 'reload':
-          this.reload();
-          break;
-        case 'stop':
-          this.stop();
-          break;
-      }
-    };
-    this.addressBar.on('navigate', handler);
-    this.addressBar.on('search', handler);
-    this.addressBar.on('reload', handler);
-    this.addressBar.on('stop', handler);
+    this.addressBar.on('navigate', this.addressBarHandler);
+    this.addressBar.on('search', this.addressBarHandler);
+    this.addressBar.on('reload', this.addressBarHandler);
+    this.addressBar.on('stop', this.addressBarHandler);
   }
 
   // ── Private: wire navigation controller ────────────────────────────────────
 
   private wireNavigationEvents(): void {
-    const handler = (e: NavigationEvent) => {
-      switch (e.kind) {
-        case 'navigationStarted':
-          this._setLoading(true);
-          this.addressBar.setLoading(true);
-          this.toolbar.setLoading(true);
-          this.bus.emit({ kind: 'navigationStarted', url: e.request.url });
-          break;
-
-        case 'navigationCommitted': {
-          this._currentUrl = e.entry.url;
-          const wasNavigating = this._navigating;
-          this._navigating = true;
-          this.addressBar.setValue(e.entry.url);
-          this._navigating = wasNavigating;
-          this._updateSecureState(e.entry.url);
-          break;
-        }
-
-        case 'navigationCompleted':
-          this._setLoading(false);
-          this.addressBar.setLoading(false);
-          this.toolbar.setLoading(false);
-          this._syncToolbarState();
-          this.bus.emit({ kind: 'navigationCompleted', url: e.entry.url, elapsedMs: e.elapsedMs });
-          break;
-
-        case 'navigationFailed':
-          this._setLoading(false);
-          this.addressBar.setLoading(false);
-          this.toolbar.setLoading(false);
-          this.bus.emit({ kind: 'navigationFailed', url: e.request.url, error: e.error });
-          break;
-
-        case 'navigationStopped':
-          this._setLoading(false);
-          this.addressBar.setLoading(false);
-          this.toolbar.setLoading(false);
-          break;
-
-        case 'canGoBackChanged':
-        case 'canGoForwardChanged':
-          this._syncToolbarState();
-          this.bus.emit({
-            kind: 'historyChanged',
-            canGoBack: this.nav.canGoBack(),
-            canGoForward: this.nav.canGoForward(),
-            historyLength: this.nav.historyLength,
-          });
-          break;
-      }
-    };
-
-    this.nav.on('navigationStarted', handler);
-    this.nav.on('navigationCommitted', handler);
-    this.nav.on('navigationCompleted', handler);
-    this.nav.on('navigationFailed', handler);
-    this.nav.on('navigationStopped', handler);
-    this.nav.on('canGoBackChanged', handler);
-    this.nav.on('canGoForwardChanged', handler);
+    this.nav.on('navigationStarted', this.navHandler);
+    this.nav.on('navigationCommitted', this.navHandler);
+    this.nav.on('navigationCompleted', this.navHandler);
+    this.nav.on('navigationFailed', this.navHandler);
+    this.nav.on('navigationStopped', this.navHandler);
+    this.nav.on('canGoBackChanged', this.navHandler);
+    this.nav.on('canGoForwardChanged', this.navHandler);
   }
 
   // ── Private: wire tab manager ──────────────────────────────────────────────
 
   private wireTabManagerEvents(): void {
-    const handler = () => { this.syncFromActiveTab(); };
-    this.tabs.on('tabActivated', handler);
-    this.tabs.on('tabRemoved', handler);
+    this.tabs.on('tabActivated', this.tabManagerHandler);
+    this.tabs.on('tabRemoved', this.tabManagerHandler);
   }
 
   // ── Private: helpers ────────────────────────────────────────────────────────
@@ -654,6 +660,23 @@ class NavigationBridge implements INavigationBridge {
   // ── Dispose ────────────────────────────────────────────────────────────────
 
   dispose(): void {
+    this.toolbar.off('back', this.toolbarHandler);
+    this.toolbar.off('forward', this.toolbarHandler);
+    this.toolbar.off('reload', this.toolbarHandler);
+    this.toolbar.off('stop', this.toolbarHandler);
+    this.addressBar.off('navigate', this.addressBarHandler);
+    this.addressBar.off('search', this.addressBarHandler);
+    this.addressBar.off('reload', this.addressBarHandler);
+    this.addressBar.off('stop', this.addressBarHandler);
+    this.nav.off('navigationStarted', this.navHandler);
+    this.nav.off('navigationCommitted', this.navHandler);
+    this.nav.off('navigationCompleted', this.navHandler);
+    this.nav.off('navigationFailed', this.navHandler);
+    this.nav.off('navigationStopped', this.navHandler);
+    this.nav.off('canGoBackChanged', this.navHandler);
+    this.nav.off('canGoForwardChanged', this.navHandler);
+    this.tabs.off('tabActivated', this.tabManagerHandler);
+    this.tabs.off('tabRemoved', this.tabManagerHandler);
     this.bus.dispose();
   }
 }
