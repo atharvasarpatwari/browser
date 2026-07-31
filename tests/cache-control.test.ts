@@ -4,7 +4,7 @@ import {
   MemoryCacheStorage,
   DiskCacheStorage,
   CacheStorageStrategy,
-} from '../src/browser/netwroking/cache-control';
+} from '../src/browser/networking/cache-control';
 
 describe('CacheControl', () => {
   let cache: CacheControl;

@@ -35,7 +35,6 @@ import {
   isStreamChunk,
 } from '../src/common/ipc/message';
 import { EventEmitterTransport } from '../src/common/ipc/transport';
-import { CrossProcessPageLoader } from '../src/common/ipc/cross-process-page-loader';
 import { ChildProcessTransport } from '../src/common/ipc/child-process-transport';
 import { WorkerParentTransport, WorkerSideTransport } from '../src/common/ipc/worker-transport';
 import { SocketTransport, SocketServerTransport } from '../src/common/ipc/socket-transport';
@@ -390,73 +389,6 @@ describe('ProcessManager state management', () => {
     expect(manager.getAllProcesses()).toHaveLength(2);
 
     manager.dispose();
-  });
-});
-
-// ── Cross-Process Proxies with subscribe() ─────────────────────────────────
-
-describe('Cross-process proxies subscribe', () => {
-  it('CrossProcessPageLoader uses subscribe without error', async () => {
-    const { a, b } = createTestPair();
-    await a.connect();
-    await b.connect();
-
-    const chA = new Channel(a, { name: 'renderer-1', direction: 'main-to-renderer' }, 'main');
-    const chB = new Channel(b, { name: 'renderer-1', direction: 'renderer-to-main' }, 'renderer');
-    chA.activate();
-    chB.activate();
-
-    // PageRenderer side responds to load requests
-    chB.onRequest(() => ({ success: true, title: 'Test', url: 'about:blank' }));
-
-    const loader = new CrossProcessPageLoader(chA);
-    const result = await loader.load('https://example.com');
-
-    expect(result).toEqual({ success: true, title: 'Test', url: 'about:blank' });
-
-    loader.dispose();
-    chA.dispose();
-    chB.dispose();
-    a.dispose();
-    b.dispose();
-  });
-
-  it('CrossProcessPageLoader onProgress uses subscribe pattern', async () => {
-    const { a, b } = createTestPair();
-    await a.connect();
-    await b.connect();
-
-    const chA = new Channel(a, { name: 'renderer-2', direction: 'main-to-renderer' }, 'main');
-    const chB = new Channel(b, { name: 'renderer-2', direction: 'renderer-to-main' }, 'renderer');
-    chA.activate();
-    chB.activate();
-
-    // Setup load response
-    chB.onRequest(() => ({ success: true, title: 'Test', url: 'about:blank' }));
-
-    const loader = new CrossProcessPageLoader(chA);
-    const progressReports: unknown[] = [];
-
-    loader.onProgress((p) => {
-      progressReports.push(p);
-    });
-
-    // Start loading
-    const loadPromise = loader.load('https://example.com');
-
-    // Simulate progress from renderer side
-    await chB.send({ __topic__: 'load-progress', __payload__: { loaded: 50, total: 100 } });
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(progressReports).toHaveLength(1);
-    expect(progressReports[0]).toEqual({ loaded: 50, total: 100 });
-
-    await loadPromise;
-    loader.dispose();
-    chA.dispose();
-    chB.dispose();
-    a.dispose();
-    b.dispose();
   });
 });
 

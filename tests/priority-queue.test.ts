@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { PriorityQueue } from '../src/browser/netwroking/priority-queue';
+import { PriorityQueue } from '../src/browser/networking/priority-queue';
 
 describe('PriorityQueue', () => {
   let pq: PriorityQueue<string>;

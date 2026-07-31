@@ -24,7 +24,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import type { PrivilegeLevel, ApiSurface } from '../../browser/security/privilege-levels';
+import type { PrivilegeLevel, ApiSurface } from '../types/privilege';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES

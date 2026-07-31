@@ -7,9 +7,9 @@ import {
   applyBaselineRules,
   firewallGuardedOpenSocket,
   filterRecordsByFirewall,
-} from '../src/browser/netwroking/firewall';
-import type { ConnectionTarget, ParsedIP, DNSRecord, SocketConnection } from '../src/browser/netwroking/ip-protocol';
-import { parseIPv4, parseIPv6, classifyIP } from '../src/browser/netwroking/ip-protocol';
+} from '../src/browser/networking/firewall';
+import type { ConnectionTarget, ParsedIP, DNSRecord, SocketConnection } from '../src/browser/networking/ip-protocol';
+import { parseIPv4, parseIPv6, classifyIP } from '../src/browser/networking/ip-protocol';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

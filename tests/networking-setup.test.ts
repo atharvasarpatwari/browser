@@ -3,13 +3,13 @@ import {
   createFirewallGuardedNetworking,
   type FirewallGuardedNetworking,
   type NetworkingSetupOptions,
-} from '../src/browser/netwroking/networking-setup';
+} from '../src/browser/networking/networking-setup';
 import {
   Firewall,
   applyBaselineRules,
   FirewallBlockedError,
-} from '../src/browser/netwroking/firewall';
-import type { ParsedIP, SocketConnection, ConnectionTarget } from '../src/browser/netwroking/ip-protocol';
+} from '../src/browser/networking/firewall';
+import type { ParsedIP, SocketConnection, ConnectionTarget } from '../src/browser/networking/ip-protocol';
 
 describe('networking-setup', () => {
   describe('createFirewallGuardedNetworking', () => {

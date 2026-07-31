@@ -3,7 +3,7 @@ import {
   ConnectionPool,
   ConnectionState,
   ConnectionProtocol,
-} from '../src/browser/netwroking/connection-pool';
+} from '../src/browser/networking/connection-pool';
 
 describe('ConnectionPool', () => {
   let pool: ConnectionPool;

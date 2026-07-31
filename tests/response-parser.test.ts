@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ResponseParser, ContentCategory, RENDERABLE_CATEGORIES } from '../src/browser/netwroking/response-parser';
-import type { HttpResponseSpec } from '../src/browser/netwroking/request-manager';
+import { ResponseParser, ContentCategory, RENDERABLE_CATEGORIES } from '../src/browser/networking/response-parser';
+import type { HttpResponseSpec } from '../src/browser/networking/request-manager';
 
 describe('ResponseParser', () => {
   let parser: ResponseParser;

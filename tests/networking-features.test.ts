@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as http from 'node:http';
 import * as zlib from 'node:zlib';
-import { ContentDecoder, ContentCoding, ContentEncodingError, ACCEPT_ENCODING } from '../src/browser/netwroking/content-encoding';
-import { HttpAuthenticator, AuthScheme, AuthError } from '../src/browser/netwroking/http-auth';
-import { MultipartBuilder, MultipartError } from '../src/browser/netwroking/multipart';
-import { QuicConnection, QuicConnectionState, QuicError, DEFAULT_QUIC_CONFIG } from '../src/browser/netwroking/quic-transport';
-import { RawSocketHttpClient } from '../src/browser/netwroking/raw-socket-http-client';
-import { HttpMethod } from '../src/browser/netwroking/request-manager';
+import { ContentDecoder, ContentCoding, ContentEncodingError, ACCEPT_ENCODING } from '../src/browser/networking/content-encoding';
+import { HttpAuthenticator, AuthScheme, AuthError } from '../src/browser/networking/http-auth';
+import { MultipartBuilder, MultipartError } from '../src/browser/networking/multipart';
+import { QuicConnection, QuicConnectionState, QuicError, DEFAULT_QUIC_CONFIG } from '../src/browser/networking/quic-transport';
+import { RawSocketHttpClient } from '../src/browser/networking/raw-socket-http-client';
+import { HttpMethod } from '../src/browser/networking/request-manager';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Content-Encoding Decompression

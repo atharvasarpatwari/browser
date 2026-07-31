@@ -28,7 +28,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
-import type { IResourceLoader } from '../netwroking/resource-loader';
+import type { IResourceLoader } from '../networking/resource-loader';
 import type { IDomTree, DomNode, DomElement, DomDocument, UsedStyle } from '../rendering/dom-tree';
 import type { ICssParser, CssRule } from '../rendering/css-parser';
 import type { ILayoutEngine } from '../rendering/layout-engine';
@@ -44,7 +44,7 @@ import type { IPageRenderer, PageLoadResult } from './browser-engine';
 import { HtmlParser } from '../rendering/html-parser';
 import { CssParser } from '../rendering/css-parser';
 import { LazyLoader } from '../rendering/lazy-loader';
-import { ResourcePrioritizer } from '../netwroking/resource-prioritizer';
+import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
 import { runJS } from '../js/index';

@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/firewall.ts
+ * @file src/browser/networking/firewall.ts
  *
  * -----------------------------------------------------------------------
  * Rule-based traffic firewall for NovaBrowser's Networking layer.

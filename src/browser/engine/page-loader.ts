@@ -26,7 +26,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
-import type { IResourceLoader, ResourceLoadResult } from '../netwroking/resource-loader';
+import type { IResourceLoader, ResourceLoadResult } from '../networking/resource-loader';
 import type { IPageLoader, PageLoadResult } from './browser-engine';
 
 // ─────────────────────────────────────────────────────────────────────────────

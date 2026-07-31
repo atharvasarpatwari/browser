@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ResourcePrioritizer } from '../src/browser/netwroking/resource-prioritizer';
+import { ResourcePrioritizer } from '../src/browser/networking/resource-prioritizer';
 import type { DiscoveredResource } from '../src/browser/rendering/html5/dom';
 
 function res(overrides: Partial<DiscoveredResource> & { url: string }): DiscoveredResource {

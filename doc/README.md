@@ -15,14 +15,18 @@
 | 2026-07-22 | [2026-07-22-android-apk-setup.md](2026-07-22-android-apk-setup.md) | Android APK setup session — Capacitor integration, web→APK pipeline, customization options. |
 | 2026-07-31 | [2026-07-31-navigation-feature-check.md](2026-07-31-navigation-feature-check.md) | Verified navigation control feature files, ran related tests, and documented the single download manager failure. |
 | 2026-07-31 | [2026-07-31-js-engine-feature-check.md](2026-07-31-js-engine-feature-check.md) | Verified JS engine feature files and ran targeted engine-related tests with 325 passing cases. |
+| 2026-07-31 | [2026-07-31-android-apk-build-config.md](2026-07-31-android-apk-build-config.md) | Added Android APK build/install helper scripts and documented Capacitor Gradle workflow. |
 
 ## Change Logs
 
 | Date | File | Summary |
 |------|------|---------|
+| 2026-07-31 | [2026-07-31-code-map-placement-audit.md](2026-07-31-code-map-placement-audit.md) | Full 410-file architecture map + placement audit. Fixed 2 broken imports (cors.ts networking path, task-manager common/types). 223 tests pass. |
 | 2026-07-31 | [2026-07-31-gpu-acceleration-enabled.md](2026-07-31-gpu-acceleration-enabled.md) | GPU acceleration enabled — `enableGpuAcceleration: true` in all 3 process models, `PaintEngine` DI registration now passes `hardwareAcceleration` from app config (GpuRasterizer path with software fallback). 85 tests pass. |
 | 2026-07-31 | [2026-07-31-analysis-report-standalone.md](2026-07-31-analysis-report-standalone.md) | Analysis Report Monitor converted to a single self-contained HTML file — CSS/JS inlined, live data snapshot embedded with API fallback (works offline, stays live when backend on :4567 is up). |
 | 2026-07-31 | [2026-07-31-platform-input-window-controls.md](2026-07-31-platform-input-window-controls.md) | Platform input & window controls — InputManager (keyboard/mouse/drag-drop events, modifier + drag state) and WindowControls (fullscreen toggle API, high-DPI pixel conversion, debounced resize). 23 new tests pass. |
+| 2026-07-31 | [2026-07-31-layout-box-model-debug.md](2026-07-31-layout-box-model-debug.md) | Debugged layout/box-model regression, fixed border-width resolution when border-style is omitted, and verified 110 targeted tests pass. |
+| 2026-07-31 | [2026-07-31-structural-cleanup.md](2026-07-31-structural-cleanup.md) | Structural cleanup — `netwroking/`→`networking/` rename, broke app↔platform circular import (BrowserWindow moved to platform), deleted stale cross-process proxies, fixed common→browser type inversion via `common/types/privilege.ts`. 956 tests pass. |
 | 2026-07-30 | [2026-07-30-analysis-report-monitor.md](2026-07-30-analysis-report-monitor.md) | Git-powered analysis report dashboard — Express API executing git commands, glassmorphism dark UI, auto-classification into 15 categories, charts, filters, sorting, exports. Fixed git log parsing misalignment via record-separator marker. |
 | 2026-07-30 | [2026-07-30-css-animations-web-animations-api.md](2026-07-30-css-animations-web-animations-api.md) | CSS Animations + Web Animations API — 8 animation longhands, shorthand parsing, @keyframes collection, timeline integration, animate()/getAnimations() JS bindings. 31 new tests, all pass. |
 | 2026-07-30 | [2026-07-30-networking-gap-fixes.md](2026-07-30-networking-gap-fixes.md) | Fixed binary data corruption in Content-Encoding decompression (Buffer-based pipeline), missing blank line separator in multipart file encoding, unreliable Buffer-based boundary splitting. 39 networking-features tests pass. |

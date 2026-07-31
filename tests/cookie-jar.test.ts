@@ -3,7 +3,7 @@ import {
   CookieJar,
   SameSitePolicy,
   CookieOverflowError,
-} from '../src/browser/netwroking/cookie-jar';
+} from '../src/browser/networking/cookie-jar';
 
 describe('CookieJar', () => {
   let jar: CookieJar;

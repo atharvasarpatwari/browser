@@ -5,7 +5,7 @@ import {
   DnsError,
   DnsTimeoutError,
   DnsNotFoundError,
-} from '../src/browser/netwroking/dns-resolver';
+} from '../src/browser/networking/dns-resolver';
 
 describe('DnsResolver', () => {
   let resolver: DnsResolver;

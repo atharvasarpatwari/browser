@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PageRenderer } from '../src/browser/engine/page-renderer';
 import type { PageRendererDependencies } from '../src/browser/engine/page-renderer';
-import type { IResourceLoader } from '../src/browser/netwroking/resource-loader';
+import type { IResourceLoader } from '../src/browser/networking/resource-loader';
 import type { IDomTree, DomDocument, DomElement } from '../src/browser/rendering/dom-tree';
 import type { ICssParser, CssRule } from '../src/browser/rendering/css-parser';
 import type { ILayoutEngine } from '../src/browser/rendering/layout-engine';

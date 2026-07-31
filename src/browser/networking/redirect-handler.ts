@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/redirect-handler.ts
+ * @file src/browser/networking/redirect-handler.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

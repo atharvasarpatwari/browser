@@ -9,7 +9,7 @@ import {
   DEFAULT_PROXY_CONFIG,
   DEFAULT_DNS_CONFIG,
   DEFAULT_TUNNEL_CONFIG,
-} from '../src/browser/netwroking/gateway-protocols';
+} from '../src/browser/networking/gateway-protocols';
 
 describe('GatewayProtocolManager', () => {
   let manager: GatewayProtocolManager;

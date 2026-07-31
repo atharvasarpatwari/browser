@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { BandwidthEstimator } from '../src/browser/netwroking/bandwidth-estimator';
+import { BandwidthEstimator } from '../src/browser/networking/bandwidth-estimator';
 
 describe('BandwidthEstimator', () => {
   let estimator: BandwidthEstimator;

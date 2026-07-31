@@ -5,7 +5,7 @@ import {
   RedirectValidationResult,
   RedirectLoopError,
   RedirectBlockedError,
-} from '../src/browser/netwroking/redirect-handler';
+} from '../src/browser/networking/redirect-handler';
 
 describe('RedirectHandler', () => {
   let handler: RedirectHandler;

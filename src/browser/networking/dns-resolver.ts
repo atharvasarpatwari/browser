@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/dns-resolver.ts
+ * @file src/browser/networking/dns-resolver.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

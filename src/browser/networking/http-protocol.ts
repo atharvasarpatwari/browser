@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/http-protocol.ts
+ * @file src/browser/networking/http-protocol.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

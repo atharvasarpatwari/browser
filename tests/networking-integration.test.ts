@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as http from 'node:http';
-import { RawSocketHttpClient } from '../src/browser/netwroking/raw-socket-http-client';
-import { DnsResolver, defaultSystemResolver } from '../src/browser/netwroking/dns-resolver';
-import { TlsHandler } from '../src/browser/netwroking/tls-handler';
+import { RawSocketHttpClient } from '../src/browser/networking/raw-socket-http-client';
+import { DnsResolver, defaultSystemResolver } from '../src/browser/networking/dns-resolver';
+import { TlsHandler } from '../src/browser/networking/tls-handler';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test HTTP server

@@ -5,7 +5,7 @@ import {
   NetworkTransport,
   buildAllowedProtocols,
   buildBlockedProtocols,
-} from '../src/browser/netwroking/protocol-handler';
+} from '../src/browser/networking/protocol-handler';
 
 describe('ProtocolHandlerRegistry', () => {
   let registry: ProtocolHandlerRegistry;

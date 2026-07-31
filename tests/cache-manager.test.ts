@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { CacheManager, DEFAULT_CACHE_POLICY } from '../src/browser/netwroking/cache-manager';
-import type { CacheEntry } from '../src/browser/netwroking/cache-manager';
+import { CacheManager, DEFAULT_CACHE_POLICY } from '../src/browser/networking/cache-manager';
+import type { CacheEntry } from '../src/browser/networking/cache-manager';
 
 describe('CacheManager', () => {
   let cache: CacheManager;

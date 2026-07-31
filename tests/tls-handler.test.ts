@@ -6,8 +6,8 @@ import {
   CipherSuite,
   TlsCertificateError,
   TlsPinMismatchError,
-} from '../src/browser/netwroking/tls-handler';
-import { RawSocketHttpClient } from '../src/browser/netwroking/raw-socket-http-client';
+} from '../src/browser/networking/tls-handler';
+import { RawSocketHttpClient } from '../src/browser/networking/raw-socket-http-client';
 
 describe('TlsHandler', () => {
   let handler: TlsHandler;

@@ -4,7 +4,7 @@
  * Exhaustive test suite for: IPv4/IPv6 parsing, CIDR matching, IP
  * classification, DNS resolution (caching, negative caching, retry), PNA
  * enforcement, Happy Eyeballs ordering, connection pooling, and rule-based
- * firewall — all against the REAL exports from src/browser/netwroking/.
+ * firewall — all against the REAL exports from src/browser/networking/.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -33,18 +33,18 @@ import {
   type DNSResolverBackend,
   type ParsedIPv4,
   type ParsedIPv6,
-} from '../src/browser/netwroking/ip-protocol';
+} from '../src/browser/networking/ip-protocol';
 
 import {
   Firewall,
   matchesHostnamePattern,
   applyBaselineRules,
   type FirewallRule,
-} from '../src/browser/netwroking/firewall';
+} from '../src/browser/networking/firewall';
 
 import {
   DnsResolver,
-} from '../src/browser/netwroking/dns-resolver';
+} from '../src/browser/networking/dns-resolver';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. IPv4 PARSING

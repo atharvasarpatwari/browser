@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/devtools.ts
+ * @file src/browser/networking/devtools.ts
  *
  * -----------------------------------------------------------------------
  * Developer Tools for NovaBrowser: Inspector, Console, and Network tab.

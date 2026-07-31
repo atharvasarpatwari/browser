@@ -58,7 +58,7 @@ import type {
 import {
   GatewayProtocolManager,
   GatewayCategory,
-} from '../netwroking/gateway-protocols';
+} from '../networking/gateway-protocols';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENUMS

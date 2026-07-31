@@ -6,14 +6,14 @@ import {
   NetworkMonitor,
   DOMInspector,
   DevTools,
-} from "../src/browser/netwroking/devtools";
+} from "../src/browser/networking/devtools";
 import type {
   DOMNodeLike,
   ConnectionTarget,
   BoxModel,
-} from "../src/browser/netwroking/devtools";
-import type { FirewallDecision } from "../src/browser/netwroking/firewall";
-import type { DNSRecord, ParsedIP } from "../src/browser/netwroking/ip-protocol";
+} from "../src/browser/networking/devtools";
+import type { FirewallDecision } from "../src/browser/networking/firewall";
+import type { DNSRecord, ParsedIP } from "../src/browser/networking/ip-protocol";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 

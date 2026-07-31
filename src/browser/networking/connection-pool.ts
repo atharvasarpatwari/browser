@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/connection-pool.ts
+ * @file src/browser/networking/connection-pool.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/cache-control.ts
+ * @file src/browser/networking/cache-control.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

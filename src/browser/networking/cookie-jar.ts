@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/cookie-jar.ts
+ * @file src/browser/networking/cookie-jar.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

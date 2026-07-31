@@ -9,7 +9,7 @@ import {
   PrivateNetworkAccessError, ConnectionEstablishmentError,
   type DNSRecord, type SecurityContext, type ConnectionTarget,
   type SocketConnection, type DNSResolverBackend,
-} from '../src/browser/netwroking/ip-protocol';
+} from '../src/browser/networking/ip-protocol';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // IPv4 Parsing

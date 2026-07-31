@@ -8,7 +8,7 @@ import {
   HttpProtocolVersion,
   Http2FrameType,
   HTTP2_FRAME_HEADER_SIZE,
-} from '../src/browser/netwroking/http-protocol';
+} from '../src/browser/networking/http-protocol';
 
 describe('HttpProtocolManager', () => {
   let manager: HttpProtocolManager;

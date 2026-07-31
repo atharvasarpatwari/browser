@@ -1,7 +1,7 @@
 import type { DomElement, DomDocument, IDomTree } from './dom-tree';
 import { IntersectionObserver, type IntersectionObserverEntry } from './intersection-observer';
 import { FrameScheduler } from './frame-scheduler';
-import type { IResourceLoader } from '../netwroking/resource-loader';
+import type { IResourceLoader } from '../networking/resource-loader';
 import { ImageDecoder, isSupportedImageType } from '../image/decoder';
 
 // ─────────────────────────────────────────────────────────────────────────────

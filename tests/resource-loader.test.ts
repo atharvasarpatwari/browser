@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ResourceLoader } from '../src/browser/netwroking/resource-loader';
-import { CacheManager } from '../src/browser/netwroking/cache-manager';
-import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from '../src/browser/netwroking/request-manager';
+import { ResourceLoader } from '../src/browser/networking/resource-loader';
+import { CacheManager } from '../src/browser/networking/cache-manager';
+import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from '../src/browser/networking/request-manager';
 import type { DiscoveredResource } from '../src/browser/rendering/html5/dom';
 
 // ── Mock HTTP client ────────────────────────────────────────────────────────

@@ -58,16 +58,16 @@ import { DownloadManager } from '../browser/downloads/download-manager';
 import type { IDownloadManager } from '../browser/downloads/download-manager';
 
 // Networking
-import { ResourceLoader } from '../browser/netwroking/resource-loader';
-import type { IResourceLoader } from '../browser/netwroking/resource-loader';
-import { CacheManager } from '../browser/netwroking/cache-manager';
-import type { ICacheManager } from '../browser/netwroking/cache-manager';
-import { ResourcePrioritizer } from '../browser/netwroking/resource-prioritizer';
-import { Firewall, applyBaselineRules } from '../browser/netwroking/firewall';
-import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from '../browser/netwroking/networking-setup';
-import { RawSocketHttpClient } from '../browser/netwroking/raw-socket-http-client';
-import { TlsHandler } from '../browser/netwroking/tls-handler';
-import type { ITlsHandler } from '../browser/netwroking/tls-handler';
+import { ResourceLoader } from '../browser/networking/resource-loader';
+import type { IResourceLoader } from '../browser/networking/resource-loader';
+import { CacheManager } from '../browser/networking/cache-manager';
+import type { ICacheManager } from '../browser/networking/cache-manager';
+import { ResourcePrioritizer } from '../browser/networking/resource-prioritizer';
+import { Firewall, applyBaselineRules } from '../browser/networking/firewall';
+import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from '../browser/networking/networking-setup';
+import { RawSocketHttpClient } from '../browser/networking/raw-socket-http-client';
+import { TlsHandler } from '../browser/networking/tls-handler';
+import type { ITlsHandler } from '../browser/networking/tls-handler';
 
 // Security
 import { CertificateValidator } from '../browser/security/certificate-validator';

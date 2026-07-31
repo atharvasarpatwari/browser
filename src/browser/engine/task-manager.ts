@@ -5,7 +5,8 @@
  * (CPU, memory, network, thread count). Similar to Chrome's chrome://task-manager.
  */
 
-import type { ISharedService, IDisposable } from '../../common/types';
+import type { IDisposable } from '../../app/dependency-container';
+import type { ISharedService } from '../../app/app-shell';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES

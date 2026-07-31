@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/ip-adapter.ts
+ * @file src/browser/networking/ip-adapter.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

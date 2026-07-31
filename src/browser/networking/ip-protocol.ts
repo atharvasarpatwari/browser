@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/ip-protocol.ts
+ * @file src/browser/networking/ip-protocol.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

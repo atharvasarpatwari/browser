@@ -1,6 +1,6 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { IWindow } from '../../app/app-shell';
-import { BrowserWindow } from '../../app/app-shell';
+import { BrowserWindow } from './browser-window';
+import type { IWindow } from './browser-window';
 
 type WindowState = 'normal' | 'minimized' | 'maximized' | 'fullscreen' | 'closed';
 

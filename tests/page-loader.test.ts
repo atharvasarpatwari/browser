@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PageLoader } from '../src/browser/engine/page-loader';
-import type { IResourceLoader, ResourceLoadResult } from '../src/browser/netwroking/resource-loader';
+import type { IResourceLoader, ResourceLoadResult } from '../src/browser/networking/resource-loader';
 import type { IPageLoader } from '../src/browser/engine/browser-engine';
 
 // ── Mock ResourceLoader ─────────────────────────────────────────────────────

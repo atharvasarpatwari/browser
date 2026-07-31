@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/tls-handler.ts
+ * @file src/browser/networking/tls-handler.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/raw-socket-http-client.ts
+ * @file src/browser/networking/raw-socket-http-client.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

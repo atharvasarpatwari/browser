@@ -1,5 +1,5 @@
 /**
- * @file src/browser/netwroking/networking-setup.ts
+ * @file src/browser/networking/networking-setup.ts
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY

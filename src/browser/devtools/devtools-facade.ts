@@ -5,7 +5,7 @@ import {
   ConsoleService,
   NetworkMonitor,
   DOMInspector,
-} from '../netwroking/devtools';
+} from '../networking/devtools';
 import { PerformanceProfiler } from './performance-panel';
 import { MemoryProfiler } from './memory-panel';
 import { SourcesDebugger } from './sources-panel';

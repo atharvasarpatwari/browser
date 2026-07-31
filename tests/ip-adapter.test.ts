@@ -4,14 +4,14 @@ import {
   PNAEnforcingHttpClient,
   createPNAClient,
   PNABlockedError,
-} from '../src/browser/netwroking/ip-adapter';
+} from '../src/browser/networking/ip-adapter';
 import type {
   DNSResolverBackend,
   DNSRecord,
   ParsedIP,
-} from '../src/browser/netwroking/ip-protocol';
-import { parseIPv4 } from '../src/browser/netwroking/ip-protocol';
-import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from '../src/browser/netwroking/request-manager';
+} from '../src/browser/networking/ip-protocol';
+import { parseIPv4 } from '../src/browser/networking/ip-protocol';
+import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from '../src/browser/networking/request-manager';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
