@@ -1,0 +1,45 @@
+
+ RUN  v4.1.10 E:/nova_1
+
+ ✓ tests/layout-engine.test.ts > LayoutEngine > basic layout > should produce a layout box for body element 128ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > basic layout > should position body at (0, 0) with no margins 2ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > basic layout > should respect body margin 11ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > basic layout > should fill viewport width for block elements 17ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > box model — margins > should add margins outside the border box 29ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > box model — margins > should use margin shorthand fallback 19ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > box model — padding > should add padding inside the border box 37ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > box model — borders > should read border widths from computed style 1ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > box model — borders > should parse thin/medium/thick border keywords 2ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > box model — borders > should include borders in border-box height 2ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > box-sizing > should use content-box sizing by default 18ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > box-sizing > should use border-box sizing when specified 26ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > box-sizing > should apply border-box to height as well 1ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > unit resolution — em > should resolve em values relative to font-size 22ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > unit resolution — em > should resolve font-size em relative to parent font-size 19ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > unit resolution — rem > should resolve rem values relative to root font-size 33ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > unit resolution — % > should resolve percentage margins relative to available width 1ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > unit resolution — % > should resolve percentage width relative to available width 15ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > named font sizes > should resolve medium to 16px 1ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > named font sizes > should resolve large to 18px 13ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > display: none > should skip elements with display: none 1ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > position: relative > should offset the element by top and left 12ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > block layout > should stack block children vertically 1ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > block layout > should compute parent height from children 1ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > inline layout > should place inline children at same position 16ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > text nodes > should add line-height for text nodes 22ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > LayoutBox written back to DOM tree > should set layoutBox on elements when domTree is provided 17ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > LayoutBox written back to DOM tree > should NOT set layoutBox when domTree is not provided 3ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > getLayoutBox > should return layout box by domId 25ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > getLayoutBox > should return null for unknown domId 0ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > getElementAtPoint > should find element at a given point 1ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > getElementAtPoint > should return null when no element at point 15ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > config > should return a copy of config 0ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > config > should update config 0ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > complex nested layout > should correctly compute nested box model with borders and padding 21ms
+ ✓ tests/layout-engine.test.ts > LayoutEngine > dispose > should clear all internal state 15ms
+
+ Test Files  1 passed (1)
+      Tests  36 passed (36)
+   Start at  12:08:56
+   Duration  24.55s (transform 12.56s, setup 506ms, import 13.69s, tests 629ms, environment 7.70s)
+

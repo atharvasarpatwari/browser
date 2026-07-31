@@ -13,11 +13,17 @@
 | 2026-07-22 | [2026-07-22-vite-dev-server.md](2026-07-22-vite-dev-server.md) | Vite dev server setup — `npm run dev` serves full browser chrome UI at localhost:5173. Fixed Buffer.byteLength in IPC transport, lazy-imported Node-only image decoders, aliased electron for Vite resolution. |
 | 2026-07-22 | [android-apk-build-guide.md](android-apk-build-guide.md) | Android APK build guide — Capacitor setup for wrapping Nova browser as native Android app. Requires JDK 17+ and Android Studio. |
 | 2026-07-22 | [2026-07-22-android-apk-setup.md](2026-07-22-android-apk-setup.md) | Android APK setup session — Capacitor integration, web→APK pipeline, customization options. |
+| 2026-07-31 | [2026-07-31-navigation-feature-check.md](2026-07-31-navigation-feature-check.md) | Verified navigation control feature files, ran related tests, and documented the single download manager failure. |
+| 2026-07-31 | [2026-07-31-js-engine-feature-check.md](2026-07-31-js-engine-feature-check.md) | Verified JS engine feature files and ran targeted engine-related tests with 325 passing cases. |
 
 ## Change Logs
 
 | Date | File | Summary |
 |------|------|---------|
+| 2026-07-31 | [2026-07-31-gpu-acceleration-enabled.md](2026-07-31-gpu-acceleration-enabled.md) | GPU acceleration enabled — `enableGpuAcceleration: true` in all 3 process models, `PaintEngine` DI registration now passes `hardwareAcceleration` from app config (GpuRasterizer path with software fallback). 85 tests pass. |
+| 2026-07-31 | [2026-07-31-analysis-report-standalone.md](2026-07-31-analysis-report-standalone.md) | Analysis Report Monitor converted to a single self-contained HTML file — CSS/JS inlined, live data snapshot embedded with API fallback (works offline, stays live when backend on :4567 is up). |
+| 2026-07-31 | [2026-07-31-platform-input-window-controls.md](2026-07-31-platform-input-window-controls.md) | Platform input & window controls — InputManager (keyboard/mouse/drag-drop events, modifier + drag state) and WindowControls (fullscreen toggle API, high-DPI pixel conversion, debounced resize). 23 new tests pass. |
+| 2026-07-30 | [2026-07-30-analysis-report-monitor.md](2026-07-30-analysis-report-monitor.md) | Git-powered analysis report dashboard — Express API executing git commands, glassmorphism dark UI, auto-classification into 15 categories, charts, filters, sorting, exports. Fixed git log parsing misalignment via record-separator marker. |
 | 2026-07-30 | [2026-07-30-css-animations-web-animations-api.md](2026-07-30-css-animations-web-animations-api.md) | CSS Animations + Web Animations API — 8 animation longhands, shorthand parsing, @keyframes collection, timeline integration, animate()/getAnimations() JS bindings. 31 new tests, all pass. |
 | 2026-07-30 | [2026-07-30-networking-gap-fixes.md](2026-07-30-networking-gap-fixes.md) | Fixed binary data corruption in Content-Encoding decompression (Buffer-based pipeline), missing blank line separator in multipart file encoding, unreliable Buffer-based boundary splitting. 39 networking-features tests pass. |
 | 2026-07-30 | [2026-07-30-layout-features.md](2026-07-30-layout-features.md) | Layout features: margin collapsing, sticky positioning, anonymous block generation, overflow:hidden clip containers, aspect-ratio flex items. Fixed classification regressions (display default, block-level check, classifyChildren iteration). 8283 tests pass. |

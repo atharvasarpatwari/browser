@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT_CAUSES_PATH = path.resolve(__dirname, '..', 'data', 'root-causes.json');
+const QUALITY_PATH = path.resolve(__dirname, '..', 'data', 'quality.json');
 
 function getRootCauses() {
   try {
@@ -13,6 +14,15 @@ function getRootCauses() {
     }
   } catch {}
   return { open: 0, resolved: 0, critical: 0, medium: 0, low: 0 };
+}
+
+function getQuality() {
+  try {
+    if (fs.existsSync(QUALITY_PATH)) {
+      return JSON.parse(fs.readFileSync(QUALITY_PATH, 'utf-8'));
+    }
+  } catch {}
+  return { openIssues: 0, warnings: 0, errors: 0, duplicateCode: 0, complexity: '—', notes: [] };
 }
 
 function classifyCommit(commit) {
@@ -87,6 +97,48 @@ function classifyCommit(commit) {
   return Object.entries(categoryScores).sort((a, b) => b[1] - a[1])[0][0];
 }
 
+let rootCausesCache = null;
+
+function getRootCausesData() {
+  if (rootCausesCache) return rootCausesCache;
+  try {
+    if (fs.existsSync(ROOT_CAUSES_PATH)) {
+      rootCausesCache = JSON.parse(fs.readFileSync(ROOT_CAUSES_PATH, 'utf-8'));
+      return rootCausesCache;
+    }
+  } catch {}
+  return null;
+}
+
+function matchRootCause(commit) {
+  const data = getRootCausesData();
+  if (!data || !Array.isArray(data.recent)) return null;
+  const commitDate = (commit.date || '').slice(0, 10);
+  const commitFiles = new Set([
+    ...(commit.files?.modified || []),
+    ...(commit.files?.created || []),
+    ...(commit.files?.deleted || [])
+  ]);
+  const title = (commit.title || '').toLowerCase();
+  const message = (commit.message || '').toLowerCase();
+
+  for (const rc of data.recent) {
+    const rcDate = (rc.date || '').slice(0, 10);
+    const fileHit = commitFiles.has(rc.file);
+    const titleHit = rc.title && (title.includes(rc.title.toLowerCase().slice(0, 24)) || message.includes(rc.title.toLowerCase().slice(0, 24)));
+    if ((fileHit || titleHit) && (!rcDate || Math.abs(new Date(commitDate) - new Date(rcDate)) < 3 * 86400000)) {
+      return {
+        id: rc.id,
+        title: rc.title,
+        severity: rc.severity,
+        status: rc.status,
+        file: rc.file
+      };
+    }
+  }
+  return null;
+}
+
 function determineStatus(commit) {
   const title = (commit.title || '').toLowerCase();
   const message = (commit.message || '').toLowerCase();
@@ -117,7 +169,8 @@ router.get('/commits', async (req, res) => {
     const commits = result.commits.map(c => ({
       ...c,
       category: classifyCommit(c),
-      status: determineStatus(c)
+      status: determineStatus(c),
+      rootCause: matchRootCause(c)
     }));
     res.json({ commits, total: result.total });
   } catch (err) {
@@ -132,6 +185,7 @@ router.get('/commits/:hash', async (req, res) => {
     const c = result.commits[0];
     c.category = classifyCommit(c);
     c.status = determineStatus(c);
+    c.rootCause = matchRootCause(c);
     res.json(c);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -160,6 +214,7 @@ router.get('/stats', async (req, res) => {
     ]);
 
     const rootCauses = getRootCauses();
+    const quality = getQuality();
 
     const todoCount = await gitService.runGit('grep -c "TODO" -- "*.ts" "*.js" "*.tsx" "*.jsx" "*.html" "*.css" 2>/dev/null || echo 0')
       .then(r => r.split('\n').filter(l => l.includes(':')).reduce((sum, l) => sum + parseInt(l.split(':').pop() || '0', 10), 0))
@@ -186,7 +241,8 @@ router.get('/stats', async (req, res) => {
       fileExtensions: fileExts,
       rootCauses,
       todoCount,
-      fixmeCount
+      fixmeCount,
+      quality
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

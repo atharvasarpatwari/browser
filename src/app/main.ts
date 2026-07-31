@@ -123,6 +123,10 @@ import { WindowManager } from '../platform/desktop/window-manager';
 import type { IWindowManager } from '../platform/desktop/window-manager';
 import { MenuIntegration } from '../platform/desktop/menu-integration';
 import type { IMenuIntegration } from '../platform/desktop/menu-integration';
+import { InputManager } from '../platform/shared/input-manager';
+import type { IInputManager } from '../platform/shared/input-manager';
+import { WindowControls } from '../platform/shared/window-controls';
+import type { IWindowControls } from '../platform/shared/window-controls';
 
 // UI
 import { AddressBar } from '../ui/components/address-bar/address-bar';
@@ -172,6 +176,8 @@ const Tokens = Object.freeze({
   RuntimeAdapter: Symbol('RuntimeAdapter'),
   WindowManager: Symbol('WindowManager'),
   MenuIntegration: Symbol('MenuIntegration'),
+  InputManager: Symbol('InputManager'),
+  WindowControls: Symbol('WindowControls'),
   AddressBar: Symbol('AddressBar'),
   DesktopLayout: Symbol('DesktopLayout'),
   BrowserWindowPage: Symbol('BrowserWindowPage'),
@@ -275,6 +281,8 @@ class ApplicationBootstrap {
     this.log('Starting…');
 
     this.registerServices();
+
+    this.startPlatformServices();
 
     this.shell = this.container.resolve<IAppShell>(Tokens.AppShell);
 
@@ -455,7 +463,14 @@ class ApplicationBootstrap {
     c.register<IDomTree>(Tokens.DomTree, () => new DomTree(), ServiceLifetime.Singleton);
     c.register<ICssParser>(Tokens.CssParser, () => new CssParser(), ServiceLifetime.Singleton);
     c.register<ILayoutEngine>(Tokens.LayoutEngine, () => new LayoutEngine(), ServiceLifetime.Singleton);
-    c.register<IPaintEngine>(Tokens.PaintEngine, () => new PaintEngine(), ServiceLifetime.Singleton);
+    c.register<IPaintEngine>(
+      Tokens.PaintEngine,
+      (ctx) =>
+        new PaintEngine({
+          hardwareAcceleration: ctx.resolve<AppConfig>(Tokens.AppConfig).processModel.enableGpuAcceleration,
+        }),
+      ServiceLifetime.Singleton,
+    );
 
     // 9. Storage
     c.register<ISessionsStore>(
@@ -500,6 +515,16 @@ class ApplicationBootstrap {
     c.register<IMenuIntegration>(
       Tokens.MenuIntegration,
       () => new MenuIntegration(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<IInputManager>(
+      Tokens.InputManager,
+      () => new InputManager(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<IWindowControls>(
+      Tokens.WindowControls,
+      () => new WindowControls(),
       ServiceLifetime.Singleton,
     );
 
@@ -589,6 +614,18 @@ class ApplicationBootstrap {
    * Registers every service that implements ISharedService with the AppShell
    * so they participate in the application lifecycle (initialize / shutdown).
    */
+  private startPlatformServices(): void {
+    // Input & window controls are resolved early so their window listeners
+    // are active for the whole session. Both implement IDisposable, so the
+    // container disposes them automatically during shutdown.
+    try {
+      this.container.resolve<IInputManager>(Tokens.InputManager).start();
+      this.container.resolve<IWindowControls>(Tokens.WindowControls).start();
+    } catch (err) {
+      console.error('[Bootstrap] Failed to start platform services:', err);
+    }
+  }
+
   private registerSharedServices(): void {
     const shell = this.shell!;
 

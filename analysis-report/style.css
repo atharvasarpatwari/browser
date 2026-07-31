@@ -274,6 +274,28 @@ body {
   border-color: var(--accent-blue);
 }
 
+.controls-bar input[type="date"] {
+  padding: 9px 12px;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font);
+  transition: var(--transition);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] .controls-bar input[type="date"] {
+  color-scheme: dark;
+}
+
+.controls-bar input[type="date"]:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
 .table-wrapper {
   position: relative;
   background: var(--bg-glass);

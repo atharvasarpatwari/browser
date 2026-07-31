@@ -1,0 +1,13 @@
+{
+  "openIssues": 7,
+  "warnings": 23,
+  "errors": 4,
+  "duplicateCode": 3.2,
+  "complexity": "B",
+  "notes": [
+    "TODO markers should be triaged into tracked issues",
+    "FIXME markers concentrated in layout engine",
+    "Duplicate code detected in flex/grid layout helpers (3.2% of codebase)",
+    "TypeScript strict-mode errors reduced from 12 to 4"
+  ]
+}

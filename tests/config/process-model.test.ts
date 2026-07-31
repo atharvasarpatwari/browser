@@ -17,7 +17,7 @@ describe('ProcessModelConfig', () => {
 
     it('should have reasonable defaults', () => {
       expect(DEFAULT_PROCESS_MODEL.maxRendererProcesses).toBe(0);
-      expect(DEFAULT_PROCESS_MODEL.enableGpuAcceleration).toBe(false);
+      expect(DEFAULT_PROCESS_MODEL.enableGpuAcceleration).toBe(true);
       expect(DEFAULT_PROCESS_MODEL.enableWebWorkers).toBe(true);
       expect(DEFAULT_PROCESS_MODEL.enableProcessRestart).toBe(true);
       expect(DEFAULT_PROCESS_MODEL.maxRestartAttempts).toBe(3);
@@ -35,7 +35,7 @@ describe('ProcessModelConfig', () => {
 
     it('should have reasonable defaults', () => {
       expect(PER_TAB_PROCESS_MODEL.maxRendererProcesses).toBe(20);
-      expect(PER_TAB_PROCESS_MODEL.enableGpuAcceleration).toBe(false);
+      expect(PER_TAB_PROCESS_MODEL.enableGpuAcceleration).toBe(true);
       expect(PER_TAB_PROCESS_MODEL.enableWebWorkers).toBe(true);
       expect(PER_TAB_PROCESS_MODEL.enableProcessRestart).toBe(true);
       expect(PER_TAB_PROCESS_MODEL.maxRestartAttempts).toBe(3);
@@ -52,7 +52,7 @@ describe('ProcessModelConfig', () => {
 
     it('should have reasonable defaults', () => {
       expect(PER_DOMAIN_PROCESS_MODEL.maxRendererProcesses).toBe(50);
-      expect(PER_DOMAIN_PROCESS_MODEL.enableGpuAcceleration).toBe(false);
+      expect(PER_DOMAIN_PROCESS_MODEL.enableGpuAcceleration).toBe(true);
       expect(PER_DOMAIN_PROCESS_MODEL.enableWebWorkers).toBe(true);
       expect(PER_DOMAIN_PROCESS_MODEL.enableProcessRestart).toBe(true);
       expect(PER_DOMAIN_PROCESS_MODEL.maxRestartAttempts).toBe(3);

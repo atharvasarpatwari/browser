@@ -36,7 +36,8 @@ function parseLogLine(line) {
 async function getCommits(options = {}) {
   const { limit = 100, offset = 0, branch = 'HEAD', since, until, author, search } = options;
 
-  let logArgs = `log --oneline --no-merges --format="%H|%an|%ai|%D|%f" --shortstat ${branch}`;
+  const RS = '\x1e';
+  let logArgs = `log --no-merges --format="${RS}%H|%an|%ai|%D|%s" --shortstat ${branch}`;
   if (since) logArgs += ` --since="${since}"`;
   if (until) logArgs += ` --until="${until}"`;
   if (author) logArgs += ` --author="${author}"`;
@@ -45,15 +46,22 @@ async function getCommits(options = {}) {
     const rawLog = await runGit(logArgs);
     if (!rawLog) return { commits: [], total: 0 };
 
-    const entries = rawLog.split('\n\n');
     const allCommits = [];
+    const blocks = rawLog.split(RS).filter(b => b.trim());
 
-    for (let i = 0; i < entries.length - 1; i += 2) {
-      const headerLine = entries[i];
-      const statLine = entries[i + 1] || '';
-      const [hashAuthorDate, ...restTitle] = headerLine.split('|');
-      const hash = hashAuthorDate ? hashAuthorDate.split(' ')[0] : '';
-      const author = hashAuthorDate ? hashAuthorDate.split(' ').slice(1).join(' ') : '';
+    for (const block of blocks) {
+      const lines = block.split('\n').filter(l => l.trim());
+      const headerLine = lines[0];
+      const statLine = lines.slice(1).join(' ');
+
+      const parts = headerLine.split('|');
+      if (parts.length < 5) continue;
+
+      const hash = parts[0];
+      const author = parts[1];
+      const date = parts[2];
+      const branchInfo = parts[3];
+      const fullTitle = parts[4];
 
       let filesChanged = 0, linesAdded = 0, linesRemoved = 0;
       const statMatch = statLine.match(/(\d+) file[s]? changed/);
@@ -63,25 +71,17 @@ async function getCommits(options = {}) {
       const removedMatch = statLine.match(/(\d+) deletion[s]?\(\-\)/);
       if (removedMatch) linesRemoved = parseInt(removedMatch[1], 10);
 
-      const fullCommit = await runGit(`log -1 --format="%H|%an|%ai|%D|%s|%B" ${hash}`);
-      const parts = fullCommit.split('|');
-      if (parts.length >= 5) {
-        const date = parts[2] || '';
-        const branchInfo = parts[3] || '';
-        const fullTitle = parts[4] || '';
-        const fullMessage = parts.slice(5).join('|') || '';
-        allCommits.push({
-          hash: parts[0],
-          author: parts[1],
-          date,
-          branch: branchInfo.split(',')[0]?.trim() || 'unknown',
-          title: fullTitle,
-          message: fullMessage || fullTitle,
-          filesChanged,
-          linesAdded,
-          linesRemoved
-        });
-      }
+      allCommits.push({
+        hash,
+        author,
+        date,
+        branch: branchInfo.split(',')[0]?.trim() || 'unknown',
+        title: fullTitle,
+        message: fullTitle,
+        filesChanged,
+        linesAdded,
+        linesRemoved
+      });
     }
 
     const filtered = allCommits.filter(c => {

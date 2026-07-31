@@ -85,16 +85,21 @@ async function loadStats() {
       });
     }
 
+    const q = stats.quality || {};
     const qualityGrid = document.getElementById('qualityGrid');
     qualityGrid.innerHTML = '';
     [
+      { value: q.openIssues ?? 0, label: 'Open Issues', color: 'var(--accent-orange)' },
+      { value: q.warnings ?? 0, label: 'Warnings', color: 'var(--accent-yellow)' },
+      { value: q.errors ?? 0, label: 'Errors', color: 'var(--accent-red)' },
       { value: stats.todoCount || 0, label: 'TODO', color: 'var(--accent-yellow)' },
       { value: stats.fixmeCount || 0, label: 'FIXME', color: 'var(--accent-red)' },
-      { value: stats.totalCommits > 500 ? 'A' : stats.totalCommits > 100 ? 'B' : 'C', label: 'Complexity', color: 'var(--accent-cyan)' },
-    ].forEach(q => {
+      { value: q.complexity || (stats.totalCommits > 500 ? 'A' : stats.totalCommits > 100 ? 'B' : 'C'), label: 'Complexity', color: 'var(--accent-cyan)' },
+      { value: q.duplicateCode != null ? `${q.duplicateCode}%` : '—', label: 'Duplicate', color: 'var(--accent-purple)' },
+    ].forEach(qu => {
       const div = document.createElement('div');
       div.className = 'quality-item';
-      div.innerHTML = `<div class="quality-value" style="color:${q.color}">${q.value}</div><div class="quality-label">${q.label}</div>`;
+      div.innerHTML = `<div class="quality-value" style="color:${qu.color}">${qu.value}</div><div class="quality-label">${qu.label}</div>`;
       qualityGrid.appendChild(div);
     });
 
@@ -139,11 +144,14 @@ async function loadActivity() {
     const data = await apiFetch('/activity?days=30');
     renderDailyChart(data.activity);
     renderFilesChart(data.activity);
+    renderWeeklyChart(data.activity);
+    renderHeatmapChart(data.activity);
   } catch {}
 
   try {
     const stats = await apiFetch('/stats');
     if (stats.fileExtensions) renderLangChart(stats.fileExtensions);
+    if (stats.contributorList) renderContributorsChart(stats.contributorList);
   } catch {}
 }
 
@@ -153,6 +161,8 @@ async function loadCommits() {
   const author = document.getElementById('filterAuthor').value;
   const branch = document.getElementById('filterBranch').value;
   const search = document.getElementById('searchInput').value;
+  const dateFrom = document.getElementById('filterDateFrom').value;
+  const dateTo = document.getElementById('filterDateTo').value;
 
   const params = new URLSearchParams({
     limit: rowsPerPage,
@@ -161,6 +171,8 @@ async function loadCommits() {
   });
   if (author) params.set('author', author);
   if (branch) params.set('branch', branch);
+  if (dateFrom) params.set('since', `${dateFrom}T00:00:00`);
+  if (dateTo) params.set('until', `${dateTo}T23:59:59`);
 
   document.getElementById('skeleton').style.display = 'block';
   document.getElementById('tableBody').innerHTML = '';
@@ -253,7 +265,15 @@ function renderTable() {
           break;
         }
         case 'rootCauses': {
-          td.textContent = '—';
+          const rc = commit.rootCause;
+          if (rc) {
+            const sevCls = { critical: 'badge-red', high: 'badge-orange', medium: 'badge-yellow', low: 'badge-gray' }[rc.severity] || 'badge-gray';
+            const stCls = rc.status === 'resolved' ? 'badge-green' : 'badge-blue';
+            td.innerHTML = `<span class="badge ${sevCls}" title="${escapeHtml(rc.title)}">${escapeHtml(rc.id || 'RC')}</span> <span class="badge ${stCls}">${rc.status === 'resolved' ? '✓' : '◉'}</span>`;
+            td.style.whiteSpace = 'normal';
+          } else {
+            td.textContent = '—';
+          }
           break;
         }
         case 'filesModified':
@@ -344,6 +364,7 @@ function getSortValue(commit, key) {
     case 'document': return commit.title || '';
     case 'category': return commit.category || '';
     case 'tests': return countTests(commit);
+    case 'rootCauses': return commit.rootCause ? 0 : 1;
     case 'filesModified': return commit.files?.modified?.length || commit.filesChanged || 0;
     case 'filesCreated': return commit.files?.created?.length || 0;
     case 'status': return commit.status || '';
@@ -398,6 +419,9 @@ async function showCommitDetail(hash) {
       ['Lines Removed', `-${commit.linesRemoved}`],
       ['Message', commit.message || commit.title],
     ];
+    if (commit.rootCause) {
+      rows.push(['Root Cause', `${commit.rootCause.id} — ${commit.rootCause.title} (${commit.rootCause.severity}, ${commit.rootCause.status})`]);
+    }
     if (commit.files) {
       if (commit.files.modified?.length) rows.push(['Modified', commit.files.modified.join(', ')]);
       if (commit.files.created?.length) rows.push(['Created', commit.files.created.join(', ')]);
@@ -677,6 +701,188 @@ function renderLangChart(extensions) {
   });
 }
 
+function renderWeeklyChart(activity) {
+  const canvas = document.getElementById('weeklyChart');
+  if (!canvas || !activity?.length) return;
+  const ctx = canvas.getContext('2d');
+  const parent = canvas.parentElement;
+  canvas.width = parent.clientWidth - 40;
+  canvas.height = 200;
+
+  const w = canvas.width, h = canvas.height;
+  const pad = { top: 20, right: 10, bottom: 30, left: 40 };
+  const chartW = w - pad.left - pad.right;
+  const chartH = h - pad.top - pad.bottom;
+
+  const weeks = [];
+  const weekMap = {};
+  activity.forEach(a => {
+    const d = new Date(a.date + 'T00:00:00');
+    const iso = new Date(d.getTime() - ((d.getDay() + 6) % 7) * 86400000);
+    const key = iso.toISOString().slice(0, 10);
+    if (!weekMap[key]) {
+      weekMap[key] = { label: key.slice(5), count: 0 };
+      weeks.push(weekMap[key]);
+    }
+    weekMap[key].count += a.count;
+  });
+
+  const maxVal = Math.max(...weeks.map(wd => wd.count), 1);
+  const step = chartW / Math.max(1, weeks.length);
+
+  ctx.clearRect(0, 0, w, h);
+
+  weeks.forEach((wd, i) => {
+    const x = pad.left + step * i;
+    const barH = (wd.count / maxVal) * chartH;
+    const y = pad.top + chartH - barH;
+
+    const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + chartH);
+    grad.addColorStop(0, 'rgba(139,92,246,0.85)');
+    grad.addColorStop(1, 'rgba(236,72,153,0.25)');
+    ctx.fillStyle = grad;
+    const r = Math.min(3, step / 4);
+    ctx.beginPath();
+    ctx.roundRect(x + 2, y, step - 4, barH, [r, r, 0, 0]);
+    ctx.fill();
+
+    ctx.fillStyle = 'var(--text-muted)';
+    ctx.font = '8px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(wd.label, x + step / 2, h - 5);
+  });
+
+  ctx.strokeStyle = 'var(--border-glass)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad.left, pad.top);
+  ctx.lineTo(pad.left, pad.top + chartH);
+  ctx.lineTo(pad.left + chartW, pad.top + chartH);
+  ctx.stroke();
+
+  ctx.fillStyle = 'var(--text-muted)';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'right';
+  for (let v = 0; v <= maxVal; v += Math.max(1, Math.ceil(maxVal / 4))) {
+    const y = pad.top + chartH - (v / maxVal) * chartH;
+    ctx.fillText(v, pad.left - 5, y + 3);
+  }
+}
+
+function renderContributorsChart(contributors) {
+  const canvas = document.getElementById('contributorsChart');
+  if (!canvas || !contributors?.length) return;
+  const ctx = canvas.getContext('2d');
+  const parent = canvas.parentElement;
+  canvas.width = parent.clientWidth - 40;
+  canvas.height = 200;
+
+  const w = canvas.width, h = canvas.height;
+  const pad = { top: 10, right: 60, bottom: 10, left: 10 };
+  const chartW = w - pad.left - pad.right;
+  const chartH = h - pad.top - pad.bottom;
+  const top = contributors.slice(0, 8);
+  const maxCommits = Math.max(...top.map(c => c.commits), 1);
+
+  const colors = ['#3b82f6', '#06b6d4', '#8b5cf6', '#ec4899', '#eab308', '#22c55e', '#f97316', '#ef4444'];
+
+  ctx.clearRect(0, 0, w, h);
+
+  top.forEach((c, i) => {
+    const barW = (c.commits / maxCommits) * chartW;
+    const y = pad.top + (chartH / top.length) * i + 4;
+    const barH = Math.max(8, chartH / top.length - 4);
+
+    const grad = ctx.createLinearGradient(pad.left, 0, pad.left + chartW, 0);
+    const base = colors[i % colors.length];
+    grad.addColorStop(0, base);
+    grad.addColorStop(1, base + '30');
+    ctx.fillStyle = grad;
+    const r = Math.min(4, barH / 2);
+    ctx.beginPath();
+    ctx.roundRect(pad.left, y, barW, barH, r);
+    ctx.fill();
+
+    ctx.fillStyle = 'var(--text-muted)';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const name = c.name.length > 18 ? c.name.slice(0, 18) + '…' : c.name;
+    ctx.fillText(name, pad.left + barW + 6, y + barH / 2);
+
+    if (barW > 60) {
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(String(c.commits), pad.left + 6, y + barH / 2);
+    }
+  });
+}
+
+function renderHeatmapChart(activity) {
+  const canvas = document.getElementById('heatmapChart');
+  if (!canvas || !activity?.length) return;
+  const ctx = canvas.getContext('2d');
+  const parent = canvas.parentElement;
+  canvas.width = parent.clientWidth - 40;
+  canvas.height = 200;
+
+  const w = canvas.width, h = canvas.height;
+  const pad = { top: 16, right: 10, bottom: 16, left: 34 };
+
+  const dayLabels = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
+  const weeks = [];
+  let currentWeek = [];
+  activity.forEach(a => {
+    const d = new Date(a.date + 'T00:00:00');
+    const day = (d.getDay() + 6) % 7;
+    if (day === 0 && currentWeek.length > 0) {
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+    currentWeek.push({ day, count: a.count });
+  });
+  if (currentWeek.length > 0) weeks.push(currentWeek);
+
+  const cols = weeks.length;
+  const cellW = Math.min(18, (w - pad.left - pad.right) / cols);
+  const cellH = Math.min(18, (h - pad.top - pad.bottom) / 7);
+  const maxCount = Math.max(...activity.map(a => a.count), 1);
+
+  ctx.clearRect(0, 0, w, h);
+
+  weeks.forEach((week, wi) => {
+    week.forEach(d => {
+      const x = pad.left + wi * cellW;
+      const y = pad.top + d.day * cellH;
+      const intensity = d.count / maxCount;
+      const alpha = 0.08 + intensity * 0.9;
+      ctx.fillStyle = `rgba(59,130,246,${alpha})`;
+      ctx.beginPath();
+      ctx.roundRect(x + 1, y + 1, cellW - 2, cellH - 2, 3);
+      ctx.fill();
+      if (intensity > 0.7) {
+        ctx.fillStyle = '#fff';
+        ctx.font = '8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(d.count), x + cellW / 2, y + cellH / 2);
+      }
+    });
+  });
+
+  ctx.fillStyle = 'var(--text-muted)';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'right';
+  dayLabels.forEach((l, i) => {
+    if (l) ctx.fillText(l, pad.left - 5, pad.top + i * cellH + cellH / 2 + 3);
+  });
+
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${activity.length} days · max ${maxCount} commits/day`, w / 2, h - 2);
+}
+
 function startResize(e, th) {
   e.preventDefault();
   const startX = e.clientX;
@@ -737,7 +943,7 @@ function renderColumnMenu() {
 }
 
 function exportCSV() {
-  const rows = [['Favorite', 'Date', 'Document', 'Category', 'Tests', 'Files Modified', 'Files Created', 'Status', 'Author', 'Branch', 'Hash']];
+  const rows = [['Favorite', 'Date', 'Document', 'Category', 'Tests', 'Root Cause', 'Files Modified', 'Files Created', 'Status', 'Author', 'Branch', 'Hash']];
   filteredCommits.forEach(c => {
     rows.push([
       favorites.includes(c.hash) ? 'Yes' : 'No',
@@ -745,6 +951,7 @@ function exportCSV() {
       `"${(c.title || '').replace(/"/g, '""')}"`,
       c.category || '',
       countTests(c),
+      c.rootCause ? `${c.rootCause.id} ${c.rootCause.title}` : '—',
       c.files?.modified?.length || c.filesChanged || 0,
       c.files?.created?.length || 0,
       c.status || '',
@@ -769,6 +976,70 @@ function exportJSON() {
   downloadFile(JSON.stringify(data, null, 2), 'analysis-report.json', 'application/json');
   showToast('JSON exported');
   toggleExportMenu();
+}
+
+function exportExcel() {
+  const rows = [['Favorite', 'Date', 'Document', 'Category', 'Tests', 'Root Cause', 'Files Modified', 'Files Created', 'Status', 'Author', 'Branch', 'Hash', 'Lines Added', 'Lines Removed']];
+  filteredCommits.forEach(c => {
+    rows.push([
+      favorites.includes(c.hash) ? 'Yes' : 'No',
+      c.date || '',
+      c.title || '',
+      c.category || '',
+      countTests(c),
+      c.rootCause ? `${c.rootCause.id} ${c.rootCause.title}` : '—',
+      c.files?.modified?.length || c.filesChanged || 0,
+      c.files?.created?.length || 0,
+      c.status || '',
+      c.author || '',
+      c.branch || '',
+      c.hash || '',
+      c.linesAdded || 0,
+      c.linesRemoved || 0
+    ]);
+  });
+  const xml = buildSpreadsheetML(rows);
+  downloadFile(xml, 'analysis-report.xls', 'application/vnd.ms-excel');
+  showToast('Excel exported');
+  toggleExportMenu();
+}
+
+function buildSpreadsheetML(rows) {
+  const cells = (row, rowIdx) => row.map((val, ci) => {
+    const isNum = typeof val === 'number';
+    const dataType = isNum ? 'Number' : 'String';
+    const safeVal = String(val).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<Cell ss:Index="${ci + 1}" ss:StyleID="${rowIdx === 0 ? 'Header' : 'Default'}"><Data ss:Type="${dataType}">${safeVal}</Data></Cell>`;
+  }).join('');
+
+  const body = rows.map((row, i) =>
+    `<Row>${cells(row, i)}</Row>`
+  ).join('');
+
+  return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <Styles>
+  <Style ss:ID="Default" ss:Name="Normal">
+   <Alignment ss:Vertical="Center"/>
+   <Font ss:FontName="Calibri" ss:Size="11"/>
+  </Style>
+  <Style ss:ID="Header">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+   <Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1"/>
+   <Interior ss:Color="#3B82F6" ss:Pattern="Solid"/>
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="Analysis Report">
+  <Table>
+   ${body}
+  </Table>
+ </Worksheet>
+</Workbook>`;
 }
 
 function downloadFile(content, filename, mime) {

@@ -27,6 +27,7 @@
           <button class="btn" onclick="toggleExportMenu()">&#8595; Export</button>
           <div class="export-dropdown" id="exportMenu" style="display:none">
             <button onclick="exportCSV()">Export CSV</button>
+            <button onclick="exportExcel()">Export Excel</button>
             <button onclick="exportJSON()">Export JSON</button>
             <button onclick="window.print()">Print PDF</button>
           </div>
@@ -48,6 +49,9 @@
       <div class="chart-card"><h3>Category Distribution</h3><canvas id="categoryChart"></canvas></div>
       <div class="chart-card"><h3>Files Modified Per Day</h3><canvas id="filesChart"></canvas></div>
       <div class="chart-card"><h3>Language Distribution</h3><canvas id="langChart"></canvas></div>
+      <div class="chart-card"><h3>Weekly Progress</h3><canvas id="weeklyChart"></canvas></div>
+      <div class="chart-card"><h3>Top Contributors</h3><canvas id="contributorsChart"></canvas></div>
+      <div class="chart-card"><h3>Commit Heatmap</h3><canvas id="heatmapChart"></canvas></div>
     </div>
 
     <div class="controls-bar">
@@ -86,6 +90,8 @@
       <select id="filterBranch" onchange="loadCommits()">
         <option value="">All Branches</option>
       </select>
+      <input type="date" id="filterDateFrom" onchange="loadCommits()" title="Date from">
+      <input type="date" id="filterDateTo" onchange="loadCommits()" title="Date to">
     </div>
 
     <div class="table-wrapper" id="tableWrapper">
