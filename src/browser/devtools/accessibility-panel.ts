@@ -1,5 +1,5 @@
-import type { A11yDomNode, AriaRole, A11yState } from '../accessibility/screen-reader';
-import { buildAccessibilityTree, resolvedRole } from '../accessibility/screen-reader';
+import type { A11yDomNode, A11yDomElement, AriaRole, A11yState } from '../accessibility/screen-reader';
+import { buildAccessibilityTree, resolvedRole, isA11yElement } from '../accessibility/screen-reader';
 
 export interface A11yAuditIssue {
   id: string;
@@ -56,7 +56,7 @@ export class AccessibilityPanel {
   }
 
   private checkNode(node: A11yDomNode): void {
-    if (node.nodeType !== 'element') return;
+    if (!isA11yElement(node)) return;
     const tag = node.tagName.toLowerCase();
     const attrs = node.attributes;
     const role = resolvedRole(attrs, tag);
@@ -85,7 +85,7 @@ export class AccessibilityPanel {
     }
   }
 
-  private addIssue(type: A11yAuditCategory, message: string, node: A11yDomNode): void {
+  private addIssue(type: A11yAuditCategory, message: string, node: A11yDomElement): void {
     this.issueCounter++;
     this.auditResults.push({
       id: `a11y-${this.issueCounter}`,

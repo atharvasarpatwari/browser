@@ -208,6 +208,13 @@ class PromiseService implements IPromiseService {
       return { id: resultId, state: 'fulfilled' };
     }
 
+    const finalize = () => {
+      resultEntry.state = 'fulfilled';
+      resultEntry.value = results;
+      resultEntry.settled = true;
+      this.emit({ kind: 'settled', data: { id: resultId, value: results } });
+    };
+
     promiseIds.forEach((pid, i) => {
       const p = this._promises.get(pid);
       if (!p) { results[i] = { status: 'rejected', reason: 'Promise not found' }; remaining--; if (remaining === 0) finalize(); return; }
@@ -218,13 +225,6 @@ class PromiseService implements IPromiseService {
         else return;
         remaining--;
         if (remaining === 0) finalize();
-      };
-
-      const finalize = () => {
-        resultEntry.state = 'fulfilled';
-        resultEntry.value = results;
-        resultEntry.settled = true;
-        this.emit({ kind: 'settled', data: { id: resultId, value: results } });
       };
 
       if (p.state === 'pending') {

@@ -5,7 +5,7 @@ import { DomTree, type DomDocument, type DomElement } from '../src/browser/rende
 
 function makeDomTree(): { domTree: DomTree; doc: DomDocument } {
   const domTree = new DomTree();
-  const doc = domTree.getDocument();
+  const doc = domTree.getDocument()!;
   return { domTree, doc };
 }
 
@@ -26,6 +26,9 @@ function createCanvasElement(domTree: DomTree, width = 300, height = 150): DomEl
     naturalWidth: 0,
     naturalHeight: 0,
     loadingState: 'none',
+    usedStyle: null,
+    willChange: null,
+    _dirtyStyle: true,
     _dirtyLayout: true,
     _dirtyPaint: true,
   };

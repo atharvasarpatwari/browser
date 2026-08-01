@@ -167,7 +167,7 @@ type CrashReporterEventHandler = (event: CrashReporterEvent) => void;
 let _reportSeq = 0;
 
 class CrashReportBuilder {
-  private partial: Partial<CrashReport> = {
+  private partial: Partial<{ -readonly [K in keyof CrashReport]: CrashReport[K] }> = {
     context: {},
   };
 

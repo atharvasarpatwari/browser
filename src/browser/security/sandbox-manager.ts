@@ -1,15 +1,15 @@
 import type { IDisposable } from '../../app/dependency-container';
 
 interface SandboxPermissions {
-  readonly allowScripts: boolean;
-  readonly allowForms: boolean;
-  readonly allowModals: boolean;
-  readonly allowPopups: boolean;
-  readonly allowSameOrigin: boolean;
-  readonly allowTopNavigation: boolean;
-  readonly allowPointerLock: boolean;
-  readonly allowOrientationLock: boolean;
-  readonly allowPresentation: boolean;
+  allowScripts: boolean;
+  allowForms: boolean;
+  allowModals: boolean;
+  allowPopups: boolean;
+  allowSameOrigin: boolean;
+  allowTopNavigation: boolean;
+  allowPointerLock: boolean;
+  allowOrientationLock: boolean;
+  allowPresentation: boolean;
 }
 
 interface SandboxConfig {

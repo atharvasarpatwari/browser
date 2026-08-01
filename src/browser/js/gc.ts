@@ -1,15 +1,15 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// GC — Garbage Collector engine for the Nova JS runtime.
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GC â€” Garbage Collector engine for the Nova JS runtime.
 // Two-generation mark-and-sweep collector with weak references and
 // finalization support.
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import type { JSValue, JSObject, JSFunction, Environment, UpvalueRef } from './values';
 import { Heap, type HeapStats } from './heap';
 import { RootScanner, WeakRefStore } from './roots';
 import type { BytecodeVM, CallFrame } from './vm';
 
-// ── GC Configuration ─────────────────────────────────────────────────────────
+// â”€â”€ GC Configuration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface GCConfig {
   /** Enable/disable automatic GC collection */
@@ -32,7 +32,7 @@ const DEFAULT_CONFIG: GCConfig = {
   maxObjectsPerOldCollection: 5000,
 };
 
-// ── Finalization Registry ────────────────────────────────────────────────────
+// â”€â”€ Finalization Registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * A registry of finalizer callbacks for GC-managed objects.
@@ -45,7 +45,7 @@ export class FinalizationRegistry {
    * Register a finalizer for an object.
    */
   register(obj: JSObject | JSFunction, finalizer: (obj: JSObject | JSFunction) => void): void {
-    const id = (obj as Record<string, unknown>)['__gcId'] as number;
+    const id = (obj as unknown as Record<string, unknown>)['__gcId'] as number;
     if (id !== undefined) {
       this.finalizers.set(id, finalizer);
     }
@@ -55,7 +55,7 @@ export class FinalizationRegistry {
    * Unregister a finalizer for an object.
    */
   unregister(obj: JSObject | JSFunction): void {
-    const id = (obj as Record<string, unknown>)['__gcId'] as number;
+    const id = (obj as unknown as Record<string, unknown>)['__gcId'] as number;
     if (id !== undefined) {
       this.finalizers.delete(id);
     }
@@ -90,7 +90,7 @@ export class FinalizationRegistry {
   }
 }
 
-// ── GC Statistics ────────────────────────────────────────────────────────────
+// â”€â”€ GC Statistics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface GCStats {
   /** Total number of collections performed */
@@ -111,7 +111,7 @@ export interface GCStats {
   heapStats: HeapStats;
 }
 
-// ── Garbage Collector ────────────────────────────────────────────────────────
+// â”€â”€ Garbage Collector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export class GarbageCollector {
   private heap: Heap;
@@ -158,7 +158,7 @@ export class GarbageCollector {
     });
   }
 
-  // ── Configuration ────────────────────────────────────────────────────────
+  // â”€â”€ Configuration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /** Set the VM for root scanning */
   setVM(vm: BytecodeVM): void {
@@ -195,7 +195,7 @@ export class GarbageCollector {
     return this._inCollection;
   }
 
-  // ── Allocation ───────────────────────────────────────────────────────────
+  // â”€â”€ Allocation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
    * Allocate a new JSObject on the GC heap.
@@ -295,7 +295,7 @@ export class GarbageCollector {
     this.heap.register(obj);
   }
 
-  // ── Finalization ─────────────────────────────────────────────────────────
+  // â”€â”€ Finalization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
    * Register a finalizer callback for an object.
@@ -307,7 +307,7 @@ export class GarbageCollector {
     }
   }
 
-  // ── Weak References ──────────────────────────────────────────────────────
+  // â”€â”€ Weak References â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
    * Create a weak reference to an object.
@@ -323,7 +323,7 @@ export class GarbageCollector {
     return this.weakRefs.deref(ref);
   }
 
-  // ── Collection ───────────────────────────────────────────────────────────
+  // â”€â”€ Collection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
    * Trigger a young generation collection (nursery).
@@ -383,7 +383,7 @@ export class GarbageCollector {
 
   /**
    * Trigger a full collection (young + old generations).
-   * More expensive — clears all marks and traces everything.
+   * More expensive â€” clears all marks and traces everything.
    */
   collectFull(): number {
     if (!this.isEnabled() || this._inCollection) return 0;
@@ -420,7 +420,7 @@ export class GarbageCollector {
   }
 
   /**
-   * Automatic collection — decides which generation to collect based on pressure.
+   * Automatic collection â€” decides which generation to collect based on pressure.
    */
   collect(): number {
     if (!this.isEnabled()) return 0;
@@ -445,7 +445,7 @@ export class GarbageCollector {
     return this.collectFull();
   }
 
-  // ── Root Scanning ────────────────────────────────────────────────────────
+  // â”€â”€ Root Scanning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
    * Scan all root sets and mark reachable objects.
@@ -469,7 +469,7 @@ export class GarbageCollector {
     }
   }
 
-  // ── Tracing ──────────────────────────────────────────────────────────────
+  // â”€â”€ Tracing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
    * Starting from marked roots, trace all reachable objects and mark them.
@@ -493,7 +493,7 @@ export class GarbageCollector {
   }
 
   /**
-   * Trace a single object — mark its children and add them to the worklist.
+   * Trace a single object â€” mark its children and add them to the worklist.
    */
   private traceObject(
     obj: JSObject | JSFunction,
@@ -507,7 +507,7 @@ export class GarbageCollector {
   }
 
   /**
-   * Trace a function object — closure environment, upvalues, prototype chain.
+   * Trace a function object â€” closure environment, upvalues, prototype chain.
    */
   private traceFunction(
     fn: JSFunction,
@@ -545,7 +545,7 @@ export class GarbageCollector {
   }
 
   /**
-   * Trace a JSValue — if it's an object, mark and enqueue it.
+   * Trace a JSValue â€” if it's an object, mark and enqueue it.
    */
   private traceValue(val: JSValue, worklist: Array<JSObject | JSFunction>): void {
     if (val === null || val === undefined) return;
@@ -569,7 +569,7 @@ export class GarbageCollector {
   }
 
   /**
-   * Trace an environment chain — all bindings in all scopes.
+   * Trace an environment chain â€” all bindings in all scopes.
    */
   private traceEnvironment(
     env: Environment | null,
@@ -585,7 +585,7 @@ export class GarbageCollector {
     }
   }
 
-  // ── Statistics ───────────────────────────────────────────────────────────
+  // â”€â”€ Statistics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
    * Get GC statistics.
@@ -635,7 +635,7 @@ export class GarbageCollector {
   }
 }
 
-// ── Singleton GC ─────────────────────────────────────────────────────────────
+// â”€â”€ Singleton GC â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 let _globalGC: GarbageCollector | null = null;
 

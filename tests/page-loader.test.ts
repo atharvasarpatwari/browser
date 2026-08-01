@@ -34,6 +34,7 @@ function createMockLoadResult(overrides?: Partial<ResourceLoadResult>): Resource
     statusCode: 200,
     contentType: 'text/html',
     body: '<html><body>Hello</body></html>',
+    bodyBinary: null,
     headers: new Map([['content-type', 'text/html']]),
     loadedAt: Date.now(),
     durationMs: 100,

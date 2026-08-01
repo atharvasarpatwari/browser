@@ -23,6 +23,7 @@ import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from './request-m
 import type { ITlsHandler } from './tls-handler';
 import { CertVerificationStatus, TlsCertificateError } from './tls-handler';
 import { ContentDecoder } from './content-encoding';
+import type { ContentCoding } from './content-encoding';
 
 export class RawSocketError extends Error {
   constructor(message: string) {
@@ -252,7 +253,7 @@ class RawSocketHttpClient implements IHttpClient {
     }
 
     const headerSection = raw.subarray(0, headerEndIdx).toString('utf-8');
-    let bodyRaw = Buffer.from(raw.subarray(headerEndIdx + 4));
+    let bodyRaw: Buffer = Buffer.from(raw.subarray(headerEndIdx + 4));
 
     const headerLines = headerSection.split('\r\n');
 
@@ -293,7 +294,7 @@ class RawSocketHttpClient implements IHttpClient {
     const contentEncoding = headers.get('content-encoding');
     if (contentEncoding && contentEncoding.trim().toLowerCase() !== 'identity') {
       try {
-        const decoded = await this.contentDecoder.decode(contentEncoding, bodyRaw);
+        const decoded = await this.contentDecoder.decode(contentEncoding as ContentCoding, bodyRaw);
         if (isBinary) {
           bodyBinary = new Uint8Array(decoded);
         } else {

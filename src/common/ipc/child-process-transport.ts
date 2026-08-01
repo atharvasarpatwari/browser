@@ -172,6 +172,7 @@ export class ChildSideTransport implements ITransport {
   constructor(config?: Partial<TransportConfig>) {
     const processId = process.env.NOVA_PROCESS_ID ?? 'unknown';
     this._config = {
+      ...DEFAULT_CHILD_TRANSPORT_CONFIG,
       localId: processId,
       remoteId: 'main',
       ...config,

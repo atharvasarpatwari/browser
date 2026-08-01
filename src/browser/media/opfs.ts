@@ -100,7 +100,7 @@ class OPFSFileHandleImpl implements OPFSFileHandle {
   }
 
   async getFile(): Promise<File> {
-    return new File([this._data], this.name);
+    return new File([this._data as unknown as BlobPart], this.name);
   }
 
   async createWritable(options?: OPFSFileWritableOptions): Promise<OPFSWritableStream> {

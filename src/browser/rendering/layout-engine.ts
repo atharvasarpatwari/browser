@@ -45,6 +45,7 @@ const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
 
 interface ILayoutEngine extends IDisposable {
   layout(document: DomDocument, domTree?: IDomTree, config?: Partial<LayoutConfig>): void;
+  layoutIncremental(document: DomDocument, domTree: IDomTree, config?: Partial<LayoutConfig>): DamageTracker;
   getLayoutBox(domId: string): LayoutBox | null;
   getElementAtPoint(x: number, y: number): DomElement | null;
   getConfig(): LayoutConfig;
@@ -683,7 +684,7 @@ class LayoutEngine implements ILayoutEngine {
     for (const child of children) {
       if (child.node.nodeType === 'text') {
         const textNode = child.node as DomElement & { text?: string };
-        const text = textNode.text ?? (child.node as { text: string }).text ?? '';
+        const text = textNode.text ?? (child.node as unknown as { text: string }).text ?? '';
         if (text) {
           ifc.addTextRun(text, parentFontSize, this.resolveLineHeight(
             new Map(), parentFontSize,

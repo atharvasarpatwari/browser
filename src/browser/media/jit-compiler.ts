@@ -25,13 +25,13 @@ interface JITFunctionInfo {
   readonly id: number;
   readonly name: string;
   readonly bytecodeSize: number;
-  readonly callCount: number;
-  readonly loopIterations: number;
-  readonly tier: ExecutionTier;
-  readonly compiled: boolean;
-  readonly compilationTime?: number;
-  readonly executionTime?: number;
-  readonly optimizationLevel?: number;
+  callCount: number;
+  loopIterations: number;
+  tier: ExecutionTier;
+  compiled: boolean;
+  compilationTime?: number;
+  executionTime?: number;
+  optimizationLevel?: number;
 }
 
 interface CompilationResult {
@@ -167,9 +167,7 @@ class JITCompilerService implements IJITCompilerService {
         data: { functionId, name: info.name, tier: targetTier, optimizationLevel, compilationTime, sizeReduction },
       });
 
-      if (targetTier !== 'bytecode') {
-        this.emit({ kind: 'tier_up', data: { functionId, from: 'bytecode', to: targetTier } });
-      }
+      this.emit({ kind: 'tier_up', data: { functionId, from: 'bytecode', to: targetTier } });
 
       return { success: true, functionId, tier: targetTier, compilationTime, sizeReduction };
     } catch (e) {

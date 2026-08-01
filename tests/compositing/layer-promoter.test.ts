@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { LayerPromoter } from '../../src/browser/rendering/compositing/layer-promoter';
 import type { StackingContext } from '../../src/browser/rendering/formatting/stacking';
 import type { DomElement } from '../../src/browser/rendering/dom-tree';
@@ -24,8 +24,10 @@ function makeEl(id: string, style: Record<string, string> = {}, box?: { width: n
     naturalHeight: 0,
     loadingState: 'none',
     willChange: null,
+    usedStyle: null,
     _dirtyLayout: false,
     _dirtyPaint: false,
+    _dirtyStyle: false,
   };
 }
 

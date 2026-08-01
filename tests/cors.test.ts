@@ -14,9 +14,9 @@ import {
 } from '../src/browser/security/cors';
 import type {
   CorsRequest,
-  HttpResponseSpec,
   PreflightCacheEntry,
 } from '../src/browser/security/cors';
+import type { HttpResponseSpec } from '../src/browser/networking/request-manager';
 import type { IRequestManager } from '../src/browser/networking/request-manager';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

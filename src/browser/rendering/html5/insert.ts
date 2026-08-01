@@ -13,10 +13,12 @@ import type {
   HtmlElement,
   HtmlNode,
   MutableElement,
+  MutableNode,
   MutableTextNode,
   MutableComment,
   MutableDoctype,
   MutableCdata,
+  MutableParentNode,
   HtmlParentNode,
 } from './dom';
 import {
@@ -156,7 +158,7 @@ export function insertText(ctx: InsertContext, token: Token): void {
     (lastChild as unknown as { text: string }).text += text;
   } else {
     const textNode = createMutableTextNode(text, token.offset);
-    appendChild(current as unknown as HtmlParentNode, textNode as unknown as HtmlNode);
+    appendChild(current as unknown as MutableParentNode, textNode);
   }
 }
 
@@ -184,7 +186,7 @@ export function insertCharacter(ctx: InsertContext, text: string): void {
     (lastChild as unknown as { text: string }).text += text;
   } else {
     const textNode = createMutableTextNode(text);
-    appendChild(current as unknown as HtmlParentNode, textNode as unknown as HtmlNode);
+    appendChild(current as unknown as MutableParentNode, textNode);
   }
 }
 
@@ -244,8 +246,8 @@ export function insertCommentBeforeOpenElements(
   // If template is higher than table (or there's no table), insert in template
   if (lastTemplate && (!lastTable || lastTemplateIdx > lastTableIdx)) {
     appendChild(
-      lastTemplate as unknown as HtmlParentNode,
-      comment as unknown as HtmlNode,
+      lastTemplate as unknown as MutableParentNode,
+      comment,
     );
     return;
   }
@@ -254,7 +256,7 @@ export function insertCommentBeforeOpenElements(
   if (!lastTable) {
     const html = ctx.openElements.elementAt(0);
     if (html) {
-      appendChild(html as unknown as HtmlParentNode, comment as unknown as HtmlNode);
+      appendChild(html as unknown as MutableParentNode, comment);
     }
     return;
   }
@@ -262,9 +264,9 @@ export function insertCommentBeforeOpenElements(
   // Table has a parent — insert BEFORE the table
   if (lastTable.parent) {
     insertBefore(
-      lastTable.parent as HtmlParentNode,
-      comment as unknown as HtmlNode,
-      lastTable as unknown as HtmlNode,
+      lastTable.parent as MutableParentNode,
+      comment,
+      lastTable as unknown as MutableNode,
     );
     return;
   }
@@ -272,14 +274,14 @@ export function insertCommentBeforeOpenElements(
   // Table has no parent — insert inside the element above it in the stack
   if (lastTableIdx > 0) {
     const above = ctx.openElements.elementAt(lastTableIdx - 1);
-    appendChild(above as unknown as HtmlParentNode, comment as unknown as HtmlNode);
+    appendChild(above as unknown as MutableParentNode, comment);
     return;
   }
 
   // Fallback: insert in the first element on the stack
   const first = ctx.openElements.elementAt(0);
   if (first) {
-    appendChild(first as unknown as HtmlParentNode, comment as unknown as HtmlNode);
+    appendChild(first as unknown as MutableParentNode, comment);
   }
 }
 
@@ -301,8 +303,8 @@ export function insertDoctype(ctx: InsertContext, token: Token): void {
   const current = ctx.currentNode();
   if (current) {
     appendChild(
-      current as unknown as HtmlParentNode,
-      doctype as unknown as HtmlNode,
+      current as unknown as MutableParentNode,
+      doctype,
     );
   }
 }
@@ -316,8 +318,8 @@ export function insertCdata(ctx: InsertContext, token: Token): void {
   const current = ctx.currentNode();
   if (current) {
     appendChild(
-      current as unknown as HtmlParentNode,
-      cdata as unknown as HtmlNode,
+      current as unknown as MutableParentNode,
+      cdata,
     );
   }
 }
@@ -363,7 +365,7 @@ export function appendToCurrentNode(
 ): void {
   const current = openElements.currentNode();
   if (current) {
-    appendChild(current as unknown as HtmlParentNode, node);
+    appendChild(current as unknown as MutableParentNode, node as unknown as MutableNode);
   }
 }
 

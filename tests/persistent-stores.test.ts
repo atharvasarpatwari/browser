@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+﻿import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   PersistentCookieStore,
   PersistentSessionsStore,
@@ -6,12 +6,12 @@ import {
   PersistentHistoryStore,
   PersistentTokenStore,
 } from '../src/browser/storage/persistent-stores';
-import { AuthProtocol } from '../src/browser/auth/auth-provider';
+import { AuthProtocol, CredentialType } from '../src/browser/auth/auth-provider';
 import type { CookieData } from '../src/browser/storage/cookie-store';
 import type { SessionData } from '../src/browser/storage/sessions-store';
 import type { TokenEntry } from '../src/browser/auth/token-store';
 
-// ── Mock localStorage ────────────────────────────────────────────────────────
+// â”€â”€ Mock localStorage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class MockStorage implements Storage {
   private data = new Map<string, string>();
@@ -42,9 +42,9 @@ class MockStorage implements Storage {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PERSISTENT COOKIE STORE
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('PersistentCookieStore', () => {
   let storage: MockStorage;
@@ -197,9 +197,9 @@ describe('PersistentCookieStore', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PERSISTENT SESSIONS STORE
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('PersistentSessionsStore', () => {
   let storage: MockStorage;
@@ -213,10 +213,9 @@ describe('PersistentSessionsStore', () => {
   function makeSession(overrides: Partial<SessionData> = {}): SessionData {
     return {
       id: 'sess-1',
-      name: 'Test Session',
+      windows: [],
       lastUpdated: Date.now(),
       version: '1.0.0',
-      tabs: [],
       ...overrides,
     };
   }
@@ -225,7 +224,7 @@ describe('PersistentSessionsStore', () => {
     await store.save(makeSession());
     const loaded = await store.load('sess-1');
     expect(loaded).not.toBeNull();
-    expect(loaded!.name).toBe('Test Session');
+    expect(loaded!.id).toBe('sess-1');
   });
 
   it('should return null for non-existent session', async () => {
@@ -310,9 +309,9 @@ describe('PersistentSessionsStore', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PERSISTENT BOOKMARK STORE
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('PersistentBookmarkStore', () => {
   let storage: MockStorage;
@@ -468,9 +467,9 @@ describe('PersistentBookmarkStore', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PERSISTENT HISTORY STORE
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('PersistentHistoryStore', () => {
   let storage: MockStorage;
@@ -546,8 +545,8 @@ describe('PersistentHistoryStore', () => {
     await new Promise(r => setTimeout(r, 5));
     await store.addVisit('https://visited.com', 'Visited', false);
     const frecents = await store.getFrecents(2);
-    // typed.com: visitCount=1 → 0.3, typedCount=1 → 0.7, total=1.0
-    // visited.com: visitCount=3 → 0.9, typedCount=0 → 0.0, total=0.9
+    // typed.com: visitCount=1 â†’ 0.3, typedCount=1 â†’ 0.7, total=1.0
+    // visited.com: visitCount=3 â†’ 0.9, typedCount=0 â†’ 0.0, total=0.9
     expect(frecents[0]!.url).toBe('https://typed.com');
   });
 
@@ -612,9 +611,9 @@ describe('PersistentHistoryStore', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PERSISTENT TOKEN STORE
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('PersistentTokenStore', () => {
   let storage: MockStorage;
@@ -631,14 +630,14 @@ describe('PersistentTokenStore', () => {
 
   function makeTokenEntry(overrides: Partial<TokenEntry> = {}): Omit<TokenEntry, 'id' | 'createdAt' | 'updatedAt'> {
     return {
-      provider: AuthProtocol.Bearer,
+      provider: AuthProtocol.OAuth2,
       userId: 'user-1',
       token: {
-        accessToken: 'token-abc',
-        refreshToken: null,
-        scopes: ['read', 'write'],
+        value: 'token-abc',
+        type: CredentialType.AccessToken,
         expiresAt: Date.now() + 3600000,
-        tokenType: 'Bearer',
+        issuedAt: Date.now(),
+        scopes: ['read', 'write'],
       },
       tags: [],
       ...overrides,
@@ -652,8 +651,8 @@ describe('PersistentTokenStore', () => {
   it('should add a token', () => {
     const entry = store.add(makeTokenEntry());
     expect(entry.id).toMatch(/^tok-/);
-    expect(entry.provider).toBe(AuthProtocol.Bearer);
-    expect(entry.token.accessToken).toBe('token-abc');
+    expect(entry.provider).toBe(AuthProtocol.OAuth2);
+    expect(entry.token.value).toBe('token-abc');
   });
 
   it('should get a token by id', () => {
@@ -669,7 +668,7 @@ describe('PersistentTokenStore', () => {
 
   it('should auto-clean expired tokens on get', () => {
     const entry = store.add(makeTokenEntry({
-      token: { accessToken: 'x', refreshToken: null, scopes: [], expiresAt: Date.now() - 1000, tokenType: 'Bearer' },
+      token: { value: 'x', type: CredentialType.AccessToken, expiresAt: Date.now() - 1000, issuedAt: Date.now(), scopes: [] },
     }));
     const fetched = store.get(entry.id);
     expect(fetched).toBeNull();
@@ -677,10 +676,10 @@ describe('PersistentTokenStore', () => {
   });
 
   it('should getByProvider', () => {
-    store.add(makeTokenEntry({ provider: AuthProtocol.Bearer }));
-    store.add(makeTokenEntry({ provider: AuthProtocol.Bearer }));
     store.add(makeTokenEntry({ provider: AuthProtocol.OAuth2 }));
-    expect(store.getByProvider(AuthProtocol.Bearer)).toHaveLength(2);
+    store.add(makeTokenEntry({ provider: AuthProtocol.OAuth2 }));
+    store.add(makeTokenEntry({ provider: AuthProtocol.BasicAuth }));
+    expect(store.getByProvider(AuthProtocol.OAuth2)).toHaveLength(2);
   });
 
   it('should getByUser', () => {
@@ -690,14 +689,14 @@ describe('PersistentTokenStore', () => {
   });
 
   it('should findValid with scopes', () => {
-    store.add(makeTokenEntry({ userId: 'u1', token: { accessToken: 'a', refreshToken: null, scopes: ['read', 'write'], expiresAt: Date.now() + 3600000, tokenType: 'Bearer' } }));
-    const found = store.findValid(AuthProtocol.Bearer, 'u1', ['read']);
+    store.add(makeTokenEntry({ userId: 'u1', token: { value: 'a', type: CredentialType.AccessToken, expiresAt: Date.now() + 3600000, issuedAt: Date.now(), scopes: ['read', 'write'] } }));
+    const found = store.findValid(AuthProtocol.OAuth2, 'u1', ['read']);
     expect(found).not.toBeNull();
   });
 
   it('should return null from findValid if scopes not matched', () => {
-    store.add(makeTokenEntry({ userId: 'u1', token: { accessToken: 'a', refreshToken: null, scopes: ['read'], expiresAt: Date.now() + 3600000, tokenType: 'Bearer' } }));
-    const found = store.findValid(AuthProtocol.Bearer, 'u1', ['admin']);
+    store.add(makeTokenEntry({ userId: 'u1', token: { value: 'a', type: CredentialType.AccessToken, expiresAt: Date.now() + 3600000, issuedAt: Date.now(), scopes: ['read'] } }));
+    const found = store.findValid(AuthProtocol.OAuth2, 'u1', ['admin']);
     expect(found).toBeNull();
   });
 
@@ -719,17 +718,17 @@ describe('PersistentTokenStore', () => {
   });
 
   it('should removeByProvider', () => {
-    store.add(makeTokenEntry({ provider: AuthProtocol.Bearer }));
-    store.add(makeTokenEntry({ provider: AuthProtocol.Bearer }));
     store.add(makeTokenEntry({ provider: AuthProtocol.OAuth2 }));
-    const removed = store.removeByProvider(AuthProtocol.Bearer);
+    store.add(makeTokenEntry({ provider: AuthProtocol.OAuth2 }));
+    store.add(makeTokenEntry({ provider: AuthProtocol.BasicAuth }));
+    const removed = store.removeByProvider(AuthProtocol.OAuth2);
     expect(removed).toBe(2);
     expect(store.count()).toBe(1);
   });
 
   it('should cleanupExpired', () => {
-    store.add(makeTokenEntry({ token: { accessToken: 'a', refreshToken: null, scopes: [], expiresAt: Date.now() - 5000, tokenType: 'Bearer' } }));
-    store.add(makeTokenEntry({ token: { accessToken: 'b', refreshToken: null, scopes: [], expiresAt: Date.now() + 5000, tokenType: 'Bearer' } }));
+    store.add(makeTokenEntry({ token: { value: 'a', type: CredentialType.AccessToken, expiresAt: Date.now() - 5000, issuedAt: Date.now(), scopes: [] } }));
+    store.add(makeTokenEntry({ token: { value: 'b', type: CredentialType.AccessToken, expiresAt: Date.now() + 5000, issuedAt: Date.now(), scopes: [] } }));
     const cleaned = store.cleanupExpired();
     expect(cleaned).toBe(1);
     expect(store.count()).toBe(1);
@@ -740,10 +739,10 @@ describe('PersistentTokenStore', () => {
       { maxTokensPerProvider: 2, autoCleanupExpired: false, masterKey },
       storage as unknown as Storage,
     );
-    smallStore.add(makeTokenEntry({ provider: AuthProtocol.Bearer }));
-    smallStore.add(makeTokenEntry({ provider: AuthProtocol.Bearer }));
-    smallStore.add(makeTokenEntry({ provider: AuthProtocol.Bearer }));
-    expect(smallStore.getByProvider(AuthProtocol.Bearer)).toHaveLength(2);
+    smallStore.add(makeTokenEntry({ provider: AuthProtocol.OAuth2 }));
+    smallStore.add(makeTokenEntry({ provider: AuthProtocol.OAuth2 }));
+    smallStore.add(makeTokenEntry({ provider: AuthProtocol.OAuth2 }));
+    expect(smallStore.getByProvider(AuthProtocol.OAuth2)).toHaveLength(2);
   });
 
   it('should exportEncrypted and importEncrypted', () => {

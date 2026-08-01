@@ -243,7 +243,7 @@ class PrivilegeLevels {
           }
         } else {
           for (const [api, allowed] of Object.entries(custom)) {
-            base.set(api as ApiSurface, allowed as boolean);
+            base.set(api as ApiSurface, Boolean(allowed));
           }
         }
       }

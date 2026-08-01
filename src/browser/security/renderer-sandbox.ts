@@ -100,7 +100,7 @@ interface CapabilityManifest {
 
 /** The scrubbed environment for the child process. */
 interface ScrubbedEnvironment {
-  readonly [key: string]: string | undefined;
+  [key: string]: string | undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

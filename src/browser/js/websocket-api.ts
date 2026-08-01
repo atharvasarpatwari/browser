@@ -59,7 +59,8 @@ function createEventObject(type: string, extra?: Record<string, JSValue>): JSObj
 
 function createMessageEvent(data: string | ArrayBuffer | ArrayBufferView, origin: string, lastEventId: string): JSObject {
   const e = createEventObject('message');
-  e.properties.set('data', { value: data, writable: false, enumerable: true, configurable: false });
+  const jsData: JSValue = typeof data === 'string' ? data : (data as JSValue);
+  e.properties.set('data', { value: jsData, writable: false, enumerable: true, configurable: false });
   e.properties.set('origin', { value: origin, writable: false, enumerable: true, configurable: false });
   e.properties.set('lastEventId', { value: lastEventId, writable: false, enumerable: true, configurable: false });
   e.properties.set('source', { value: null, writable: false, enumerable: true, configurable: false });
@@ -89,6 +90,15 @@ interface PlatformWebSocket {
   set onmessage(handler: ((ev: any) => void) | null);
   set onerror(handler: ((ev: any) => void) | null);
   set onclose(handler: ((ev: any) => void) | null);
+}
+
+/** Internal per-instance state stashed on WebSocket JS objects. */
+interface WebSocketInternalState {
+  __wsEventHandlers?: Map<string, Set<JSFunction>>;
+  __wsNative?: PlatformWebSocket | null;
+  __wsState?: number;
+  __wsUrl?: string;
+  __wsProtocol?: string;
 }
 
 let platformWebSocketFactory: WebSocketFactory = (url, protocols) => {
@@ -139,7 +149,7 @@ export function createWebSocketClass(
   // ── addEventListener(type, fn) ─────────────────────────────────────────
   proto.properties.set('addEventListener', {
     value: createNativeFunction('addEventListener', (_this, args) => {
-      const wsObj = _this as JSObject;
+      const wsObj = _this as JSObject & WebSocketInternalState;
       const type = toString(args[0]);
       const fn = args[1];
       if (fn === undefined || fn === null) return undefined;
@@ -159,7 +169,7 @@ export function createWebSocketClass(
   // ── removeEventListener(type, fn) ──────────────────────────────────────
   proto.properties.set('removeEventListener', {
     value: createNativeFunction('removeEventListener', (_this, args) => {
-      const wsObj = _this as JSObject;
+      const wsObj = _this as JSObject & WebSocketInternalState;
       const type = toString(args[0]);
       const fn = args[1];
       const set = wsObj.__wsEventHandlers?.get(type);
@@ -172,7 +182,7 @@ export function createWebSocketClass(
   // ── send(data) ──────────────────────────────────────────────────────────
   proto.properties.set('send', {
     value: createNativeFunction('send', (_this, args) => {
-      const wsObj = _this as JSObject;
+      const wsObj = _this as JSObject & WebSocketInternalState;
       const native = wsObj.__wsNative as PlatformWebSocket | undefined;
       const state = wsObj.__wsState as number | undefined;
 
@@ -198,14 +208,14 @@ export function createWebSocketClass(
           if (typeOverride === 'arraybuffer') {
             const buf = jsObj.properties.get('__buffer')?.value;
             if (buf !== undefined) {
-              formattedData = buf as ArrayBufferLike;
+              formattedData = buf as unknown as ArrayBufferLike;
             } else {
               formattedData = String(data);
             }
           } else if (TYPED_ARRAY_TYPES.has(typeOverride)) {
             const buf = jsObj.properties.get('__buffer')?.value;
             if (buf !== undefined) {
-              formattedData = buf as ArrayBufferLike;
+              formattedData = buf as unknown as ArrayBufferLike;
             } else {
               formattedData = String(data);
             }
@@ -237,7 +247,7 @@ export function createWebSocketClass(
   // ── close([code[, reason]]) ─────────────────────────────────────────────
   proto.properties.set('close', {
     value: createNativeFunction('close', (_this, args) => {
-      const wsObj = _this as JSObject;
+      const wsObj = _this as JSObject & WebSocketInternalState;
       const native = wsObj.__wsNative as PlatformWebSocket | undefined;
       const state = wsObj.__wsState as number | undefined;
 
@@ -348,7 +358,7 @@ export function createWebSocketClass(
     }
 
     // Create the JS object
-    const wsObj = createObject(proto);
+    const wsObj = createObject(proto) as JSObject & WebSocketInternalState;
     wsObj.__wsNative = null;
     wsObj.__wsState = CONNECTING;
     wsObj.__wsEventHandlers = new Map<string, Set<JSFunction>>();
@@ -466,7 +476,7 @@ export function createWebSocketClass(
 
 // ── Event Emitter ─────────────────────────────────────────────────────────────
 
-function emitEvent(wsObj: JSObject, type: string, eventObj: JSObject): void {
+function emitEvent(wsObj: JSObject & WebSocketInternalState, type: string, eventObj: JSObject): void {
   // Fire the onX handler property
   const handlerProp = wsObj.properties.get(`on${type}`);
   if (handlerProp && handlerProp.value !== null && handlerProp.value !== undefined) {

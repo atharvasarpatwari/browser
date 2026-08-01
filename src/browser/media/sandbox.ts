@@ -1,6 +1,4 @@
 import type { IDisposable } from '../../app/dependency-container';
-import { SandboxManager } from '../security/sandbox-manager';
-import { SandboxEnforcer } from '../security/sandbox-enforcer';
 
 interface ISandboxService extends IDisposable {
   setFlags(origin: string, flags: string[]): void;
@@ -36,11 +34,9 @@ const SANDBOX_FLAGS = [
 
 class SandboxService implements ISandboxService {
   private _flags = new Map<string, Set<string>>();
-  private _enforcer: SandboxEnforcer;
   private _handlers = new Set<SandboxEventHandler>();
 
   constructor() {
-    this._enforcer = new SandboxEnforcer();
   }
 
   setFlags(origin: string, flags: string[]): void {
@@ -104,7 +100,6 @@ class SandboxService implements ISandboxService {
   dispose(): void {
     this._handlers.clear();
     this._flags.clear();
-    this._enforcer.dispose();
   }
 }
 

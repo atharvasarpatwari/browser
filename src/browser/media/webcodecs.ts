@@ -284,7 +284,7 @@ class AudioDataImpl implements AudioData {
   close(): void { this._closed = true; }
 }
 
-abstract class CodecBase<TEvent, THandler extends (...args: unknown[]) => void> implements IDisposable {
+abstract class CodecBase<TEvent, THandler extends (...args: never[]) => void> implements IDisposable {
   protected _state: CodecState = 'unconfigured';
   protected _queueSize = 0;
   protected handlers = new Set<THandler>();

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { HtmlSanitizer, sanitizeHtmlTree } from '../src/browser/security/html-sanitizer';
 import { CspGuardAdapter } from '../src/browser/security/csp-guard-adapter';
 import { createCspEnforcement } from '../src/browser/security/csp-enforcement';
@@ -7,6 +7,7 @@ import { CspNavigationGuard } from '../src/browser/security/csp-navigation-guard
 import { CspResourceEnforcer } from '../src/browser/security/csp-resource-enforcer';
 import { CspScriptEnforcer } from '../src/browser/security/csp-script-enforcer';
 import { BLOCKED_PROTOCOLS } from '../src/browser/navigation/url-parser';
+import { NavigationType } from '../src/browser/navigation/navigation-controller';
 import { DomTree } from '../src/browser/rendering/dom-tree';
 import { Lexer } from '../src/browser/js/lexer';
 import { Parser } from '../src/browser/js/parser';
@@ -16,7 +17,7 @@ import { createFetchFn, createHeadersClass } from '../src/browser/js/fetch-api';
 import { HtmlParser } from '../src/browser/rendering/html-parser';
 import { createObject, createNativeFunction, Environment } from '../src/browser/js/values';
 
-// ─── HTML Sanitizer ──────────────────────────────────────────────────────
+// â”€â”€â”€ HTML Sanitizer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('HtmlSanitizer', () => {
   let domTree: DomTree;
@@ -231,7 +232,7 @@ describe('HtmlSanitizer', () => {
   });
 });
 
-// ─── CSP Guard Adapter ───────────────────────────────────────────────────
+// â”€â”€â”€ CSP Guard Adapter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('CspGuardAdapter', () => {
   it('should have name "csp"', () => {
@@ -247,7 +248,7 @@ describe('CspGuardAdapter', () => {
     const adapter = new CspGuardAdapter(guard);
     const result = await adapter.canNavigate({
       url: 'https://example.com',
-      type: 'push',
+      type: NavigationType.Push,
       userInitiated: true,
     });
     expect(result).toBe(true);
@@ -260,7 +261,7 @@ describe('CspGuardAdapter', () => {
     const adapter = new CspGuardAdapter(guard);
     const result = await adapter.canNavigate({
       url: 'https://evil.com/steal',
-      type: 'push',
+      type: NavigationType.Push,
       referrer: 'https://example.com',
       userInitiated: true,
     });
@@ -274,7 +275,7 @@ describe('CspGuardAdapter', () => {
     const adapter = new CspGuardAdapter(guard);
     const reason = adapter.blockedReason({
       url: 'https://evil.com/page',
-      type: 'push',
+      type: NavigationType.Push,
       userInitiated: true,
     });
     expect(typeof reason).toBe('string');
@@ -282,7 +283,7 @@ describe('CspGuardAdapter', () => {
   });
 });
 
-// ─── CSP Enforcement ─────────────────────────────────────────────────────
+// â”€â”€â”€ CSP Enforcement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('CspEnforcement', () => {
   it('should create all CSP components', () => {
@@ -323,7 +324,7 @@ describe('CspEnforcement', () => {
   });
 });
 
-// ─── CSP Resource Enforcer ───────────────────────────────────────────────
+// â”€â”€â”€ CSP Resource Enforcer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('CspResourceEnforcer', () => {
   let store: CspPolicyStore;
@@ -358,7 +359,7 @@ describe('CspResourceEnforcer', () => {
   });
 });
 
-// ─── CSP Script Enforcer ─────────────────────────────────────────────────
+// â”€â”€â”€ CSP Script Enforcer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('CspScriptEnforcer', () => {
   let store: CspPolicyStore;
@@ -399,7 +400,7 @@ describe('CspScriptEnforcer', () => {
   });
 });
 
-// ─── URL Parser data: blocking ───────────────────────────────────────────
+// â”€â”€â”€ URL Parser data: blocking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('URL Parser data: blocking', () => {
   it('should block javascript: protocol', () => {
@@ -415,7 +416,7 @@ describe('URL Parser data: blocking', () => {
   });
 });
 
-// ─── Fetch API scheme blocking ───────────────────────────────────────────
+// â”€â”€â”€ Fetch API scheme blocking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Fetch API scheme blocking', () => {
   it('should reject fetch to javascript: URLs', () => {
@@ -470,7 +471,7 @@ describe('Fetch API scheme blocking', () => {
   });
 });
 
-// ─── Header sanitization ─────────────────────────────────────────────────
+// â”€â”€â”€ Header sanitization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Header sanitization', () => {
   it('should block Host header in Headers.set()', () => {
@@ -548,7 +549,7 @@ describe('Header sanitization', () => {
   });
 });
 
-// ─── Interpreter execution timeout ───────────────────────────────────────
+// â”€â”€â”€ Interpreter execution timeout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Interpreter execution timeout', () => {
   it('should timeout on infinite loop', () => {

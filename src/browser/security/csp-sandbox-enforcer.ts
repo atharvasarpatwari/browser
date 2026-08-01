@@ -166,7 +166,7 @@ class CspSandboxEnforcer {
     for (const flag of policy.sandboxFlags) {
       const mapping = SANDBOX_MAPPINGS.find(m => m.token === flag);
       if (mapping) {
-        (permissions as Record<string, boolean>)[mapping.permission] = true;
+        permissions[mapping.permission] = true;
         activeFlags.push(flag);
       }
     }

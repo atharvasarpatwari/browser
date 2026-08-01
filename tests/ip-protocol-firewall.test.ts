@@ -317,7 +317,7 @@ describe('CachingDNSResolver', () => {
 
   beforeEach(() => {
     mockResolve = vi.fn();
-    upstream = { resolve: mockResolve };
+    upstream = { resolve: mockResolve as DNSResolverBackend['resolve'] };
     resolver = new CachingDNSResolver(upstream, { negativeCacheTtlSeconds: 60 });
   });
 

@@ -28,7 +28,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import type { IDisposable } from '../../../app/dependency-container';
+import type { IDisposable } from '../../app/dependency-container';
 import type { PrivilegeLevel, ApiSurface } from './privilege-levels';
 import { PrivilegeLevels } from './privilege-levels';
 import type { ISandboxManager, SandboxPermissions } from './sandbox-manager';

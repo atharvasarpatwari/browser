@@ -135,7 +135,7 @@ export class JITManager {
 
     const startTime = Date.now();
     try {
-      const exports = profile.wasmInstance.exports as Record<string, WebAssembly.Export>;
+      const exports = profile.wasmInstance.exports as Record<string, unknown>;
       const mainFn = exports['main'] as ((argc: number) => bigint) | undefined;
       if (!mainFn) return undefined;
 
@@ -277,7 +277,7 @@ export class JITManager {
    */
   private async compileAsync(fn: BytecodeFunction, profile: ProfileData, wasmBytes: Uint8Array): Promise<void> {
     try {
-      const module = await WebAssembly.compile(wasmBytes);
+      const module = await WebAssembly.compile(wasmBytes as unknown as BufferSource);
       profile.compiledModule = { module, fn };
 
       // Create host environment
@@ -301,7 +301,7 @@ export class JITManager {
    */
   private createHostEnv(profile: ProfileData): HostEnv {
     return {
-      constants: profile.fn.constants,
+      constants: profile.compiledModule!.fn.constants,
       getStackValue: (_sp: number) => undefined,
       setStackValue: (_sp: number, _val: unknown) => {},
       loadGlobal: (_nameIdx: number) => undefined,

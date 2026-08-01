@@ -11,14 +11,14 @@ import {
   type InlineLevelBox,
 } from '../src/browser/rendering/formatting/index';
 import { FloatContext } from '../src/browser/rendering/formatting/float-context';
-import type { DomNode, DomElement } from '../src/browser/rendering/dom-tree';
+import type { DomNode, DomElement, DomTextNode } from '../src/browser/rendering/dom-tree';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-function textNode(text: string): DomNode {
-  return { domId: `t-${text}`, nodeType: 'text' as const, parent: null, children: [], text, _dirtyLayout: true, _dirtyPaint: true };
+function textNode(text: string): DomTextNode {
+  return { domId: `t-${text}`, nodeType: 'text' as const, parent: null, children: [], text, _dirtyStyle: true, _dirtyLayout: true, _dirtyPaint: true };
 }
 
 function elem(tagName: string, display?: string): DomElement {
@@ -37,6 +37,9 @@ function elem(tagName: string, display?: string): DomElement {
     naturalWidth: 0,
     naturalHeight: 0,
     loadingState: 'none',
+    usedStyle: null,
+    willChange: null,
+    _dirtyStyle: true,
     _dirtyLayout: true,
     _dirtyPaint: true,
   };
@@ -197,7 +200,7 @@ describe('classifyChildren', () => {
   });
 
   it('should skip non-element, non-text nodes', () => {
-    const comment = { domId: 'c1', nodeType: 'comment' as const, parent: null, children: [], text: '', _dirtyLayout: true, _dirtyPaint: true };
+    const comment = { domId: 'c1', nodeType: 'comment' as const, parent: null, children: [], text: '', _dirtyStyle: true, _dirtyLayout: true, _dirtyPaint: true };
     const children: DomNode[] = [comment, elem('div', 'block')];
     const groups = classifyChildren(children);
     expect(groups.length).toBe(1);

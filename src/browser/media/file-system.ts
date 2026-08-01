@@ -75,7 +75,7 @@ class InMemoryFileHandle implements FileHandle {
   }
 
   async getFile(): Promise<File> {
-    return new File([this._content], this.name);
+    return new File([this._content as unknown as BlobPart], this.name);
   }
 
   async createWritable(_options?: FileWritableOptions): Promise<WritableStream> {

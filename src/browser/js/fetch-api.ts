@@ -272,7 +272,7 @@ function buildResponseInstance(eventLoop: EventLoop, internal: ResponseInternal)
     value: createNativeFunction('json', () => {
       if (internal.bodyUsed) {
         const p = createWiredPromise(eventLoop);
-        rejectPromise(p, new TypeError('Body already used'));
+        rejectPromise(p, 'TypeError: Body already used');
         return p;
       }
       internal.bodyUsed = true;
@@ -294,7 +294,7 @@ function buildResponseInstance(eventLoop: EventLoop, internal: ResponseInternal)
     value: createNativeFunction('text', () => {
       if (internal.bodyUsed) {
         const p = createWiredPromise(eventLoop);
-        rejectPromise(p, new TypeError('Body already used'));
+        rejectPromise(p, 'TypeError: Body already used');
         return p;
       }
       internal.bodyUsed = true;
@@ -309,7 +309,7 @@ function buildResponseInstance(eventLoop: EventLoop, internal: ResponseInternal)
     value: createNativeFunction('blob', () => {
       if (internal.bodyUsed) {
         const p = createWiredPromise(eventLoop);
-        rejectPromise(p, new TypeError('Body already used'));
+        rejectPromise(p, 'TypeError: Body already used');
         return p;
       }
       internal.bodyUsed = true;
@@ -324,7 +324,7 @@ function buildResponseInstance(eventLoop: EventLoop, internal: ResponseInternal)
     value: createNativeFunction('arrayBuffer', () => {
       if (internal.bodyUsed) {
         const p = createWiredPromise(eventLoop);
-        rejectPromise(p, new TypeError('Body already used'));
+        rejectPromise(p, 'TypeError: Body already used');
         return p;
       }
       internal.bodyUsed = true;
@@ -427,7 +427,7 @@ export function createResponseClass(eventLoop: EventLoop): JSObject {
         body: '', status, statusText: '', headers: { map: new Map() },
         url, redirected: false, type: 'default', bodyUsed: false,
       };
-      return buildResponseInstance(_eventLoop, internal);
+      return buildResponseInstance(eventLoop, internal);
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -466,7 +466,7 @@ function buildRequestInstance(eventLoop: EventLoop, internal: RequestInternal): 
     value: createNativeFunction('json', () => {
       if (internal.bodyUsed) {
         const p = createWiredPromise(eventLoop);
-        rejectPromise(p, new TypeError('Body already used'));
+        rejectPromise(p, 'TypeError: Body already used');
         return p;
       }
       internal.bodyUsed = true;
@@ -485,7 +485,7 @@ function buildRequestInstance(eventLoop: EventLoop, internal: RequestInternal): 
     value: createNativeFunction('text', () => {
       if (internal.bodyUsed) {
         const p = createWiredPromise(eventLoop);
-        rejectPromise(p, new TypeError('Body already used'));
+        rejectPromise(p, 'TypeError: Body already used');
         return p;
       }
       internal.bodyUsed = true;
@@ -554,11 +554,9 @@ export function createRequestClass(eventLoop: EventLoop): JSObject {
   return ctor;
 }
 
-// DOMException shim (simplified)
-function createDOMException(message: string, name: string): Error {
-  const err = new Error(message);
-  (err as any).name = name;
-  return err;
+// DOMException shim (simplified) — the runtime represents exceptions as strings
+function createDOMException(message: string, name: string): string {
+  return `${name}: ${message}`;
 }
 
 // ── AbortController / AbortSignal ────────────────────────────────────────────
@@ -873,10 +871,14 @@ export function createFetchFn(
             };
             try {
               corsEngine.checkResponse(corsReq, {
+                url: res.url ?? url,
                 statusCode: res.status ?? 200,
                 statusText: res.statusText ?? 'OK',
                 headers: new Map(Object.entries(resHeaders.map).map(([k, v]) => [k, v])) as Map<string, string>,
                 body: '',
+                bodyBinary: null,
+                redirected: res.redirected ?? false,
+                redirectChain: [],
               });
             } catch {
               // CORS violation — make response opaque

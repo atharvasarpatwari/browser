@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { CssTokenizer, tokenizeCss, tokenizeCssClean } from '../src/browser/rendering/css5/tokenizer';
 import { CssTokenType } from '../src/browser/rendering/css5/types';
+import type { CssPseudoClassSelector } from '../src/browser/rendering/css5/types';
 import { CssParser } from '../src/browser/rendering/css5/parser';
 import type { CssSelector, CssCompoundSelector } from '../src/browser/rendering/css5/types';
 import { matchesSelector } from '../src/browser/rendering/css5/selector';
@@ -395,9 +396,9 @@ describe('CSS5 Parser — Multiple Pseudo-Classes (Bug #4 fix)', () => {
     if (sel?.type === 'compound') {
       expect(sel.pseudoClasses.length).toBe(2);
       expect(sel.pseudoClasses[0]!.type).toBe('dynamic');
-      expect(sel.pseudoClasses[0]!.name).toBe('hover');
+      expect((sel.pseudoClasses[0] as Extract<CssPseudoClassSelector, { type: 'dynamic' }>).name).toBe('hover');
       expect(sel.pseudoClasses[1]!.type).toBe('dynamic');
-      expect(sel.pseudoClasses[1]!.name).toBe('focus');
+      expect((sel.pseudoClasses[1] as Extract<CssPseudoClassSelector, { type: 'dynamic' }>).name).toBe('focus');
     }
   });
 

@@ -277,6 +277,9 @@ function compoundToString(sel: CssCompoundSelector): string {
     } else if (pc.type === 'structural') {
       result += `:${pc.name}`;
       if (pc.value) result += `(${pc.value})`;
+    } else if (pc.type === 'where') {
+      const inner = pc.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
+      result += `:where(${inner})`;
     } else {
       result += `:${pc.name}`;
     }

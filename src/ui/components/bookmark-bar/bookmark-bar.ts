@@ -68,6 +68,7 @@ interface IBookmarkBar extends IDisposable {
   navigateUp(): Promise<void>;
   loadBookmarks(): Promise<void>;
   isBookmarked(url: string): Promise<boolean>;
+  setService(service: IBookmarkService): void;
   on(type: BookmarkBarEventType, handler: (event: BookmarkBarEventUnion) => void): void;
   off(type: BookmarkBarEventType, handler: (event: BookmarkBarEventUnion) => void): void;
 }

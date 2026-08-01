@@ -29,7 +29,7 @@ export interface StackingContext {
   /** The element that establishes this context. */
   readonly element: DomElement;
   /** Resolved z-index within the parent context. */
-  readonly zIndex: number;
+  zIndex: number;
   /** Child stacking contexts, sorted by (zIndex, DOM order). */
   readonly children: StackingContext[];
   /** Level 0: this element's own background/border commands (collected by paint engine). */

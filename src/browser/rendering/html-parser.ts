@@ -39,8 +39,9 @@
 
 import { Html5Tokenizer, type Token, type TokenKind } from './html5-tokenizer';
 import { TreeBuilder } from './html5/tree-builder';
-import { decodeBytes, type SniffOptions } from './html5/encoding';
+import { decodeBytes } from './html5/encoding';
 import { NodeType } from './html5/dom';
+import type { HtmlNode, HtmlElement, HtmlDocument, DiscoveredResource } from './html5/dom';
 import { VOID_ELEMENTS, RAW_TEXT_ELEMENTS } from './html5/constants';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -175,9 +176,6 @@ class HtmlParser implements IHtmlParser {
     const start = Date.now();
     const { text, charset, source } = decodeBytes(data, options);
 
-    const sniffOptions: SniffOptions = options
-      ? { contentType: options.contentType, url: options.url }
-      : undefined;
     const tokens = this.tokenizer.tokenize(text);
     const { document, resources } = this.treeBuilder.build(tokens, options?.url ?? '');
 

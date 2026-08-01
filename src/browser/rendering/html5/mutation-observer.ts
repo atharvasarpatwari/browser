@@ -92,9 +92,9 @@ let microtaskScheduled = false;
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class MutationObserver {
-  private _callback: MutationCallback;
+  _callback: MutationCallback;
   private _records: MutationRecord[] = [];
-  private _disconnected = false;
+  _disconnected = false;
 
   constructor(callback: MutationCallback) {
     this._callback = callback;

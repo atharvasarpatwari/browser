@@ -9,7 +9,7 @@ import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction } from './values';
+import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction } from './values';
 import type { JSValue, JSObject } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
 import {
@@ -1827,7 +1827,7 @@ export function createGlobalEnv(
             eObj.properties.set('time', { value: entry.time, writable: false, enumerable: true, configurable: false });
             return eObj;
           }));
-          callJSFunction(callback, ioObj, [entryArr, ioObj]);
+          callJSFunction(callback as JSFunction, ioObj, [entryArr, ioObj]);
         }
       },
       { rootMargin, threshold },
@@ -1895,10 +1895,10 @@ export function createGlobalEnv(
   });
 
   // document.createTreeWalker()
-  docBinding.properties.set('createTreeWalker', createTreeWalkerObject());
+  docBinding.properties.set('createTreeWalker', { value: createTreeWalkerObject(), writable: true, enumerable: true, configurable: true });
 
   // document.createNodeIterator()
-  docBinding.properties.set('createNodeIterator', createNodeIteratorObject());
+  docBinding.properties.set('createNodeIterator', { value: createNodeIteratorObject(), writable: true, enumerable: true, configurable: true });
 
   // document.elementFromPoint / elementsFromPoint
   docBinding.properties.set('elementFromPoint', {

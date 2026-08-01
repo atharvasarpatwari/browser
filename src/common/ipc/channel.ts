@@ -28,7 +28,7 @@ import type { IDisposable } from '../../app/dependency-container';
 import type { ITransport } from './transport';
 import type { ISerializer } from './serializer';
 import { JSONSerializer } from './serializer';
-import type { IPCMessage, IFireAndForgetMessage, IRequestMessage, IResponseMessage, IStreamChunkMessage, IStreamRequestMessage } from './message';
+import type { IPCMessage, IFireAndForgetMessage, IRequestMessage, IResponseMessage, IStreamChunkMessage, IStreamRequestMessage, MessageDirection } from './message';
 import {
   isFireAndForget,
   isRequest,
@@ -68,7 +68,7 @@ interface ChannelConfig {
   /** The channel name. */
   readonly name: string;
   /** The direction of messages sent by this channel (e.g., 'main-to-renderer'). */
-  readonly direction: string;
+  readonly direction: MessageDirection;
   /** Maximum pending requests (0 = unlimited). */
   readonly maxPendingRequests: number;
   /** Default timeout for requests on this channel. */

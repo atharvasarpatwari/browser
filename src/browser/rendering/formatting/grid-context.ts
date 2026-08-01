@@ -485,7 +485,7 @@ export class GridFormattingContext {
    * The engine will call layoutNode then reposition the box to this exact position.
    */
   private computeItemPositions(): void {
-    const { columnGap, rowGap, justifyContent, alignItems, justifyItems } = this.options;
+    const { columnGap, rowGap, alignItems, justifyItems } = this.options;
 
     // Compute column offsets (track start positions)
     const colOffsets: number[] = [];
@@ -607,7 +607,7 @@ export class GridFormattingContext {
    * Call this after layoutNode has run for all items.
    */
   recomputeAlignmentForAutoSize(): void {
-    const { columnGap, rowGap, justifyContent, alignItems, justifyItems } = this.options;
+    const { columnGap, rowGap, alignItems, justifyItems } = this.options;
 
     const colOffsets: number[] = [];
     let cx = 0;

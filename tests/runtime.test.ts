@@ -54,8 +54,8 @@ describe('CallStackService', () => {
   });
 
   it('getStackTrace formats frames', () => {
-    service.push({ functionName: 'inner', fileName: 'test.ts', lineNumber: 10 });
-    service.push({ functionName: 'outer', fileName: 'test.ts', lineNumber: 20 });
+    service.push({ functionName: 'inner', fileName: 'test.ts', lineNumber: 10, timestamp: 1 });
+    service.push({ functionName: 'outer', fileName: 'test.ts', lineNumber: 20, timestamp: 2 });
     const trace = service.getStackTrace();
     expect(trace).toContain('inner');
     expect(trace).toContain('outer');

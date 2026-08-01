@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 import {
   TabContext,
   TabContextManager,
   TabContextState,
 } from '../src/browser/engine/tab-context';
+import type { TabContextBusEvent } from '../src/browser/engine/tab-context';
 import {
   TabProcessManager,
 } from '../src/browser/engine/tab-process-adapter';
@@ -16,6 +17,7 @@ import {
   DuplicatePhaseError,
   DEFAULT_RECOVERY_CONFIG,
 } from '../src/browser/engine/lifecycle-manager';
+import type { LifecycleEvent } from '../src/browser/engine/lifecycle-manager';
 import {
   ErrorBoundary,
   ChainedErrorBoundary,
@@ -31,15 +33,16 @@ import {
 import {
   ProcessGuard,
 } from '../src/browser/engine/process-guard';
+import { DEFAULT_PROCESS_MODEL } from '../src/app/config/process-model';
 import type {
   IProcessManager,
   ProcessBusEvent,
 } from '../src/common/ipc/process-manager';
 import { ProcessState } from '../src/common/ipc/process-manager';
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // HELPERS
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function createMockProcessManager(): IProcessManager & {
   emitCrash: (processId: string, error: Error) => void;
@@ -147,12 +150,14 @@ function createMockAppConfig() {
     maxTabs: 20,
     homePage: 'about:blank',
     userAgent: 'TestBrowser/1.0',
+    browserName: 'Test Browser',
+    processModel: DEFAULT_PROCESS_MODEL,
   };
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 1. TAB PROCESS MANAGER ADAPTER
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('TabProcessManager (adapter integration)', () => {
   let mockPM: ReturnType<typeof createMockProcessManager>;
@@ -243,9 +248,9 @@ describe('TabProcessManager (adapter integration)', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// 2. LIFECYCLE MANAGER — STATE MACHINE
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// 2. LIFECYCLE MANAGER â€” STATE MACHINE
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('LifecycleManager state machine', () => {
   let engine: ReturnType<typeof createMockBrowserEngine>;
@@ -266,7 +271,7 @@ describe('LifecycleManager state machine', () => {
     expect(lm.state).toBe(LifecycleState.Idle);
   });
 
-  it('transitions Idle → Starting → Running on start()', async () => {
+  it('transitions Idle â†’ Starting â†’ Running on start()', async () => {
     await lm.start();
     expect(lm.state).toBe(LifecycleState.Running);
   });
@@ -277,7 +282,7 @@ describe('LifecycleManager state machine', () => {
     expect(lm.state).toBe(LifecycleState.Running);
   });
 
-  it('transitions Running → Stopping → Stopped on stop()', async () => {
+  it('transitions Running â†’ Stopping â†’ Stopped on stop()', async () => {
     await lm.start();
     await lm.stop();
     expect(lm.state).toBe(LifecycleState.Stopped);
@@ -292,7 +297,7 @@ describe('LifecycleManager state machine', () => {
 
   it('throws LifecycleStateError when starting from Running (non-idempotent path)', async () => {
     await lm.start();
-    // Running → start is idempotent, but Running → suspend then start from Suspended is not
+    // Running â†’ start is idempotent, but Running â†’ suspend then start from Suspended is not
     await lm.suspend();
     // Now suspended, calling start directly should throw (must use resume)
     await expect(lm.start()).rejects.toThrow(LifecycleStateError);
@@ -302,20 +307,20 @@ describe('LifecycleManager state machine', () => {
     await expect(lm.suspend()).rejects.toThrow(LifecycleStateError);
   });
 
-  it('transitions Running → Suspending → Suspended', async () => {
+  it('transitions Running â†’ Suspending â†’ Suspended', async () => {
     await lm.start();
     await lm.suspend();
     expect(lm.state).toBe(LifecycleState.Suspended);
   });
 
-  it('transitions Suspended → Starting → Running via resume()', async () => {
+  it('transitions Suspended â†’ Starting â†’ Running via resume()', async () => {
     await lm.start();
     await lm.suspend();
     await lm.resume();
     expect(lm.state).toBe(LifecycleState.Running);
   });
 
-  it('restart() goes Running → Stopped → Running', async () => {
+  it('restart() goes Running â†’ Stopped â†’ Running', async () => {
     await lm.start();
     await lm.restart();
     expect(lm.state).toBe(LifecycleState.Running);
@@ -335,9 +340,9 @@ describe('LifecycleManager state machine', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// 3. LIFECYCLE MANAGER — PHASE REGISTRY
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// 3. LIFECYCLE MANAGER â€” PHASE REGISTRY
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('LifecycleManager phase registry', () => {
   let engine: ReturnType<typeof createMockBrowserEngine>;
@@ -398,14 +403,14 @@ describe('LifecycleManager phase registry', () => {
       order: 200,
       timeoutMs: 1_000,
       critical: false,
-      startup: async () => order.push('second'),
+      startup: async () => { order.push('second'); },
     });
     lm.registerPhase({
       name: 'first',
       order: 100,
       timeoutMs: 1_000,
       critical: false,
-      startup: async () => order.push('first'),
+      startup: async () => { order.push('first'); },
     });
     await lm.start();
     expect(order).toEqual(['first', 'second']);
@@ -443,7 +448,7 @@ describe('LifecycleManager phase registry', () => {
       timeoutMs: 1_000,
       critical: false,
       startup: async () => {},
-      shutdown: async () => order.push('early-shutdown'),
+      shutdown: async () => { order.push('early-shutdown'); },
     });
     lm.registerPhase({
       name: 'late',
@@ -451,7 +456,7 @@ describe('LifecycleManager phase registry', () => {
       timeoutMs: 1_000,
       critical: false,
       startup: async () => {},
-      shutdown: async () => order.push('late-shutdown'),
+      shutdown: async () => { order.push('late-shutdown'); },
     });
     await lm.start();
     await lm.stop();
@@ -459,9 +464,9 @@ describe('LifecycleManager phase registry', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// 4. LIFECYCLE MANAGER — CRASH RECOVERY
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// 4. LIFECYCLE MANAGER â€” CRASH RECOVERY
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('LifecycleManager crash recovery', () => {
   let engine: ReturnType<typeof createMockBrowserEngine>;
@@ -585,9 +590,9 @@ describe('LifecycleManager crash recovery', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// 5. LIFECYCLE MANAGER — OBSERVERS & EVENTS
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// 5. LIFECYCLE MANAGER â€” OBSERVERS & EVENTS
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('LifecycleManager observers and events', () => {
   let engine: ReturnType<typeof createMockBrowserEngine>;
@@ -608,8 +613,8 @@ describe('LifecycleManager observers and events', () => {
     const calls: string[] = [];
     lm.addObserver({
       name: 'test-observer',
-      onBeforeStart: async () => calls.push('beforeStart'),
-      onAfterStart: async () => calls.push('afterStart'),
+      onBeforeStart: async () => { calls.push('beforeStart'); },
+      onAfterStart: async () => { calls.push('afterStart'); },
     });
     await lm.start();
     expect(calls).toEqual(['beforeStart', 'afterStart']);
@@ -619,8 +624,8 @@ describe('LifecycleManager observers and events', () => {
     const calls: string[] = [];
     lm.addObserver({
       name: 'test-observer',
-      onBeforeStop: async () => calls.push('beforeStop'),
-      onAfterStop: async () => calls.push('afterStop'),
+      onBeforeStop: async () => { calls.push('beforeStop'); },
+      onAfterStop: async () => { calls.push('afterStop'); },
     });
     await lm.start();
     await lm.stop();
@@ -649,8 +654,8 @@ describe('LifecycleManager observers and events', () => {
     const calls: string[] = [];
     lm.addObserver({
       name: 'suspend-observer',
-      onSuspend: async () => calls.push('suspend'),
-      onResume: async () => calls.push('resume'),
+      onSuspend: async () => { calls.push('suspend'); },
+      onResume: async () => { calls.push('resume'); },
     });
     await lm.start();
     await lm.suspend();
@@ -662,7 +667,7 @@ describe('LifecycleManager observers and events', () => {
     const calls: string[] = [];
     const obs = {
       name: 'removable',
-      onBeforeStart: async () => calls.push('start'),
+      onBeforeStart: async () => { calls.push('start'); },
     };
     lm.addObserver(obs);
     lm.removeObserver(obs);
@@ -673,11 +678,12 @@ describe('LifecycleManager observers and events', () => {
   it('emits stateChanged events', async () => {
     const transitions: string[] = [];
     lm.on('stateChanged', (e) => {
-      transitions.push(`${e.from}→${e.to}`);
+      const ev = e as Extract<LifecycleEvent, { kind: 'stateChanged' }>;
+      transitions.push(`${ev.from}â†’${ev.to}`);
     });
     await lm.start();
-    expect(transitions).toContain('idle→starting');
-    expect(transitions).toContain('starting→running');
+    expect(transitions).toContain('idleâ†’starting');
+    expect(transitions).toContain('startingâ†’running');
   });
 
   it('emits crashed event', async () => {
@@ -695,9 +701,9 @@ describe('LifecycleManager observers and events', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// 6. LIFECYCLE MANAGER — PHASE TIMEOUT
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// 6. LIFECYCLE MANAGER â€” PHASE TIMEOUT
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('LifecycleManager phase timeout', () => {
   let engine: ReturnType<typeof createMockBrowserEngine>;
@@ -743,9 +749,9 @@ describe('LifecycleManager phase timeout', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 7. INTEGRATION: MULTI-TAB CRASH ISOLATION
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Multi-tab crash isolation', () => {
   let manager: TabContextManager;
@@ -819,9 +825,9 @@ describe('Multi-tab crash isolation', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 8. INTEGRATION: ERROR BOUNDARY + TAB OPERATIONS
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('ErrorBoundary wrapping tab operations', () => {
   it('catches error in tab operation with fail-fast', () => {
@@ -912,9 +918,9 @@ describe('ErrorBoundary wrapping tab operations', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 9. INTEGRATION: SCRIPT GUARD + TAB OPERATIONS
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('ScriptGuard protecting tab execution', () => {
   it('allows fast scripts to complete', async () => {
@@ -997,9 +1003,9 @@ describe('ScriptGuard protecting tab execution', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 10. INTEGRATION: PROCESS GUARD + CRASH REPORTER
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('ProcessGuard feeding CrashReporter', () => {
   let guard: ProcessGuard;
@@ -1150,9 +1156,9 @@ describe('ProcessGuard feeding CrashReporter', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 11. INTEGRATION: CHAINED ERROR BOUNDARY FOR TAB PIPELINE
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('ChainedErrorBoundary for rendering pipeline', () => {
   it('first boundary handles transient error via retry', () => {
@@ -1211,15 +1217,15 @@ describe('ChainedErrorBoundary for rendering pipeline', () => {
     chain.exec(() => { throw new Error('err1'); });
     chain.exec(() => { throw new Error('err2'); });
 
-    // Each call passes through both boundaries (b1 tries then b2 tries), so 2 calls × 2 boundaries = 4 errors
+    // Each call passes through both boundaries (b1 tries then b2 tries), so 2 calls x 2 boundaries = 4 errors
     expect(chain.getErrorCount()).toBe(4);
     expect(chain.getErrorHistory()).toHaveLength(4);
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 12. INTEGRATION: TAB CONTEXT SNAPSHOT + RECOVERY
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('TabContext snapshot-based recovery', () => {
   it('saveSnapshot stores URL and title', () => {
@@ -1246,7 +1252,7 @@ describe('TabContext snapshot-based recovery', () => {
   it('snapshotSaved event fires', () => {
     const ctx = new TabContext();
     let savedUrl = '';
-    ctx.on('snapshotSaved', (e) => { savedUrl = e.url; });
+    ctx.on('snapshotSaved', (e) => { savedUrl = (e as Extract<TabContextBusEvent, { kind: 'snapshotSaved' }>).url; });
     ctx.saveSnapshot('https://saved.com', 'Saved');
     expect(savedUrl).toBe('https://saved.com');
   });
@@ -1260,9 +1266,9 @@ describe('TabContext snapshot-based recovery', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 13. INTEGRATION: CRASH REPORT BUILDER FLUENT API
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('CrashReportBuilder fluent API', () => {
   it('builds a complete report', () => {
@@ -1330,11 +1336,11 @@ describe('CrashReportBuilder fluent API', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 14. INTEGRATION: TAB PROCESS MANAGER CRASH RECOVERY FLOW
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-describe('TabProcessManager crash → recovery flow', () => {
+describe('TabProcessManager crash â†’ recovery flow', () => {
   let mockPM: ReturnType<typeof createMockProcessManager>;
   let adapter: TabProcessManager;
 
@@ -1388,11 +1394,11 @@ describe('TabProcessManager crash → recovery flow', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// 15. INTEGRATION: LIFECYCLE MANAGER CRASH → REPORTER PIPELINE
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// 15. INTEGRATION: LIFECYCLE MANAGER CRASH â†’ REPORTER PIPELINE
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-describe('LifecycleManager crash → CrashReporter integration', () => {
+describe('LifecycleManager crash â†’ CrashReporter integration', () => {
   it('lifecycle crash events can feed into CrashReporter', async () => {
     const engine = createMockBrowserEngine();
     const config = createMockAppConfig();
@@ -1431,9 +1437,9 @@ describe('LifecycleManager crash → CrashReporter integration', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // 16. EDGE CASES
-// ═════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Edge cases', () => {
   it('TabContext crash with all phase types', () => {

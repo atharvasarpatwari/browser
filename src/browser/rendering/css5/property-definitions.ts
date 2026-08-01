@@ -192,7 +192,6 @@ const PROPERTIES: Record<string, PropertyDef> = {
 
   // ── Misc ───────────────────────────────────────────────────────────────
   'content':            { inherited: false, initialValue: 'normal' },
-  'cursor':             { inherited: true,  initialValue: 'auto' },
   'resize':             { inherited: false, initialValue: 'none' },
   'outline-width':      { inherited: false, initialValue: 'medium' },
   'outline-style':      { inherited: false, initialValue: 'none' },
@@ -206,7 +205,6 @@ const PROPERTIES: Record<string, PropertyDef> = {
   // ── Multi-column ────────────────────────────────────────────────────
   'column-count':       { inherited: false, initialValue: 'auto' },
   'column-width':       { inherited: false, initialValue: 'auto' },
-  'column-gap':         { inherited: false, initialValue: 'normal' },
   'column-rule-width':  { inherited: false, initialValue: 'medium' },
   'column-rule-style':  { inherited: false, initialValue: 'none' },
   'column-rule-color':  { inherited: false, initialValue: 'currentcolor' },
@@ -326,6 +324,6 @@ export function getInheritedProperties(): readonly string[] {
 /**
  * Returns all property definitions.
  */
-export function getAllPropertyDefinitions(): ReadonlyRecord<string, PropertyDef> {
+export function getAllPropertyDefinitions(): Readonly<Record<string, PropertyDef>> {
   return PROPERTIES;
 }

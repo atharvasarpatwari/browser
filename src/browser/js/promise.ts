@@ -123,7 +123,7 @@ export function rejectPromise(promise: JSObject, reason: JSValue): void {
 
 function resolvePromise(promise: JSObject, x: JSValue, eventLoop: EventLoop): void {
   if (x === promise) {
-    rejectPromise(promise, new TypeError('Promise resolved with itself'));
+    rejectPromise(promise, 'TypeError: Promise resolved with itself');
     return;
   }
 
@@ -177,7 +177,7 @@ function resolvePromise(promise: JSObject, x: JSValue, eventLoop: EventLoop): vo
         }
       }
     } catch {
-      rejectPromise(promise, new TypeError('Error reading thenable'));
+      rejectPromise(promise, 'TypeError: Error reading thenable');
       return;
     }
 

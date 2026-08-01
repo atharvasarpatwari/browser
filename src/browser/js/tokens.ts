@@ -263,6 +263,7 @@ export function tokenTypeName(tt: TokenType): string {
     case TokenType.Comment: return 'Comment';
     case TokenType.Illegal: return 'Illegal';
   }
+  return 'Unknown';
 }
 
 const KEYWORDS: Record<string, TokenType> = {

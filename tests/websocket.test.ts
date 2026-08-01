@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { runJS, createGlobalEnv, createObject } from '../src/browser/js/index';
+import type { JSValue } from '../src/browser/js/values';
 import { EventLoop } from '../src/browser/js/event-loop';
 import { setPlatformWebSocketFactory } from '../src/browser/js/websocket-api';
 
@@ -48,7 +49,7 @@ class MockWebSocket {
     }, 0);
   }
 
-  send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+  send(data: string | ArrayBufferLike | ArrayBufferView): void {
     if (this.readyState !== MockWebSocket.OPEN) {
       throw new Error("The WebSocket is not open.");
     }
@@ -403,7 +404,7 @@ describe('WebSocket API', () => {
     const buf = new ArrayBuffer(4);
     const binaryObj = createObject(null);
     binaryObj.properties.set('__binaryData', { value: true, writable: false, enumerable: false, configurable: false });
-    binaryObj.properties.set('__buffer', { value: buf, writable: false, enumerable: false, configurable: false });
+    binaryObj.properties.set('__buffer', { value: buf as unknown as JSValue, writable: false, enumerable: false, configurable: false });
     mockWs!._simulateMessage(binaryObj);
     eventLoop.drainMicrotasks();
 
@@ -424,7 +425,7 @@ describe('WebSocket API', () => {
     const buf = new ArrayBuffer(4);
     const binaryObj = createObject(null);
     binaryObj.properties.set('__binaryData', { value: true, writable: false, enumerable: false, configurable: false });
-    binaryObj.properties.set('__buffer', { value: buf, writable: false, enumerable: false, configurable: false });
+    binaryObj.properties.set('__buffer', { value: buf as unknown as JSValue, writable: false, enumerable: false, configurable: false });
     mockWs!._simulateMessage(binaryObj);
     eventLoop.drainMicrotasks();
 

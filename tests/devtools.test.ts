@@ -9,9 +9,9 @@ import {
 } from "../src/browser/networking/devtools";
 import type {
   DOMNodeLike,
-  ConnectionTarget,
   BoxModel,
 } from "../src/browser/networking/devtools";
+import type { ConnectionTarget } from "../src/browser/networking/ip-protocol";
 import type { FirewallDecision } from "../src/browser/networking/firewall";
 import type { DNSRecord, ParsedIP } from "../src/browser/networking/ip-protocol";
 

@@ -69,10 +69,10 @@ describe('placeFloat', () => {
   it('accounts for margins in float placement', () => {
     const ctx = new FloatContext(0, 0, 800, 600);
     const box = makeBox(0, 0, 180, 80);
-    box.marginLeft = 10;
-    box.marginRight = 10;
-    box.marginTop = 5;
-    box.marginBottom = 5;
+    (box as { marginLeft: number }).marginLeft = 10;
+    (box as { marginRight: number }).marginRight = 10;
+    (box as { marginTop: number }).marginTop = 5;
+    (box as { marginBottom: number }).marginBottom = 5;
     const placed = ctx.placeFloat(box, 'left', 0);
     expect(placed).not.toBeNull();
     // Margin box width = 180 + 10 + 10 = 200

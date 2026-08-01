@@ -272,6 +272,11 @@ interface GPUQuerySet {
   readonly count: number;
 }
 
+interface GPUQuerySetDescriptor {
+  readonly type: 'occlusion' | 'timestamp';
+  readonly count: number;
+}
+
 interface GPUEvent {
   readonly kind: GPUEventKind;
   readonly data?: Record<string, unknown>;

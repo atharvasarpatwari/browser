@@ -96,7 +96,7 @@ class ScriptGuardError extends Error {
 
 interface IScriptGuard extends IDisposable {
   /** Execute a function with all limits enforced. */
-  exec<T>(fn: () => T): ScriptGuardResult<T>;
+  exec<T>(fn: () => T): Promise<ScriptGuardResult<T>>;
   /** Execute an async function with all limits enforced. */
   execAsync<T>(fn: () => Promise<T>): Promise<ScriptGuardResult<T>>;
   /** Increment the instruction counter (called by the interpreter). */
@@ -136,7 +136,7 @@ class ScriptGuard implements IScriptGuard {
     this.config = { ...DEFAULT_SCRIPT_GUARD_CONFIG, ...config };
   }
 
-  exec<T>(fn: () => T): ScriptGuardResult<T> {
+  async exec<T>(fn: () => T): Promise<ScriptGuardResult<T>> {
     if (!this.config.enabled) {
       const start = Date.now();
       try {

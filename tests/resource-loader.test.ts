@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ResourceLoader } from '../src/browser/networking/resource-loader';
 import { CacheManager } from '../src/browser/networking/cache-manager';
 import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from '../src/browser/networking/request-manager';
 import type { DiscoveredResource } from '../src/browser/rendering/html5/dom';
 
-// ── Mock HTTP client ────────────────────────────────────────────────────────
+// â”€â”€ Mock HTTP client â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function mockClient(responses: Record<string, { status?: number; body?: string; headers?: Record<string, string> }> = {}): IHttpClient {
   return {
@@ -12,18 +12,22 @@ function mockClient(responses: Record<string, { status?: number; body?: string; 
       const url = spec.url;
       const resp = responses[url] ?? { status: 200, body: '', headers: {} };
       return {
+        url,
         statusCode: resp.status ?? 200,
+        statusText: 'OK',
         body: resp.body ?? '',
+        bodyBinary: null,
         headers: new Map(Object.entries(resp.headers ?? {})),
-        httpVersion: '1.1',
+        redirected: false,
+        redirectChain: [],
       };
     },
   };
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+// â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-describe('ResourceLoader — Cache integration', () => {
+describe('ResourceLoader â€” Cache integration', () => {
   let cache: CacheManager;
   let loader: ResourceLoader;
 
@@ -82,20 +86,20 @@ describe('ResourceLoader — Cache integration', () => {
   });
 });
 
-describe('ResourceLoader — Priority queue integration', () => {
+describe('ResourceLoader â€” Priority queue integration', () => {
   it('priority queue orders pending requests correctly', async () => {
     const order: string[] = [];
 
     const client: IHttpClient = {
       async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
         order.push(new URL(spec.url).pathname);
-        return { statusCode: 200, body: '', headers: new Map(), httpVersion: '1.1' };
+        return { url: spec.url, statusCode: 200, statusText: 'OK', body: '', bodyBinary: null, headers: new Map(), redirected: false, redirectChain: [] };
       },
     };
 
     const loader = new ResourceLoader(client);
 
-    // 4 requests, max 4 concurrent — all go through immediately, but loadBatch
+    // 4 requests, max 4 concurrent â€” all go through immediately, but loadBatch
     // sorts by priority before dispatching
     const resources: DiscoveredResource[] = [
       { url: 'https://example.com/img.png', kind: 'image', blocking: false, deferred: false, sourceTag: 'img' },
@@ -118,7 +122,7 @@ describe('ResourceLoader — Priority queue integration', () => {
     const client: IHttpClient = {
       async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
         order.push(new URL(spec.url).pathname);
-        return { statusCode: 200, body: '', headers: new Map(), httpVersion: '1.1' };
+        return { url: spec.url, statusCode: 200, statusText: 'OK', body: '', bodyBinary: null, headers: new Map(), redirected: false, redirectChain: [] };
       },
     };
 
@@ -139,7 +143,7 @@ describe('ResourceLoader — Priority queue integration', () => {
   });
 });
 
-describe('ResourceLoader — Bandwidth tracking', () => {
+describe('ResourceLoader â€” Bandwidth tracking', () => {
   it('records bandwidth samples on fetch', async () => {
     const loader = new ResourceLoader(
       mockClient({ 'https://example.com/a.css': { body: 'x'.repeat(1000) } }),
@@ -148,7 +152,7 @@ describe('ResourceLoader — Bandwidth tracking', () => {
   });
 });
 
-describe('ResourceLoader — Error handling with cache', () => {
+describe('ResourceLoader â€” Error handling with cache', () => {
   it('does not cache error responses', async () => {
     const cache = new CacheManager();
     const loader = new ResourceLoader(

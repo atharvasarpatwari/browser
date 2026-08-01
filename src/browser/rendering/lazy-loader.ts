@@ -27,8 +27,8 @@ export interface LazyLoadConfig {
   /** Placeholder background color (default: "#f0f0f0"). */
   readonly placeholderColor?: string;
   /** Default viewport dimensions. */
-  readonly viewportWidth?: number;
-  readonly viewportHeight?: number;
+  viewportWidth?: number;
+  viewportHeight?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -259,7 +259,7 @@ export class LazyLoader {
       if (isSupportedImageType(result.contentType)) {
         const decoded = await this.decoder!.decode(result.bodyBinary, result.contentType);
         if (decoded) {
-          el.imageData = { data: decoded.data, width: decoded.width, height: decoded.height };
+          el.imageData = { data: decoded.data as unknown as ImageDataArray, width: decoded.width, height: decoded.height, colorSpace: 'srgb' };
           el.naturalWidth = decoded.width;
           el.naturalHeight = decoded.height;
           el.loadingState = 'loaded';
@@ -344,7 +344,7 @@ export class LazyLoader {
       }
     }
 
-    return { data: pixels, width, height };
+    return { data: pixels as unknown as ImageDataArray, width, height, colorSpace: 'srgb' };
   }
 
   private urlToColor(url: string): { r: number; g: number; b: number } {

@@ -66,7 +66,7 @@ describe('WasmCompiler', () => {
 
   it('should export jsValueToI64 for number values', () => {
     // Numbers: raw f64 bits as i64
-    const i64_0 = compiler.jsValueToWasm?.(0) ?? compiler.jsValueToI64(0);
+    const i64_0 = compiler.jsValueToI64(0);
     expect(typeof i64_0).toBe('bigint');
     expect(i64_0).toBe(0n); // 0.0 as f64 bits = 0x0000000000000000
   });
@@ -339,7 +339,7 @@ describe('WASM module validation', () => {
     const wasmBytes = compiler.compile(fn);
 
     try {
-      const module = await WebAssembly.compile(wasmBytes);
+      const module = await WebAssembly.compile(wasmBytes as Uint8Array<ArrayBuffer>);
       expect(module).toBeDefined();
       // Module should have an export named "main"
       const exports = WebAssembly.Module.exports(module);
@@ -359,7 +359,7 @@ describe('WASM module validation', () => {
     const wasmBytes = compiler.compile(fn);
 
     try {
-      const module = await WebAssembly.compile(wasmBytes);
+      const module = await WebAssembly.compile(wasmBytes as Uint8Array<ArrayBuffer>);
       expect(module).toBeDefined();
     } catch {
       // Binary structure should at least be valid enough to parse

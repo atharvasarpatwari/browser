@@ -385,7 +385,8 @@ class TlsHandler implements ITlsHandler {
     const exact = this.hstsStore.get(hostname);
     if (exact) {
       if (exact.maxAgeSeconds <= 0) return false; // Max-Age 0 = remove.
-      if (exact.expiresAt !== undefined && exact.expiresAt < Date.now()) {
+      const expiresAt = exact.createdAt + exact.maxAgeSeconds * 1000;
+      if (expiresAt < Date.now()) {
         this.hstsStore.delete(hostname);
         return false;
       }
@@ -522,9 +523,9 @@ class TlsHandler implements ITlsHandler {
           while (current && current.issuerCertificate) {
             current = current.issuerCertificate;
             if (current && current.subject) {
-              const isCa = current.basicConstraints?.CA === true ||
-                           current.subject.CN?.includes('CA') ||
-                           current.subject.CN?.includes('Root');
+              const isCa: boolean = Boolean((current as { basicConstraints?: { CA?: boolean } }).basicConstraints?.CA)
+                            || Boolean(current.subject.CN?.includes('CA'))
+                            || Boolean(current.subject.CN?.includes('Root'));
               chain.push(toInfo(current, isCa));
             }
           }

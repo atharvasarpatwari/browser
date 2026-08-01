@@ -236,10 +236,10 @@ describeWPT('DOM Core — Events', () => {
 
   assertWPT('addEventListener adds listener', () => {
     const el = document.createElement('div');
-    let called = false;
+    let called: boolean = false;
     el.addEventListener('click', () => { called = true; });
     el.dispatchEvent(new Event('click'));
-    return called === true;
+    return called;
   });
 
   assertWPT('removeEventListener removes listener', () => {

@@ -66,11 +66,11 @@ export interface A11yDomElement extends A11yDomNode {
   attributes: ReadonlyMap<string, string>;
 }
 
-function isA11yElement(n: A11yDomNode): n is A11yDomElement {
+export function isA11yElement(n: A11yDomNode): n is A11yDomElement {
   return n.nodeType === 'element' && 'tagName' in n && 'attributes' in n;
 }
 
-const TAG_ROLE_MAP: Record<string, AriaRole> = Object.freeze({
+export const TAG_ROLE_MAP: Record<string, AriaRole> = Object.freeze({
   a: 'link',
   button: 'button',
   input: 'textbox',

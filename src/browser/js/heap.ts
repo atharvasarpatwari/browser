@@ -1,11 +1,11 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// HEAP — Object allocation tracking and memory accounting
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// HEAP â€” Object allocation tracking and memory accounting
 // Tracks all allocated JS objects for GC integration.
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import type { JSObject, JSFunction, JSValue } from './values';
 
-// ── GC Header ────────────────────────────────────────────────────────────────
+// â”€â”€ GC Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Every GC-managed object gets a header with collection metadata.
@@ -28,7 +28,7 @@ export interface GCHeader {
   weakRefs: Set<WeakRef<object>>;
 }
 
-// ── Size estimation ──────────────────────────────────────────────────────────
+// â”€â”€ Size estimation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Approximate memory size of a JSValue in bytes */
 function estimateValueSize(val: JSValue): number {
@@ -44,7 +44,7 @@ function estimateValueSize(val: JSValue): number {
 /** Approximate memory size of a JSObject in bytes */
 function estimateObjectSize(obj: JSObject): number {
   let size = 64; // base overhead
-  // Properties map — only for objects, not functions
+  // Properties map â€” only for objects, not functions
   if (obj.properties) {
     size += 32; // map overhead
     for (const [, desc] of obj.properties) {
@@ -55,7 +55,7 @@ function estimateObjectSize(obj: JSObject): number {
   return size;
 }
 
-// ── Heap ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Heap â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface HeapStats {
   /** Total number of allocated objects */
@@ -96,7 +96,7 @@ export class Heap {
    * Returns the object with GC metadata attached.
    */
   allocate<T extends JSObject | JSFunction>(obj: T): T {
-    const size = estimateObjectSize(obj);
+    const size = estimateObjectSize(obj as JSObject);
     const header: GCHeader & { ref: T } = {
       id: this.nextId++,
       marked: false,
@@ -108,8 +108,8 @@ export class Heap {
     };
 
     // Attach GC header as hidden properties
-    (obj as Record<string, unknown>)['__gcId'] = header.id;
-    (obj as Record<string, unknown>)['__gcHeader'] = header;
+    (obj as unknown as Record<string, unknown>)['__gcId'] = header.id;
+    (obj as unknown as Record<string, unknown>)['__gcHeader'] = header;
 
     this.objects.set(header.id, header as GCHeader & { ref: JSObject | JSFunction });
     this._allocatedBytes += size;
@@ -124,7 +124,7 @@ export class Heap {
   register(obj: JSObject | JSFunction): void {
     if (this.objects.has(this.getId(obj))) return;
 
-    const size = estimateObjectSize(obj);
+    const size = estimateObjectSize(obj as JSObject);
     const header: GCHeader & { ref: JSObject | JSFunction } = {
       id: this.nextId++,
       marked: false,
@@ -135,8 +135,8 @@ export class Heap {
       ref: obj,
     };
 
-    (obj as Record<string, unknown>)['__gcId'] = header.id;
-    (obj as Record<string, unknown>)['__gcHeader'] = header;
+    (obj as unknown as Record<string, unknown>)['__gcId'] = header.id;
+    (obj as unknown as Record<string, unknown>)['__gcHeader'] = header;
     this.objects.set(header.id, header as GCHeader & { ref: JSObject | JSFunction });
     this._allocatedBytes += size;
   }
@@ -153,7 +153,7 @@ export class Heap {
    * Get the GC ID for an object.
    */
   getId(obj: JSObject | JSFunction): number {
-    return (obj as Record<string, unknown>)['__gcId'] as number ?? 0;
+    return (obj as unknown as Record<string, unknown>)['__gcId'] as number ?? 0;
   }
 
   /**
@@ -191,7 +191,7 @@ export class Heap {
   }
 
   /**
-   * Sweep unmarked objects — remove them from the heap.
+   * Sweep unmarked objects â€” remove them from the heap.
    * Returns the list of swept (collected) objects.
    */
   sweep(): Array<JSObject | JSFunction> {
@@ -322,7 +322,7 @@ export class Heap {
   }
 
   /**
-   * Reset the heap — clear all tracking data.
+   * Reset the heap â€” clear all tracking data.
    */
   reset(): void {
     this.objects.clear();
@@ -334,7 +334,7 @@ export class Heap {
   }
 }
 
-// ── Singleton heap ───────────────────────────────────────────────────────────
+// â”€â”€ Singleton heap â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 let _globalHeap: Heap | null = null;
 

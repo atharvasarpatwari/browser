@@ -1145,7 +1145,7 @@ export function createHostImports(env: HostEnv): WebAssembly.Imports {
         const jObj = env.toJSValue(obj) as Record<string, unknown>;
         const jKey = env.toJSValue(key);
         if (jObj && typeof jObj === 'object' && 'properties' in jObj) {
-          const props = (jObj as { properties: Map<string, { value: unknown }> }).properties;
+          const props = (jObj as { properties: Map<string, { value: unknown; writable?: boolean; enumerable?: boolean; configurable?: boolean }> }).properties;
           const desc = props.get(String(jKey));
           return env.toI64(desc?.value);
         }
@@ -1156,7 +1156,7 @@ export function createHostImports(env: HostEnv): WebAssembly.Imports {
         const jKey = String(env.toJSValue(key));
         const jVal = env.toJSValue(val);
         if (jObj && typeof jObj === 'object' && 'properties' in jObj) {
-          const props = (jObj as { properties: Map<string, { value: unknown }> }).properties;
+          const props = (jObj as { properties: Map<string, { value: unknown; writable?: boolean; enumerable?: boolean; configurable?: boolean }> }).properties;
           const existing = props.get(jKey);
           if (existing) {
             existing.value = jVal;

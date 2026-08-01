@@ -11,10 +11,14 @@ describe('ResponseParser', () => {
 
   function makeResponse(headers: Map<string, string> = new Map(), body = ''): HttpResponseSpec {
     return {
+      url: 'https://example.com/',
       statusCode: 200,
       statusText: 'OK',
       headers,
       body,
+      bodyBinary: null,
+      redirected: false,
+      redirectChain: [],
     };
   }
 

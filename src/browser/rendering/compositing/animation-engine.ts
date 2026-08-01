@@ -311,7 +311,7 @@ export class AnimationTimeline {
 }
 
 export class Animation {
-  readonly effect: KeyframeEffect;
+  effect: KeyframeEffect;
   readonly timeline: AnimationTimeline;
   private _playState: AnimationPlayState = 'idle';
   private _startTime: number | null = null;

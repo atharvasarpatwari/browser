@@ -153,7 +153,7 @@ export class StartupPages implements IStartupPages {
       // In production, this would load from session store
       return [];
     }
-    return this.getPages();
+    return [...this.getPages()];
   }
 
   getConfig(): StartupPagesConfig {

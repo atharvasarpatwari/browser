@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import {
   createWebAssemblyObject, createWebAssemblyModuleStatic, createWebAssemblyInstanceConstructor,
   createWebAssemblyMemoryConstructor, createWebAssemblyTableConstructor,
@@ -8,6 +8,8 @@ import {
   createSchedulerObject, createSharedStorageObject, createFencedFrameObject, createFenceObject,
   createAIAPIObject, createSpeculationRulesObject,
 } from '../src/browser/js/web-apis';
+import type { JSObject, JSFunction } from '../src/browser/js/values';
+import { createNativeFunction } from '../src/browser/js/values';
 
 function mockObj(label?: string) {
   const obj: any = { type: undefined, properties: new Map() };
@@ -15,9 +17,9 @@ function mockObj(label?: string) {
   return obj;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // WEBASSEMBLY (WASM) API
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('WebAssembly API', () => {
   it('WebAssembly exists with all methods', () => {
@@ -126,7 +128,7 @@ describe('WebAssembly API', () => {
 
   it('Global constructor creates a global', () => {
     const Glob = createWebAssemblyGlobalConstructor();
-    const g = (Glob as any).nativeFn(null, [{ value: 'i32', value: 42 }]);
+    const g = (Glob as any).nativeFn(null, [{ value: 42 }]);
     expect(g).toBeDefined();
     expect(g.properties.has('value')).toBe(true);
     expect(g.properties.has('valueOf')).toBe(true);
@@ -134,7 +136,7 @@ describe('WebAssembly API', () => {
 
   it('Global.valueOf returns current value', () => {
     const Glob = createWebAssemblyGlobalConstructor();
-    const g = (Glob as any).nativeFn(null, [{ value: 'i32', value: 100 }]);
+    const g = (Glob as any).nativeFn(null, [{ value: 100 }]);
     const result = g.properties.get('valueOf').value.nativeFn(g, []);
     expect(result).toBe(100);
   });
@@ -155,9 +157,9 @@ describe('WebAssembly API', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // WEBGPU API
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('WebGPU API', () => {
   it('gpu object has requestAdapter and getPreferredCanvasFormat', () => {
@@ -277,9 +279,9 @@ describe('WebGPU API', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // WEBXR API
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('WebXR API', () => {
   it('xr has isSessionSupported and requestSession', () => {
@@ -354,9 +356,9 @@ describe('WebXR API', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // COMPRESSION STREAMS API
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Compression Streams API', () => {
   it('CompressionStream creates readable and writable', () => {
@@ -424,9 +426,9 @@ describe('Compression Streams API', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // SCHEDULER API
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Scheduler API', () => {
   it('scheduler has postTask and yield', () => {
@@ -459,9 +461,9 @@ describe('Scheduler API', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // SHARED STORAGE API
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Shared Storage API', () => {
   it('sharedStorage has all expected methods', () => {
@@ -499,9 +501,9 @@ describe('Shared Storage API', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // FENCED FRAMES API
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Fenced Frames API', () => {
   it('FencedFrameConfig has expected properties', () => {
@@ -512,7 +514,7 @@ describe('Fenced Frames API', () => {
     expect(ffc.properties.has('deprecatedReplaceInURN')).toBe(true);
     expect(ffc.properties.has('executeQuery')).toBe(true);
     expect(ffc.properties.has('getName')).toBe(true);
-    expect(ffc.properties.get('url').value).toBe('about:blank');
+    expect(ffc.properties.get('url')!.value).toBe('about:blank');
   });
 
   it('Fence has report, getJoiningOrigins, getSharedStorage, notifyEvent', () => {
@@ -540,9 +542,9 @@ describe('Fenced Frames API', () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // AI APIs
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('AI APIs', () => {
   it('window.ai has canCreateTextSession and createTextSession', () => {
@@ -679,18 +681,18 @@ describe('AI APIs', () => {
 
   it('languageModelFactory.create returns a language model', async () => {
     const ai = createAIAPIObject();
-    const factory = ai.properties.get('languageModelFactory').value;
-    const result = factory.properties.get('create').value.nativeFn(factory, [null]);
+    const factory = ai.properties.get('languageModelFactory')!.value as JSObject;
+    const result = (factory.properties.get('create')!.value as JSFunction).nativeFn!(factory, [null]) as JSObject;
     let lm: any;
-    result.properties.get('then').value.nativeFn(null, [(v: any) => { lm = v; }]);
+    (result.properties.get('then')!.value as JSFunction).nativeFn!(null, [createNativeFunction('thenCb', (v: any) => { lm = v; })]);
     expect(lm).toBeDefined();
     expect(lm.properties.has('prompt')).toBe(true);
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // SPECULATION RULES API
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 describe('Speculation Rules API', () => {
   it('SpeculationRules has prerender and prefetch', () => {
@@ -702,23 +704,23 @@ describe('Speculation Rules API', () => {
 
   it('prerender has expected properties', () => {
     const sr = createSpeculationRulesObject();
-    const prerender = sr.properties.get('prerender').value;
+    const prerender = sr.properties.get('prerender')!.value as JSObject;
     expect(prerender.properties.has('urls')).toBe(true);
     expect(prerender.properties.has('source')).toBe(true);
     expect(prerender.properties.has('requires')).toBe(true);
     expect(prerender.properties.has('eagerness')).toBe(true);
-    expect(prerender.properties.get('source').value).toBe('list');
-    expect(prerender.properties.get('eagerness').value).toBe('immediate');
+    expect(prerender.properties.get('source')!.value).toBe('list');
+    expect(prerender.properties.get('eagerness')!.value).toBe('immediate');
   });
 
   it('prefetch has expected properties', () => {
     const sr = createSpeculationRulesObject();
-    const prefetch = sr.properties.get('prefetch').value;
+    const prefetch = sr.properties.get('prefetch')!.value as JSObject;
     expect(prefetch.properties.has('urls')).toBe(true);
     expect(prefetch.properties.has('source')).toBe(true);
     expect(prefetch.properties.has('requires')).toBe(true);
     expect(prefetch.properties.has('eagerness')).toBe(true);
-    expect(prefetch.properties.get('source').value).toBe('list');
+    expect(prefetch.properties.get('source')!.value).toBe('list');
   });
 
   it('prerenders returns empty array', () => {

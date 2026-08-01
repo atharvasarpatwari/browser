@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach } from 'vitest';
 import {
   IDBFactory,
   IDBDatabase,
@@ -6,6 +6,7 @@ import {
   IDBTransaction,
   IDBKeyRange,
   IDBRequest,
+  IDBCursor,
   InMemoryIndexedDBBackend,
   type IDBTransactionMode,
 } from '../src/browser/storage/indexed-db';
@@ -20,7 +21,7 @@ describe('IndexedDB', () => {
     factory = new IDBFactory(backend, origin);
   });
 
-  // ── IDBFactory ──────────────────────────────────────────────────
+  // â”€â”€ IDBFactory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('IDBFactory.open', () => {
     it('should open a new database', () => {
@@ -30,7 +31,7 @@ describe('IndexedDB', () => {
 
     it('should succeed asynchronously with an IDBDatabase', async () => {
       const req = factory.open('mydb');
-      const db = await waitForSuccess(req);
+      const db = await waitForSuccess<IDBDatabase>(req);
       expect(db).toBeInstanceOf(IDBDatabase);
       expect(db.name).toBe('mydb');
       expect(db.version).toBe(1);
@@ -39,20 +40,20 @@ describe('IndexedDB', () => {
 
     it('should open an existing database', async () => {
       const req1 = factory.open('mydb');
-      const db1 = await waitForSuccess(req1);
+      const db1 = await waitForSuccess<IDBDatabase>(req1);
       const store = db1.createObjectStore('items', { keyPath: 'id' });
       store.put({ id: 1, name: 'Item 1' });
       db1.close();
 
       const req2 = factory.open('mydb');
-      const db2 = await waitForSuccess(req2);
+      const db2 = await waitForSuccess<IDBDatabase>(req2);
       expect(db2.objectStoreNames).toContain('items');
       db2.dispose();
     });
 
     it('should reject if version is lower than current', async () => {
       const req1 = factory.open('mydb', 2);
-      const db1 = await waitForSuccess(req1);
+      const db1 = await waitForSuccess<IDBDatabase>(req1);
       db1.close();
 
       const req2 = factory.open('mydb', 1);
@@ -64,7 +65,7 @@ describe('IndexedDB', () => {
   describe('IDBFactory.deleteDatabase', () => {
     it('should delete a database', async () => {
       const req1 = factory.open('todelete');
-      const db1 = await waitForSuccess(req1);
+      const db1 = await waitForSuccess<IDBDatabase>(req1);
       db1.createObjectStore('store');
       db1.close();
 
@@ -83,7 +84,7 @@ describe('IndexedDB', () => {
     });
   });
 
-  // ── IDBDatabase ─────────────────────────────────────────────────
+  // â”€â”€ IDBDatabase â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('IDBDatabase', () => {
     it('should create and delete object stores', async () => {
@@ -110,7 +111,7 @@ describe('IndexedDB', () => {
     });
   });
 
-  // ── IDBObjectStore CRUD ─────────────────────────────────────────
+  // â”€â”€ IDBObjectStore CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('IDBObjectStore', () => {
     describe('put / get', () => {
@@ -157,7 +158,7 @@ describe('IndexedDB', () => {
         const db = await openTestDB('add-new');
         const store = db.createObjectStore('items', { keyPath: 'id' });
         const req = store.add({ id: 1 });
-        const key = await waitForSuccess(req);
+        const key = await waitForSuccess<IDBDatabase>(req);
         expect(key).toBe(1);
         db.dispose();
       });
@@ -209,7 +210,7 @@ describe('IndexedDB', () => {
         store.put({ id: 2, name: 'B' });
 
         const req = store.getAll();
-        const all = await waitForSuccess(req);
+        const all = await waitForSuccess<IDBDatabase>(req);
         expect(all).toHaveLength(2);
         db.dispose();
       });
@@ -221,7 +222,7 @@ describe('IndexedDB', () => {
         store.put({ id: 20 });
 
         const req = store.getAllKeys();
-        const keys = await waitForSuccess(req);
+        const keys = await waitForSuccess<IDBDatabase>(req);
         expect(keys).toEqual([10, 20]);
         db.dispose();
       });
@@ -236,7 +237,7 @@ describe('IndexedDB', () => {
         store.put({ id: 3 });
 
         const req = store.count();
-        const count = await waitForSuccess(req);
+        const count = await waitForSuccess<IDBDatabase>(req);
         expect(count).toBe(3);
         db.dispose();
       });
@@ -283,7 +284,7 @@ describe('IndexedDB', () => {
     });
   });
 
-  // ── IDBIndex ────────────────────────────────────────────────────
+  // â”€â”€ IDBIndex â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('IDBIndex', () => {
     it('should create an index and query by indexed key', async () => {
@@ -330,7 +331,7 @@ describe('IndexedDB', () => {
     });
   });
 
-  // ── IDBKeyRange ─────────────────────────────────────────────────
+  // â”€â”€ IDBKeyRange â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('IDBKeyRange', () => {
     it('should create an only range', () => {
@@ -387,7 +388,7 @@ describe('IndexedDB', () => {
     });
   });
 
-  // ── IDBTransaction ──────────────────────────────────────────────
+  // â”€â”€ IDBTransaction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('IDBTransaction', () => {
     it('should open a readonly transaction', async () => {
@@ -421,7 +422,7 @@ describe('IndexedDB', () => {
     });
   });
 
-  // ── IDBCursor ───────────────────────────────────────────────────
+  // â”€â”€ IDBCursor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('IDBCursor', () => {
     it('should iterate records with openCursor', async () => {
@@ -432,13 +433,13 @@ describe('IndexedDB', () => {
       store.put({ id: 3, name: 'C' });
 
       const cursorReq = store.openCursor();
-      const cursor = await waitForSuccess(cursorReq);
+      const cursor = await waitForSuccess<IDBCursor>(cursorReq);
       expect(cursor).not.toBeNull();
       expect(cursor.key).toBe(1);
       expect(cursor.primaryKey).toBe(1);
 
       // Advance
-      const next = await waitForSuccess(cursor.continue());
+      const next = await waitForSuccess<IDBCursor>(cursor.continue());
       expect(next).toBeDefined();
       expect(next.key).toBe(2);
 
@@ -453,16 +454,16 @@ describe('IndexedDB', () => {
       store.put({ id: 3 });
 
       const req = store.openCursor(undefined, 'prev');
-      const cursor = await waitForSuccess(req);
+      const cursor = await waitForSuccess<IDBCursor>(req);
       expect(cursor.key).toBe(3);
       db.dispose();
     });
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // HELPERS
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function waitForSuccess<T>(req: IDBRequest): Promise<T> {
   return new Promise((resolve, reject) => {

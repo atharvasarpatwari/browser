@@ -137,7 +137,7 @@ describe('CertificateValidator', () => {
     });
 
     it('getOptions should return copy', () => {
-      const opts = validator.getOptions();
+      const opts = validator.getOptions() as { minKeySize: number };
       opts.minKeySize = 999;
       expect(validator.getOptions().minKeySize).not.toBe(999);
     });

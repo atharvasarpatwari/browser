@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach } from 'vitest';
 import { Lexer } from '../src/browser/js/lexer';
 import { Parser } from '../src/browser/js/parser';
 import { Interpreter } from '../src/browser/js/interpreter';
@@ -10,6 +10,7 @@ function makeMinimalDoc() {
   return {
     domId: 'doc-1', nodeType: 'document' as const, parent: null,
     children: [], htmlElement: null, headElement: null, bodyElement: null,
+    _dirtyStyle: false, _dirtyLayout: false, _dirtyPaint: false,
   };
 }
 

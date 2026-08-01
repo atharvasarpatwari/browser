@@ -259,7 +259,7 @@ export function getRootNode(
  * Get the slot name for a slot element.
  * Returns '' for unnamed slots, or the value of the 'name' attribute.
  */
-export function getSlotName(slotElement: HtmlElement): string {
+export function getSlotName(slotElement: MutableElement): string {
   return elementGetAttribute(slotElement as unknown as MutableElement, 'name') ?? '';
 }
 
@@ -357,7 +357,7 @@ function collectSlotElements(root: MutableShadowRoot): MutableElement[] {
  * Returns nodes from the slot map, or empty array if no shadow root.
  */
 export function getAssignedNodes(
-  slotElement: HtmlElement,
+  slotElement: HtmlElement | MutableElement,
   options?: { flatten?: boolean },
 ): readonly HtmlNode[] {
   // Walk up to find the shadow root
@@ -369,7 +369,7 @@ export function getAssignedNodes(
     assignSlots(shadowRoot);
   }
 
-  const slotName = getSlotName(slotElement);
+  const slotName = getSlotName(slotElement as unknown as MutableElement);
   const assigned = shadowRoot._slotMap.get(slotName) ?? [];
 
   if (options?.flatten) {
@@ -742,7 +742,7 @@ function cloneElementDeep(el: MutableElement): MutableElement {
   return clone;
 }
 
-function cloneShallow(node: MutableNode): MutableNode | null {
+function cloneShallow(node: HtmlNode | MutableNode): MutableNode | null {
   switch (node.nodeType) {
     case NodeType.Text:
       return {

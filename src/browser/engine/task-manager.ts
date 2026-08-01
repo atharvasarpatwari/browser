@@ -169,6 +169,7 @@ function formatBytes(bytes: number): string {
 }
 
 export class TaskManager implements ITaskManager {
+  readonly name = 'task-manager';
   private processes = new Map<string, ProcessRegistrationInfo & { usage: ProcessResourceUsage; killCallback?: () => void | Promise<void> }>();
   private snapshots: ResourceSnapshot[] = [];
   private handlers: TaskManagerEventHandler[] = [];

@@ -21,6 +21,7 @@ enum NodeType {
   Doctype               = 'doctype',
   CdataSection          = 'cdata',
   ProcessingInstruction = 'pi',
+  DocumentFragment      = 'fragment',
   ParseError            = 'error',
 }
 
@@ -483,7 +484,7 @@ function appendChild(parent: MutableParentNode, node: MutableNode): void {
   });
 }
 
-function insertBefore(parent: MutableParentNode, newNode: MutableNode, refNode: HtmlNode): void {
+function insertBefore(parent: MutableParentNode, newNode: MutableNode, refNode: MutableNode): void {
   const children = getParentChildren(parent);
   const idx = children.indexOf(refNode);
   if (idx < 0) {
@@ -493,11 +494,11 @@ function insertBefore(parent: MutableParentNode, newNode: MutableNode, refNode: 
   const prev = idx > 0 ? children[idx - 1] : null;
   newNode.parent = parent;
   newNode.previousSibling = prev as HtmlNode | null;
-  newNode.nextSibling = refNode;
+  newNode.nextSibling = refNode as HtmlNode;
   if (prev) {
     (prev as MutableNode).nextSibling = newNode as HtmlNode;
   }
-  (refNode as MutableNode).previousSibling = newNode as HtmlNode;
+  refNode.previousSibling = newNode as HtmlNode;
   children.splice(idx, 0, newNode);
   syncDocumentPointers(parent);
   fireMutation({
@@ -572,16 +573,16 @@ function getParentChildren(parent: MutableParentNode): MutableNode[] {
   return parent.children as MutableNode[];
 }
 
-function cloneElement(el: HtmlElement, deep = false): MutableElement {
+function cloneElement(el: HtmlElement | MutableElement, deep = false): MutableElement {
   const clone = createMutableElement(el.tagName, new Map(el.attributes), el.sourceOffset);
   clone.isVoid = el.isVoid;
   clone.isRawText = el.isRawText;
   clone.rawContent = el.rawContent;
-  clone.namespaceURI = (el as MutableElement).namespaceURI ?? Namespace.HTML;
+  clone.namespaceURI = (el as unknown as MutableElement).namespaceURI ?? Namespace.HTML;
   // Preserve shadow DOM fields (shallow copy — shadow root is not deep-cloned here)
-  clone._shadowRoot = (el as MutableElement)._shadowRoot ?? null;
-  clone._assignedSlot = (el as MutableElement)._assignedSlot ?? null;
-  clone._internals = (el as MutableElement)._internals ?? null;
+  clone._shadowRoot = (el as unknown as MutableElement)._shadowRoot ?? null;
+  clone._assignedSlot = (el as unknown as MutableElement)._assignedSlot ?? null;
+  clone._internals = (el as unknown as MutableElement)._internals ?? null;
   if (deep) {
     for (const child of el.children) {
       if (child.nodeType === NodeType.Element) {
@@ -663,7 +664,7 @@ function nodeRemove(node: MutableNode): void {
   }
 }
 
-function nodeAppend(parent: MutableParentNode, ...nodes: MutableNode[]): void {
+function nodeAppend(parent: MutableParentNode, ...nodes: (MutableNode | string)[]): void {
   for (const n of nodes) {
     if (n === null || n === undefined) continue;
     if (typeof n === 'string') {
@@ -676,7 +677,7 @@ function nodeAppend(parent: MutableParentNode, ...nodes: MutableNode[]): void {
 
 function nodePrepend(parent: MutableParentNode, ...nodes: (MutableNode | string)[]): void {
   const children = getParentChildren(parent);
-  const refNode = children.length > 0 ? children[0] as HtmlNode : null;
+  const refNode = children.length > 0 ? children[0] : null;
   for (const n of nodes) {
     if (n === null || n === undefined) continue;
     if (typeof n === 'string') {
@@ -703,9 +704,9 @@ function nodeBefore(node: MutableNode, ...nodes: (MutableNode | string)[]): void
     const n = nodes[i];
     if (n === null || n === undefined) continue;
     if (typeof n === 'string') {
-      insertBefore(parent, createMutableTextNode(n), node as HtmlNode);
+      insertBefore(parent, createMutableTextNode(n), node);
     } else {
-      insertBefore(parent, n, node as HtmlNode);
+      insertBefore(parent, n, node);
     }
   }
 }
@@ -716,7 +717,7 @@ function nodeAfter(node: MutableNode, ...nodes: (MutableNode | string)[]): void 
   const children = getParentChildren(parent);
   const idx = children.indexOf(node);
   const refIdx = idx + 1;
-  const refNode = refIdx < children.length ? children[refIdx] as HtmlNode : null;
+  const refNode = refIdx < children.length ? children[refIdx] : null;
   for (const n of nodes) {
     if (n === null || n === undefined) continue;
     if (typeof n === 'string') {
@@ -748,9 +749,9 @@ function nodeReplaceWith(node: MutableNode, ...nodes: (MutableNode | string)[]):
   for (const n of nodes) {
     if (n === null || n === undefined) continue;
     if (typeof n === 'string') {
-      insertBefore(parent, createMutableTextNode(n), node as HtmlNode);
+      insertBefore(parent, createMutableTextNode(n), node);
     } else {
-      insertBefore(parent, n, node as HtmlNode);
+      insertBefore(parent, n, node);
     }
   }
   // Now remove the old node
@@ -990,7 +991,7 @@ function cloneNode(node: HtmlNode, deep = false): MutableNode {
       clone.isVoid = el.isVoid;
       clone.isRawText = el.isRawText;
       clone.rawContent = el.rawContent;
-      clone.namespaceURI = (el as MutableElement).namespaceURI ?? Namespace.HTML;
+      clone.namespaceURI = (el as unknown as MutableElement).namespaceURI ?? Namespace.HTML;
       if (deep) {
         for (const child of el.children) {
           appendChild(clone, cloneNode(child, true));
@@ -1018,7 +1019,7 @@ function cloneNode(node: HtmlNode, deep = false): MutableNode {
       // Documents are cloned shallow by default — deep clone copies children
       const clone = createMutableDocument();
       if (deep) {
-        const doc = node as HtmlDocument;
+        const doc = node as unknown as HtmlDocument;
         for (const child of doc.children) {
           appendChild(clone, cloneNode(child, true));
         }
@@ -1136,6 +1137,8 @@ export type {
   MutableDoctype,
   MutableCdata,
   MutableDocument,
+  MutableNode,
+  MutableParentNode,
 };
 
 // Re-export MutationObserver types

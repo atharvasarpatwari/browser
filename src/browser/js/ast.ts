@@ -109,7 +109,7 @@ export interface PropertyDefinition {
 export interface FunctionExpression {
   type: 'FunctionExpression';
   id: Identifier | null;
-  params: (Identifier | RestElement | AssignmentPattern)[];
+  params: (Identifier | RestElement | AssignmentPattern | ArrayPattern | ObjectPattern)[];
   body: BlockStatement | Expression;
   async: boolean;
   generator: boolean;
@@ -119,7 +119,7 @@ export interface FunctionExpression {
 
 export interface ArrowFunctionExpression {
   type: 'ArrowFunctionExpression';
-  params: (Identifier | RestElement | AssignmentPattern)[];
+  params: (Identifier | RestElement | AssignmentPattern | ArrayPattern | ObjectPattern)[];
   body: BlockStatement | Expression;
   async: boolean;
   expression: boolean;
@@ -443,7 +443,7 @@ export interface VariableDeclaration {
 
 export interface VariableDeclarator {
   type: 'VariableDeclarator';
-  id: Identifier | AssignmentPattern | RestElement;
+  id: Identifier | AssignmentPattern | RestElement | ArrayPattern | ObjectPattern;
   init: Expression | null;
   loc?: SourceLocation;
 }
@@ -451,7 +451,7 @@ export interface VariableDeclarator {
 export interface FunctionDeclaration {
   type: 'FunctionDeclaration';
   id: Identifier;
-  params: (Identifier | RestElement | AssignmentPattern)[];
+  params: (Identifier | RestElement | AssignmentPattern | ArrayPattern | ObjectPattern)[];
   body: BlockStatement;
   async: boolean;
   generator: boolean;

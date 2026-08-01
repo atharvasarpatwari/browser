@@ -1,13 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { isShorthandProperty, getLonghands, getInitialValue, isInheritedProperty } from '../src/browser/rendering/css5/property-definitions';
 import { expandShorthands, collectKeyframes, computeComputedStyles, type StyleableElement } from '../src/browser/rendering/css5/cascade';
 import { type CssStylesheet, type CssRule, type CssSelector, type CssSpecificity } from '../src/browser/rendering/css5/types';
 import { AnimationTimeline, Animation, KeyframeEffect, createAnimation } from '../src/browser/rendering/compositing/animation-engine';
 import { ReflowRepaintController } from '../src/browser/rendering/reflow-repaint-controller';
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Phase 1a: Animation longhand properties
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Animation property definitions', () => {
   const longhands = ['animation-name', 'animation-duration', 'animation-timing-function',
@@ -31,9 +31,9 @@ describe('Animation property definitions', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Phase 1b: Animation shorthand expansion
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Animation shorthand expansion', () => {
   it('expands name + duration', () => {
@@ -100,9 +100,9 @@ describe('Animation shorthand expansion', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Phase 1c: @keyframes collection
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('@keyframes collection', () => {
   function makeKeyframesRule(name: string): CssRule {
@@ -120,10 +120,10 @@ describe('@keyframes collection', () => {
     const stylesheet: CssStylesheet = {
       rules: [
         makeKeyframesRule('fadeIn'),
-        { type: 'style', selectors: ['.foo'], specificity: { id: 0, a: 0, b: 1 }, declarations: [], sourceOrder: 1 },
+        { type: 'style', selectors: [{ type: 'compound', tagName: 'div', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null }], specificity: { id: 0, a: 0, b: 1 }, declarations: [], sourceOrder: 1, sourceUrl: null },
         makeKeyframesRule('slideIn'),
       ],
-      imported: [],
+      url: null,
     };
     const kfs = collectKeyframes(stylesheet);
     expect(kfs.size).toBe(2);
@@ -137,11 +137,11 @@ describe('@keyframes collection', () => {
       rules: [
         {
           type: 'media',
-          mediaQueries: [{ mediaType: 'screen', features: [], modifier: undefined }],
+          mediaQueries: [{ mediaType: 'screen', features: [], modifier: null, conjunction: null }],
           rules: [makeKeyframesRule('nestedAnim')],
         },
       ],
-      imported: [],
+      url: null,
     };
     const kfs = collectKeyframes(stylesheet);
     expect(kfs.has('nestedAnim')).toBe(true);
@@ -149,8 +149,8 @@ describe('@keyframes collection', () => {
 
   it('returns empty map when no @keyframes exist', () => {
     const stylesheet: CssStylesheet = {
-      rules: [{ type: 'style', selectors: ['div'], specificity: { id: 0, a: 0, b: 1 }, declarations: [], sourceOrder: 1 }],
-      imported: [],
+      rules: [{ type: 'style', selectors: [{ type: 'compound', tagName: 'div', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null }], specificity: { id: 0, a: 0, b: 1 }, declarations: [], sourceOrder: 1, sourceUrl: null }],
+      url: null,
     };
     const kfs = collectKeyframes(stylesheet);
     expect(kfs.size).toBe(0);
@@ -159,7 +159,7 @@ describe('@keyframes collection', () => {
   it('animation-* properties appear in computed styles', () => {
     const stylesheet: CssStylesheet = {
       rules: [],
-      imported: [],
+      url: null,
     };
     const element: StyleableElement = {
       tagName: 'div',
@@ -187,8 +187,9 @@ describe('@keyframes collection', () => {
         specificity: { id: 0, a: 0, b: 1 },
         declarations: [{ property: 'animation', value: 'fadeIn 500ms ease-out', important: false }],
         sourceOrder: 1,
+        sourceUrl: null,
       }],
-      imported: [],
+      url: null,
     };
     const element: StyleableElement = {
       tagName: 'div',
@@ -203,9 +204,9 @@ describe('@keyframes collection', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Phase 2: Animation timeline integration
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Animation timeline in rendering pipeline', () => {
   it('ReflowRepaintController has an AnimationTimeline', () => {
@@ -262,9 +263,9 @@ describe('Animation timeline in rendering pipeline', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Phase 3: Web Animations API engine integration
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Animation engine: Web Animations API bridge', () => {
   it('createAnimation returns an Animation with correct options', () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { CompositingLayer } from '../../src/browser/rendering/compositing/compositing-layer';
 import { TileGrid } from '../../src/browser/rendering/compositing/tile-grid';
 import type { DomElement } from '../../src/browser/rendering/dom-tree';
@@ -49,8 +49,10 @@ function makeElement(
     naturalHeight: 0,
     loadingState: 'none',
     willChange: null,
+    usedStyle: null,
     _dirtyLayout: false,
     _dirtyPaint: false,
+    _dirtyStyle: false,
   };
 }
 

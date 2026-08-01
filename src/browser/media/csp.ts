@@ -57,7 +57,7 @@ class CspService implements ICspService {
   }
 
   evaluateDirective(directive: CspDirective, value: string): boolean {
-    if (directive === 'default-src' || directive === 'script-src' || directive === 'style-src') {
+    if (directive.name === 'default-src' || directive.name === 'script-src' || directive.name === 'style-src') {
       return !value.includes("'none'");
     }
     return true;

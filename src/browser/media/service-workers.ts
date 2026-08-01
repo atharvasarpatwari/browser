@@ -29,7 +29,7 @@ interface ServiceWorkerRegistration {
 
 interface ServiceWorker {
   readonly scriptURL: string;
-  readonly state: SWState;
+  state: SWState;
   postMessage(message: unknown): void;
 }
 
@@ -63,11 +63,13 @@ class ServiceWorkerContainer implements IServiceWorkerContainer {
     const existing = this._registrations.find(r => r.scope === scope);
     if (existing) return existing;
 
+    const self = this;
+
     const sw: ServiceWorker = {
       scriptURL,
       state: 'installing',
       postMessage(message: unknown) {
-        this.emit({ kind: 'message', data: { message } });
+        self.emit({ kind: 'message', data: { message } });
       },
     };
 
@@ -79,19 +81,11 @@ class ServiceWorkerContainer implements IServiceWorkerContainer {
       updateViaCache: options?.updateViaCache ?? 'imports',
       async update() { },
       async unregister(): Promise<boolean> {
-        const idx = this._registrations.indexOf(reg);
-        if (idx >= 0) this._registrations.splice(idx, 1);
-        this.emit({ kind: 'unregister', data: { scope } });
+        const idx = self._registrations.indexOf(reg);
+        if (idx >= 0) self._registrations.splice(idx, 1);
+        self.emit({ kind: 'unregister', data: { scope } });
         return true;
       },
-    };
-
-    const self = this;
-    reg.unregister = async function (): Promise<boolean> {
-      const idx = self._registrations.indexOf(reg);
-      if (idx >= 0) self._registrations.splice(idx, 1);
-      self.emit({ kind: 'unregister', data: { scope } });
-      return true;
     };
 
     this._registrations.push(reg);

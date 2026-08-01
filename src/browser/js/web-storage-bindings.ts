@@ -12,7 +12,7 @@
  */
 
 import { createObject, createNativeFunction, toString, toNumber } from './values';
-import type { JSObject, Environment } from './values';
+import type { JSObject, JSValue, Environment } from './values';
 import {
   NovaLocalStorage,
   InMemoryStorageBackend,
@@ -159,7 +159,7 @@ function wrapIndexedDBFactory(factory: IDBFactory): JSObject {
     value: createNativeFunction('open', (_this, args) => {
       const name = toString(args[0] ?? '');
       const version = args[1] !== undefined ? toNumber(args[1]) : undefined;
-      return factory.open(name, version);
+      return factory.open(name, version) as unknown as JSValue;
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -168,7 +168,7 @@ function wrapIndexedDBFactory(factory: IDBFactory): JSObject {
   obj.properties.set('deleteDatabase', {
     value: createNativeFunction('deleteDatabase', (_this, args) => {
       const name = toString(args[0] ?? '');
-      return factory.deleteDatabase(name);
+      return factory.deleteDatabase(name) as unknown as JSValue;
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -176,7 +176,7 @@ function wrapIndexedDBFactory(factory: IDBFactory): JSObject {
   // databases(): IDBRequest
   obj.properties.set('databases', {
     value: createNativeFunction('databases', () => {
-      return factory.databases();
+      return factory.databases() as unknown as JSValue;
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -199,20 +199,20 @@ function wrapIDBKeyRange(): JSObject {
   const obj = createObject(null);
 
   obj.properties.set('only', {
-    value: createNativeFunction('only', (_this, args) => IDBKeyRange.only(args[0])),
+    value: createNativeFunction('only', (_this, args) => IDBKeyRange.only(args[0]) as unknown as JSValue),
     writable: true, enumerable: true, configurable: true,
   });
 
   obj.properties.set('lowerBound', {
     value: createNativeFunction('lowerBound', (_this, args) => {
-      return IDBKeyRange.lowerBound(args[0], args[1] !== undefined ? Boolean(args[1]) : false);
+      return IDBKeyRange.lowerBound(args[0], args[1] !== undefined ? Boolean(args[1]) : false) as unknown as JSValue;
     }),
     writable: true, enumerable: true, configurable: true,
   });
 
   obj.properties.set('upperBound', {
     value: createNativeFunction('upperBound', (_this, args) => {
-      return IDBKeyRange.upperBound(args[0], args[1] !== undefined ? Boolean(args[1]) : false);
+      return IDBKeyRange.upperBound(args[0], args[1] !== undefined ? Boolean(args[1]) : false) as unknown as JSValue;
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -223,7 +223,7 @@ function wrapIDBKeyRange(): JSObject {
         args[0], args[1],
         args[2] !== undefined ? Boolean(args[2]) : false,
         args[3] !== undefined ? Boolean(args[3]) : false,
-      );
+      ) as unknown as JSValue;
     }),
     writable: true, enumerable: true, configurable: true,
   });

@@ -6,7 +6,7 @@ describe('ScriptGuard', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
-    guard = new ScriptGuard({ logErrors: false });
+    guard = new ScriptGuard();
   });
 
   // ── exec (sync) ─────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ describe('ScriptGuard', () => {
     });
 
     it('getConfig should return copy', () => {
-      const config = guard.getConfig();
+      const config = guard.getConfig() as { maxExecutionMs: number };
       config.maxExecutionMs = 999;
       expect(guard.getConfig().maxExecutionMs).not.toBe(999);
     });

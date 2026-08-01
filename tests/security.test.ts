@@ -127,8 +127,8 @@ describe('CspService', () => {
   });
 
   it('evaluates directives', () => {
-    expect(csp.evaluateDirective('default-src', "'none'")).toBe(false);
-    expect(csp.evaluateDirective('img-src', "*")).toBe(true);
+    expect(csp.evaluateDirective({ name: 'default-src', sources: [], rawValue: "'none'" }, "'none'")).toBe(false);
+    expect(csp.evaluateDirective({ name: 'img-src', sources: [], rawValue: '*' }, '*')).toBe(true);
   });
 
   it('dispose clears handlers and store', () => {

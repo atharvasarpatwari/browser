@@ -249,10 +249,14 @@ function buildXhrInstance(eventLoop: EventLoop, corsEngine?: ICorsEngine, pageOr
           });
           try {
             corsEngine.checkResponse(corsReq, {
+              url: state.url,
               statusCode: response.status,
               statusText: response.statusText,
               headers: resHeadersMap,
               body: '',
+              bodyBinary: null,
+              redirected: response.redirected,
+              redirectChain: [],
             });
           } catch {
             // CORS violation — make response opaque

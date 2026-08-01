@@ -468,7 +468,7 @@ export class Rasterizer {
 
   /** Returns the pixel buffer as an ImageData object. */
   getImageData(): ImageData {
-    return new ImageData(this.pixels, this.width, this.height);
+    return new ImageData(this.pixels as unknown as ImageDataArray, this.width, this.height);
   }
 
   /** Returns the raw pixel buffer (RGBA, 4 bytes per pixel). */

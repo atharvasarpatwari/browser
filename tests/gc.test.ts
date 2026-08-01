@@ -269,7 +269,7 @@ describe('FinalizationRegistry', () => {
     const finalizer = () => {};
     registry.register(obj, finalizer);
 
-    const id = (obj as Record<string, unknown>)['__gcId'] as number;
+    const id = (obj as unknown as Record<string, unknown>)['__gcId'] as number;
     expect(registry.getFinalizer(id)).toBe(finalizer);
   });
 
@@ -278,7 +278,7 @@ describe('FinalizationRegistry', () => {
     registry.register(obj, () => {});
     registry.unregister(obj);
 
-    const id = (obj as Record<string, unknown>)['__gcId'] as number;
+    const id = (obj as unknown as Record<string, unknown>)['__gcId'] as number;
     expect(registry.getFinalizer(id)).toBeUndefined();
   });
 
@@ -286,7 +286,7 @@ describe('FinalizationRegistry', () => {
     const obj = gc.allocateObject();
     registry.register(obj, () => {});
 
-    const id = (obj as Record<string, unknown>)['__gcId'] as number;
+    const id = (obj as unknown as Record<string, unknown>)['__gcId'] as number;
     registry.remove(id);
     expect(registry.getFinalizer(id)).toBeUndefined();
   });

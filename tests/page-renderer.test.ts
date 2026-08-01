@@ -35,38 +35,61 @@ function createMockDomTree(): IDomTree {
       type: 'document',
       children: [],
     }),
+    getNodeById: vi.fn(),
+    getElementById: vi.fn(),
+    getElementsByTagName: vi.fn().mockReturnValue([]),
+    getElementsByClassName: vi.fn().mockReturnValue([]),
+    querySelector: vi.fn(),
+    querySelectorAll: vi.fn().mockReturnValue([]),
+    insertBefore: vi.fn(),
+    appendChild: vi.fn(),
+    removeChild: vi.fn(),
+    setAttribute: vi.fn(),
+    removeAttribute: vi.fn(),
+    setTextContent: vi.fn(),
+    setComputedStyle: vi.fn(),
+    setUsedStyle: vi.fn(),
+    setLayoutBox: vi.fn(),
+    getMutations: vi.fn().mockReturnValue([]),
+    clearMutations: vi.fn(),
+    processMutations: vi.fn(),
+    markDirty: vi.fn(),
+    markSubtreeDirty: vi.fn(),
+    clearDirty: vi.fn(),
+    clearSubtreeDirty: vi.fn(),
     getDocument: vi.fn().mockReturnValue({
       type: 'document',
       children: [],
     }),
-    getElementById: vi.fn(),
-    getElementsByTagName: vi.fn().mockReturnValue([]),
-    setComputedStyle: vi.fn(),
-    setLayoutBox: vi.fn(),
-    appendChild: vi.fn(),
-    removeChild: vi.fn(),
-    insertBefore: vi.fn(),
-    setAttribute: vi.fn(),
-    removeAttribute: vi.fn(),
-    setTextContent: vi.fn(),
+    getParentElement: vi.fn(),
+    getOwnerDocument: vi.fn(),
+    isConnected: vi.fn().mockReturnValue(true),
     dispose: vi.fn(),
   };
 }
 
 function createMockCssParser(): ICssParser {
   return {
-    parse: vi.fn().mockReturnValue({ rules: [] }),
+    parseStylesheet: vi.fn().mockReturnValue({ rules: [], url: null }),
+    parseInlineStyle: vi.fn().mockReturnValue(new Map()),
     extractStylesFromDocument: vi.fn().mockReturnValue([]),
+    computeStyles: vi.fn().mockReturnValue(new Map()),
+    computeStylesForElement: vi.fn().mockReturnValue(new Map()),
     getCss5Parser: vi.fn().mockReturnValue({
       parseSelector: vi.fn().mockReturnValue(null),
     }),
-  };
+    dispose: vi.fn(),
+  } as ICssParser;
 }
 
 function createMockLayoutEngine(): ILayoutEngine {
   return {
     layout: vi.fn(),
+    layoutIncremental: vi.fn().mockReturnValue(new Set()),
+    getLayoutBox: vi.fn(),
     getElementAtPoint: vi.fn(),
+    getConfig: vi.fn(),
+    updateConfig: vi.fn(),
     dispose: vi.fn(),
   };
 }
@@ -74,6 +97,17 @@ function createMockLayoutEngine(): ILayoutEngine {
 function createMockPaintEngine(): IPaintEngine {
   return {
     paint: vi.fn(),
+    paintIncremental: vi.fn().mockReturnValue(new Set()),
+    getLayers: vi.fn().mockReturnValue([]),
+    getLayerById: vi.fn(),
+    compositeFrame: vi.fn().mockReturnValue([]),
+    rasterize: vi.fn(),
+    rasterizeAsync: vi.fn().mockReturnValue(Promise.resolve({} as ImageData)),
+    resize: vi.fn(),
+    getConfig: vi.fn(),
+    updateConfig: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
     dispose: vi.fn(),
   };
 }
@@ -327,6 +361,7 @@ describe('PageRenderer', () => {
           selector: 'h1',
           declarations: new Map([['color', 'red']]),
           specificity: { id: 0, class: 0, tag: 1 },
+          source: 'style-tag',
           sourceUrl: 'test.css',
         },
       ];

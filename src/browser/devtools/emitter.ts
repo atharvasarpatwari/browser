@@ -1,6 +1,6 @@
 type Listener<T> = (payload: T) => void;
 
-export class Emitter<Events extends Record<string, unknown>> {
+export class Emitter<Events extends object> {
   private listeners = new Map<keyof Events, Set<Listener<any>>>();
 
   on<K extends keyof Events>(event: K, listener: Listener<Events[K]>): () => void {

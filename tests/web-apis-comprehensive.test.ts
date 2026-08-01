@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file tests/web-apis-comprehensive.test.ts
  *
  * Tests for the Nova JS engine Web API implementations.
@@ -28,7 +28,7 @@ import {
   createResizeObserverConstructor,
 } from '../src/browser/js/web-apis';
 import { createObject, createArray, createNativeFunction, Environment } from '../src/browser/js/values';
-import type { JSObject } from '../src/browser/js/values';
+import type { JSObject, JSFunction } from '../src/browser/js/values';
 
 // Helper: create a mock env with basic helpers
 function createMockEnv() {
@@ -41,7 +41,7 @@ function mockObj(): JSObject {
   return createObject(null);
 }
 
-// ─── Web Crypto API ────────────────────────────────────────────────────────
+// â”€â”€â”€ Web Crypto API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Web Crypto API', () => {
   const crypto = createCryptoObject() as JSObject;
@@ -95,7 +95,7 @@ describe('Web Crypto API', () => {
   });
 });
 
-// ─── BroadcastChannel ─────────────────────────────────────────────────────
+// â”€â”€â”€ BroadcastChannel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('BroadcastChannel', () => {
   const BroadcastChannel = createBroadcastChannelConstructor() as any;
@@ -103,7 +103,7 @@ describe('BroadcastChannel', () => {
   it('creates with name', () => {
     const ch = BroadcastChannel.nativeFn(null, ['test-ch']) as JSObject;
     expect(ch.properties.get('name')!.value).toBe('test-ch');
-    ch.properties.get('close')!.value.nativeFn(ch, []);
+    (ch.properties.get('close')!.value as JSFunction).nativeFn!(ch, []);
   });
 
   it('postMessage sends to other channels with same name', () => {
@@ -122,8 +122,8 @@ describe('BroadcastChannel', () => {
     postMessage.nativeFn(ch1, [{ foo: 'bar' }]);
 
     expect(received.length).toBe(1);
-    ch1.properties.get('close')!.value.nativeFn(ch1, []);
-    ch2.properties.get('close')!.value.nativeFn(ch2, []);
+    (ch1.properties.get('close')!.value as JSFunction).nativeFn!(ch1, []);
+    (ch2.properties.get('close')!.value as JSFunction).nativeFn!(ch2, []);
   });
 
   it('close removes from channel', () => {
@@ -147,7 +147,7 @@ describe('BroadcastChannel', () => {
     postMessage.nativeFn(ch1, ['b']);
     expect(received.length).toBe(1);
 
-    ch2.properties.get('close')!.value.nativeFn(ch2, []);
+    (ch2.properties.get('close')!.value as JSFunction).nativeFn!(ch2, []);
   });
 
   it('does not send to self', () => {
@@ -164,11 +164,11 @@ describe('BroadcastChannel', () => {
     postMessage.nativeFn(ch, ['self-msg']);
     expect(received.length).toBe(0);
 
-    ch.properties.get('close')!.value.nativeFn(ch, []);
+    (ch.properties.get('close')!.value as JSFunction).nativeFn!(ch, []);
   });
 });
 
-// ─── Custom Elements ──────────────────────────────────────────────────────
+// â”€â”€â”€ Custom Elements â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Custom Elements', () => {
   const customElements = createCustomElementsObject();
@@ -205,7 +205,7 @@ describe('Custom Elements', () => {
   });
 });
 
-// ─── Fullscreen API ────────────────────────────────────────────────────────
+// â”€â”€â”€ Fullscreen API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Fullscreen API', () => {
   it('creates fullscreen methods', () => {
@@ -218,29 +218,29 @@ describe('Fullscreen API', () => {
 
   it('fullscreenElement returns undefined initially', () => {
     const fs = createFullscreenAPIMethods();
-    const result = fs.fullscreenElement.nativeFn(null, []);
+    const result = fs.fullscreenElement.nativeFn!(null, []);
     expect(result).toBeUndefined();
   });
 
   it('requestFullscreen sets fullscreen element', () => {
     const fs = createFullscreenAPIMethods();
     const el = mockObj();
-    fs.requestFullscreen.nativeFn(el, [el]);
-    const result = fs.fullscreenElement.nativeFn(null, []);
+    fs.requestFullscreen.nativeFn!(el, [el]);
+    const result = fs.fullscreenElement.nativeFn!(null, []);
     expect(result).toBe(el);
   });
 
   it('exitFullscreen clears fullscreen element', () => {
     const fs = createFullscreenAPIMethods();
     const el = mockObj();
-    fs.requestFullscreen.nativeFn(el, [el]);
-    fs.exitFullscreen.nativeFn(null, []);
-    const result = fs.fullscreenElement.nativeFn(null, []);
+    fs.requestFullscreen.nativeFn!(el, [el]);
+    fs.exitFullscreen.nativeFn!(null, []);
+    const result = fs.fullscreenElement.nativeFn!(null, []);
     expect(result).toBeUndefined();
   });
 });
 
-// ─── Streams API ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Streams API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('ReadableStream', () => {
   const ReadableStream = createReadableStreamConstructor() as any;
@@ -340,7 +340,7 @@ describe('TransformStream', () => {
   });
 });
 
-// ─── Performance API ──────────────────────────────────────────────────────
+// â”€â”€â”€ Performance API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Performance API', () => {
   const perf = createPerformanceObject() as JSObject;
@@ -432,7 +432,7 @@ describe('Performance API', () => {
   });
 });
 
-// ─── PerformanceObserver ──────────────────────────────────────────────────
+// â”€â”€â”€ PerformanceObserver â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('PerformanceObserver', () => {
   const PerfObserver = createPerformanceObserverConstructor() as any;
@@ -455,7 +455,7 @@ describe('PerformanceObserver', () => {
   });
 });
 
-// ─── Selection API ────────────────────────────────────────────────────────
+// â”€â”€â”€ Selection API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Selection API', () => {
   it('creates a Selection', () => {
@@ -500,7 +500,7 @@ describe('Selection API', () => {
   });
 });
 
-// ─── Range API ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Range API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Range API', () => {
   it('creates a Range', () => {
@@ -557,7 +557,7 @@ describe('Range API', () => {
   });
 });
 
-// ─── TreeWalker ────────────────────────────────────────────────────────────
+// â”€â”€â”€ TreeWalker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('TreeWalker', () => {
   it('creates a TreeWalker', () => {
@@ -566,7 +566,7 @@ describe('TreeWalker', () => {
     root.properties.set('childNodes', {
       value: createArray([]), writable: true, enumerable: true, configurable: true,
     });
-    const walker = createTreeWalker.nativeFn(null, [root]) as JSObject;
+    const walker = createTreeWalker.nativeFn!(null, [root]) as JSObject;
     expect(walker).toBeDefined();
     expect(walker.properties.has('root')).toBe(true);
     expect(walker.properties.has('currentNode')).toBe(true);
@@ -581,7 +581,7 @@ describe('TreeWalker', () => {
     root.properties.set('childNodes', {
       value: createArray([]), writable: true, enumerable: true, configurable: true,
     });
-    const walker = createTreeWalker.nativeFn(null, [root]) as JSObject;
+    const walker = createTreeWalker.nativeFn!(null, [root]) as JSObject;
     expect(walker.properties.get('currentNode')!.value).toBe(root);
   });
 
@@ -592,7 +592,7 @@ describe('TreeWalker', () => {
     root.properties.set('childNodes', {
       value: createArray([child1]), writable: true, enumerable: true, configurable: true,
     });
-    const walker = createTreeWalker.nativeFn(null, [root]) as JSObject;
+    const walker = createTreeWalker.nativeFn!(null, [root]) as JSObject;
     const firstChild = walker.properties.get('firstChild')!.value as any;
     const result = firstChild.nativeFn(walker, []);
     expect(result).toBe(child1);
@@ -605,18 +605,18 @@ describe('TreeWalker', () => {
     root.properties.set('childNodes', {
       value: createArray([]), writable: true, enumerable: true, configurable: true,
     });
-    const walker = createTreeWalker.nativeFn(null, [root, 1]) as JSObject;
+    const walker = createTreeWalker.nativeFn!(null, [root, 1]) as JSObject;
     expect(walker.properties.get('whatToShow')!.value).toBe(1);
   });
 });
 
-// ─── NodeIterator ──────────────────────────────────────────────────────────
+// â”€â”€â”€ NodeIterator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('NodeIterator', () => {
   it('creates a NodeIterator', () => {
     const createNodeIterator = createNodeIteratorObject();
     const root = mockObj();
-    const iter = createNodeIterator.nativeFn(null, [root]) as JSObject;
+    const iter = createNodeIterator.nativeFn!(null, [root]) as JSObject;
     expect(iter).toBeDefined();
     expect(iter.properties.has('root')).toBe(true);
     expect(iter.properties.has('referenceNode')).toBe(true);
@@ -628,12 +628,12 @@ describe('NodeIterator', () => {
   it('root is the root node', () => {
     const createNodeIterator = createNodeIteratorObject();
     const root = mockObj();
-    const iter = createNodeIterator.nativeFn(null, [root]) as JSObject;
+    const iter = createNodeIterator.nativeFn!(null, [root]) as JSObject;
     expect(iter.properties.get('root')!.value).toBe(root);
   });
 });
 
-// ─── MessageChannel ───────────────────────────────────────────────────────
+// â”€â”€â”€ MessageChannel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('MessageChannel', () => {
   const MessageChannel = createMessageChannelConstructor() as any;
@@ -688,7 +688,7 @@ describe('MessageChannel', () => {
   });
 });
 
-// ─── Touch constructor ────────────────────────────────────────────────────
+// â”€â”€â”€ Touch constructor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Touch constructor', () => {
   const Touch = createTouchObject() as any;
@@ -721,7 +721,7 @@ describe('Touch constructor', () => {
   });
 });
 
-// ─── TouchEvent constructor ──────────────────────────────────────────────
+// â”€â”€â”€ TouchEvent constructor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('TouchEvent constructor', () => {
   const TouchEvent = createTouchEventConstructor() as any;
@@ -735,7 +735,7 @@ describe('TouchEvent constructor', () => {
   });
 });
 
-// ─── DragEvent constructor ───────────────────────────────────────────────
+// â”€â”€â”€ DragEvent constructor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('DragEvent constructor', () => {
   const DragEvent = createDragEventConstructor() as any;
@@ -761,7 +761,7 @@ describe('DragEvent constructor', () => {
   });
 });
 
-// ─── Animation ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Animation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Animation', () => {
   it('creates an Animation with expected properties', () => {
@@ -790,7 +790,7 @@ describe('Animation', () => {
   });
 });
 
-// ─── ResizeObserver ───────────────────────────────────────────────────────
+// â”€â”€â”€ ResizeObserver â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('ResizeObserver', () => {
   const ResizeObserver = createResizeObserverConstructor() as any;
@@ -805,7 +805,7 @@ describe('ResizeObserver', () => {
   });
 });
 
-// ─── WPT-style API Conformance ────────────────────────────────────────────
+// â”€â”€â”€ WPT-style API Conformance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('WPT-style API Conformance', () => {
   it('crypto.getRandomValues works with Int32Array', () => {
@@ -845,7 +845,7 @@ describe('WPT-style API Conformance', () => {
   it('BroadcastChannel addEventListener fires', () => {
     const BroadcastChannel = createBroadcastChannelConstructor();
     let fired = false;
-    const ch = BroadcastChannel.nativeFn(null, ['ev-test']) as JSObject;
+    const ch = BroadcastChannel.nativeFn!(null, ['ev-test']) as JSObject;
     const addEventListener = ch.properties.get('addEventListener')!.value as any;
     const handler = createNativeFunction('handler', () => { fired = true; });
     addEventListener.nativeFn(ch, ['message', handler]);
@@ -855,7 +855,7 @@ describe('WPT-style API Conformance', () => {
 
     // addEventListener listeners are called with the event object
     // But they aren't wired to onmessage delivery mechanism, only onmessage is
-    ch.properties.get('close')!.value.nativeFn(ch, []);
+    (ch.properties.get('close')!.value as JSFunction).nativeFn!(ch, []);
   });
 
   it('Selection getRangeAt returns a valid Range', () => {

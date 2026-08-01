@@ -150,8 +150,6 @@ describe('TabPersistenceManager', () => {
       const tab1 = manager.createTab();
       manager.createTab();
       persistence.startAutoSave(manager);
-      const handler = vi.fn();
-      persistence.on?.('save', handler);
       manager.activateTab(tab1.id);
       const data = JSON.parse(store.read()!);
       expect(data.activeTabId).toBe(tab1.id);

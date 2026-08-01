@@ -25,7 +25,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import type { IDisposable } from '../../../app/dependency-container';
+import type { IDisposable } from '../../app/dependency-container';
 import type { PrivilegeLevel } from './privilege-levels';
 
 // ─────────────────────────────────────────────────────────────────────────────

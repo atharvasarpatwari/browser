@@ -247,7 +247,7 @@ class HttpAuthenticator implements IHttpAuthenticator {
       return hmac.update(data).digest();
     } catch {
       const hash = this.ntlmHash(password);
-      const inner = this.md5WithNode(`-----BEGIN NTLM-----${username.toUpperCase()}${domain}-----END NTLM-----`);
+      const inner = this.md5(`-----BEGIN NTLM-----${username.toUpperCase()}${domain}-----END NTLM-----`);
       const outerData = Buffer.concat([hash, Buffer.from(inner, 'hex')]);
       const crypto = require('crypto');
       return crypto.createHash('md5').update(outerData).digest();

@@ -404,6 +404,7 @@ export interface EventListenerEntry {
   capture: boolean;
   once: boolean;
   passive: boolean;
+  _markedForRemoval?: boolean;
 }
 
 export type EventListener = (event: Event) => void;

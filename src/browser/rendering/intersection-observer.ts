@@ -100,8 +100,8 @@ function offsetRect(r: ViewportRect, dx: number, dy: number): ViewportRect {
  * - threshold (array of ratios at which to fire)
  */
 export class IntersectionObserver {
-  private readonly callback: IntersectionObserverCallback;
-  private readonly root: DomElement | null;
+  private callback: IntersectionObserverCallback;
+  private root: DomElement | null;
   private readonly rootMargin: ParsedMargin;
   private readonly thresholds: readonly number[];
   private readonly observed = new Map<DomElement, ViewportRect>();
@@ -190,8 +190,8 @@ export class IntersectionObserver {
   dispose(): void {
     this.disposed = true;
     this.disconnect();
-    (this as { root: DomElement | null }).root = null;
-    (this as { callback: IntersectionObserverCallback }).callback = null as any;
+    this.root = null;
+    this.callback = null as any;
   }
 
   // ── Frame scheduling ────────────────────────────────────────────────

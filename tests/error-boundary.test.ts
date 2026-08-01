@@ -203,7 +203,7 @@ describe('ErrorBoundary', () => {
     });
 
     it('getConfig should return copy', () => {
-      const config = boundary.getConfig();
+      const config = boundary.getConfig() as { name: string };
       config.name = 'mutated';
       expect(boundary.getConfig().name).toBe('test');
     });

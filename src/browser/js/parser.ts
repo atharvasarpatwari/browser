@@ -194,7 +194,7 @@ export class Parser {
         return { type: 'SuperExpression', loc: { line: tok.line, column: tok.column } };
 
       case TokenType.Backtick:
-        return this.parseTemplateLiteral();
+        return this.parseTemplateLiteral(this.peek());
 
       case TokenType.Yield:
         return this.parseYieldExpression(false);
@@ -204,7 +204,7 @@ export class Parser {
 
       default:
         this.advance();
-        return { type: 'Literal', value: undefined, raw: tok.value, loc: { line: tok.line, column: tok.column } };
+        return { type: 'Literal', value: null, raw: tok.value, loc: { line: tok.line, column: tok.column } };
     }
   }
 
@@ -405,7 +405,7 @@ export class Parser {
       }
     }
 
-    return { type: 'TemplateLiteral', quasis, expressions, loc: headToken.loc };
+    return { type: 'TemplateLiteral', quasis, expressions, loc: { line: headToken.line, column: headToken.column } };
   }
 
   private parseNewExpression(): AST.NewExpression {
@@ -622,7 +622,7 @@ export class Parser {
     this.expect(TokenType.LParen);
     const object = this.parseExpression();
     this.expect(TokenType.RParen);
-    const body = this.parseStatement();
+    const body = this.parseStatement()!;
     return { type: 'WithStatement', object, body, loc: { line: tok.line, column: tok.column } };
   }
 
@@ -701,7 +701,7 @@ export class Parser {
         continue;
       }
       if (this.is(TokenType.LBracket)) {
-        const key = this.parseAssignmentExpression();
+        const key = this.parseExpression();
         this.expect(TokenType.Colon);
         const value = this.parseBindingName();
         properties.push({ type: 'Property', key, value: value as any, shorthand: false, computed: true, loc: { line: tok.line, column: tok.column } });
@@ -712,7 +712,7 @@ export class Parser {
       if (keyTok.type === TokenType.Identifier) {
         this.advance();
         const key: AST.Identifier = { type: 'Identifier', name: keyTok.value, loc: { line: keyTok.line, column: keyTok.column } };
-        let value: AST.Identifier | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern;
+        let value: AST.Identifier | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern | AST.RestElement;
         let shorthand = false;
         if (this.is(TokenType.Colon)) {
           this.advance();
@@ -727,7 +727,7 @@ export class Parser {
         }
         properties.push({ type: 'Property', key, value: value as any, shorthand, computed: false, loc: { line: tok.line, column: tok.column } });
       } else {
-        const key = this.parseAssignmentExpression();
+        const key = this.parseExpression();
         this.expect(TokenType.Colon);
         const value = this.parseBindingName();
         properties.push({ type: 'Property', key, value: value as any, shorthand: false, computed: false, loc: { line: tok.line, column: tok.column } });
@@ -855,7 +855,7 @@ export class Parser {
     this.expect(TokenType.LParen);
     const test = this.parseExpression();
     this.expect(TokenType.RParen);
-    const consequent = this.parseStatement();
+    const consequent = this.parseStatement()!;
     let alternate: AST.Statement | null = null;
     if (this.is(TokenType.Else)) {
       this.advance();
@@ -870,14 +870,14 @@ export class Parser {
     this.expect(TokenType.LParen);
     const test = this.parseExpression();
     this.expect(TokenType.RParen);
-    const body = this.parseStatement();
+    const body = this.parseStatement()!;
     return { type: 'WhileStatement', test, body, loc: { line: tok.line, column: tok.column } };
   }
 
   private parseDoWhileStatement(): AST.DoWhileStatement {
     const tok = this.peek();
     this.advance();
-    const body = this.parseStatement();
+    const body = this.parseStatement()!;
     this.expect(TokenType.While);
     this.expect(TokenType.LParen);
     const test = this.parseExpression();
@@ -900,14 +900,14 @@ export class Parser {
         this.advance();
         const right = this.parseExpression();
         this.expect(TokenType.RParen);
-        const body = this.parseStatement();
+        const body = this.parseStatement()!;
         return { type: 'ForInStatement', left: { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init: null }], kind: kind as 'var' | 'let' | 'const' }, right, body, loc: { line: tok.line, column: tok.column } };
       }
       if (this.is(TokenType.Of)) {
         this.advance();
         const right = this.parseExpression();
         this.expect(TokenType.RParen);
-        const body = this.parseStatement();
+        const body = this.parseStatement()!;
         return { type: 'ForOfStatement', left: { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init: null }], kind: kind as 'var' | 'let' | 'const' }, right, body, await: false, loc: { line: tok.line, column: tok.column } };
       }
       // for (var x = ...)
@@ -922,7 +922,7 @@ export class Parser {
       this.expect(TokenType.Semicolon);
       const update = this.is(TokenType.RParen) ? null : this.parseExpression();
       this.expect(TokenType.RParen);
-      const body = this.parseStatement();
+      const body = this.parseStatement()!;
       return { type: 'ForStatement', init: decl, test, update, body, loc: { line: tok.line, column: tok.column } };
     }
 
@@ -935,14 +935,14 @@ export class Parser {
         this.advance();
         const right = this.parseExpression();
         this.expect(TokenType.RParen);
-        const body = this.parseStatement();
+        const body = this.parseStatement()!;
         return { type: 'ForInStatement', left: { type: 'Identifier', name }, right, body, loc: { line: tok.line, column: tok.column } };
       }
       if (this.is(TokenType.Of)) {
         this.advance();
         const right = this.parseExpression();
         this.expect(TokenType.RParen);
-        const body = this.parseStatement();
+        const body = this.parseStatement()!;
         return { type: 'ForOfStatement', left: { type: 'Identifier', name }, right, body, await: false, loc: { line: tok.line, column: tok.column } };
       }
       this.pos = savedPos;
@@ -958,7 +958,7 @@ export class Parser {
     this.expect(TokenType.Semicolon);
     const update = !this.is(TokenType.RParen) ? this.parseExpression() : null;
     this.expect(TokenType.RParen);
-    const body = this.parseStatement();
+    const body = this.parseStatement()!;
     return { type: 'ForStatement', init, test, update, body, loc: { line: tok.line, column: tok.column } };
   }
 

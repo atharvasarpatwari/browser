@@ -31,6 +31,8 @@ export interface TelemetryConfig {
   sessionId: string;
   /** User-facing consent status */
   consent: TelemetryConsent;
+  /** App version reported with each event */
+  appVersion?: string;
 }
 
 export interface TelemetryEvent {
@@ -202,7 +204,7 @@ export class Telemetry implements ITelemetry {
       anonymousUserId: this.anonymousUserId,
       properties: { ...properties },
       category,
-      appVersion: this.config.currentVersion ?? '0.0.0',
+      appVersion: this.config.appVersion ?? '0.0.0',
     };
 
     this.buffer.push(event);

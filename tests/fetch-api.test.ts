@@ -24,8 +24,8 @@ function createTestEnv(mockFetch?: typeof globalThis.fetch) {
   return { interp, env, eventLoop };
 }
 
-async function run(source: string, mockFetch?: typeof globalThis.fetch) {
-  const { interp, env, eventLoop } = createTestEnv(mockFetch);
+async function run(source: string, mockFetch?: typeof globalThis.fetch | ReturnType<typeof vi.fn>) {
+  const { interp, env, eventLoop } = createTestEnv(mockFetch as typeof globalThis.fetch);
   const lexer = new Lexer(source);
   const parser = new Parser([], lexer);
   const program = parser.parse();

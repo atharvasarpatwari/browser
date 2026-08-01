@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+﻿import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { AudioElement } from '../src/browser/media/audio';
 import { VideoElement, KNOWN_QUALITIES } from '../src/browser/media/video';
@@ -291,7 +291,7 @@ describe('MediaSource', () => {
 });
 
 describe('SourceBuffer', () => {
-  it('appends data and updates buffered ranges', (done) => {
+  it('appends data and updates buffered ranges', (done: () => void) => {
     const buf = new SourceBufferImpl('video/mp4');
     expect(buf.updating).toBe(false);
     buf.appendBuffer(new Uint8Array([0, 1, 2, 3]));
@@ -303,7 +303,7 @@ describe('SourceBuffer', () => {
     }, 100);
   });
 
-  it('remove filters buffered ranges', (done) => {
+  it('remove filters buffered ranges', (done: () => void) => {
     const buf = new SourceBufferImpl('video/mp4');
     buf.appendBuffer(new Uint8Array(1024));
     setTimeout(() => {
@@ -684,7 +684,7 @@ describe('VideoDecoder', () => {
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }));
   });
 
-  it('decode emits output', (done) => {
+  it('decode emits output', (done: () => void) => {
     const handler = vi.fn();
     decoder.onEvent(handler);
     decoder.configure({ codec: 'vp8' });
@@ -724,7 +724,7 @@ describe('AudioDecoder', () => {
     expect(decoder.state).toBe('configured');
   });
 
-  it('decode emits output', (done) => {
+  it('decode emits output', (done: () => void) => {
     const handler = vi.fn();
     decoder.onEvent(handler);
     decoder.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 });
@@ -754,7 +754,7 @@ describe('VideoEncoder', () => {
     expect(encoder.state).toBe('configured');
   });
 
-  it('encode emits output', (done) => {
+  it('encode emits output', (done: () => void) => {
     const handler = vi.fn();
     encoder.onEvent(handler);
     encoder.configure({ codec: 'vp8', width: 640, height: 480, bitrate: 1000000 });

@@ -1,5 +1,5 @@
 import type { IDisposable } from '../../../app/dependency-container';
-import type { ITabManager } from '../../../browser/tabs/tab-manager';
+import type { ITabManager, TabManagerEventUnion } from '../../../browser/tabs/tab-manager';
 
 type TabStripEventType =
   | 'tabSelected' | 'tabClosed' | 'newTabRequested'
@@ -138,18 +138,18 @@ class TabStrip implements ITabStrip {
   private wireManagerEvents(): void {
     const onCreated = () => { this.syncWithManager(); };
     const onRemoved = () => { this.syncWithManager(); this.subscribeToActiveTab(); };
-    const onActivated = (e: { kind: string; tabId: string }) => {
+    const onActivated = (e: TabManagerEventUnion) => {
       if (e.kind === 'tabActivated') this._activeTabId = e.tabId;
       this.syncWithManager();
       this.subscribeToActiveTab();
     };
-    const onMoved = (e: { kind: string; tabId: string; fromIndex: number; toIndex: number }) => {
+    const onMoved = (e: TabManagerEventUnion) => {
       if (e.kind === 'tabMoved') {
         this.syncWithManager();
         this.bus.emit({ kind: 'tabMoved', tabId: e.tabId, fromIndex: e.fromIndex, toIndex: e.toIndex });
       }
     };
-    const onPinned = (e: { kind: string; tabId: string; pinned: boolean }) => {
+    const onPinned = (e: TabManagerEventUnion) => {
       if (e.kind === 'tabPinned') {
         this.syncWithManager();
         this.bus.emit({ kind: 'tabPinned', tabId: e.tabId, pinned: e.pinned });

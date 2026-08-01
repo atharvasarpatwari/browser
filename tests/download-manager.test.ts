@@ -53,7 +53,7 @@ describe('DownloadManagerEventBus', () => {
     const handler = vi.fn();
     bus.on('downloadProgress', handler);
     bus.off('downloadProgress', handler);
-    bus.emit({ kind: 'downloadProgress', id: '1', receivedBytes: 0, totalBytes: 100, percent: 0 });
+    bus.emit({ kind: 'downloadProgress', id: '1', receivedBytes: 0, totalBytes: 100, percent: 0, speedBytesPerSec: 0, etaSeconds: 0 });
     expect(handler).not.toHaveBeenCalled();
   });
 

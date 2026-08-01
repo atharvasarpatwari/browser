@@ -86,7 +86,7 @@ interface PreloadIPC {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** APIs that the bridge exposes per surface. */
-const BRIDGE_APIS: ReadonlyMap<ApiSurface, readonly string[]> = new Map([
+const BRIDGE_APIS: ReadonlyMap<ApiSurface, readonly string[]> = new Map<ApiSurface, readonly string[]>([
   ['dom', ['getElementById', 'querySelector', 'querySelectorAll', 'createElement',
            'createTextNode', 'addEventListener', 'removeEventListener']],
   ['fetch', ['fetch', 'requestAnimationFrame', 'cancelAnimationFrame']],
@@ -97,7 +97,7 @@ const BRIDGE_APIS: ReadonlyMap<ApiSurface, readonly string[]> = new Map([
   ['eval', ['eval', 'Function', 'setTimeout', 'setInterval', 'clearTimeout',
             'clearInterval', 'queueMicrotask']],
   ['navigation-top', ['location', 'history']],
-  ['notification', ['Notification']],
+  ['notifications', ['Notification']],
   ['clipboard-read', ['navigator.clipboard.read']],
   ['clipboard-write', ['navigator.clipboard.write']],
   ['geolocation', ['navigator.geolocation']],

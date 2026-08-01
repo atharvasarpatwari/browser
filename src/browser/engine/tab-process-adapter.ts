@@ -21,7 +21,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import type { IDisposable } from '../../../app/dependency-container';
+import type { IDisposable } from '../../app/dependency-container';
 import type { ITabContextManager, TabContext, TabContextConfig, TabCrashInfo } from './tab-context';
 import { TabContextManager, TabContextState } from './tab-context';
 import type { IProcessManager, ProcessInfo, ProcessBusEvent } from '../../common/ipc/process-manager';
@@ -69,6 +69,14 @@ interface TabProcessEvent {
   readonly processId: string;
 }
 
+interface TabProcessCreatedEvent extends TabProcessEvent {
+  readonly kind: 'tabProcessCreated';
+}
+
+interface TabProcessDestroyedEvent extends TabProcessEvent {
+  readonly kind: 'tabProcessDestroyed';
+}
+
 interface TabProcessCrashedEvent extends TabProcessEvent {
   readonly kind: 'tabProcessCrashed';
   readonly error: Error;
@@ -80,7 +88,11 @@ interface TabProcessRecoveredEvent extends TabProcessEvent {
   readonly attempt: number;
 }
 
-type TabProcessBusEvent = TabProcessEvent | TabProcessCrashedEvent | TabProcessRecoveredEvent;
+type TabProcessBusEvent =
+  | TabProcessCreatedEvent
+  | TabProcessDestroyedEvent
+  | TabProcessCrashedEvent
+  | TabProcessRecoveredEvent;
 type TabProcessEventHandler = (event: TabProcessBusEvent) => void;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,7 +130,7 @@ class TabProcessEventBus {
 
 interface ITabProcessManager extends IDisposable {
   /** Create a tab context and spawn its associated process. */
-  createTab(config?: Partial<TabContextConfig>): { tab: TabContext; processId: string };
+  createTab(config?: Partial<TabContextConfig>): Promise<{ tab: TabContext; processId: string }>;
   /** Get the process ID for a tab context. */
   getProcessForTab(tabId: string): string | null;
   /** Get the tab context for a process ID. */
@@ -129,6 +141,7 @@ interface ITabProcessManager extends IDisposable {
   getBindings(): readonly TabProcessBinding[];
   /** Subscribe to lifecycle events. */
   on(type: TabProcessEventType, handler: TabProcessEventHandler): void;
+  /** Unsubscribe from lifecycle events. */
   off(type: TabProcessEventType, handler: TabProcessEventHandler): void;
 }
 

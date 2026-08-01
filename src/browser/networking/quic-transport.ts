@@ -45,8 +45,8 @@ enum QuicConnectionState {
 
 interface QuicStream {
   readonly id: number;
-  readonly state: 'idle' | 'open' | 'half-closed' | 'closed';
-  readonly buffer: Buffer[];
+  state: 'idle' | 'open' | 'half-closed' | 'closed';
+  buffer: Buffer[];
   readonly created: number;
 }
 

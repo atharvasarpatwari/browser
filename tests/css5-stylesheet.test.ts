@@ -12,7 +12,7 @@ describe('StyleSheet', () => {
 
   it('should create stylesheet with rules', () => {
     const rules: CssRule[] = [
-      { type: 'style', selectors: [], declarations: [], specificity: { id: 0, a: 0, b: 0 }, sourceOrder: 0 },
+      { type: 'style', selectors: [], declarations: [], specificity: { id: 0, a: 0, b: 0 }, sourceOrder: 0, sourceUrl: null },
     ];
     const ss = new StyleSheet('test', rules);
     expect(ss.length).toBe(1);
@@ -67,7 +67,7 @@ describe('StyleSheet', () => {
     ss.insertRule('.a { color: red }');
     const newRule: CssStyleRule = {
       type: 'style', selectors: [], declarations: [{ property: 'background', value: 'blue', important: false }],
-      specificity: { id: 0, a: 0, b: 0 }, sourceOrder: 1,
+      specificity: { id: 0, a: 0, b: 0 }, sourceOrder: 1, sourceUrl: null,
     };
     ss.replaceRule(0, newRule);
     expect(ss.length).toBe(1);
@@ -78,7 +78,7 @@ describe('StyleSheet', () => {
     const ss = new StyleSheet('test');
     ss.insertRule('.a { color: red }');
     const newRule: CssStyleRule = {
-      type: 'style', selectors: [], declarations: [], specificity: { id: 0, a: 0, b: 0 }, sourceOrder: 1,
+      type: 'style', selectors: [], declarations: [], specificity: { id: 0, a: 0, b: 0 }, sourceOrder: 1, sourceUrl: null,
     };
     ss.replaceRule(5, newRule);
     expect(ss.length).toBe(1);
@@ -87,7 +87,7 @@ describe('StyleSheet', () => {
   it('should add a rule and return its index', () => {
     const ss = new StyleSheet('test');
     const rule: CssStyleRule = {
-      type: 'style', selectors: [], declarations: [], specificity: { id: 0, a: 0, b: 0 }, sourceOrder: 0,
+      type: 'style', selectors: [], declarations: [], specificity: { id: 0, a: 0, b: 0 }, sourceOrder: 0, sourceUrl: null,
     };
     const idx = ss.addRule(rule);
     expect(idx).toBe(0);

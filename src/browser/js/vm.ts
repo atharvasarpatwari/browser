@@ -491,7 +491,7 @@ export class BytecodeVM {
         case OP.CLOSURE: {
           const idx = this.readU16(bytecode, frame.pc);
           frame.pc += 2;
-          const fn = constants[idx] as BytecodeFunction;
+          const fn = constants[idx] as unknown as BytecodeFunction;
           // Capture upvalues from the current frame
           const capturedUpvalues: UpvalueRef[] = [];
           for (const uv of fn.upvalues) {
@@ -734,7 +734,7 @@ export class BytecodeVM {
         case OP.ARROW_EXPR: {
           const idx = this.readU16(bytecode, frame.pc);
           frame.pc += 2;
-          const fn = constants[idx] as BytecodeFunction;
+          const fn = constants[idx] as unknown as BytecodeFunction;
           const jsFn = createFunction(
             fn.name,
             Array.from({ length: fn.paramCount }, (_, i) => `param${i}`),
@@ -927,7 +927,7 @@ export class BytecodeVM {
 
     // Create new object with prototype
     const jsCtor = ctor as JSFunction;
-    const protoObj = jsCtor.properties?.get('prototype')?.value;
+    const protoObj = (jsCtor as unknown as JSObject).properties?.get('prototype')?.value;
     const newObj = createObject(typeof protoObj === 'object' && protoObj !== null ? protoObj as JSObject : null);
 
     // Restore stack

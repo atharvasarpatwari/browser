@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { LayerCompositor } from '../../src/browser/rendering/compositing/layer-compositor';
 import { LayerTree } from '../../src/browser/rendering/compositing/layer-tree';
 import { LayerPromoter } from '../../src/browser/rendering/compositing/layer-promoter';
@@ -31,8 +31,10 @@ function makeEl(
     naturalHeight: 0,
     loadingState: 'none',
     willChange: null,
+    usedStyle: null,
     _dirtyLayout: false,
     _dirtyPaint: false,
+    _dirtyStyle: false,
   };
 }
 

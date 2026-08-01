@@ -126,7 +126,39 @@ const DEFAULT_MANAGER_CONFIG: PermissionManagerConfig = {
 // CONCRETE IMPLEMENTATION
 // ─────────────────────────────────────────────────────────────────────────────
 
-class PermissionManager implements IDisposable {
+/** Interface for the per-origin permission manager. */
+interface IPermissionManager extends IDisposable {
+  query(origin: string, permission: PermissionName): PermissionQueryResult;
+  queryAll(origin: string): PermissionQueryResult[];
+  request(
+    origin: string,
+    permission: PermissionName,
+    userGesture?: boolean,
+    ttlMs?: number,
+  ): PermissionQueryResult;
+  grant(
+    origin: string,
+    permission: PermissionName,
+    userGesture?: boolean,
+    ttlMs?: number,
+  ): PermissionQueryResult;
+  deny(
+    origin: string,
+    permission: PermissionName,
+    userGesture?: boolean,
+  ): PermissionQueryResult;
+  revoke(origin: string, permission: PermissionName): void;
+  revokeAll(origin: string): void;
+  reset(): void;
+  isGranted(origin: string, permission: PermissionName): boolean;
+  isDenied(origin: string, permission: PermissionName): boolean;
+  readonly size: number;
+  getOrigins(): string[];
+  on(handler: PermissionManagerEventHandler): void;
+  off(handler: PermissionManagerEventHandler): void;
+}
+
+class PermissionManager implements IPermissionManager {
   /**
    * Key format: "origin::permission"
    * e.g. "https://example.com::camera"
@@ -410,6 +442,7 @@ export {
 };
 
 export type {
+  IPermissionManager,
   PermissionName,
   PermissionState,
   PermissionEntry,

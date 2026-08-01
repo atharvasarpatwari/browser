@@ -29,7 +29,7 @@ function createTestEventLoop(): EventLoop {
 }
 
 function callJSFn(fn: JSFunction, thisArg: JSValue, args: JSValue[]): JSValue {
-  return fn.nativeFn!(thisArg, args);
+  return fn.nativeFn!(thisArg, args) as JSValue;
 }
 
 function buildXhr(el: EventLoop): JSObject {

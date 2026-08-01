@@ -1,5 +1,6 @@
 import { HtmlParser } from '../src/browser/rendering/html-parser';
 import { DomTree } from '../src/browser/rendering/dom-tree';
+import type { HtmlElement } from '../src/browser/rendering/html5/dom';
 import { HtmlSanitizer, containsDangerousCss, sanitizeStyleAttribute } from '../src/browser/security/html-sanitizer';
 import { isBlockedUrlScheme } from '../src/browser/security/blocked-url-schemes';
 
@@ -45,15 +46,15 @@ const result2 = htmlParser.parse('<div><div><p onclick="evil()">Nested</p></div>
 const htmlDoc = result2.document;
 console.log('htmlDoc.children:', htmlDoc.children.length);
 if (htmlDoc.children[0]) {
-  const html = htmlDoc.children[0];
+  const html = htmlDoc.children[0] as HtmlElement;
   console.log('html.tagName:', html.tagName);
   console.log('html.children:', html.children.length);
   if (html.children[0]) {
-    const body = html.children.find((c: any) => c.tagName === 'body') || html.children[0];
+    const body = (html.children.find((c: any) => c.tagName === 'body') || html.children[0]) as HtmlElement;
     console.log('body.tagName:', body.tagName);
     console.log('body.children:', body.children.length);
     if (body.children[0]) {
-      const outerDiv = body.children[0];
+      const outerDiv = body.children[0] as HtmlElement;
       console.log('outerDiv.tagName:', outerDiv.tagName);
       console.log('outerDiv.children:', outerDiv.children.length);
     }

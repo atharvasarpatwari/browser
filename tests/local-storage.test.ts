@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   NovaLocalStorage,
-  NovaSessionStorage as NovaSessionStorageImpl,
   InMemoryStorageBackend,
   type StorageEvent,
 } from '../src/browser/storage/local-storage';

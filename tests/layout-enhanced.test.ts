@@ -122,6 +122,8 @@ describe('generateAnonymousTableBoxes', () => {
       naturalWidth: 0, naturalHeight: 0,
       loadingState: 'none',
       parent: null, children: [],
+      usedStyle: null,
+      _dirtyStyle: true,
       _dirtyLayout: true, _dirtyPaint: true,
       willChange: null,
     };
@@ -139,6 +141,8 @@ describe('generateAnonymousTableBoxes', () => {
       naturalWidth: 0, naturalHeight: 0,
       loadingState: 'none',
       parent: null, children: [],
+      usedStyle: null,
+      _dirtyStyle: true,
       _dirtyLayout: true, _dirtyPaint: true,
       willChange: null,
     };
@@ -156,6 +160,8 @@ describe('generateAnonymousTableBoxes', () => {
       naturalWidth: 0, naturalHeight: 0,
       loadingState: 'none',
       parent: null, children: [],
+      usedStyle: null,
+      _dirtyStyle: true,
       _dirtyLayout: true, _dirtyPaint: true,
       willChange: null,
     };
@@ -205,6 +211,8 @@ function makeCellWithStyle(id: string, style: Record<string, string>): DomElemen
     naturalWidth: 0, naturalHeight: 0,
     loadingState: 'none',
     parent: null, children: [],
+    usedStyle: null,
+    _dirtyStyle: true,
     _dirtyLayout: true, _dirtyPaint: true,
     willChange: null,
   };

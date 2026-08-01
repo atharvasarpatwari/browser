@@ -676,6 +676,7 @@ class ApplicationBootstrap {
 
       const crashReporter = this.container.resolve<ICrashReporter>(Tokens.CrashReporter);
       tabProcessManager.on('tabProcessCrashed', (event) => {
+        if (event.kind !== 'tabProcessCrashed') return;
         const report = new CrashReportBuilder()
           .source('tab-context')
           .error(event.error)

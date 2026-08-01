@@ -39,7 +39,8 @@ async function main(): Promise<void> {
 
   // Register a basic renderer service stub
   const rendererChannel = channelManager.getChannel('renderer');
-  const rendererStub = new ServiceStub(rendererChannel, {
+  const rendererStub = new ServiceStub(rendererChannel, 'renderer');
+  rendererStub.setImplementation({
     ping: () => ({ success: true, value: 'pong' } as any),
     getProcessId: () => ({ success: true, value: PROCESS_ID } as any),
   });

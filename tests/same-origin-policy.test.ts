@@ -509,7 +509,7 @@ describe('Phase 7: CORP enforcement logic', () => {
     // Test the logic: if CORP is "same-origin" and request is cross-origin → block
     const corp = 'same-origin';
     const pageOrigin = 'https://example.com';
-    const requestOrigin = 'https://other.com';
+    const requestOrigin: string = 'https://other.com';
     const isCrossOrigin = requestOrigin !== pageOrigin;
     expect(isCrossOrigin && corp.trim().toLowerCase() === 'same-origin').toBe(true);
   });
@@ -525,7 +525,7 @@ describe('Phase 7: CORP enforcement logic', () => {
   it('cross-origin CORP allows cross-origin requests', () => {
     const corp = 'cross-origin';
     const pageOrigin = 'https://example.com';
-    const requestOrigin = 'https://other.com';
+    const requestOrigin: string = 'https://other.com';
     const isCrossOrigin = requestOrigin !== pageOrigin;
     expect(isCrossOrigin && corp.trim().toLowerCase() === 'same-origin').toBe(false);
   });

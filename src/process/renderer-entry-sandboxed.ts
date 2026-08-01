@@ -138,7 +138,7 @@ function buildSandboxedWindow(
   };
 
   // Notification
-  if (bridge.hasSurface('notification')) {
+  if (bridge.hasSurface('notifications')) {
     window.Notification = {
       permission: 'default',
       requestPermission: () => bridge.call('notifications', 'notification-request'),
@@ -297,10 +297,10 @@ class SandboxedRendererProcess {
       // Create a JS engine for this script
       const lexer = new Lexer(script);
       const parser = new Parser([], lexer);
-      const program = parser.parseProgram();
+      const program = parser.parse();
 
-      this.interpreter = new Interpreter(program, env);
-      const result = this.interpreter.run();
+      this.interpreter = new Interpreter(env);
+      const result = this.interpreter.run(program);
 
       this.send({ type: 'script-result', id, result });
     } catch (error) {

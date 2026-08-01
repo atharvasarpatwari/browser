@@ -3,7 +3,7 @@ import { TabSession, TabSessionEventBus } from '../src/browser/tabs/tab-session'
 import type { NavigationEntry } from '../src/browser/navigation/navigation-controller';
 
 function makeEntry(url = 'https://example.com'): NavigationEntry {
-  return { id: `nav-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, url, title: '', timestamp: Date.now(), type: 'other' as any };
+  return { id: `nav-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, url, title: '', timestamp: Date.now(), type: 'other' as any, scrollX: 0, scrollY: 0, parsedUrl: null as any, state: null };
 }
 
 describe('TabSession', () => {

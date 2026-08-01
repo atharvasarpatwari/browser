@@ -86,7 +86,7 @@ export class Interpreter {
     if (this.opCount % Interpreter.OPS_BETWEEN_CHECKS !== 0) return;
     const elapsed = Date.now() - this.executionStartTime;
     if (elapsed > this.maxExecutionMs) {
-      throw new JSError(`Script execution timed out after ${this.maxExecutionMs}ms`, 'TimeoutError');
+      throw new JSError(`TimeoutError: Script execution timed out after ${this.maxExecutionMs}ms`);
     }
   }
 
@@ -118,7 +118,7 @@ export class Interpreter {
       if (isThrowSignal(result)) throw new JSError(result.value);
       // Drain microtasks after program execution
       this.eventLoop?.drainMicrotasks();
-      return result;
+      return result as JSValue;
     } finally {
       setGlobalCaller(null);
     }
@@ -184,8 +184,8 @@ export class Interpreter {
       return result.value;
     }
     if (isThrowSignal(result)) throw new JSError(result.value);
-    if (fn.async && this.eventLoop) return wrapAsyncResult(result, this.eventLoop);
-    return result;
+    if (fn.async && this.eventLoop) return wrapAsyncResult(result as JSValue, this.eventLoop);
+    return result as JSValue;
   }
 
   /** Handle async function awaiting a pending Promise — set up microtask resumption */
@@ -247,9 +247,9 @@ export class Interpreter {
     switch (stmt.type) {
       case 'BlockStatement': return this.execBlock(stmt.body, env);
       case 'ExpressionStatement': return this.evalExpr(stmt.expression, env);
-      case 'VariableDeclaration': return this.execVarDecl(stmt, env);
-      case 'FunctionDeclaration': return this.execFuncDecl(stmt, env);
-      case 'ClassDeclaration': return this.execClassDecl(stmt, env);
+      case 'VariableDeclaration': this.execVarDecl(stmt, env); return undefined;
+      case 'FunctionDeclaration': this.execFuncDecl(stmt, env); return undefined;
+      case 'ClassDeclaration': this.execClassDecl(stmt, env); return undefined;
       case 'ReturnStatement': return this.execReturn(stmt, env);
       case 'IfStatement': return this.execIf(stmt, env);
       case 'WhileStatement': return this.execWhile(stmt, env);
@@ -784,10 +784,10 @@ export class Interpreter {
       case '/': return toNumber(left) / toNumber(right);
       case '%': return toNumber(left) % toNumber(right);
       case '**': return toNumber(left) ** toNumber(right);
-      case '<': return left < right as unknown as boolean;
-      case '>': return left > right as unknown as boolean;
-      case '<=': return left <= right as unknown as boolean;
-      case '>=': return left >= right as unknown as boolean;
+      case '<': return (left as unknown as number) < (right as unknown as number);
+      case '>': return (left as unknown as number) > (right as unknown as number);
+      case '<=': return (left as unknown as number) <= (right as unknown as number);
+      case '>=': return (left as unknown as number) >= (right as unknown as number);
       case '==': return left == right as unknown as boolean;
       case '!=': return left != right as unknown as boolean;
       case '===': return left === right;
@@ -1061,11 +1061,11 @@ export class Interpreter {
           return result.value;
         }
         if (isThrowSignal(result)) throw new JSError(result.value);
-        if (fn.async && this.eventLoop) return wrapAsyncResult(result, this.eventLoop);
-        return result;
+        if (fn.async && this.eventLoop) return wrapAsyncResult(result as JSValue, this.eventLoop);
+        return result as JSValue;
       }
       // Object-as-function
-      const callFn = fn.properties.get('call')?.value;
+      const callFn = (fn as unknown as JSObject).properties.get('call')?.value;
       if (typeof callFn === 'object' && callFn !== null && (callFn as JSFunction).type === 'closure') {
         return this.evalCall({ type: 'CallExpression', callee: callFn as unknown as AST.Expression, arguments: [expr.callee, ...expr.arguments], optional: false }, env);
       }
@@ -1202,8 +1202,8 @@ export class Interpreter {
           return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
         },
         search: (_t, a) => (obj as string).search(new RegExp(toString(a[0]))),
-        valueOf: (_t, _a) => obj,
-        toString: (_t, _a) => obj,
+        valueOf: (_t: JSValue, _a: JSValue[]) => obj,
+        toString: (_t: JSValue, _a: JSValue[]) => obj,
       };
       if (key in strMethods) {
         return createNativeFunction(key, strMethods[key]);
@@ -1296,8 +1296,8 @@ export class Interpreter {
           const m = (obj as string).match(new RegExp(toString(a[0])));
           return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
         },
-        valueOf: (_t, _a) => obj,
-        toString: (_t, _a) => obj,
+        valueOf: (_t: JSValue, _a: JSValue[]) => obj,
+        toString: (_t: JSValue, _a: JSValue[]) => obj,
       };
       if (key === 'length') return (obj as string).length;
       const idx = parseInt(key, 10);
@@ -1307,8 +1307,8 @@ export class Interpreter {
     }
     if (typeof obj === 'number') {
       const numMethods: Record<string, NativeFunction> = {
-        toString: (_t, _a) => obj.toString(),
-        valueOf: (_t, _a) => obj,
+        toString: (_t: JSValue, _a: JSValue[]) => obj.toString(),
+        valueOf: (_t: JSValue, _a: JSValue[]) => obj,
         toFixed: (_t, a) => (obj as number).toFixed(toNumber(a[0])),
         toPrecision: (_t, a) => (obj as number).toPrecision(toNumber(a[0])),
         toExponential: (_t, a) => (obj as number).toExponential(toNumber(a[0])),
@@ -1318,8 +1318,8 @@ export class Interpreter {
     }
     if (typeof obj === 'boolean') {
       const boolMethods: Record<string, NativeFunction> = {
-        toString: (_t, _a) => obj.toString(),
-        valueOf: (_t, _a) => obj,
+        toString: (_t: JSValue, _a: JSValue[]) => obj.toString(),
+        valueOf: (_t: JSValue, _a: JSValue[]) => obj,
       };
       if (key in boolMethods) return createNativeFunction(key, boolMethods[key]);
       return undefined;
@@ -1348,11 +1348,11 @@ export class Interpreter {
       }
       if ((o as any).__type_override === 'symbol') {
         const symMethods: Record<string, NativeFunction> = {
-          toString: (_t, _a) => {
+          toString: (_t: JSValue, _a: JSValue[]) => {
             const desc = (o as any).symbolDescription ?? '';
             return `Symbol(${desc})`;
           },
-          valueOf: (_t, _a) => o,
+          valueOf: (_t: JSValue, _a: JSValue[]) => o,
         };
         if (key in symMethods) return createNativeFunction(key, symMethods[key]);
         return undefined;

@@ -61,7 +61,7 @@ export class UpvalueRef {
   constructor(public value: JSValue) {}
 }
 
-export type NativeFunction = (thisArg: JSValue, args: JSValue[]) => JSValue;
+export type NativeFunction = (thisArg: JSValue, args: JSValue[]) => JSValue | void;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SENTINEL VALUES

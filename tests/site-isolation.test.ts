@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // OriginIsolator tests
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import {
   OriginIsolator,
@@ -239,9 +239,9 @@ describe('OriginIsolator', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // CrossOriginGuard tests
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import {
   CrossOriginGuard,
@@ -611,9 +611,9 @@ describe('CrossOriginGuard', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PermissionManager tests
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import {
   PermissionManager,
@@ -834,9 +834,9 @@ describe('PermissionManager', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // ResourceQuotaManager tests
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import {
   ResourceQuotaManager,
@@ -1083,9 +1083,9 @@ describe('ResourceQuotaManager', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PrivilegeLevels tests
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import {
   PrivilegeLevels,
@@ -1160,7 +1160,7 @@ describe('PrivilegeLevels', () => {
     });
 
     it('should check API surface at the current level', () => {
-      // sandboxed-content at web-content required level → still denied because
+      // sandboxed-content at web-content required level â†’ still denied because
       // the sandboxed-content policy doesn't allow fetch
       const result = pl.checkPrivilege('sandboxed-content', 'web-content', 'fetch');
       expect(result.allowed).toBe(false);
@@ -1181,6 +1181,9 @@ describe('PrivilegeLevels', () => {
         allowPopups: false,
         allowTopNavigation: false,
         allowPointerLock: false,
+        allowSameOrigin: false,
+        allowOrientationLock: false,
+        allowPresentation: false,
       });
       expect(result.allowed).toBe(true);
     });
@@ -1193,6 +1196,9 @@ describe('PrivilegeLevels', () => {
         allowPopups: false,
         allowTopNavigation: false,
         allowPointerLock: false,
+        allowSameOrigin: false,
+        allowOrientationLock: false,
+        allowPresentation: false,
       });
       expect(result.allowed).toBe(false);
     });
@@ -1205,6 +1211,9 @@ describe('PrivilegeLevels', () => {
         allowPopups: false,
         allowTopNavigation: false,
         allowPointerLock: false,
+        allowSameOrigin: false,
+        allowOrientationLock: false,
+        allowPresentation: false,
       });
       expect(result.allowed).toBe(true);
     });
@@ -1217,6 +1226,9 @@ describe('PrivilegeLevels', () => {
         allowPopups: true,
         allowTopNavigation: false,
         allowPointerLock: false,
+        allowSameOrigin: false,
+        allowOrientationLock: false,
+        allowPresentation: false,
       });
       expect(result.allowed).toBe(true);
     });
@@ -1229,6 +1241,9 @@ describe('PrivilegeLevels', () => {
         allowPopups: false,
         allowTopNavigation: true,
         allowPointerLock: false,
+        allowSameOrigin: false,
+        allowOrientationLock: false,
+        allowPresentation: false,
       });
       expect(result.allowed).toBe(true);
     });
@@ -1241,6 +1256,9 @@ describe('PrivilegeLevels', () => {
         allowPopups: false,
         allowTopNavigation: false,
         allowPointerLock: true,
+        allowSameOrigin: false,
+        allowOrientationLock: false,
+        allowPresentation: false,
       });
       expect(result.allowed).toBe(true);
     });
@@ -1253,6 +1271,9 @@ describe('PrivilegeLevels', () => {
         allowPopups: false,
         allowTopNavigation: false,
         allowPointerLock: false,
+        allowSameOrigin: false,
+        allowOrientationLock: false,
+        allowPresentation: false,
       });
       expect(result.allowed).toBe(true); // dom is allowed for sandboxed-content by default
     });

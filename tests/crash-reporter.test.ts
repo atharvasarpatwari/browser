@@ -171,7 +171,7 @@ describe('CrashReporter', () => {
   });
 
   it('getConfig should return copy', () => {
-    const config = reporter.getConfig();
+    const config = reporter.getConfig() as { maxReports: number };
     config.maxReports = 999;
     expect(reporter.getConfig().maxReports).not.toBe(999);
   });

@@ -49,7 +49,7 @@ class CertificateService implements ICertificateService {
   isHostSecure(hostname: string): boolean {
     const override = this._hostOverrides.get(hostname.toLowerCase());
     if (override === 'trusted') return true;
-    if (override && override !== 'trusted') return false;
+    if (override) return false;
     return this._validator.isHostSecure(hostname);
   }
 

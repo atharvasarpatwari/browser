@@ -267,7 +267,6 @@ class TabContext implements ITabContext {
     // Reset rendering pipeline state
     this._layoutEngine.dispose();
     this._paintEngine.dispose();
-    this._layoutEngine.clearLayout?.();
 
     // Create fresh instances to avoid contaminated state
     // (In a real browser, we'd reuse the instances but clear their caches)

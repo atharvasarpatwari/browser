@@ -9,7 +9,7 @@ interface IClipboardService extends IDisposable {
 }
 
 interface ClipboardItem {
-  readonly types: string[];
+  readonly types: readonly string[];
   getType(type: string): Promise<Blob>;
 }
 
@@ -42,14 +42,14 @@ class ClipboardService implements IClipboardService {
 
   async read(): Promise<ClipboardItem[]> {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      try { return await navigator.clipboard.read(); } catch { }
+      try { return [...(await navigator.clipboard.read())]; } catch { }
     }
     return [];
   }
 
   async write(items: ClipboardItem[]): Promise<void> {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      try { await navigator.clipboard.write(items); return; } catch { }
+      try { await navigator.clipboard.write(items as unknown as ClipboardItems); return; } catch { }
     }
     this.emit({ kind: 'copy', data: { items: items.length } });
   }

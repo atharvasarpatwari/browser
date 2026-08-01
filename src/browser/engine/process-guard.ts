@@ -67,6 +67,8 @@ const DEFAULT_PROCESS_GUARD_CONFIG: ProcessGuardConfig = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface IProcessGuard extends IDisposable {
+  /** Human-readable service identifier used by the shell lifecycle. */
+  readonly name: string;
   /** Install error handlers when the service lifecycle initializes. */
   initialize(): Promise<void>;
   /** Remove error handlers when the service lifecycle shuts down. */
@@ -92,6 +94,7 @@ interface IProcessGuard extends IDisposable {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ProcessGuard implements IProcessGuard {
+  readonly name = 'process-guard';
   private config: ProcessGuardConfig;
   private readonly errorHistory: ProcessErrorRecord[] = [];
   private errorCount = 0;

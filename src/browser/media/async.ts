@@ -78,7 +78,7 @@ class AsyncService implements IAsyncService {
   start(fn: string, args?: unknown[]): AsyncOperationHandle {
     const id = this._nextId++;
     this._totalStarted++;
-    const op = { id, fn, args: [...(args ?? [])], started: Date.now(), status: 'pending' as const, result: undefined, error: undefined, awaitCount: 0, _totalWaitTime: 0 };
+    const op: AsyncOperation & { _totalWaitTime: number } = { id, fn, args: [...(args ?? [])], started: Date.now(), status: 'pending', result: undefined, error: undefined, awaitCount: 0, _totalWaitTime: 0 };
     this._operations.set(id, op);
 
     this.emit({ kind: 'started', data: { id, fn, args: args ?? [] } });

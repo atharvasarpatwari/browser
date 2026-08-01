@@ -169,7 +169,7 @@ export class ReflowRepaintController {
       const layoutDamage = this.layoutEngine.layoutIncremental(
         this.document,
         this.domTree,
-        { width: this.viewportWidth, height: this.viewportHeight },
+        { viewportWidth: this.viewportWidth, viewportHeight: this.viewportHeight },
       );
 
       // 3. Incremental paint — uses layout damage to know what to repaint

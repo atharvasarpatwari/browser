@@ -287,6 +287,7 @@ class CspReporter implements IDisposable {
       readonly userAgent?: string;
       readonly scriptSample?: string;
       readonly styleSample?: string;
+      readonly disposition?: 'enforce' | 'report';
       readonly policy: CspPolicy;
     },
     reportUri?: string,
@@ -294,7 +295,7 @@ class CspReporter implements IDisposable {
   ): void {
     if (this.disposed) return;
 
-    const disposition = reportOnly ? 'report' : 'enforce';
+    const disposition = context.disposition ?? (reportOnly ? 'report' : 'enforce');
 
     const report = buildViolationReport(result, { ...context, disposition });
 

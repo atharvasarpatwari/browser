@@ -68,6 +68,14 @@ At the end of every prompt delivery, the agent MUST:
 2. If yes, generate the doc file before marking the task complete
 3. Update `doc/README.md` index if a new doc was created
 
+## Run & Verify Rule
+
+**Every piece of code written or modified MUST be run/verified before the task is marked complete. If it fails, rewrite it until it runs properly.**
+
+- After writing or editing code, run it (e.g. `npx tsc --noEmit`, `npx vitest run <file>`, `node <script>`, build command) and confirm success.
+- If the run fails, fix the code and re-run — do not declare success without a passing run.
+- Log the exact command run and its output in the session's change log (Test Results section).
+
 ## Token Efficiency Rule
 
 **Do NOT read source code files for reference/context. Use `doc/` files instead.**

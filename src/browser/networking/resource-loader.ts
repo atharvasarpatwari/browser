@@ -1,6 +1,6 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { IHttpClient, RetryPolicy, RequestEventType, RequestEvent } from './request-manager';
-import { FetchHttpClient, ExponentialBackoffRetryPolicy, HttpMethod, NetworkError, RequestAbortedError } from './request-manager';
+import type { IHttpClient, RetryPolicy, HttpMethod, HttpRequestSpec, RequestEventType, RequestEvent } from './request-manager';
+import { FetchHttpClient, ExponentialBackoffRetryPolicy, NetworkError, RequestAbortedError } from './request-manager';
 import type { IResponseParser } from './response-parser';
 import { ResponseParser } from './response-parser';
 import type { DiscoveredResource, DiscoveredResourceKind } from '../rendering/html-parser';
@@ -139,6 +139,7 @@ class ResourceLoader implements IResourceLoader {
 
     try {
       const headers = new Map<string, string>([['accept', '*/*']]);
+      const signal = options?.signal ?? new AbortController().signal;
 
       // ── CORS pre-request check ──────────────────────────────────────────
       let corsPreflightDone = false;
@@ -200,14 +201,12 @@ class ResourceLoader implements IResourceLoader {
         }
       }
 
-      const spec = {
+      const spec: HttpRequestSpec = {
         url,
-        method: HttpMethod.GET,
+        method: 'GET',
         headers,
         timeoutMs: options?.timeoutMs ?? 15_000,
       };
-
-      const signal = options?.signal ?? new AbortController().signal;
 
       let res;
       try {

@@ -168,7 +168,7 @@ describe('SyncEngine', () => {
   it('disable resets state', async () => { await se.enable('pass'); se.disable(); expect(se.getStatus()).toBe('disabled'); expect(se.getConfig().passphrase).toBe(''); });
   it('forceSync when disabled is no-op', async () => { await se.forceSync(); expect(se.getStatus()).toBe('disabled'); });
   it('getStats returns data', () => { const s = se.getStats(); expect(s.totalSynced).toBe(0); expect(s.deviceCount).toBe(0); });
-  it('onEvent unsubscribe works', () => { const h = vi.fn(); const u = se.onEvent(h); u(); se.emit = vi.fn(); expect(h).not.toHaveBeenCalled(); });
+  it('onEvent unsubscribe works', () => { const h = vi.fn(); const u = se.onEvent(h); u(); (se as any).emit = vi.fn(); expect(h).not.toHaveBeenCalled(); });
   it('resolveConflict removes conflict', () => {
     (se as any).conflicts = [{ recordId: 'r1', type: 'bookmarks', local: {}, remote: {} }];
     se.resolveConflict('r1', true);
@@ -390,7 +390,7 @@ describe('StartupPages', () => {
     sp.setAction('continue-where-left');
     expect(sp.getStartupPages()).toHaveLength(0);
   });
-  it('getConfig returns copy', () => { const c = sp.getConfig(); c.action = 'never'; expect(sp.getAction()).toBe('new-tab'); });
+  it('getConfig returns copy', () => { const c = sp.getConfig(); c.action = 'continue-where-left'; expect(sp.getAction()).toBe('new-tab'); });
   it('setConfig updates', () => { sp.setConfig({ action: 'specific-pages', newWindow: false }); expect(sp.getAction()).toBe('specific-pages'); });
   it('events fire on add/remove/reorder', () => {
     const events: string[] = [];

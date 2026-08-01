@@ -29,21 +29,22 @@ interface DomListenerEntry {
   capture: boolean;
   once: boolean;
   thisArg: JSValue;
+  __marked?: boolean;
 }
 
 const domListenerMap = new WeakMap<DomNode, DomListenerEntry[]>();
 
-function getDomListeners(node: DomNode): DomListenerEntry[] {
-  let list = domListenerMap.get(node);
+function getDomListeners(node: DomNode | DomDocument): DomListenerEntry[] {
+  let list = domListenerMap.get(node as DomNode);
   if (!list) {
     list = [];
-    domListenerMap.set(node, list);
+    domListenerMap.set(node as DomNode, list);
   }
   return list;
 }
 
 function invokeDomListeners(
-  node: DomNode,
+  node: DomNode | DomDocument,
   eventType: string,
   event: JSObject,
   isCapture: boolean,
@@ -65,7 +66,7 @@ function invokeDomListeners(
   return stopped;
 }
 
-function cleanupDomOnceListeners(node: DomNode): void {
+function cleanupDomOnceListeners(node: DomNode | DomDocument): void {
   const entries = getDomListeners(node);
   for (let i = entries.length - 1; i >= 0; i--) {
     if (entries[i].__marked) entries.splice(i, 1);
@@ -82,27 +83,31 @@ function makeElement(tagName: string, parent: DomNode | null): DomElement {
     tagName: tagName.toLowerCase(),
     attributes: new Map(),
     computedStyle: null,
+    usedStyle: null,
     layoutBox: null,
     imageData: null,
     naturalWidth: 0,
     naturalHeight: 0,
     loadingState: 'none',
+    willChange: null,
+    _dirtyStyle: true,
     _dirtyLayout: true,
     _dirtyPaint: true,
   };
 }
 
 /** Create a lightweight DomTextNode (for document.createTextNode). */
-function makeTextNode(text: string, parent: DomNode | null): DomNode {
+function makeTextNode(text: string, parent: DomNode | null): DomTextNode {
   return {
     domId: `dom-js-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     nodeType: 'text',
     parent,
     children: [],
     text,
+    _dirtyStyle: true,
     _dirtyLayout: true,
     _dirtyPaint: true,
-  } as DomNode & { text: string };
+  };
 }
 
 export function createDocumentBinding(
@@ -413,7 +418,7 @@ export function wrapAnimation(anim: Animation): JSObject {
     obj.properties.set('playbackRate', { value: 1, writable: true, enumerable: true, configurable: true });
     obj.properties.set('currentTime', { value: anim.currentTime, writable: true, enumerable: true, configurable: true });
     obj.properties.set('startTime', { value: anim.currentTime, writable: true, enumerable: true, configurable: true });
-    obj.properties.set('finished', { value: anim.finished, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('finished', { value: anim.finished as unknown as JSValue, writable: true, enumerable: true, configurable: true });
     obj.properties.set('pending', { value: anim.pending, writable: true, enumerable: true, configurable: true });
     obj.properties.set('onfinish', { value: obj.properties.get('onfinish')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
     obj.properties.set('oncancel', { value: obj.properties.get('oncancel')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
@@ -1541,7 +1546,16 @@ function shallowClone(el: DomElement): DomElement {
     tagName: el.tagName,
     attributes: new Map(el.attributes),
     computedStyle: null,
+    usedStyle: null,
     layoutBox: null,
+    imageData: null,
+    naturalWidth: 0,
+    naturalHeight: 0,
+    loadingState: 'none',
+    willChange: null,
+    _dirtyStyle: true,
+    _dirtyLayout: true,
+    _dirtyPaint: true,
   };
 }
 
@@ -1559,6 +1573,9 @@ function deepClone(el: DomElement): DomElement {
         parent: clone as unknown as DomNode | null,
         children: [],
         text: (child as DomNode & { text?: string }).text ?? '',
+        _dirtyStyle: true,
+        _dirtyLayout: true,
+        _dirtyPaint: true,
       };
       clone.children.push(textClone);
     }

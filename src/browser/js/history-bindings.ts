@@ -128,10 +128,10 @@ function jsValueToPlain(val: JSValue): unknown {
  * Serialize an arbitrary state value into a JSON-safe JSValue.
  * Per WHATWG spec, history.state uses structured clone — for now we do JSON.
  */
-function serializeState(state: JSValue): JSValue {
+function serializeState(state: unknown): JSValue {
   if (state === undefined || state === null) return null;
   if (typeof state === 'string' || typeof state === 'number' || typeof state === 'boolean') return state;
-  const plain = jsValueToPlain(state);
+  const plain = jsValueToPlain(state as JSValue);
   try {
     return JSON.parse(JSON.stringify(plain)) as JSValue;
   } catch {

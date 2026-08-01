@@ -5,6 +5,7 @@ import type { DomDocument, DomElement } from '../src/browser/rendering/dom-tree'
 import { LayoutEngine } from '../src/browser/rendering/layout-engine';
 import { PaintEngine } from '../src/browser/rendering/paint-engine';
 import type { PaintCommand } from '../src/browser/rendering/paint-engine';
+import type { PaintCmd } from '../src/browser/rendering/formatting/stacking';
 import {
   buildStackingContextTree,
   renderStackingContext,

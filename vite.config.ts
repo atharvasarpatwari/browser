@@ -21,7 +21,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      electron: 'data:text/javascript,export default {}',
+      electron: fileURLToPath(new URL('./src/platform/shared/electron-stub.ts', import.meta.url)),
     },
   },
   build: {

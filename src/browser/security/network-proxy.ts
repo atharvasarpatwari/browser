@@ -27,7 +27,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import type { IDisposable } from '../../../app/dependency-container';
+import type { IDisposable } from '../../app/dependency-container';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES

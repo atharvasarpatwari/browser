@@ -1,29 +1,29 @@
 export { MultiTabs } from './multi-tabs';
-export type { IMultiTabs, TabItem, TabInfo, TabEvent, TabEventKind, TabEventHandler } from './multi-tabs';
+export type { TabInfo, TabManagerFacade, MultiTabsEvent, MultiTabsEventKind, MultiTabsEventHandler, ITabSessionLike, ITabManagerLike } from './multi-tabs';
 
-export { TabGroups } from './tab-groups';
-export type { ITabGroups, TabGroup, TabGroupEvent, TabGroupEventKind, TabGroupEventHandler } from './tab-groups';
+export { TabGroupManager, GROUP_COLORS, generateId } from './tab-groups';
+export type { ITabGroupManager, TabGroup, TabGroupEvent, TabGroupEventKind, TabGroupEventHandler } from './tab-groups';
 
 export { TabSearch } from './tab-search';
-export type { ITabSearch, TabSearchResult, TabSearchOptions, TabSearchEvent, TabSearchEventKind, TabSearchEventHandler } from './tab-search';
+export type { ITabSearch, TabSearchResult } from './tab-search';
 
-export { BackService } from './back';
-export type { IBackService, NavigationEntry } from './back';
+export { Back } from './back';
+export type { IBack, BackEvent, BackEventKind, BackEventHandler, NavigationControllerLike } from './back';
 
-export { ForwardService } from './forward';
-export type { IForwardService } from './forward';
+export { Forward } from './forward';
+export type { IForward, ForwardEvent, ForwardEventKind, ForwardEventHandler } from './forward';
 
-export { ReloadService } from './reload';
-export type { IReloadService } from './reload';
+export { Reload } from './reload';
+export type { IReload, ReloadEvent, ReloadEventKind, ReloadEventHandler } from './reload';
 
-export { HardReloadService } from './hard-reload';
-export type { IHardReloadService } from './hard-reload';
+export { HardReload } from './hard-reload';
+export type { IHardReload, HardReloadEvent, HardReloadEventKind, HardReloadEventHandler } from './hard-reload';
 
-export { DownloadsServiceWrapper } from './downloads';
-export type { IDownloadsServiceWrapper, DownloadItem, DownloadEvent, DownloadEventKind, DownloadEventHandler } from './downloads';
+export { DownloadsService } from './downloads';
+export type { IDownloadsService, DownloadInfo, DownloadsEvent, DownloadsEventKind, DownloadsEventHandler, DownloadManagerLike, DownloadItemLike } from './downloads';
 
-export { BookmarksServiceWrapper } from './bookmarks';
-export type { IBookmarksServiceWrapper, BookmarkItem, BookmarkFolder, BookmarkChangeEvent, BookmarkChangeKind, BookmarkEventHandler } from './bookmarks';
+export { BookmarksService } from './bookmarks';
+export type { IBookmarksService, BookmarkItem, BookmarksEvent, BookmarksEventKind, BookmarksEventHandler, BookmarkServiceLike, BookmarkEntryLike } from './bookmarks';
 
 export { HistoryServiceWrapper } from './history';
 export type { IHistoryServiceWrapper, HistoryEntryItem, HistoryEvent, HistoryEventKind, HistoryEventHandler } from './history';

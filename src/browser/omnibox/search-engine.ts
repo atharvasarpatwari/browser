@@ -7,7 +7,7 @@ interface SearchEngine {
   readonly url: string;
   readonly keyword: string;
   readonly icon?: string;
-  readonly isDefault: boolean;
+  isDefault: boolean;
 }
 
 interface ISearchEngineManager extends IDisposable {

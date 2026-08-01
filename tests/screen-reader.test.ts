@@ -12,6 +12,7 @@ import {
   createScreenReaderManager,
   type A11yDomElement,
   type A11yDomNode,
+  type AriaRole,
 } from '../src/browser/accessibility/screen-reader';
 
 function el(
@@ -177,11 +178,11 @@ describe('computeStates', () => {
     expect(s.has('disabled')).toBe(true);
   });
   it('hidden from hidden attribute', () => {
-    const s = computeStates(new Map([['hidden', '']]), 'div');
+    const s = computeStates(new Map([['hidden', '']]), 'div' as AriaRole);
     expect(s.has('hidden')).toBe(true);
   });
   it('hidden from aria-hidden', () => {
-    const s = computeStates(new Map([['aria-hidden', 'true']]), 'div');
+    const s = computeStates(new Map([['aria-hidden', 'true']]), 'div' as AriaRole);
     expect(s.has('hidden')).toBe(true);
   });
   it('expanded / collapsed', () => {

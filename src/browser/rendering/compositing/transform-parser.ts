@@ -387,7 +387,7 @@ export function decomposeMatrix(m: DOMMatrix4x4): { translate: [number, number, 
   const m33 = m.m33;
   const perspective = m.m14 !== 0 || m.m24 !== 0 || m.m34 !== 0 || m.m44 !== 1
     ? [m.m14, m.m24, m.m34, m.m44] as [number, number, number, number]
-    : [0, 0, 0, 1];
+    : [0, 0, 0, 1] as [number, number, number, number];
 
   const translate: [number, number, number] = [m.m41, m.m42, m.m43];
 

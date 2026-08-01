@@ -43,6 +43,7 @@ class FakeHttpClient implements IHttpClient {
       statusText: 'OK',
       headers: new Map(),
       body: 'OK',
+      bodyBinary: null,
       redirected: false,
       redirectChain: [],
     };

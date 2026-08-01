@@ -118,7 +118,7 @@ export function createCryptoObject() {
             const onRejected = a[1];
             if (typeof onRejected === 'object' && onRejected !== null && (onRejected as any).type === 'closure') {
               callJSFunction(onRejected as JSFunction, undefined, [
-                createNativeFunction('error', () => {}) as unknown as JSValue,
+                createNativeFunction('error', () => undefined),
               ]);
             }
             return rejectObj;
@@ -1850,15 +1850,23 @@ export function createResizeObserverConstructor() {
 // HELPER: createPromiseLike
 // ─────────────────────────────────────────────────────────────────────────────
 
-function createPromiseLike(value: JSValue): JSObject {
+function createPromiseLike(value: unknown): JSObject {
+  const normalized = toJSValueShallow(value);
   const p = createObject(null);
   p.properties.set('then', {
     value: createNativeFunction('then', (_t, a) => {
       const onFulfilled = a[0];
-      if (typeof onFulfilled === 'function') {
-        onFulfilled(value);
-      } else if (typeof onFulfilled === 'object' && onFulfilled !== null && (onFulfilled as any).type === 'closure') {
-        callJSFunction(onFulfilled as JSFunction, undefined, [value]);
+      if (onFulfilled !== undefined && onFulfilled !== null) {
+        if (typeof onFulfilled === 'function') {
+          onFulfilled(normalized);
+        } else if (typeof onFulfilled === 'object' && ((onFulfilled as JSFunction).type === 'closure' || (onFulfilled as JSFunction).isNative)) {
+          const fn = onFulfilled as JSFunction;
+          if (fn.isNative) {
+            callJSFunction(fn, normalized, []);
+          } else {
+            callJSFunction(fn, undefined, [normalized]);
+          }
+        }
       }
       return createPromiseLike(undefined);
     }),
@@ -1869,6 +1877,24 @@ function createPromiseLike(value: JSValue): JSObject {
     writable: true, enumerable: true, configurable: true,
   });
   return p;
+}
+
+/** Convert a native value (possibly a plain object literal) into a JSValue. */
+function toJSValueShallow(val: unknown): JSValue {
+  if (val === null || val === undefined
+    || typeof val === 'boolean' || typeof val === 'number' || typeof val === 'string' || typeof val === 'bigint') {
+    return val as JSValue;
+  }
+  if (typeof val === 'object') {
+    const asObj = val as Record<string, unknown>;
+    if ('properties' in asObj && typeof (asObj as unknown as JSObject).properties?.get === 'function') return val as JSValue;
+    const obj = createObject(null);
+    for (const [k, v] of Object.entries(asObj)) {
+      obj.properties.set(k, { value: toJSValueShallow(v), writable: true, enumerable: true, configurable: true });
+    }
+    return obj;
+  }
+  return undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1895,7 +1921,7 @@ function deepCloneJS(val: JSValue): JSValue {
     }
     // Handle plain JS objects (no .properties Map)
     const result = createObject(null);
-    for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
+    for (const [k, v] of Object.entries(val as unknown as Record<string, unknown>)) {
       result.properties.set(k, { value: deepCloneJS(v as JSValue), writable: true, enumerable: true, configurable: true });
     }
     return result;
@@ -2142,7 +2168,7 @@ export function createWebAssemblyMemoryConstructor() {
     const maximum = getProp('maximum', undefined) as number | undefined;
     const buffer = new ArrayBuffer(initial * 65536);
 
-    memoryObj.properties.set('buffer', { value: { buffer }, writable: true, enumerable: true, configurable: true });
+    memoryObj.properties.set('buffer', { value: toJSValueShallow({ buffer }), writable: true, enumerable: true, configurable: true });
     memoryObj.properties.set('grow', {
       value: createNativeFunction('grow', (_t, a) => {
         const delta = toNumber(a[0]);
@@ -2494,9 +2520,6 @@ export function createGPUConstants() {
     MAP_READ: 0x0001, MAP_WRITE: 0x0002, COPY_SRC: 0x0004, COPY_DST: 0x0008,
     INDEX: 0x0010, VERTEX: 0x0020, UNIFORM: 0x0040, STORAGE: 0x0080,
     INDIRECT: 0x0100, QUERY_RESOLVE: 0x0200, STORAGE_READ_ONLY: 0x8000,
-    MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8,
-    VERTEX: 32, INDEX: 16, UNIFORM: 64, STORAGE: 128,
-    INDIRECT: 256, STORAGE_READ_ONLY: 32768,
   };
   for (const [k, v] of Object.entries(consts)) {
     constants.properties.set(k, { value: v, writable: false, enumerable: true, configurable: false });

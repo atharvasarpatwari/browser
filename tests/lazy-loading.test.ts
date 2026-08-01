@@ -478,7 +478,7 @@ describe('PaintEngine image rendering', () => {
     const img = tree.getElementById('img')!;
     // Simulate loaded state
     img.loadingState = 'loaded';
-    img.imageData = { data: new Uint8ClampedArray(100 * 50 * 4), width: 100, height: 50 };
+    img.imageData = { data: new Uint8ClampedArray(100 * 50 * 4), width: 100, height: 50, colorSpace: 'srgb' };
     img.naturalWidth = 100;
     img.naturalHeight = 50;
 

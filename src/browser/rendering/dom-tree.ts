@@ -19,7 +19,7 @@ interface DomElement extends DomNode {
   readonly nodeType: 'element';
   readonly tagName: string;
   readonly attributes: ReadonlyMap<string, string>;
-  computedStyle: ReadonlyMap<string, string> | null;
+  computedStyle: Map<string, string> | null;
   usedStyle: UsedStyle | null;
   layoutBox: LayoutBox | null;
   /** Decoded image data (populated after lazy load completes). */
@@ -38,8 +38,7 @@ interface DomTextNode extends DomNode {
   readonly text: string;
 }
 
-interface DomDocument {
-  readonly domId: string;
+interface DomDocument extends DomNode {
   readonly nodeType: 'document';
   readonly parent: null;
   readonly children: DomNode[];
@@ -49,9 +48,9 @@ interface DomDocument {
 }
 
 interface LayoutBox {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
+  x: number;
+  y: number;
+  width: number;
   height: number;
   readonly marginTop: number;
   readonly marginRight: number;
@@ -372,7 +371,7 @@ class DomTree implements IDomTree {
   }
 
   setComputedStyle(element: DomElement, style: ReadonlyMap<string, string>): void {
-    element.computedStyle = style;
+    element.computedStyle = new Map(style);
     this.mutations.push({ type: 'styleChanged', targetDomId: element.domId, data: {} });
   }
 
@@ -530,7 +529,7 @@ class DomTree implements IDomTree {
     }
 
     // Reassign parent for top-level children now that the document exists
-    const doc: DomDocument = { domId: id, nodeType: 'document', parent: null, children, htmlElement, headElement, bodyElement };
+    const doc: DomDocument = { domId: id, nodeType: 'document', parent: null, children, htmlElement, headElement, bodyElement, _dirtyStyle: true, _dirtyLayout: true, _dirtyPaint: true };
     for (const child of doc.children) {
       (child as { parent: DomNode | null }).parent = doc;
     }

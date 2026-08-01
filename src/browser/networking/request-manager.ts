@@ -66,15 +66,7 @@ import { HttpAuthenticator, AuthScheme }    from './http-auth';
 // ENUMS
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum HttpMethod {
-  GET     = 'GET',
-  POST    = 'POST',
-  PUT     = 'PUT',
-  PATCH   = 'PATCH',
-  DELETE  = 'DELETE',
-  HEAD    = 'HEAD',
-  OPTIONS = 'OPTIONS',
-}
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VALUE OBJECTS
@@ -875,7 +867,7 @@ class RequestManager implements IRequestManager {
             authHeader = this.authenticator.generateResponse(
               challenge,
               { username: options.auth.username, password: options.auth.password },
-              options.method ?? HttpMethod.GET,
+  options.method ?? 'GET',
               currentUrl,
             );
             authRetried = true;
@@ -939,7 +931,7 @@ class RequestManager implements IRequestManager {
 
     return {
       url,
-      method:    options.method ?? HttpMethod.GET,
+      method:    options.method ?? 'GET',
       headers,
       body:      options.body,
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -995,7 +987,6 @@ export {
   ProxyAwareHttpClient,
   ExponentialBackoffRetryPolicy,
   NoRetryPolicy,
-  HttpMethod,
   NetworkError,
   RequestTimeoutError,
   RequestAbortedError,
@@ -1009,6 +1000,7 @@ export type {
   IRequestManager,
   IHttpClient,
   RetryPolicy,
+  HttpMethod,
   HttpRequestSpec,
   HttpResponseSpec,
   RequestOptions,

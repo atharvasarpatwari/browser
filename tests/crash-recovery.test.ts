@@ -5,6 +5,7 @@ import {
   TabContextEventBus,
   TabContextState,
 } from '../src/browser/engine/tab-context';
+import type { TabContextBusEvent } from '../src/browser/engine/tab-context';
 import {
   ScriptGuard,
   ScriptGuardError,
@@ -156,7 +157,8 @@ describe('TabContext', () => {
   it('emits stateChanged events via bus', () => {
     const events: string[] = [];
     ctx.on('stateChanged', (e) => {
-      events.push(`${e.from}→${e.to}`);
+      const ev = e as Extract<TabContextBusEvent, { kind: 'stateChanged' }>;
+      events.push(`${ev.from}→${ev.to}`);
     });
     ctx.setLoading('url');
     ctx.setActive('title');
@@ -167,7 +169,7 @@ describe('TabContext', () => {
     let crashed = false;
     ctx.on('crashed', (e) => {
       crashed = true;
-      expect(e.crashInfo.error.message).toBe('boom');
+      expect((e as Extract<TabContextBusEvent, { kind: 'crashed' }>).crashInfo.error.message).toBe('boom');
     });
     ctx.crash(new Error('boom'), 'script', 'url');
     expect(crashed).toBe(true);
@@ -176,7 +178,7 @@ describe('TabContext', () => {
   it('emits recovered event', () => {
     let recoveredAttempt = -1;
     ctx.on('recovered', (e) => {
-      recoveredAttempt = e.attempt;
+      recoveredAttempt = (e as Extract<TabContextBusEvent, { kind: 'recovered' }>).attempt;
     });
     ctx.crash(new Error('test'), 'script', 'url');
     ctx.recover();
@@ -187,7 +189,7 @@ describe('TabContext', () => {
   it('emits snapshotSaved event', () => {
     let savedUrl = '';
     ctx.on('snapshotSaved', (e) => {
-      savedUrl = e.url;
+      savedUrl = (e as Extract<TabContextBusEvent, { kind: 'snapshotSaved' }>).url;
     });
     ctx.saveSnapshot('https://test.com', 'Test');
     expect(savedUrl).toBe('https://test.com');

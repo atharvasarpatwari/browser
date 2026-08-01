@@ -55,7 +55,7 @@ class IndexedDBService implements IIndexedDBService {
   setOrigin(origin: string): void {
     if (origin !== this._origin) {
       this._origin = origin;
-      this._factory = new IDBFactory(origin, this._backend);
+      this._factory = new IDBFactory(this._backend, origin);
     }
   }
 

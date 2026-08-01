@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file tests/wpt/networking-apis.test.ts
  *
  * Networking API specification compliance tests.
@@ -8,9 +8,9 @@
 import { describe, it, expect } from 'vitest';
 import { describeWPT, assertWPT } from './wpt-adapter';
 
-// ─── Fetch API ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Fetch API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-describeWPT('Fetch API — Headers', () => {
+describeWPT('Fetch API â€” Headers', () => {
   assertWPT('Headers constructor creates empty headers', () => {
     const headers = new Headers();
     return headers !== null;
@@ -93,7 +93,7 @@ describeWPT('Fetch API — Headers', () => {
   });
 });
 
-describeWPT('Fetch API — Request', () => {
+describeWPT('Fetch API â€” Request', () => {
   assertWPT('Request constructor with URL', () => {
     const req = new Request('https://example.com');
     return req.url === 'https://example.com/';
@@ -137,7 +137,7 @@ describeWPT('Fetch API — Request', () => {
   });
 });
 
-describeWPT('Fetch API — Response', () => {
+describeWPT('Fetch API â€” Response', () => {
   assertWPT('Response constructor creates response', () => {
     const res = new Response();
     return res !== null;
@@ -223,7 +223,7 @@ describeWPT('Fetch API — Response', () => {
   });
 });
 
-describeWPT('Fetch API — fetch()', () => {
+describeWPT('Fetch API â€” fetch()', () => {
   it('fetch returns a Promise', () => {
     const result = fetch('https://example.com');
     expect(result).toBeInstanceOf(Promise);
@@ -254,9 +254,9 @@ describeWPT('Fetch API — fetch()', () => {
   });
 });
 
-// ─── WebSocket ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ WebSocket â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-describeWPT('WebSocket — Construction', () => {
+describeWPT('WebSocket â€” Construction', () => {
   assertWPT('WebSocket constructor creates connection', () => {
     try {
       const ws = new WebSocket('wss://echo.websocket.org');
@@ -319,7 +319,7 @@ describeWPT('WebSocket — Construction', () => {
   });
 });
 
-describeWPT('WebSocket — Events', () => {
+describeWPT('WebSocket â€” Events', () => {
   assertWPT('WebSocket supports event listeners', () => {
     const ws = new WebSocket('wss://echo.websocket.org');
     const result = typeof ws.addEventListener === 'function' && typeof ws.removeEventListener === 'function';
@@ -365,9 +365,9 @@ describeWPT('WebSocket — Events', () => {
   });
 });
 
-// ─── URL API ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ URL API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-describeWPT('URL API — Construction', () => {
+describeWPT('URL API â€” Construction', () => {
   assertWPT('URL parses standard URL', () => {
     const url = new URL('https://example.com/path?q=1#hash');
     return url.protocol === 'https:' && url.hostname === 'example.com';
@@ -419,7 +419,7 @@ describeWPT('URL API — Construction', () => {
   });
 });
 
-describeWPT('URL API — Mutations', () => {
+describeWPT('URL API â€” Mutations', () => {
   assertWPT('URL.searchParams returns URLSearchParams', () => {
     const url = new URL('https://example.com');
     return url.searchParams instanceof URLSearchParams;
@@ -497,7 +497,7 @@ describeWPT('URL API — Mutations', () => {
   });
 });
 
-// ─── URL.canParse ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ URL.canParse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describeWPT('URL.canParse', () => {
   assertWPT('URL.canParse returns true for valid URL', () => {
@@ -513,7 +513,7 @@ describeWPT('URL.canParse', () => {
   });
 });
 
-// ─── TextEncoder / TextDecoder ────────────────────────────────────────────────
+// â”€â”€â”€ TextEncoder / TextDecoder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describeWPT('TextEncoder', () => {
   assertWPT('TextEncoder encodes to UTF-8', () => {
@@ -565,7 +565,7 @@ describeWPT('TextDecoder', () => {
   });
 });
 
-// ─── AbortController / AbortSignal ────────────────────────────────────────────
+// â”€â”€â”€ AbortController / AbortSignal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describeWPT('AbortController', () => {
   assertWPT('AbortController.signal is AbortSignal', () => {
@@ -606,7 +606,7 @@ describeWPT('AbortController', () => {
     let fired = false;
     controller.signal.addEventListener('abort', () => { fired = true; });
     controller.abort();
-    return fired === true;
+    return fired;
   });
 
   assertWPT('AbortController.abort() fires event via onabort', () => {
@@ -614,7 +614,7 @@ describeWPT('AbortController', () => {
     let fired = false;
     controller.signal.onabort = () => { fired = true; };
     controller.abort();
-    return fired === true;
+    return fired;
   });
 
   assertWPT('AbortSignal.timeout creates timeout signal', () => {
@@ -635,7 +635,7 @@ describeWPT('AbortController', () => {
   });
 });
 
-// ─── Performance API ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Performance API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describeWPT('Performance API', () => {
   assertWPT('performance.now() returns a number', () => {
@@ -677,7 +677,7 @@ describeWPT('Performance API', () => {
   });
 });
 
-// ─── Console API ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Console API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describeWPT('Console API', () => {
   assertWPT('console.log is a function', () => {

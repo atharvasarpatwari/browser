@@ -264,12 +264,12 @@ describe('BookmarkSuggestionsProvider', () => {
     expect(provider.getSuggestions('test')).toEqual([]);
   });
 
-  it('returns bookmark results from queryFn', () => {
+  it('returns bookmark results from queryFn', async () => {
     provider.setQueryFn((q) => [
       { id: '1', title: 'Example', url: 'https://example.com', iconUrl: null, folder: false },
       { id: '2', title: 'Other', url: 'https://other.com', iconUrl: null, folder: false },
     ].filter(e => e.title.toLowerCase().includes(q) || (e.url ?? '').toLowerCase().includes(q)));
-    const results = provider.getSuggestions('example');
+    const results = await provider.getSuggestions('example');
     expect(results).toHaveLength(1);
     expect(results[0].type).toBe('bookmark');
     expect(results[0].action).toBe('navigate');
@@ -306,12 +306,12 @@ describe('HistorySuggestionsProvider', () => {
     expect(provider.getSuggestions('test')).toEqual([]);
   });
 
-  it('returns history results from queryFn', () => {
+  it('returns history results from queryFn', async () => {
     provider.setQueryFn((q, max) => [
       { id: '1', url: 'https://example.com', title: 'Example', visitCount: 5, typedCount: 2, lastVisitTime: Date.now() },
       { id: '2', url: 'https://other.com', title: 'Other', visitCount: 1, typedCount: 0, lastVisitTime: Date.now() - 86400000 },
     ].filter(e => e.title.toLowerCase().includes(q) || e.url.toLowerCase().includes(q)));
-    const results = provider.getSuggestions('example');
+    const results = await provider.getSuggestions('example');
     expect(results).toHaveLength(1);
     expect(results[0].type).toBe('history');
     expect(results[0].action).toBe('navigate');

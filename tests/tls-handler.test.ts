@@ -378,6 +378,7 @@ describe('TlsHandler', () => {
           url: 'https://untrusted.example.com/',
           method: 'GET',
           headers: new Map(),
+          timeoutMs: 1000,
         }, controller.signal),
       ).rejects.toThrow('aborted');
     });

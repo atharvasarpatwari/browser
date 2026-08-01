@@ -75,7 +75,7 @@ export class LayerPromoter {
     // Check will-change properties
     let hasWillChangeHint = false;
     if (willChange) {
-      const props = willChange.split(',').map(s => s.trim().toLowerCase());
+      const props = willChange.split(',').map((s: string) => s.trim().toLowerCase());
       hasWillChangeHint = (
         props.includes('transform') ||
         props.includes('opacity') ||

@@ -508,8 +508,9 @@ export class BytecodeCompiler {
     const tryEnd = this.builder.currentOffset();
     const handlerJump = this.builder.emitJump(OP.JMP); // skip catch if no exception
 
+    let handlerStart = 0;
     if (stmt.handler) {
-      const handlerStart = this.builder.currentOffset();
+      handlerStart = this.builder.currentOffset();
       // Exception value is on stack from VM's exception handling
       // Store it in the catch variable
       if (stmt.handler.param) {
@@ -553,9 +554,9 @@ export class BytecodeCompiler {
     const label = stmt.label?.name ?? null;
     const pos = this.builder.emitJump(OP.CONTINUE);
     if (this.loopStack.length > 0) {
-      this.loopStack[this.loopStack.length - 1]!.continueTargets.push({ label, patchPos: pos });
+      this.loopStack[this.loopStack.length - 1]!.continueTargets.push({ label, jumpPos: pos });
     } else {
-      this.continueStack.push({ label, patchPos: pos });
+      this.continueStack.push({ label, jumpPos: pos });
     }
   }
 
@@ -627,7 +628,7 @@ export class BytecodeCompiler {
         const el = pattern.elements[i];
         if (!el) { this.builder.emit(OP.POP); continue; }
         this.builder.emit(OP.DUP);
-        this.builder.emit(OP.PUSH_CONST, this.builder.addConst(i));
+        this.builder.emitU16(OP.PUSH_CONST, this.builder.addConst(i));
         this.builder.emit(OP.COMPUTED_GET);
         if (el.type === 'Identifier') {
           const existing = this.resolveLocal(el.name);
@@ -704,7 +705,7 @@ export class BytecodeCompiler {
     // Declare and assign the class
     this.declareLocal(className, 'var');
     const slot = this.resolveLocal(className)!.slot;
-    this.builder.emitU16(OP.CLOSURE, this.builder.addConst(fnObj));
+    this.builder.emitU16(OP.CLOSURE, this.builder.addConst(fnObj as unknown as JSValue));
     // Call the closure to instantiate the class
     this.builder.emitU16(OP.CALL, 0);
     this.builder.emitU16(OP.STORE_LOCAL, slot);
@@ -786,12 +787,12 @@ export class BytecodeCompiler {
     const fnName = expr.type === 'FunctionExpression' ? (expr.id?.name ?? 'anonymous') : 'arrow';
     const fnObj = fnCompiler.builder.build(
       paramCount, fnCompiler.nextSlot, fnName,
-      isArrow, expr.async ?? false, expr.generator ?? false,
+      isArrow, expr.async ?? false, expr.type === 'FunctionExpression' ? expr.generator : false,
       fnCompiler.capturedUpvalues,
     );
 
     // Push the compiled function as a constant
-    this.builder.emitU16(OP.CLOSURE, this.builder.addConst(fnObj));
+    this.builder.emitU16(OP.CLOSURE, this.builder.addConst(fnObj as unknown as JSValue));
   }
 
   // ── Expression compilation ───────────────────────────────────────────────
@@ -1300,6 +1301,10 @@ export class BytecodeCompiler {
         this.compileExpression(prop.argument);
         continue;
       }
+      if (!prop.value) {
+        this.builder.emit(OP.PUSH_UNDEFINED);
+        continue;
+      }
       // key
       if (prop.computed) {
         this.compileExpression(prop.key);
@@ -1311,7 +1316,7 @@ export class BytecodeCompiler {
       if (prop.method && prop.value.type === 'FunctionExpression') {
         this.compileFunctionExpr(prop.value);
       } else if (prop.kind === 'get' || prop.kind === 'set') {
-        this.compileFunctionExpr(prop.value);
+        this.compileFunctionExpr(prop.value as AST.FunctionExpression);
       } else {
         this.compileExpression(prop.value);
       }
@@ -1408,7 +1413,7 @@ export class BytecodeCompiler {
   private patchLoopContinues(): void {
     const ctx = this.loopStack[this.loopStack.length - 1]!;
     for (const ct of ctx.continueTargets) {
-      this.builder.patchJumpTo(ct.patchPos, ctx.continueTarget);
+      this.builder.patchJumpTo(ct.jumpPos, ctx.continueTarget);
     }
   }
 

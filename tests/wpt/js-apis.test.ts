@@ -362,13 +362,13 @@ describeWPT('ECMAScript — Proxy', () => {
 
 describeWPT('ECMAScript — Symbol', () => {
   assertWPT('Symbol creates unique value', () => {
-    const s1 = Symbol('test');
-    const s2 = Symbol('test');
+    const s1: symbol = Symbol('test');
+    const s2: symbol = Symbol('test');
     return s1 !== s2;
   });
 
   assertWPT('Symbol.for creates global symbol', () => {
-    const s1 = Symbol.for('test');
+    const s1: symbol = Symbol.for('test');
     const s2 = Symbol.for('test');
     return s1 === s2;
   });
@@ -425,11 +425,11 @@ describeWPT('ECMAScript — Async/Iterator', () => {
 
 describeWPT('Web API — EventTarget', () => {
   assertWPT('addEventListener adds listener', () => {
-    let called = false;
+    let called: boolean = false;
     const target = new EventTarget();
     target.addEventListener('test', () => { called = true; });
     target.dispatchEvent(new Event('test'));
-    return called === true;
+    return called;
   });
 
   assertWPT('removeEventListener removes listener', () => {
@@ -481,10 +481,10 @@ describeWPT('Web API — AbortController', () => {
 
   assertWPT('AbortSignal abort event fires', () => {
     const controller = new AbortController();
-    let fired = false;
+    let fired: boolean = false;
     controller.signal.addEventListener('abort', () => { fired = true; });
     controller.abort();
-    return fired === true;
+    return fired;
   });
 });
 

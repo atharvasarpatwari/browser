@@ -276,17 +276,17 @@ class AudioNodeBase implements IAudioNode {
   protected _inputs: IAudioNode[] = [];
   protected _channelCount = 2;
   protected _channelCountMode: AudioNodeChannelCountMode = 'max';
-  protected _channelInterpretation: AudioChannelInterpretation = 'speakers';
+  protected _channelInterpretation: AudioNodeChannelInterpretation = 'speakers';
 
   get numberOfInputs(): number { return this._inputs.length; }
   get numberOfOutputs(): number { return this._outputs.length; }
   get channelCount(): number { return this._channelCount; }
   get channelCountMode(): AudioNodeChannelCountMode { return this._channelCountMode; }
-  get channelInterpretation(): AudioChannelInterpretation { return this._channelInterpretation; }
+  get channelInterpretation(): AudioNodeChannelInterpretation { return this._channelInterpretation; }
 
   setChannelCount(count: number): void { this._channelCount = Math.max(1, count); }
   setChannelCountMode(mode: AudioNodeChannelCountMode): void { this._channelCountMode = mode; }
-  setChannelInterpretation(interp: AudioChannelInterpretation): void { this._channelInterpretation = interp; }
+  setChannelInterpretation(interp: AudioNodeChannelInterpretation): void { this._channelInterpretation = interp; }
 
   connect(destination: IAudioNode): IAudioNode {
     this._outputs.push(destination);

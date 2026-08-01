@@ -42,7 +42,7 @@ function createTestManifest(overrides?: Partial<PreloadCapabilityManifest>): Pre
     origin: 'https://example.com',
     allowedChannels: ['dom', 'fetch', 'storage', 'websocket', 'workers'],
     allowedSurfaces: ['dom', 'fetch', 'storage', 'websocket', 'workers', 'eval'],
-    capabilities: ['canvas-2d', 'dom-access'],
+    capabilities: ['canvas-2d', 'dom'],
     env: { NODE_ENV: 'production' },
     ...overrides,
   };
@@ -98,7 +98,7 @@ describe('PreloadBridge', () => {
 
     it('hasCapability returns true for allowed capabilities', () => {
       expect(bridge.hasCapability('canvas-2d' as any)).toBe(true);
-      expect(bridge.hasCapability('dom-access' as any)).toBe(true);
+      expect(bridge.hasCapability('dom' as any)).toBe(true);
     });
 
     it('hasCapability returns false for disallowed capabilities', () => {

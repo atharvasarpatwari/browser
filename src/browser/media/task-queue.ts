@@ -14,7 +14,7 @@ interface ITaskQueueService extends IDisposable {
 interface QueuedTask {
   readonly id: number;
   readonly delay: number;
-  readonly scheduledAt: number;
+  scheduledAt: number;
   readonly recurring: boolean;
   readonly interval?: number;
 }

@@ -100,7 +100,7 @@ export function normalizeManifest(raw: Record<string, unknown>): ExtensionManife
     : [];
 
   const content_scripts = Array.isArray(raw.content_scripts)
-    ? (raw.content_scripts as Record<string, unknown>[]).map(normalizeContentScript).filter(Boolean)
+    ? (raw.content_scripts as Record<string, unknown>[]).map(normalizeContentScript).filter((cs): cs is ContentScriptDeclaration => cs !== null)
     : [];
 
   const background = raw.background

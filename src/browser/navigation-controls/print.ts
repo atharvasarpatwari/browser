@@ -17,9 +17,9 @@ interface PrintJob {
   readonly url: string;
   readonly title: string;
   readonly options: PrintOptions;
-  readonly status: PrintJobStatus;
+  status: PrintJobStatus;
   readonly createdAt: number;
-  readonly completedAt?: number;
+  completedAt?: number;
 }
 
 type PrintJobStatus = 'pending' | 'printing' | 'completed' | 'cancelled' | 'failed';
