@@ -72,6 +72,10 @@ export function parseLength(
     const n = parseFloat(raw);
     return { kind: 'percent', value: isFinite(n) ? n : 0 };
   }
+  if (raw.endsWith('vw') || raw.endsWith('vh')) {
+    const n = parseFloat(raw);
+    return { kind: 'percent', value: isFinite(n) ? n : 0 };
+  }
   if (raw.endsWith('em')) {
     const n = parseFloat(raw);
     return { kind: 'px', value: isFinite(n) ? n * fontSize : 0 };

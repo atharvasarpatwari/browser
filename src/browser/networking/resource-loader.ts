@@ -1,5 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { IHttpClient, RetryPolicy, HttpMethod, HttpRequestSpec, RequestEventType, RequestEvent } from './request-manager';
+import type { IHttpClient, RetryPolicy, HttpMethod, HttpRequestSpec, HttpResponseSpec, RequestEventType, RequestEvent } from './request-manager';
 import { FetchHttpClient, ExponentialBackoffRetryPolicy, NetworkError, RequestAbortedError } from './request-manager';
 import type { IResponseParser } from './response-parser';
 import { ResponseParser } from './response-parser';
@@ -201,19 +201,46 @@ class ResourceLoader implements IResourceLoader {
         }
       }
 
-      const spec: HttpRequestSpec = {
-        url,
+      const specBase: Omit<HttpRequestSpec, 'url'> = {
         method: 'GET',
         headers,
         timeoutMs: options?.timeoutMs ?? 15_000,
       };
 
-      let res;
+      // Follow 3xx redirects here — ResourceLoader talks to IHttpClient directly
+      // (bypassing RequestManager), so redirect policy lives in this loop.
+      const redirectStatusCodes = new Set([301, 302, 303, 307, 308]);
+      const maxRedirects = 10;
+      let currentUrl = url;
+      let res: HttpResponseSpec;
+
       try {
-        res = await this.client.send(spec, signal);
+        for (let hops = 0; ; hops++) {
+          res = await this.client.send({ ...specBase, url: currentUrl }, signal);
+
+          if (!redirectStatusCodes.has(res.statusCode)) {
+            break;
+          }
+
+          const location = res.headers.get('location');
+          if (!location) {
+            throw new NetworkError(
+              currentUrl,
+              `Received ${res.statusCode} redirect from "${currentUrl}" with no Location header.`,
+            );
+          }
+          if (hops >= maxRedirects) {
+            throw new NetworkError(
+              currentUrl,
+              `Too many redirects while loading "${url}" (${hops + 1} hops).`,
+            );
+          }
+
+          currentUrl = new URL(location, currentUrl).toString();
+        }
       } catch (err) {
         if (signal.aborted) {
-          throw new RequestAbortedError(url);
+          throw new RequestAbortedError(currentUrl);
         }
         throw err;
       }

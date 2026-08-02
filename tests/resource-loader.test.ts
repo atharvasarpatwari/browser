@@ -175,3 +175,83 @@ describe('ResourceLoader â€” Error handling with cache', () => {
     expect(cached).toBeNull();
   });
 });
+
+describe('ResourceLoader — Redirect following', () => {
+  it('follows a 301 redirect and returns the final body', async () => {
+    const requested: string[] = [];
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+        requested.push(spec.url);
+        if (spec.url === 'https://mail.com/') {
+          return { url: spec.url, statusCode: 301, statusText: 'Moved Permanently', body: '',
+            bodyBinary: null, headers: new Map([['location', 'https://www.mail.com/']]),
+            redirected: false, redirectChain: [] };
+        }
+        return { url: spec.url, statusCode: 200, statusText: 'OK', body: '<h1>home</h1>',
+          bodyBinary: null, headers: new Map(), redirected: false, redirectChain: [] };
+      },
+    };
+
+    const loader = new ResourceLoader(client);
+    const result = await loader.loadResource('https://mail.com/', 'document');
+    expect(result.error).toBeNull();
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toBe('<h1>home</h1>');
+    expect(requested).toEqual(['https://mail.com/', 'https://www.mail.com/']);
+  });
+
+  it('resolves relative Location headers against the current URL', async () => {
+    const requested: string[] = [];
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+        requested.push(spec.url);
+        if (spec.url === 'https://mail.com/') {
+          return { url: spec.url, statusCode: 302, statusText: 'Found', body: '',
+            bodyBinary: null, headers: new Map([['location', '/en/']]),
+            redirected: false, redirectChain: [] };
+        }
+        return { url: spec.url, statusCode: 200, statusText: 'OK', body: 'ok',
+          bodyBinary: null, headers: new Map(), redirected: false, redirectChain: [] };
+      },
+    };
+
+    const loader = new ResourceLoader(client);
+    const result = await loader.loadResource('https://mail.com/', 'document');
+    expect(result.error).toBeNull();
+    expect(result.statusCode).toBe(200);
+    expect(requested).toEqual(['https://mail.com/', 'https://mail.com/en/']);
+  });
+
+  it('returns an error when a redirect has no Location header', async () => {
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+        return { url: spec.url, statusCode: 301, statusText: 'Moved Permanently', body: '',
+          bodyBinary: null, headers: new Map(), redirected: false, redirectChain: [] };
+      },
+    };
+
+    const loader = new ResourceLoader(client);
+    const result = await loader.loadResource('https://mail.com/', 'document');
+    expect(result.error).not.toBeNull();
+    expect(result.error).toContain('no Location header');
+  });
+
+  it('caps redirect chains to avoid infinite loops', async () => {
+    let calls = 0;
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+        calls++;
+        const next = `https://example.com/loop/${calls}`;
+        return { url: spec.url, statusCode: 301, statusText: 'Moved Permanently', body: '',
+          bodyBinary: null, headers: new Map([['location', next]]),
+          redirected: false, redirectChain: [] };
+      },
+    };
+
+    const loader = new ResourceLoader(client);
+    const result = await loader.loadResource('https://example.com/start', 'document');
+    expect(result.error).not.toBeNull();
+    expect(result.error).toContain('Too many redirects');
+    expect(calls).toBe(11);
+  });
+});

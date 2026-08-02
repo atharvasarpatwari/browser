@@ -372,10 +372,17 @@ export class ComputeOps {
     bindGroup: GPUBindGroup,
     x: number, y = 1, z = 1,
   ): void {
+    // WebGPU dispatchWorkgroups args must be finite unsigned longs in
+    // [0, 2^32-1]. Hostile/large layout dimensions (e.g. from scripted CSS)
+    // can produce non-finite or out-of-range values that would make
+    // beginComputePass/dispatchWorkgroups throw a validation error.
+    const toCount = (v: number): number =>
+      Number.isFinite(v) ? Math.max(0, Math.min(0xFFFFFFFF, Math.floor(v))) : 0;
+
     const pass = encoder.beginComputePass();
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(x, y, z);
+    pass.dispatchWorkgroups(toCount(x), toCount(y), toCount(z));
     pass.end();
   }
 

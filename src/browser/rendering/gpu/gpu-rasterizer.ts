@@ -210,28 +210,38 @@ export class GpuRasterizer {
   // ── Public API ──────────────────────────────────────────────────
 
   rasterize(commands: readonly PaintCommand[]): ImageData {
-    if (!this.useGpu || !this.device || !this.computeOps || !this.doubleBuffer) {
-      return this.softwareFallback.rasterize(commands);
+    // Sync path: GPU-to-CPU readback requires awaiting mapAsync, which cannot
+    // be done here. Always render synchronously via the software fallback so
+    // the returned ImageData reflects the actual frame (never a stale buffer).
+    if (this.useGpu && this.device && this.computeOps && this.doubleBuffer) {
+      try {
+        const buf = this.doubleBuffer.getCurrentBuffer();
+        if (buf) {
+          const encoder = this.device.createCommandEncoder();
+
+          for (const cmd of commands) {
+            this.execGpu(cmd, buf, encoder);
+          }
+
+          // Copy current frame to staging buffer, then swap
+          this.doubleBuffer.copyToStaging(encoder);
+          this.submitEncoder(encoder);
+
+          // Swap first so next frame writes to the other buffer
+          this.doubleBuffer.swap();
+        }
+      } catch (error) {
+        // GPU compute is opportunistic in the sync path (the software fallback
+        // below is what produces the returned pixels). Any encoding error must
+        // not break rendering — disable GPU and continue with software.
+        console.warn('GPU rasterize failed, falling back to software:', error);
+        this.useGpu = false;
+      }
     }
 
-    const buf = this.doubleBuffer.getCurrentBuffer();
-    if (!buf) return this.softwareFallback.rasterize(commands);
-
-    const encoder = this.device.createCommandEncoder();
-
-    for (const cmd of commands) {
-      this.execGpu(cmd, buf, encoder);
-    }
-
-    // Copy current frame to staging buffer, then swap
-    this.doubleBuffer.copyToStaging(encoder);
-    this.submitEncoder(encoder);
-
-    // Swap first so next frame writes to the other buffer
-    this.doubleBuffer.swap();
-
-    // Sync readback — always returns software fallback since mapAsync can't be awaited
-    return this.softwareFallback.getImageData();
+    // Render synchronously into the software fallback so sync callers receive
+    // correct pixels (mapAsync can't be awaited in the sync path).
+    return this.softwareFallback.rasterize(commands);
   }
 
   /**
@@ -247,23 +257,33 @@ export class GpuRasterizer {
       return this.softwareFallback.rasterize(commands);
     }
 
-    const buf = this.doubleBuffer.getCurrentBuffer();
-    if (!buf) return this.softwareFallback.rasterize(commands);
+    let submitted = false;
+    try {
+      const buf = this.doubleBuffer.getCurrentBuffer();
+      if (buf) {
+        const encoder = this.device.createCommandEncoder();
 
-    const encoder = this.device.createCommandEncoder();
+        for (const cmd of commands) {
+          this.execGpu(cmd, buf, encoder);
+        }
 
-    for (const cmd of commands) {
-      this.execGpu(cmd, buf, encoder);
+        // Copy current frame to staging buffer, then swap
+        this.doubleBuffer.copyToStaging(encoder);
+        this.submitEncoder(encoder);
+
+        this.doubleBuffer.swap();
+        submitted = true;
+      }
+    } catch (error) {
+      console.warn('GPU rasterizeAsync failed, falling back to software:', error);
+      this.useGpu = false;
     }
 
-    // Copy current frame to staging buffer, then swap
-    this.doubleBuffer.copyToStaging(encoder);
-    this.submitEncoder(encoder);
-
-    this.doubleBuffer.swap();
-
-    // Await the staging buffer from the *previous* frame
-    return this.readBackStagingAsync();
+    if (submitted) {
+      // Await the staging buffer from the *previous* frame
+      return this.readBackStagingAsync();
+    }
+    return this.softwareFallback.rasterize(commands);
   }
 
   getImageData(): ImageData {
@@ -341,25 +361,33 @@ export class GpuRasterizer {
       return tempRasterizer.getPixels();
     }
 
-    // GPU path: create a temporary buffer for this layer
-    const layerSize = width * height * 4;
-    const layerBuf = this.bufferPool!.acquire(
-      layerSize,
-      GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-    );
+    try {
+      // GPU path: create a temporary buffer for this layer
+      const layerSize = width * height * 4;
+      const layerBuf = this.bufferPool!.acquire(
+        layerSize,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      );
 
-    const encoder = this.device.createCommandEncoder();
+      const encoder = this.device.createCommandEncoder();
 
-    for (const cmd of commands) {
-      this.execGpu(cmd, layerBuf.buffer, encoder);
+      for (const cmd of commands) {
+        this.execGpu(cmd, layerBuf.buffer, encoder);
+      }
+
+      // The layer buffer is referenced by the submitted command list; destroy it
+      // after the submit completes (submitEncoder) instead of returning it to the
+      // pool, where a full pool would destroy it while still in-flight.
+      this.pendingDestroy.push(layerBuf.buffer);
+      this.submitEncoder(encoder);
+      return null;
+    } catch (error) {
+      console.warn('GPU layer rasterize failed, using software fallback:', error);
+      this.useGpu = false;
+      const tempRasterizer = new Rasterizer({ width, height, backgroundColor: 'transparent' });
+      tempRasterizer.rasterize(commands);
+      return tempRasterizer.getPixels();
     }
-
-    // The layer buffer is referenced by the submitted command list; destroy it
-    // after the submit completes (submitEncoder) instead of returning it to the
-    // pool, where a full pool would destroy it while still in-flight.
-    this.pendingDestroy.push(layerBuf.buffer);
-    this.submitEncoder(encoder);
-    return null;
   }
 
   /**
@@ -376,16 +404,21 @@ export class GpuRasterizer {
   ): void {
     if (!this.useGpu || !this.device || !this.computeOps) return;
 
-    const encoder = this.device.createCommandEncoder();
-    this.computeOps.compositeWithOffset(
-      dstBuffer, srcBuffer,
-      dstWidth, dstHeight,
-      srcWidth, srcHeight,
-      offsetX, offsetY,
-      opacity,
-      encoder,
-    );
-    this.submitEncoder(encoder);
+    try {
+      const encoder = this.device.createCommandEncoder();
+      this.computeOps.compositeWithOffset(
+        dstBuffer, srcBuffer,
+        dstWidth, dstHeight,
+        srcWidth, srcHeight,
+        offsetX, offsetY,
+        opacity,
+        encoder,
+      );
+      this.submitEncoder(encoder);
+    } catch (error) {
+      console.warn('GPU composite failed, disabling GPU:', error);
+      this.useGpu = false;
+    }
   }
 
   // ── GPU Command Execution ───────────────────────────────────────

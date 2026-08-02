@@ -1654,6 +1654,28 @@ class LayoutEngine implements ILayoutEngine {
       return isFinite(n) ? (n / 100) * containingWidth : 0;
     }
 
+    if (value.endsWith('vmin')) {
+      const n = parseFloat(value);
+      const v = Math.min(this.config.viewportWidth, this.config.viewportHeight);
+      return isFinite(n) ? (n / 100) * v : 0;
+    }
+
+    if (value.endsWith('vmax')) {
+      const n = parseFloat(value);
+      const v = Math.max(this.config.viewportWidth, this.config.viewportHeight);
+      return isFinite(n) ? (n / 100) * v : 0;
+    }
+
+    if (value.endsWith('vw')) {
+      const n = parseFloat(value);
+      return isFinite(n) ? (n / 100) * this.config.viewportWidth : 0;
+    }
+
+    if (value.endsWith('vh')) {
+      const n = parseFloat(value);
+      return isFinite(n) ? (n / 100) * this.config.viewportHeight : 0;
+    }
+
     const n = parseFloat(value);
     return isFinite(n) ? n : 0;
   }
