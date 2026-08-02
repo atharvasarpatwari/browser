@@ -51,6 +51,8 @@ import { runJS } from '../js/index';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
+import { ReflowRepaintController } from '../rendering/reflow-repaint-controller';
+import type { LayerCompositor } from '../rendering/compositing/layer-compositor';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTRUCTOR PARAMETERS
@@ -81,6 +83,7 @@ interface PageRendererDependencies {
 class PageRenderer implements IPageRenderer, IDisposable {
   private readonly deps: PageRendererDependencies;
   private disposed = false;
+  private reflowController: ReflowRepaintController | null = null;
 
   constructor(deps: PageRendererDependencies) {
     this.deps = deps;
@@ -136,6 +139,32 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 8. Paint
     paintEngine.paint(doc);
+
+    // 9. Wire the incremental reflow/repaint controller for post-load DOM
+    //    mutations (JS-triggered changes, scroll/scroll-triggered relayout).
+    this.initReflowController(doc);
+  }
+
+  /**
+   * Creates (or resets) the ReflowRepaintController for the current document.
+   * After the initial full layout+paint, all subsequent DOM mutations flow
+   * through this controller so only dirty subtrees are re-laid-out/repainted.
+   */
+  private initReflowController(doc: DomDocument): void {
+    const { domTree, layoutEngine, paintEngine } = this.deps;
+
+    this.reflowController?.dispose();
+    const controller = new ReflowRepaintController(layoutEngine, paintEngine, domTree, {
+      viewportWidth: 1920,
+      viewportHeight: 1080,
+    });
+    controller.init(doc);
+    // Incremental style recalc resolves _dirtyStyle nodes before layout.
+    controller.setStyleRecalcCallback(() => this.recalcStylesIncremental());
+    // Layer-based compositing when a compositor is available.
+    const compositor = (paintEngine as { getLayerCompositor?: () => LayerCompositor | null }).getLayerCompositor?.();
+    if (compositor) controller.setLayerCompositor(compositor);
+    this.reflowController = controller;
   }
 
   // ── Private Helper Methods ──────────────────────────────────────────────
@@ -540,11 +569,32 @@ class PageRenderer implements IPageRenderer, IDisposable {
     return this.deps.prioritizer;
   }
 
+  /**
+   * Gets the incremental reflow/repaint controller for the current document,
+   * or null if render() has not completed yet.
+   */
+  getReflowController(): ReflowRepaintController | null {
+    return this.reflowController;
+  }
+
+  /**
+   * Request an incremental reflow+repaint of the current document.
+   * Coalesced by the controller's FrameScheduler — safe to call repeatedly.
+   */
+  requestReflow(): void {
+    const doc = this.deps.domTree.getDocument();
+    if (!this.reflowController || !doc) return;
+    this.reflowController.invalidateLayout(doc);
+    this.reflowController.requestFrame();
+  }
+
   // ── Dispose ──────────────────────────────────────────────────────────────
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.reflowController?.dispose();
+    this.reflowController = null;
   }
 }
 

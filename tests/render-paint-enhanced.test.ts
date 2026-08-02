@@ -837,4 +837,36 @@ describe('buildRenderObject', () => {
     const ro = buildRenderObject(el);
     expect(ro.createsStackingContext).toBe(true);
   });
+
+  it('should detect stacking context from will-change: transform', () => {
+    const el = makeElement({
+      computedStyle: new Map([['will-change', 'transform']]),
+    });
+    const ro = buildRenderObject(el);
+    expect(ro.createsStackingContext).toBe(true);
+  });
+
+  it('should detect stacking context from will-change: opacity, filter', () => {
+    const el = makeElement({
+      computedStyle: new Map([['will-change', 'opacity, filter']]),
+    });
+    const ro = buildRenderObject(el);
+    expect(ro.createsStackingContext).toBe(true);
+  });
+
+  it('should NOT create stacking context from will-change: color', () => {
+    const el = makeElement({
+      computedStyle: new Map([['will-change', 'color']]),
+    });
+    const ro = buildRenderObject(el);
+    expect(ro.createsStackingContext).toBe(false);
+  });
+
+  it('should detect stacking context from transform', () => {
+    const el = makeElement({
+      computedStyle: new Map([['transform', 'translateX(10px)']]),
+    });
+    const ro = buildRenderObject(el);
+    expect(ro.createsStackingContext).toBe(true);
+  });
 });

@@ -84,6 +84,36 @@ export function parseLength(
   return isFinite(n) ? { kind: 'px', value: n } : { kind: 'auto', value: 0 };
 }
 
+/**
+ * Resolve the element's computed font-size to a pixel value.
+ * The cascade normally resolves `font-size` to px, but be defensive about
+ * keywords and relative units. Falls back to the CSS default of 16px.
+ */
+export function resolveFontSize(style: ReadonlyMap<string, string>): number {
+  const raw = style.get('font-size');
+  if (!raw) return 16;
+  const s = raw.trim();
+  if (s.endsWith('px')) {
+    const n = parseFloat(s);
+    return isFinite(n) ? n : 16;
+  }
+  if (s.endsWith('em')) {
+    const n = parseFloat(s);
+    return isFinite(n) ? n * 16 : 16;
+  }
+  if (s.endsWith('rem')) {
+    const n = parseFloat(s);
+    return isFinite(n) ? n * 16 : 16;
+  }
+  const keywordSizes: Record<string, number> = {
+    'xx-small': 9, 'x-small': 10, small: 13, medium: 16, large: 18,
+    'x-large': 24, 'xx-large': 32, 'xxx-large': 48, smaller: 13, larger: 18,
+  };
+  if (s in keywordSizes) return keywordSizes[s]!;
+  const n = parseFloat(s);
+  return isFinite(n) ? n : 16;
+}
+
 // ---------------------------------------------------------------------------
 // Containing block resolution
 // ---------------------------------------------------------------------------
@@ -358,7 +388,7 @@ export class StickyController {
     const visibleBottom = scrollTop + viewportHeight;
     const visibleRight = scrollLeft + viewportWidth;
 
-    const fontSize = 16; // TODO: resolve from style
+    const fontSize = resolveFontSize(style);
     let y = c.flowRectInScrollContainer.y;
     let x = c.flowRectInScrollContainer.x;
 

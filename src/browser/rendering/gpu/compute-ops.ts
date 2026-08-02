@@ -36,6 +36,29 @@ export class ComputeOps {
   private drawImageLayout: GPUBindGroupLayout | null = null;
   private fillTextLayout: GPUBindGroupLayout | null = null;
 
+  // Buffers awaiting destruction. They must not be destroyed until after the
+  // queue submit that references them completes (WebGPU validation).
+  private pendingDestroy: GPUBuffer[] = [];
+
+  /**
+   * Defer a buffer's destruction until after the next queue submit that
+   * references it has completed. WebGPU validation forbids destroying a buffer
+   * while it is still in a submitted command list.
+   */
+  private deferDestroy(buffer: GPUBuffer): void {
+    this.pendingDestroy.push(buffer);
+  }
+
+  /**
+   * Hand off all pending-destroy buffers (and clear the list) so the submit
+   * site can destroy them after the queue completes the work.
+   */
+  takePendingDestroy(): GPUBuffer[] {
+    const pending = this.pendingDestroy;
+    this.pendingDestroy = [];
+    return pending;
+  }
+
   constructor(device: GPUDevice, bufferPool: BufferPool, shaders: ShaderModules) {
     this.device = device;
     this.bufferPool = bufferPool;
@@ -78,7 +101,7 @@ export class ComputeOps {
 
     this.dispatchCompute(encoder, pipeline, bindGroup,
       Math.ceil(width / GPU_WORKGROUP_SIZE), Math.ceil(height / GPU_WORKGROUP_SIZE));
-    uniformBuffer.destroy();
+    this.deferDestroy(uniformBuffer);
   }
 
   // ── Clear Rect ──────────────────────────────────────────────────
@@ -112,7 +135,7 @@ export class ComputeOps {
 
     this.dispatchCompute(encoder, pipeline, bindGroup,
       Math.ceil(width / GPU_WORKGROUP_SIZE), Math.ceil(height / GPU_WORKGROUP_SIZE));
-    uniformBuffer.destroy();
+    this.deferDestroy(uniformBuffer);
   }
 
   // ── Composite ───────────────────────────────────────────────────
@@ -142,7 +165,7 @@ export class ComputeOps {
 
     this.dispatchCompute(encoder, pipeline, bindGroup,
       Math.ceil(width / GPU_WORKGROUP_SIZE), Math.ceil(height / GPU_WORKGROUP_SIZE));
-    uniformBuffer.destroy();
+    this.deferDestroy(uniformBuffer);
   }
 
   /**
@@ -183,7 +206,7 @@ export class ComputeOps {
 
     this.dispatchCompute(encoder, pipeline, bindGroup,
       Math.ceil(srcWidth / GPU_WORKGROUP_SIZE), Math.ceil(srcHeight / GPU_WORKGROUP_SIZE));
-    uniformBuffer.destroy();
+    this.deferDestroy(uniformBuffer);
   }
 
   // ── Draw Image ──────────────────────────────────────────────────
@@ -228,7 +251,7 @@ export class ComputeOps {
 
     this.dispatchCompute(encoder, pipeline, bindGroup,
       Math.ceil(dw / GPU_WORKGROUP_SIZE), Math.ceil(dh / GPU_WORKGROUP_SIZE));
-    uniformBuffer.destroy();
+    this.deferDestroy(uniformBuffer);
   }
 
   // ── Fill Text ───────────────────────────────────────────────────
@@ -282,7 +305,7 @@ export class ComputeOps {
 
     this.dispatchCompute(encoder, pipeline, bindGroup,
       Math.ceil(charCount / GPU_WORKGROUP_SIZE));
-    uniformBuffer.destroy();
+    this.deferDestroy(uniformBuffer);
   }
 
   // ── Font Atlas ──────────────────────────────────────────────────
@@ -314,6 +337,10 @@ export class ComputeOps {
   dispose(): void {
     this.fontAtlasBuffer?.destroy();
     this.fontAtlasBuffer = null;
+    for (const buffer of this.pendingDestroy) {
+      buffer.destroy();
+    }
+    this.pendingDestroy = [];
     this.fillRectPipeline = null;
     this.clearRectPipeline = null;
     this.compositePipeline = null;

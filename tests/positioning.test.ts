@@ -447,4 +447,49 @@ describe('LayoutEngine — positioning', () => {
       expect(a.layoutBox!.x).toBe(50);
     });
   });
+
+  describe('sticky positioning', () => {
+    function makeStickyFixture() {
+      const { tree } = buildDoc('<html><body><div id="sc"><div id="a"></div></body></html>');
+      const sc = tree.getElementById('sc')!;
+      const a = tree.getElementById('a')!;
+      sc.layoutBox = { x: 0, y: 0, width: 1000, height: 800, borderTop: 0, borderBottom: 0, paddingTop: 0, paddingBottom: 0 } as LayoutBox;
+      a.layoutBox = { x: 0, y: 0, width: 100, height: 50, borderTop: 0, borderBottom: 0, paddingTop: 0, paddingBottom: 0 } as LayoutBox;
+      return { tree, sc, a };
+    }
+
+    it('resolves top offset from the element font-size (em)', () => {
+      const { tree, sc, a } = makeStickyFixture();
+      applyStyles(tree, a, { position: 'sticky', top: '2em', 'font-size': '10px' });
+
+      const controller = new StickyController();
+      controller.register({
+        node: a,
+        box: a.layoutBox!,
+        scrollContainer: sc,
+        flowRectInScrollContainer: { x: 0, y: 100, width: 100, height: 50 },
+      });
+
+      controller.recompute(sc, 300, 0);
+      // font-size 10px → 2em = 20px; stuckY = 300 + 20 = 320
+      expect(a.layoutBox!.y).toBe(320);
+    });
+
+    it('stays at flow position when scroll has not reached the threshold', () => {
+      const { tree, sc, a } = makeStickyFixture();
+      applyStyles(tree, a, { position: 'sticky', top: '10px', 'font-size': '16px' });
+
+      const controller = new StickyController();
+      controller.register({
+        node: a,
+        box: a.layoutBox!,
+        scrollContainer: sc,
+        flowRectInScrollContainer: { x: 0, y: 100, width: 100, height: 50 },
+      });
+
+      controller.recompute(sc, 0, 0);
+      // stuckY = 0 + 10 = 10 < flow y (100) → stays at 100
+      expect(a.layoutBox!.y).toBe(100);
+    });
+  });
 });

@@ -233,6 +233,7 @@ h3{font-family:var(--font-head)}
 .changelog-time{font-family:'Courier New',monospace;font-size:.72rem;color:var(--text-muted);flex:none;width:64px}
 .changelog-prefix{font-family:'Courier New',monospace;font-size:.72rem;font-weight:700;flex:none;padding:1px 7px;border-radius:5px}
 .changelog-prefix.feat{background:rgba(52,211,153,0.14);color:var(--green)}
+.changelog-prefix.new{background:rgba(0,240,255,0.14);color:var(--cyan)}
 .changelog-prefix.fix{background:rgba(248,113,113,0.14);color:var(--red)}
 .changelog-prefix.test{background:rgba(96,165,250,0.14);color:var(--blue)}
 .changelog-prefix.docs{background:rgba(168,85,247,0.14);color:var(--purple)}
@@ -498,6 +499,11 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   <ul id="efficiencyList"></ul>
 </div>
 
+<div class="insights-card glass">
+  <h3>📐 Data Patterns</h3>
+  <ul id="patternsList"></ul>
+</div>
+
 <div class="todo-section glass" id="todo">
   <h3>🌙 Tomorrow's To-Do List</h3>
   <div class="todo-sub" id="todoDateLabel">Plan for tomorrow</div>
@@ -556,6 +562,8 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   <div class="chart-card glass chart-card-narrow" data-chart-id="statusPie"><div class="chart-head"><h3>🥧 Status Breakdown</h3><button class="expand-btn" data-expand="statusPie" title="Expand">⛶</button></div><canvas id="statusPie"></canvas></div>
   <div class="chart-card glass" data-chart-id="filesVsTests"><div class="chart-head"><h3>🔬 Files Touched vs Tests Added</h3><button class="expand-btn" data-expand="filesVsTests" title="Expand">⛶</button></div><canvas id="filesVsTests"></canvas></div>
   <div class="chart-card glass" data-chart-id="sessionSize"><div class="chart-head"><h3>📏 Session Size Distribution</h3><button class="expand-btn" data-expand="sessionSize" title="Expand">⛶</button></div><canvas id="sessionSize"></canvas></div>
+  <div class="chart-card glass full" data-chart-id="paretoChart"><div class="chart-head"><h3>📐 Test Contribution — Pareto (80/20)</h3><button class="expand-btn" data-expand="paretoChart" title="Expand">⛶</button></div><canvas id="paretoChart"></canvas></div>
+  <div class="chart-card glass" data-chart-id="categoryRadar"><div class="chart-head"><h3>🕸 Category Comparison</h3><button class="expand-btn" data-expand="categoryRadar" title="Expand">⛶</button></div><canvas id="categoryRadar"></canvas></div>
 </div>
 
 <div class="heat-section glass" id="heatmap">
@@ -592,6 +600,7 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
     <div class="changelog-filters" id="changelogFilters">
       <button class="changelog-filter-chip active" data-type="">All</button>
       <button class="changelog-filter-chip" data-type="feat">feat</button>
+      <button class="changelog-filter-chip" data-type="new">new</button>
       <button class="changelog-filter-chip" data-type="fix">fix</button>
       <button class="changelog-filter-chip" data-type="test">test</button>
       <button class="changelog-filter-chip" data-type="docs">docs</button>
@@ -995,7 +1004,61 @@ CHARTS.sessionSize=new Chart(document.getElementById('sessionSize'),{
   options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:5}}}}
 });
 
-/* ---------- Chart expand/maximize ---------- */
+/* ---------- Pareto chart: ranked test contribution + cumulative % (80/20 analysis) ---------- */
+const paretoRanked=[...DOCS].filter(d=>d.tests>0).sort((a,b)=>b.tests-a.tests);
+const paretoTotal=paretoRanked.reduce((s,d)=>s+d.tests,0);
+let paretoRunning=0;
+const paretoCumPct=paretoRanked.map(d=>{paretoRunning+=d.tests;return+(paretoRunning/paretoTotal*100).toFixed(1)});
+CHARTS.paretoChart=new Chart(document.getElementById('paretoChart'),{
+  data:{
+    labels:paretoRanked.map(d=>truncate(d.title,20)),
+    datasets:[
+      {type:'bar',label:'Tests Added',data:paretoRanked.map(d=>d.tests),backgroundColor:paretoRanked.map(d=>(CAT_COLORS[d.category]||'#00f0ff')+'cc'),borderRadius:4,borderSkipped:false,yAxisID:'y'},
+      {type:'line',label:'Cumulative %',data:paretoCumPct,borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,0.15)',borderWidth:2,pointRadius:2,tension:.25,yAxisID:'y1'}
+    ]
+  },
+  options:{
+    responsive:true,maintainAspectRatio:false,
+    onHover:(e,els)=>{e.native.target.style.cursor=els.length?'pointer':'default'},
+    onClick:(e,els)=>{if(els.length){const doc=paretoRanked[els[0].index];if(doc)openModal(doc)}},
+    plugins:{legend:{position:'top',labels:{font:{size:10}}}},
+    scales:{
+      x:{grid:{display:false},ticks:{font:{size:9},maxRotation:60,minRotation:60}},
+      y:{position:'left',title:{display:true,text:'Tests',color:'#94a3b8',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'}},
+      y1:{position:'right',min:0,max:100,title:{display:true,text:'Cumulative %',color:'#94a3b8',font:{size:10}},grid:{display:false},ticks:{callback:v=>v+'%'}}
+    }
+  }
+});
+
+/* ---------- Category Comparison (radar, top 5 categories by doc count) ---------- */
+const radarCats=catKeys.slice(0,5);
+const radarMetrics=[
+  {label:'Tests',get:c=>DOCS.filter(d=>d.category===c).reduce((s,d)=>s+d.tests,0)},
+  {label:'Root Causes',get:c=>DOCS.filter(d=>d.category===c).reduce((s,d)=>s+d.rootCauses,0)},
+  {label:'Files Touched',get:c=>DOCS.filter(d=>d.category===c).reduce((s,d)=>s+d.filesModified+d.filesCreated,0)},
+  {label:'Documents',get:c=>DOCS.filter(d=>d.category===c).length}
+];
+const radarMax=radarMetrics.map(m=>Math.max(...catKeys.map(c=>m.get(c)))||1);
+CHARTS.categoryRadar=new Chart(document.getElementById('categoryRadar'),{
+  type:'radar',
+  data:{
+    labels:radarMetrics.map(m=>m.label),
+    datasets:radarCats.map(c=>({
+      label:c,
+      data:radarMetrics.map((m,i)=>Math.round((m.get(c)/radarMax[i])*100)),
+      borderColor:CAT_COLORS[c]||'#00f0ff',
+      backgroundColor:(CAT_COLORS[c]||'#00f0ff')+'22',
+      borderWidth:2,pointRadius:3,pointBackgroundColor:CAT_COLORS[c]||'#00f0ff'
+    }))
+  },
+  options:{
+    responsive:true,maintainAspectRatio:false,
+    onHover:(e,els)=>{e.native.target.style.cursor=els.length?'pointer':'default'},
+    onClick:(e,els)=>{if(els.length)openCategoryPage(radarCats[els[0].datasetIndex])},
+    plugins:{legend:{position:'bottom',labels:{font:{size:9},padding:8}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.formattedValue+'% of category leader'}}},
+    scales:{r:{angleLines:{color:'rgba(255,255,255,0.06)'},grid:{color:'rgba(255,255,255,0.06)'},pointLabels:{font:{size:10},color:'#94a3b8'},ticks:{display:false,stepSize:25},min:0,max:100}}
+  }
+});
 document.querySelectorAll('.expand-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{
     const id=btn.dataset.expand;
@@ -1122,6 +1185,41 @@ drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)
   list.innerHTML=items.map(t=>`<li>${t}</li>`).join('');
 })();
 
+(function buildDataPatterns(){
+  const list=document.getElementById('patternsList');
+  const testCounts=[...testedSessions.map(d=>d.tests)].sort((a,b)=>a-b);
+  const mid=Math.floor(testCounts.length/2);
+  const median=testCounts.length%2?testCounts[mid]:Math.round((testCounts[mid-1]+testCounts[mid])/2);
+  const avg=Math.round(testCounts.reduce((s,v)=>s+v,0)/testCounts.length);
+  const skewNote=avg>median*1.3?'a few large sessions are pulling the average up':avg<median*0.77?'a few very small sessions are pulling the average down':'fairly evenly distributed';
+
+  let paretoDocCount=0,paretoRunningPct=0;
+  for(let i=0;i<paretoCumPct.length;i++){paretoDocCount=i+1;paretoRunningPct=paretoCumPct[i];if(paretoRunningPct>=80)break}
+  const paretoDocPct=Math.round((paretoDocCount/paretoRanked.length)*100);
+
+  const totalCreated=DOCS.reduce((s,d)=>s+d.filesCreated,0);
+  const totalModified=DOCS.reduce((s,d)=>s+d.filesModified,0);
+  const totalFiles=totalCreated+totalModified;
+  const createdPct=Math.round((totalCreated/totalFiles)*100);
+
+  const bugDensity=catKeys.map(c=>{
+    const docs=DOCS.filter(d=>d.category===c);
+    const tests=docs.reduce((s,d)=>s+d.tests,0);
+    const roots=docs.reduce((s,d)=>s+d.rootCauses,0);
+    return{c,density:tests?roots/tests:0,roots};
+  }).filter(x=>x.roots>0).sort((a,b)=>b.density-a.density)[0];
+  const cleanestCat=catKeys.map(c=>({c,roots:DOCS.filter(d=>d.category===c).reduce((s,d)=>s+d.rootCauses,0),docs:DOCS.filter(d=>d.category===c).length})).filter(x=>x.roots===0).sort((a,b)=>b.docs-a.docs)[0];
+
+  const items=[
+    `Median tests per session is <b>${median}</b> vs an average of <b>${avg}</b> — ${skewNote}.`,
+    `Just <b>${paretoDocCount}</b> documents (<b>${paretoDocPct}%</b> of all tested sessions) account for <b>${Math.round(paretoRunningPct)}%</b> of every test added — a classic 80/20 pattern.`,
+    `<b>${createdPct}%</b> of all file changes were brand-new files rather than edits to existing ones (<b>${totalCreated}</b> created vs <b>${totalModified}</b> modified).`,
+    bugDensity?`<b>${bugDensity.c}</b> has the highest bug density — about <b>${bugDensity.density.toFixed(2)}</b> root causes per test added.`:'',
+    cleanestCat?`<b>${cleanestCat.c}</b> is the cleanest category — <b>${cleanestCat.docs}</b> documents with zero root causes recorded.`:''
+  ].filter(Boolean);
+  list.innerHTML=items.map(t=>`<li>${t}</li>`).join('');
+})();
+
 /* ---------- Daily activity heat strip ---------- */
 (function buildHeat(){
   const strip=document.getElementById('heatStrip');
@@ -1180,6 +1278,7 @@ function fakeHash(str){
 }
 function commitPrefix(d){
   if(d.status==='Planned')return'plan';
+  if(d.filesCreated>0&&d.filesModified===0&&d.rootCauses===0)return'new';
   if(d.rootCauses>0)return'fix';
   if(['Architecture','UI','Rendering','Layout'].includes(d.category))return'feat';
   if(d.tests>0)return'test';
@@ -1289,9 +1388,9 @@ document.getElementById('changelogFilters').addEventListener('click',e=>{
   buildChangelog();
 });
 
-const PREFIX_COLOR={feat:'#34d399',fix:'#f87171',test:'#60a5fa',docs:'#a855f7',plan:'#fbbf24'};
+const PREFIX_COLOR={feat:'#34d399',new:'#00f0ff',fix:'#f87171',test:'#60a5fa',docs:'#a855f7',plan:'#fbbf24'};
 function buildChangelogBreakdown(){
-  const counts={feat:0,fix:0,test:0,docs:0,plan:0};
+  const counts={feat:0,new:0,fix:0,test:0,docs:0,plan:0};
   DOCS.forEach(d=>{counts[commitPrefix(d)]++});
   const total=DOCS.length;
   const bar=document.getElementById('changelogBreakdown');

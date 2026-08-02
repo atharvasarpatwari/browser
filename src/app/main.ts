@@ -315,6 +315,10 @@ class ApplicationBootstrap {
     this.log('Stopped');
   }
 
+  isRunning(): boolean {
+    return this.running;
+  }
+
   // ── Service wiring ────────────────────────────────────────────────────────
 
   /**
@@ -847,11 +851,34 @@ function registerSignalHandlers(app: ApplicationBootstrap): void {
   }
 }
 
+// ── Renderer health probe ─────────────────────────────────────────────────────
+//
+// Exposes a probe the Electron main-process watchdog pings to confirm the
+// renderer (and its mounted chrome) is alive. Returns a small serializable
+// status object; never throws.
+
+function installRendererHealthProbe(startedAt: number, getApp: () => { running(): boolean }): void {
+  const host = (globalThis as unknown as Record<string, unknown>);
+  host.__novaHealthProbe = (): Record<string, unknown> => {
+    const mounted = document.getElementById('browser-app') !== null;
+    return {
+      ok: getApp().running() && mounted,
+      running: getApp().running(),
+      mounted,
+      uptimeMs: Date.now() - startedAt,
+      title: document.title,
+      readyState: document.readyState,
+    };
+  };
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 (async () => {
+  const startedAt = Date.now();
   const app = new ApplicationBootstrap();
   registerSignalHandlers(app);
+  installRendererHealthProbe(startedAt, () => ({ running: () => app.isRunning() }));
 
   try {
     await app.start();

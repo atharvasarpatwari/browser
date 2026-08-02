@@ -290,6 +290,38 @@ describe('PageRenderer', () => {
       expect(mockDeps.paintEngine.paint).toHaveBeenCalledWith(mockDoc);
     });
 
+    it('should wire the ReflowRepaintController after paint', async () => {
+      const mockDoc = { type: 'document', children: [] };
+      (mockDeps.domTree.buildFromHtml as ReturnType<typeof vi.fn>).mockReturnValue(mockDoc);
+
+      const result = createMockPageLoadResult();
+      const signal = new AbortController().signal;
+
+      await renderer.render(result, signal);
+
+      const controller = renderer.getReflowController();
+      expect(controller).not.toBeNull();
+      expect(typeof controller!.invalidateLayout).toBe('function');
+      expect(typeof controller!.requestFrame).toBe('function');
+    });
+
+    it('should schedule an incremental frame via requestReflow()', async () => {
+      const mockDoc = { type: 'document', children: [] };
+      (mockDeps.domTree.buildFromHtml as ReturnType<typeof vi.fn>).mockReturnValue(mockDoc);
+      (mockDeps.domTree.getDocument as ReturnType<typeof vi.fn>).mockReturnValue(mockDoc);
+
+      const result = createMockPageLoadResult();
+      const signal = new AbortController().signal;
+
+      await renderer.render(result, signal);
+
+      const controller = renderer.getReflowController()!;
+      const frameSpy = vi.spyOn(controller, 'requestFrame');
+
+      renderer.requestReflow();
+      expect(frameSpy).toHaveBeenCalled();
+    });
+
     it('should handle empty HTML body', async () => {
       const result = createMockPageLoadResult({ body: '' });
       const signal = new AbortController().signal;

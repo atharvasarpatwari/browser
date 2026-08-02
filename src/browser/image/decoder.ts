@@ -29,6 +29,7 @@ const SUPPORTED_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/jpg',
+  'image/webp',
 ]);
 
 function normalizeMime(mimeType: string): string {
@@ -72,6 +73,10 @@ export class ImageDecoder implements IImageDecoder {
         return await this.decodeJpeg(bytes);
       }
 
+      if (mime === 'image/webp') {
+        return await this.decodeWebp(bytes);
+      }
+
       return null;
     } catch {
       return null;
@@ -95,6 +100,21 @@ export class ImageDecoder implements IImageDecoder {
   private async decodeJpeg(bytes: Uint8Array): Promise<DecodedImage | null> {
     const jpeg = await import('jpeg-js');
     const raw = jpeg.decode(bytes, { useTArray: true });
+    if (!raw || raw.width <= 0 || raw.height <= 0) {
+      return null;
+    }
+
+    return {
+      data: new Uint8ClampedArray(raw.data),
+      width: raw.width,
+      height: raw.height,
+    };
+  }
+
+  private async decodeWebp(bytes: Uint8Array): Promise<DecodedImage | null> {
+    // Pure-TS decoder — lazy import keeps it out of the initial bundle.
+    const { decode } = await import('@stacksjs/ts-webp');
+    const raw = decode(bytes);
     if (!raw || raw.width <= 0 || raw.height <= 0) {
       return null;
     }

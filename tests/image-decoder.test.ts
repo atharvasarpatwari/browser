@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { PNG } from 'pngjs';
 import * as jpeg from 'jpeg-js';
+import { encode as encodeWebp } from '@stacksjs/ts-webp';
 import { ImageDecoder, isSupportedImageType } from '../src/browser/image/decoder';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,6 +40,20 @@ function createMinimalJpeg(width: number, height: number, r: number, g: number, 
   return jpeg.encode(rawImageData, 50).data;
 }
 
+function createMinimalWebp(width: number, height: number, r: number, g: number, b: number): Uint8Array {
+  const data = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      data[idx]     = r;
+      data[idx + 1] = g;
+      data[idx + 2] = b;
+      data[idx + 3] = 255;
+    }
+  }
+  return encodeWebp({ data, width, height });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TESTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,8 +75,8 @@ describe('isSupportedImageType', () => {
     expect(isSupportedImageType('image/png; charset=utf-8')).toBe(true);
   });
 
-  it('should not support image/webp', () => {
-    expect(isSupportedImageType('image/webp')).toBe(false);
+  it('should support image/webp', () => {
+    expect(isSupportedImageType('image/webp')).toBe(true);
   });
 
   it('should not support image/gif', () => {
@@ -146,10 +161,52 @@ describe('ImageDecoder', () => {
     });
   });
 
+  describe('WebP decoding', () => {
+    it('should decode a 1x1 red lossless WebP', async () => {
+      const webpBuf = createMinimalWebp(1, 1, 255, 0, 0);
+      const result = await decoder.decode(new Uint8Array(webpBuf), 'image/webp');
+
+      expect(result).not.toBeNull();
+      expect(result!.width).toBe(1);
+      expect(result!.height).toBe(1);
+      expect(result!.data.length).toBe(4);
+      expect(result!.data[0]).toBe(255); // R
+      expect(result!.data[1]).toBe(0);   // G
+      expect(result!.data[2]).toBe(0);   // B
+      expect(result!.data[3]).toBe(255); // A
+    });
+
+    it('should decode a 4x4 green lossless WebP', async () => {
+      const webpBuf = createMinimalWebp(4, 4, 0, 200, 0);
+      const result = await decoder.decode(new Uint8Array(webpBuf), 'image/webp');
+
+      expect(result).not.toBeNull();
+      expect(result!.width).toBe(4);
+      expect(result!.height).toBe(4);
+      expect(result!.data.length).toBe(4 * 4 * 4);
+
+      for (let i = 0; i < 4 * 4; i++) {
+        expect(result!.data[i * 4]).toBe(0);         // R
+        expect(result!.data[i * 4 + 1]).toBe(200);   // G
+        expect(result!.data[i * 4 + 2]).toBe(0);     // B
+        expect(result!.data[i * 4 + 3]).toBe(255);   // A
+      }
+    });
+
+    it('should handle WebP with ArrayBuffer input', async () => {
+      const webpBuf = createMinimalWebp(2, 2, 100, 200, 50);
+      const result = await decoder.decode(new Uint8Array(webpBuf).buffer, 'image/webp');
+
+      expect(result).not.toBeNull();
+      expect(result!.width).toBe(2);
+      expect(result!.height).toBe(2);
+    });
+  });
+
   describe('Error handling', () => {
     it('should return null for unsupported MIME type', async () => {
       const buf = new Uint8Array([1, 2, 3, 4]);
-      const result = await decoder.decode(buf, 'image/webp');
+      const result = await decoder.decode(buf, 'image/gif');
       expect(result).toBeNull();
     });
 

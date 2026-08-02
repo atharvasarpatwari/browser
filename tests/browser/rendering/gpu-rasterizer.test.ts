@@ -697,9 +697,38 @@ describe('ComputeOps — drawImage and fillText', () => {
     expect(encoder.beginComputePass).toHaveBeenCalled();
   });
 
-  it('should dispose cleanly', () => {
-    computeOps.dispose();
-    // Should not throw
+  it('should defer uniform buffer destruction until after submit', async () => {
+    const pixelBuffer = bufferPool.acquire(100 * 100 * 4, GPUBufferUsage.STORAGE);
+    const encoder = mockDevice.createCommandEncoder();
+
+    computeOps.fillRect(
+      pixelBuffer.buffer, 0, 0, 10, 10,
+      { r: 255, g: 0, b: 0, a: 1 },
+      100, 100, encoder,
+    );
+
+    // Uniform buffer must NOT be destroyed while its work is un-submitted.
+    const uniformBuffers = (mockDevice.createBuffer.mock.results as any[])
+      .map((r: any) => r.value)
+      .filter((b: any) => b.usage & GPUBufferUsage.UNIFORM);
+    expect(uniformBuffers.length).toBeGreaterThan(0);
+    for (const b of uniformBuffers) {
+      expect(b.destroy.mock.calls.length).toBe(0);
+    }
+
+    // takePendingDestroy hands the buffers to the submit site; they remain
+    // alive through submit and are destroyed only after work-done resolves.
+    const pending = computeOps.takePendingDestroy();
+    expect(pending.length).toBe(uniformBuffers.length);
+    mockDevice.queue.submit([encoder.finish()]);
+    await mockDevice.queue.onSubmittedWorkDone();
+
+    for (const b of pending) {
+      b.destroy();
+    }
+    for (const b of pending) {
+      expect(b.destroy.mock.calls.length).toBe(1);
+    }
   });
 });
 

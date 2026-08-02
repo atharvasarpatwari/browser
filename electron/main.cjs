@@ -3,9 +3,25 @@
 const { app, BrowserWindow, Menu, nativeImage } = require('electron')
 const path = require('path')
 const url = require('url')
+const fs = require('fs')
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 const APP_TITLE = 'Nova Browser'
+
+const HEALTH_LOG_PATH = path.join(__dirname, '..', 'nova-health.log')
+const HEALTH_LOG_ENABLED = process.env.NOVA_HEALTH_LOG !== '0'
+
+// ── Health log helpers ──────────────────────────────────────────────────────
+
+function writeHealthLog(entry) {
+  if (!HEALTH_LOG_ENABLED) return
+  const line = `[${new Date().toISOString()}] ${entry}\n`
+  try {
+    fs.appendFileSync(HEALTH_LOG_PATH, line)
+  } catch {
+    /* log file unavailable — keep running */
+  }
+}
 
 function resolveIcon() {
   const candidates = [
@@ -23,6 +39,18 @@ function resolveIcon() {
   }
   return undefined
 }
+
+// ── Watchdog state ──────────────────────────────────────────────────────────
+
+let mainWindow = null
+let watchdogTimer = null
+let unresponsiveTimer = null
+let rendererCrashed = false
+let quitting = false
+
+const WATCHDOG_INTERVAL_MS = 5000
+const PROBE_TIMEOUT_MS = 2000
+const UNRESPONSIVE_ESCALATION_MS = 15000
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -52,7 +80,137 @@ function createWindow() {
   }
 
   win.on('page-title-updated', (event) => event.preventDefault())
+
+  // Crash resilience: recover instead of dying silently.
+  win.webContents.on('render-process-gone', (_event, details) => {
+    const reason = details ? details.reason : 'unknown'
+    console.error(`[Nova] Renderer process gone: ${reason}`)
+    writeHealthLog(`RENDERER_GONE reason=${reason}`)
+    rendererCrashed = true
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.reload()
+        writeHealthLog(`RENDERER_RELOADED after=${reason}`)
+      } catch (err) {
+        writeHealthLog(`RENDERER_RELOAD_FAILED error=${err.message}`)
+      }
+    }
+  })
+
+  win.webContents.on('unresponsive', () => {
+    console.warn('[Nova] Renderer unresponsive')
+    writeHealthLog('RENDERER_UNRESPONSIVE')
+    // Escalate after a grace period: reload to reclaim the UI.
+    unresponsiveTimer = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        writeHealthLog('RENDERER_UNRESPONSIVE_ESCALATE reload')
+        mainWindow.reload()
+      }
+    }, UNRESPONSIVE_ESCALATION_MS)
+  })
+
+  win.webContents.on('responsive', () => {
+    if (unresponsiveTimer) {
+      clearTimeout(unresponsiveTimer)
+      unresponsiveTimer = null
+    }
+    writeHealthLog('RENDERER_RESPONSIVE')
+  })
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error(`[Nova] Failed to load: ${errorCode} ${errorDescription}`)
+    writeHealthLog(`LOAD_FAILED code=${errorCode} desc=${errorDescription}`)
+  })
+
+  win.on('closed', () => {
+    if (unresponsiveTimer) {
+      clearTimeout(unresponsiveTimer)
+      unresponsiveTimer = null
+    }
+    mainWindow = null
+    writeHealthLog('WINDOW_CLOSED')
+  })
+
   return win
+}
+
+function probeRenderer(win) {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (result) => {
+      if (!settled) {
+        settled = true
+        resolve(result)
+      }
+    }
+    const timer = setTimeout(() => done({ alive: false, reason: 'timeout' }), PROBE_TIMEOUT_MS)
+    win.webContents
+      .executeJavaScript(
+        'globalThis.__novaHealthProbe ? globalThis.__novaHealthProbe() : (document.getElementById("browser-app") != null)',
+        true
+      )
+      .then((result) => {
+        clearTimeout(timer)
+        done({ alive: true, result })
+      })
+      .catch((err) => {
+        clearTimeout(timer)
+        done({ alive: false, reason: err && err.message ? err.message : String(err) })
+      })
+  })
+}
+
+async function runWatchdog() {
+  if (mainWindow && mainWindow.isDestroyed()) {
+    writeHealthLog('WINDOW_DESTROYED recreate')
+    mainWindow = createWindow()
+    return
+  }
+
+  if (!mainWindow) {
+    writeHealthLog('NO_WINDOW recreate')
+    mainWindow = createWindow()
+    return
+  }
+
+  if (mainWindow.webContents.isCrashed()) {
+    writeHealthLog('RENDERER_CRASHED reload')
+    rendererCrashed = true
+    mainWindow.reload()
+    return
+  }
+
+  const probe = await probeRenderer(mainWindow)
+  if (probe.alive) {
+    writeHealthLog(`ALIVE probe=${JSON.stringify(probe.result)}`)
+  } else {
+    writeHealthLog(`UNRESPONSIVE reason=${probe.reason}`)
+    if (!rendererCrashed) {
+      rendererCrashed = true
+      mainWindow.reload()
+    }
+  }
+  rendererCrashed = false
+}
+
+function startWatchdog() {
+  if (watchdogTimer) return
+  watchdogTimer = setInterval(() => {
+    runWatchdog().catch((err) => {
+      writeHealthLog(`WATCHDOG_ERROR error=${err && err.message ? err.message : String(err)}`)
+    })
+  }, WATCHDOG_INTERVAL_MS)
+}
+
+function stopWatchdog() {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer)
+    watchdogTimer = null
+  }
+  if (unresponsiveTimer) {
+    clearTimeout(unresponsiveTimer)
+    unresponsiveTimer = null
+  }
 }
 
 function installApplicationMenu() {
@@ -72,13 +230,32 @@ app.setName(APP_TITLE)
 
 app.whenReady().then(() => {
   installApplicationMenu()
-  createWindow()
+  mainWindow = createWindow()
+  writeHealthLog('APP_READY')
+  startWatchdog()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      mainWindow = createWindow()
+      writeHealthLog('WINDOW_CREATED activate')
+    }
   })
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // Keep-alive: recreate the window so the browser stays open. The watchdog
+  // also recreates it on the next tick if a race slips past this handler.
+  if (quitting) return
+  writeHealthLog('WINDOW_ALL_CLOSED recreate')
+  if (app.isReady()) {
+    mainWindow = createWindow()
+  } else if (process.platform !== 'darwin') {
+    app.quit()
+  }
+})
+
+app.on('before-quit', () => {
+  quitting = true
+  stopWatchdog()
+  writeHealthLog('APP_QUIT')
 })

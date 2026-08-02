@@ -110,6 +110,12 @@ export class GpuRasterizer {
   private softwareFallback: Rasterizer;
   private useGpu = false;
 
+  // Buffers awaiting destruction after the next submit completes.
+  // WebGPU validation forbids destroying a buffer while it is still in a
+  // submitted command list, so per-frame buffers are collected here and
+  // destroyed in submitEncoder() after onSubmittedWorkDone() resolves.
+  private pendingDestroy: GPUBuffer[] = [];
+
   private stateStack: RasterState[];
   private state: RasterState;
 
@@ -171,7 +177,34 @@ export class GpuRasterizer {
     const encoder = this.device.createCommandEncoder();
     this.computeOps.clearRect(buf, 0, 0, this.width, this.height, this.width, this.height, encoder);
     this.computeOps.fillRect(buf, 0, 0, this.width, this.height, color, this.width, this.height, encoder);
-    this.device.queue.submit([encoder.finish()]);
+    this.submitEncoder(encoder);
+  }
+
+  /**
+   * Finish an encoder, submit it, and only then destroy any buffers that were
+   * deferred during encoding. WebGPU validation forbids destroying a buffer
+   * while it is still referenced by a submitted command list.
+   */
+  private submitEncoder(encoder: GPUCommandEncoder): void {
+    if (!this.device) return;
+    const commandBuffer = encoder.finish();
+    const pending = [
+      ...this.pendingDestroy,
+      ...(this.computeOps?.takePendingDestroy() ?? []),
+    ];
+    this.pendingDestroy = [];
+
+    this.device.queue.submit([commandBuffer]);
+
+    if (pending.length === 0) return;
+    const queue = this.device.queue;
+    queue.onSubmittedWorkDone()
+      .then(() => {
+        for (const buffer of pending) buffer.destroy();
+      })
+      .catch(() => {
+        for (const buffer of pending) buffer.destroy();
+      });
   }
 
   // ── Public API ──────────────────────────────────────────────────
@@ -192,7 +225,7 @@ export class GpuRasterizer {
 
     // Copy current frame to staging buffer, then swap
     this.doubleBuffer.copyToStaging(encoder);
-    this.device.queue.submit([encoder.finish()]);
+    this.submitEncoder(encoder);
 
     // Swap first so next frame writes to the other buffer
     this.doubleBuffer.swap();
@@ -225,7 +258,7 @@ export class GpuRasterizer {
 
     // Copy current frame to staging buffer, then swap
     this.doubleBuffer.copyToStaging(encoder);
-    this.device.queue.submit([encoder.finish()]);
+    this.submitEncoder(encoder);
 
     this.doubleBuffer.swap();
 
@@ -284,6 +317,10 @@ export class GpuRasterizer {
     this.computeOps?.dispose();
     this.bufferPool?.dispose();
     this.shaders?.clear();
+    for (const buffer of this.pendingDestroy) {
+      buffer.destroy();
+    }
+    this.pendingDestroy = [];
   }
 
   // ── PER-LAYER RASTERIZATION ──────────────────────────────────────
@@ -317,11 +354,11 @@ export class GpuRasterizer {
       this.execGpu(cmd, layerBuf.buffer, encoder);
     }
 
-    this.device.queue.submit([encoder.finish()]);
-
-    // Read back the layer buffer synchronously (software fallback for now)
-    // TODO: async readback for GPU layers
-    this.bufferPool!.release(layerBuf);
+    // The layer buffer is referenced by the submitted command list; destroy it
+    // after the submit completes (submitEncoder) instead of returning it to the
+    // pool, where a full pool would destroy it while still in-flight.
+    this.pendingDestroy.push(layerBuf.buffer);
+    this.submitEncoder(encoder);
     return null;
   }
 
@@ -348,7 +385,7 @@ export class GpuRasterizer {
       opacity,
       encoder,
     );
-    this.device.queue.submit([encoder.finish()]);
+    this.submitEncoder(encoder);
   }
 
   // ── GPU Command Execution ───────────────────────────────────────
@@ -472,7 +509,8 @@ export class GpuRasterizer {
       this.width, this.height, encoder,
     );
 
-    charBuffer.destroy();
+    // Defer destruction until the submit referencing charBuffer completes.
+    this.pendingDestroy.push(charBuffer);
   }
 
   // ── GPU Image Rendering ─────────────────────────────────────────
@@ -502,7 +540,8 @@ export class GpuRasterizer {
       this.width, this.height, encoder,
     );
 
-    imageBuffer.destroy();
+    // Defer destruction until the submit referencing imageBuffer completes.
+    this.pendingDestroy.push(imageBuffer);
   }
 
   // ── Private Helpers ─────────────────────────────────────────────

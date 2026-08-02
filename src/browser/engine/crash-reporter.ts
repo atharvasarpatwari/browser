@@ -20,9 +20,6 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
-import { randomUUID } from 'crypto';
-import { writeFileSync, mkdirSync, readdirSync, readFileSync, unlinkSync, existsSync } from 'fs';
-import { join } from 'path';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -400,15 +397,22 @@ class CrashReporter implements ICrashReporter {
 
   writeMinidump(report: CrashReport, data: Buffer): MinidumpFile | undefined {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('node:fs') as typeof import('node:fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('node:path') as typeof import('node:path');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { randomUUID } = require('node:crypto') as typeof import('node:crypto');
+
       const dir = this.enhancedConfig.minidumpDir;
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
       }
 
       const id = randomUUID();
       const filename = `minidump-${report.id}-${id}.dmp`;
-      const filePath = join(dir, filename);
-      writeFileSync(filePath, data);
+      const filePath = path.join(dir, filename);
+      fs.writeFileSync(filePath, data);
 
       const minidump: MinidumpFile = {
         id,
@@ -424,7 +428,7 @@ class CrashReporter implements ICrashReporter {
       if (this.minidumps.length > this.enhancedConfig.maxMinidumps) {
         const old = this.minidumps.splice(0, this.minidumps.length - this.enhancedConfig.maxMinidumps);
         for (const m of old) {
-          try { unlinkSync(m.filePath); } catch {}
+          try { fs.unlinkSync(m.filePath); } catch {}
         }
       }
 
@@ -443,7 +447,11 @@ class CrashReporter implements ICrashReporter {
     const idx = this.minidumps.findIndex(m => m.id === id);
     if (idx < 0) return false;
     const [removed] = this.minidumps.splice(idx, 1);
-    try { unlinkSync(removed.filePath); } catch {}
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('node:fs') as typeof import('node:fs');
+      fs.unlinkSync(removed.filePath);
+    } catch {}
     return true;
   }
 

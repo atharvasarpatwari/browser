@@ -48,7 +48,12 @@ export function buildRenderObject(element: DomElement): RenderObject {
 
   const hasFilter = (style.get('filter') ?? 'none') !== 'none';
   const hasTransform = (style.get('transform') ?? 'none') !== 'none';
-  const scCtx = hasFilter || hasTransform || opacity < 1 || position === 'fixed' || position === 'sticky' ||
+  const willChange = style.get('will-change');
+  const willChangeSc = willChange !== undefined && willChange !== 'auto'
+    && willChange.split(',').map((s: string) => s.trim().toLowerCase())
+      .some((p: string) => p === 'transform' || p === 'opacity' || p === 'paint' || p === 'filter');
+  const scCtx = hasFilter || hasTransform || willChangeSc || opacity < 1 ||
+    position === 'fixed' || position === 'sticky' ||
     (isPos && zRaw !== 'auto' && zRaw !== undefined) ||
     style.get('mix-blend-mode') !== undefined ||
     style.get('isolation') === 'isolate';
