@@ -66,6 +66,8 @@ import { ResourcePrioritizer } from '../browser/networking/resource-prioritizer'
 import { Firewall, applyBaselineRules } from '../browser/networking/firewall';
 import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from '../browser/networking/networking-setup';
 import { RawSocketHttpClient } from '../browser/networking/raw-socket-http-client';
+import { ProxyAwareHttpClient, createProxyConfigFromEnv } from '../browser/networking/request-manager';
+import type { IHttpClient } from '../browser/networking/request-manager';
 import { TlsHandler } from '../browser/networking/tls-handler';
 import type { ITlsHandler } from '../browser/networking/tls-handler';
 
@@ -403,10 +405,17 @@ class ApplicationBootstrap {
     c.register<IResourceLoader>(
       Tokens.ResourceLoader,
       (ctx) => {
-        const isNode = typeof process !== 'undefined' && typeof globalThis.fetch === 'undefined';
-        const client = isNode ? new RawSocketHttpClient({
-          tlsHandler: ctx.resolve<ITlsHandler>(Tokens.TlsHandler),
-        }) : undefined;
+        const isNode =
+          typeof process !== 'undefined' &&
+          typeof (process as { versions?: { node?: string } }).versions?.node === 'string';
+        const tlsHandler = ctx.resolve<ITlsHandler>(Tokens.TlsHandler);
+        const proxyConfig = createProxyConfigFromEnv();
+        let client: IHttpClient | undefined;
+        if (proxyConfig.socksProxy) {
+          client = new ProxyAwareHttpClient(proxyConfig, undefined, tlsHandler);
+        } else if (isNode) {
+          client = new RawSocketHttpClient({ tlsHandler });
+        }
         const cache = ctx.resolve<ICacheManager>(Tokens.CacheManager);
         const loader = new ResourceLoader(
           client,

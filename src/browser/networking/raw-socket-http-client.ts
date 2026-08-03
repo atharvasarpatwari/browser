@@ -24,6 +24,7 @@ import type { ITlsHandler } from './tls-handler';
 import { CertVerificationStatus, TlsCertificateError } from './tls-handler';
 import { ContentDecoder } from './content-encoding';
 import type { ContentCoding } from './content-encoding';
+import { connectThroughSocks, parseSocksProxyUrl } from './socks-connection';
 
 export class RawSocketError extends Error {
   constructor(message: string) {
@@ -88,10 +89,12 @@ class RawSocketHttpClient implements IHttpClient {
   private readonly tlsHandler?: ITlsHandler;
   private readonly trustedCAs: Set<string>;
   private readonly contentDecoder: ContentDecoder;
+  private readonly socksProxy?: string;
 
-  constructor(options?: { defaultTimeoutMs?: number; tlsHandler?: ITlsHandler }) {
+  constructor(options?: { defaultTimeoutMs?: number; tlsHandler?: ITlsHandler; socksProxy?: string }) {
     this.defaultTimeoutMs = options?.defaultTimeoutMs ?? 30_000;
     this.tlsHandler = options?.tlsHandler;
+    this.socksProxy = options?.socksProxy;
     this.contentDecoder = new ContentDecoder();
 
     // Load system trust store once.
@@ -148,6 +151,8 @@ class RawSocketHttpClient implements IHttpClient {
 
     return new Promise<HttpResponseSpec>((resolve, reject) => {
       let settled = false;
+      let socket: any = null;
+      const chunks: Buffer[] = [];
 
       const finish = (fn: () => void) => {
         if (settled) return;
@@ -159,14 +164,14 @@ class RawSocketHttpClient implements IHttpClient {
 
       const timer = setTimeout(() => {
         finish(() => {
-          socket.destroy();
+          socket?.destroy();
           reject(new RawSocketTimeoutError(hostname, port, timeoutMs));
         });
       }, timeoutMs);
 
       const onAbort = () => {
         finish(() => {
-          socket.destroy();
+          socket?.destroy();
           reject(new DOMException('The operation was aborted.', 'AbortError'));
         });
       };
@@ -176,72 +181,100 @@ class RawSocketHttpClient implements IHttpClient {
         finish(() => reject(new RawSocketConnectionError(hostname, port, err)));
       };
 
-      let socket: any;
-
-      if (useTls) {
-        // Use rejectUnauthorized: false so we can inspect the peer cert before deciding.
-        socket = tls.connect({ host: hostname, port, servername: hostname, rejectUnauthorized: false });
-      } else {
-        socket = net.connect({ host: hostname, port });
-      }
-
-      socket.on('error', onSocketError);
-
-      if (useTls) {
-        // Wait for the TLS handshake to complete, then validate the certificate.
-        socket.on('secureConnect', () => {
-          const peerCert = socket.getPeerCertificate(true);
-          if (!peerCert || !peerCert.subject) {
-            socket.destroy();
-            finish(() => reject(new RawSocketConnectionError(hostname, port,
-              new Error('Server did not present a certificate'))));
-            return;
-          }
-
-          // Validate certificate if tlsHandler is available.
-          if (this.tlsHandler) {
-            this.tlsHandler.negotiate(hostname, port).then(result => {
-              if (!result.verified) {
-                socket.destroy();
-                const detail = `Certificate verification failed: ${result.verificationStatus}`;
-                finish(() => reject(new TlsCertificateError(hostname, result.verificationStatus, detail)));
-                return;
-              }
-              // Certificate valid — send the HTTP request.
-              socket.write(requestBytes);
-            }).catch(err => {
-              socket.destroy();
-              finish(() => reject(err instanceof Error ? err : new RawSocketConnectionError(hostname, port, err)));
+      const run = async () => {
+        let rawSocket: any;
+        try {
+          if (this.socksProxy) {
+            const proxyInfo = parseSocksProxyUrl(this.socksProxy);
+            if (!proxyInfo) {
+              throw new RawSocketError(`Invalid SOCKS proxy URL: ${this.socksProxy}`);
+            }
+            rawSocket = await connectThroughSocks({
+              proxy: proxyInfo,
+              targetHost: hostname,
+              targetPort: port,
+              timeoutMs,
+              signal,
             });
+          } else if (useTls) {
+            // Use rejectUnauthorized: false so we can inspect the peer cert before deciding.
+            rawSocket = tls.connect({ host: hostname, port, servername: hostname, rejectUnauthorized: false });
           } else {
-            // No tlsHandler — trust the connection (legacy behavior).
-            socket.write(requestBytes);
+            rawSocket = net.connect({ host: hostname, port });
           }
+        } catch (err) {
+          finish(() => {
+            rawSocket?.destroy();
+            reject(err instanceof Error ? err : new RawSocketConnectionError(hostname, port));
+          });
+          return;
+        }
+
+        if (this.socksProxy && useTls) {
+          // Wrap the tunneled socket with TLS; SNI still carries the real host.
+          rawSocket = tls.connect({ socket: rawSocket, servername: hostname, rejectUnauthorized: false });
+        }
+        socket = rawSocket;
+
+        socket.on('error', onSocketError);
+        socket.on('data', (chunk: Buffer) => {
+          chunks.push(chunk);
         });
-      } else {
-        // Plain TCP — send immediately on connect.
-        socket.on('connect', () => {
+        socket.on('end', () => {
+          finish(async () => {
+            try {
+              const rawResponse = Buffer.concat(chunks);
+              const result = await this.parseHttpResponse(rawResponse, request.url);
+              resolve(result);
+            } catch (err) {
+              reject(err instanceof Error ? err : new RawSocketError(String(err)));
+            }
+          });
+        });
+
+        if (useTls) {
+          // Wait for the TLS handshake to complete, then validate the certificate.
+          socket.on('secureConnect', () => {
+            const peerCert = socket.getPeerCertificate(true);
+            if (!peerCert || !peerCert.subject) {
+              socket.destroy();
+              finish(() => reject(new RawSocketConnectionError(hostname, port,
+                new Error('Server did not present a certificate'))));
+              return;
+            }
+
+            // Validate certificate if tlsHandler is available.
+            if (this.tlsHandler) {
+              this.tlsHandler.negotiate(hostname, port).then(result => {
+                if (!result.verified) {
+                  socket.destroy();
+                  const detail = `Certificate verification failed: ${result.verificationStatus}`;
+                  finish(() => reject(new TlsCertificateError(hostname, result.verificationStatus, detail)));
+                  return;
+                }
+                // Certificate valid — send the HTTP request.
+                socket.write(requestBytes);
+              }).catch(err => {
+                socket.destroy();
+                finish(() => reject(err instanceof Error ? err : new RawSocketConnectionError(hostname, port, err)));
+              });
+            } else {
+              // No tlsHandler — trust the connection (legacy behavior).
+              socket.write(requestBytes);
+            }
+          });
+        } else if (this.socksProxy) {
+          // The SOCKS tunnel is already established — write immediately.
           socket.write(requestBytes);
-        });
-      }
+        } else {
+          // Plain TCP — send immediately on connect.
+          socket.on('connect', () => {
+            socket.write(requestBytes);
+          });
+        }
+      };
 
-      const chunks: Buffer[] = [];
-
-      socket.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
-
-      socket.on('end', () => {
-        finish(async () => {
-          try {
-            const rawResponse = Buffer.concat(chunks);
-            const result = await this.parseHttpResponse(rawResponse, request.url);
-            resolve(result);
-          } catch (err) {
-            reject(err instanceof Error ? err : new RawSocketError(String(err)));
-          }
-        });
-      });
+      run();
     });
   }
 

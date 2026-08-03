@@ -61,6 +61,8 @@ import {
 }                                         from './gateway-protocols';
 import { ContentDecoder, ACCEPT_ENCODING } from './content-encoding';
 import { HttpAuthenticator, AuthScheme }    from './http-auth';
+import { RawSocketHttpClient }              from './raw-socket-http-client';
+import type { ITlsHandler }                 from './tls-handler';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENUMS
@@ -383,6 +385,48 @@ class SftpHttpClient implements IHttpClient {
 }
 
 /**
+ * Build a ProxyConfig from standard proxy environment variables.
+ *
+ * Supported variables:
+ *   NOVA_SOCKS_PROXY   socks://, socks4://, socks4a://, socks5:// or socks5h:// URL
+ *   ALL_PROXY          only when it carries a socks scheme → socksProxy
+ *   NO_PROXY           comma-separated hostname bypass list ("localhost,127.0.0.1")
+ *
+ * Conventional HTTP_PROXY / HTTPS_PROXY variables are deliberately ignored:
+ * the HTTP(S)-proxy CONNECT path is not yet exercised by the production
+ * transport, and routing traffic through an untested tunnel is riskier than
+ * staying direct.
+ */
+export function createProxyConfigFromEnv(
+  env: Readonly<Record<string, string | undefined>> = readProcessEnv(),
+): Partial<ProxyConfig> {
+  const socks = env.NOVA_SOCKS_PROXY ?? env.ALL_PROXY;
+  const noProxy = env.NO_PROXY ?? env.no_proxy;
+  return {
+    ...(socks && isSocksUrl(socks) ? { socksProxy: socks } : {}),
+    ...(noProxy
+      ? { noProxy: noProxy.split(',').map(part => part.trim()).filter(Boolean) }
+      : {}),
+  };
+}
+
+function isSocksUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol.startsWith('socks');
+  } catch {
+    return false;
+  }
+}
+
+function readProcessEnv(): Readonly<Record<string, string | undefined>> {
+  if (typeof process === 'undefined') {
+    return {};
+  }
+  const env = (process as { env?: Readonly<Record<string, string | undefined>> }).env;
+  return env ?? {};
+}
+
+/**
  * Gateway-aware HTTP transport that routes requests through configured proxies.
  *
  * Consults the GatewayProtocolManager to determine if a proxy (HTTP, SOCKS4,
@@ -396,13 +440,18 @@ class ProxyAwareHttpClient implements IHttpClient {
   private readonly inner: FetchHttpClient;
   private readonly gatewayManager: GatewayProtocolManager;
   private readonly proxyConfig: ProxyConfig;
+  private socksTransport: IHttpClient | null = null;
+  private socksTransportUrl: string | null = null;
+  private readonly tlsHandler?: ITlsHandler;
 
   constructor(
     proxyConfig?: Partial<ProxyConfig>,
     gatewayManager?: GatewayProtocolManager,
+    tlsHandler?: ITlsHandler,
   ) {
     this.inner           = new FetchHttpClient();
     this.gatewayManager  = gatewayManager ?? new GatewayProtocolManager();
+    this.tlsHandler      = tlsHandler;
     this.proxyConfig     = {
       httpProxy:  proxyConfig?.httpProxy  ?? null,
       httpsProxy: proxyConfig?.httpsProxy ?? null,
@@ -467,13 +516,33 @@ class ProxyAwareHttpClient implements IHttpClient {
       return this.sendViaHttpProxy(request, signal, proxyUrl);
     }
 
-    // For SOCKS proxies, log the attempt and fall back to direct connection.
-    // A real implementation would use a SOCKS client library.
-    console.warn(
-      `[ProxyAwareHttpClient] SOCKS proxy "${proxyUrl}" requested for "${request.url}" ` +
-      `but native SOCKS support is not yet implemented. Falling back to direct connection.`,
-    );
-    return this.inner.send(request, signal);
+    // SOCKS proxies (socks4 / socks4a / socks5) tunnel via raw sockets.
+    return this.sendViaSocks(request, signal, proxyUrl);
+  }
+
+  private async sendViaSocks(
+    request: HttpRequestSpec,
+    signal: AbortSignal,
+    proxyUrl: string,
+  ): Promise<HttpResponseSpec> {
+    const isNode = typeof process !== 'undefined' && typeof (process as { versions?: { node?: string } }).versions?.node === 'string';
+    if (!isNode) {
+      // Raw sockets are unavailable outside Node — keep the previous behavior.
+      console.warn(
+        `[ProxyAwareHttpClient] SOCKS proxy "${proxyUrl}" requested for "${request.url}" ` +
+        `but SOCKS tunneling requires a Node socket transport. Falling back to direct connection.`,
+      );
+      return this.inner.send(request, signal);
+    }
+
+    if (this.socksTransport === null || this.socksTransportUrl !== proxyUrl) {
+      this.socksTransport = new RawSocketHttpClient({
+        socksProxy: proxyUrl,
+        tlsHandler: this.tlsHandler,
+      });
+      this.socksTransportUrl = proxyUrl;
+    }
+    return this.socksTransport.send(request, signal);
   }
 
   private async sendViaHttpProxy(
@@ -498,7 +567,12 @@ class ProxyAwareHttpClient implements IHttpClient {
 
   /** Update proxy configuration at runtime. */
   updateProxyConfig(partial: Partial<ProxyConfig>): void {
+    const prevSocks = this.proxyConfig.socksProxy;
     Object.assign(this.proxyConfig, partial);
+    if (this.proxyConfig.socksProxy !== prevSocks) {
+      this.socksTransport = null;
+      this.socksTransportUrl = null;
+    }
   }
 }
 
