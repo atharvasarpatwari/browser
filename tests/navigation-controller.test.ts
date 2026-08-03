@@ -290,6 +290,43 @@ describe('NavigationController', () => {
     expect(events).toEqual(['started', 'committed', 'completed']);
   });
 
+  it('commitRedirectedUrl updates the entry URL and emits urlRedirected only', async () => {
+    const ctrl = new NavigationController(parser);
+    await ctrl.navigate('https://mail.com/');
+
+    const committed = vi.fn();
+    const redirected = vi.fn();
+    ctrl.on('navigationCommitted', committed);
+    ctrl.on('urlRedirected', redirected);
+
+    const beforeId = ctrl.getCurrentEntry()!.id;
+    ctrl.commitRedirectedUrl('https://www.mail.com/');
+
+    const current = ctrl.getCurrentEntry()!;
+    expect(current.url).toBe('https://www.mail.com/');
+    expect(current.id).toBe(beforeId);
+    expect(ctrl.historyLength).toBe(1);
+    expect(committed).not.toHaveBeenCalled();
+    expect(redirected).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'urlRedirected', url: 'https://www.mail.com/' }),
+    );
+  });
+
+  it('commitRedirectedUrl is a no-op when the URL is unchanged or invalid', async () => {
+    const ctrl = new NavigationController(parser);
+    await ctrl.navigate('https://mail.com/');
+
+    const redirected = vi.fn();
+    ctrl.on('urlRedirected', redirected);
+
+    ctrl.commitRedirectedUrl('https://mail.com/');
+    expect(redirected).not.toHaveBeenCalled();
+
+    ctrl.commitRedirectedUrl('not a url');
+    expect(ctrl.getCurrentEntry()!.url).toBe('https://mail.com/');
+    expect(redirected).not.toHaveBeenCalled();
+  });
+
   it('should emit canGoBackChanged and canGoForwardChanged', async () => {
     const ctrl = new NavigationController(parser);
     const backChanges: boolean[] = [];

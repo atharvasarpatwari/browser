@@ -351,7 +351,7 @@ class ResourceLoader implements IResourceLoader {
       }
 
       return {
-        url,
+        url: currentUrl,
         kind: _kind,
         statusCode: res.statusCode,
         contentType: parsed.mimeType.full || 'application/octet-stream',

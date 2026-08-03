@@ -95,6 +95,11 @@ interface PageLoadSession {
   readonly entry: NavigationEntry;
   /** The route the engine resolved for this entry. */
   routeResult: RouteResult | null;
+  /**
+   * Final URL after server-side redirects (differs from entry.url when a 3xx
+   * was followed). Set once the document has been fetched.
+   */
+  finalUrl?: string;
   /** Current lifecycle state. */
   state: PageLoadState;
   /** Wall clock time when the load started (navigationCommitted). */
@@ -500,6 +505,13 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
       this.throwIfAborted(signal, session);
       raw = await this.loader.load(session.entry.url, signal);
       this.bus.emit({ kind: 'pageLoadFetched', session, raw });
+
+      // A 3xx redirect changed the committed URL — surface the final URL so
+      // the address bar / history follow the redirect without a new fetch.
+      if (raw.url !== session.entry.url) {
+        session.finalUrl = raw.url;
+        this.navController.commitRedirectedUrl(raw.url);
+      }
     }
 
     // ── Step 4: Render ────────────────────────────────────────────────────

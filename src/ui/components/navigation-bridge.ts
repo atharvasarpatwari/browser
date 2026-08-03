@@ -269,6 +269,16 @@ class NavigationBridge implements INavigationBridge {
           this.bus.emit({ kind: 'navigationCompleted', url: e.entry.url, elapsedMs: e.elapsedMs });
           break;
 
+        case 'urlRedirected':
+          this._currentUrl = e.url;
+          const wasNavigating = this._navigating;
+          this._navigating = true;
+          this.addressBar.setValue(e.url);
+          this._navigating = wasNavigating;
+          this._updateSecureState(e.url);
+          this.bus.emit({ kind: 'urlNavigated', url: e.url });
+          break;
+
         case 'navigationFailed':
           this._setLoading(false);
           this.addressBar.setLoading(false);
@@ -580,6 +590,7 @@ class NavigationBridge implements INavigationBridge {
     this.nav.on('navigationCompleted', this.navHandler);
     this.nav.on('navigationFailed', this.navHandler);
     this.nav.on('navigationStopped', this.navHandler);
+    this.nav.on('urlRedirected', this.navHandler);
     this.nav.on('canGoBackChanged', this.navHandler);
     this.nav.on('canGoForwardChanged', this.navHandler);
   }
@@ -673,6 +684,7 @@ class NavigationBridge implements INavigationBridge {
     this.nav.off('navigationCompleted', this.navHandler);
     this.nav.off('navigationFailed', this.navHandler);
     this.nav.off('navigationStopped', this.navHandler);
+    this.nav.off('urlRedirected', this.navHandler);
     this.nav.off('canGoBackChanged', this.navHandler);
     this.nav.off('canGoForwardChanged', this.navHandler);
     this.tabs.off('tabActivated', this.tabManagerHandler);

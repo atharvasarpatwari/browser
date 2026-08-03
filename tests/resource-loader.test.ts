@@ -196,6 +196,7 @@ describe('ResourceLoader — Redirect following', () => {
     const result = await loader.loadResource('https://mail.com/', 'document');
     expect(result.error).toBeNull();
     expect(result.statusCode).toBe(200);
+    expect(result.url).toBe('https://www.mail.com/');
     expect(result.body).toBe('<h1>home</h1>');
     expect(requested).toEqual(['https://mail.com/', 'https://www.mail.com/']);
   });
@@ -219,6 +220,7 @@ describe('ResourceLoader — Redirect following', () => {
     const result = await loader.loadResource('https://mail.com/', 'document');
     expect(result.error).toBeNull();
     expect(result.statusCode).toBe(200);
+    expect(result.url).toBe('https://mail.com/en/');
     expect(requested).toEqual(['https://mail.com/', 'https://mail.com/en/']);
   });
 

@@ -77,6 +77,8 @@ class NavigationFetcher implements INavigationFetcher {
   }
 
   private renderFromEngine(session: PageLoadSession): void {
+    const url = session.finalUrl ?? session.entry.url;
+    const hostname = this.extractHostname(url);
     try {
       const imageData = this.paintEngine.rasterize();
       if (imageData.width > 0 && imageData.height > 0) {
@@ -85,23 +87,31 @@ class NavigationFetcher implements INavigationFetcher {
         this.contentRenderer.renderHtml(
           `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
             <div style="text-align:center;color:#5f6368;">
-              <h2 style="margin:0 0 8px;">${this.escapeHtml(session.entry.parsedUrl.hostname || session.entry.url)}</h2>
-              <p style="margin:0;word-break:break-all;max-width:500px;">${this.escapeHtml(session.entry.url)}</p>
+              <h2 style="margin:0 0 8px;">${this.escapeHtml(hostname)}</h2>
+              <p style="margin:0;word-break:break-all;max-width:500px;">${this.escapeHtml(url)}</p>
             </div>
           </body></html>`,
-          { title: session.entry.parsedUrl.hostname || session.entry.url, baseUrl: session.entry.url },
+          { title: hostname, baseUrl: url },
         );
       }
     } catch {
       this.contentRenderer.renderHtml(
         `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">
           <div style="text-align:center;color:#5f6368;">
-            <h2 style="margin:0 0 8px;">${this.escapeHtml(session.entry.parsedUrl.hostname || session.entry.url)}</h2>
-            <p style="margin:0;word-break:break-all;max-width:500px;">${this.escapeHtml(session.entry.url)}</p>
+            <h2 style="margin:0 0 8px;">${this.escapeHtml(hostname)}</h2>
+            <p style="margin:0;word-break:break-all;max-width:500px;">${this.escapeHtml(url)}</p>
           </div>
         </body></html>`,
-        { title: session.entry.parsedUrl.hostname || session.entry.url, baseUrl: session.entry.url },
+        { title: hostname, baseUrl: url },
       );
+    }
+  }
+
+  private extractHostname(url: string): string {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return url;
     }
   }
 

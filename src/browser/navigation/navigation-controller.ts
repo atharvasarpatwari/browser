@@ -174,6 +174,7 @@ type NavigationEventType =
   | 'navigationCompleted'
   | 'navigationFailed'
   | 'navigationStopped'
+  | 'urlRedirected'
   | 'hashChanged'
   | 'canGoBackChanged'
   | 'canGoForwardChanged';
@@ -224,6 +225,19 @@ interface HashChangedEvent {
   readonly hash: string;
 }
 
+/**
+ * Fired when a server-side redirect changed the current entry's URL in place
+ * (e.g. https://mail.com/ → https://www.mail.com/). Unlike navigationCommitted,
+ * this does NOT re-trigger a document fetch — the URL is informational only.
+ */
+interface UrlRedirectedEvent {
+  readonly kind: 'urlRedirected';
+  /** The final post-redirect URL. */
+  readonly url: string;
+  /** The updated history entry (same id, new URL). */
+  readonly entry: NavigationEntry;
+}
+
 /** Fired when the ability to navigate backwards changes. */
 interface CanGoBackChangedEvent {
   readonly kind: 'canGoBackChanged';
@@ -243,6 +257,7 @@ type NavigationEvent =
   | NavigationCompletedEvent
   | NavigationFailedEvent
   | NavigationStoppedEvent
+  | UrlRedirectedEvent
   | HashChangedEvent
   | CanGoBackChangedEvent
   | CanGoForwardChangedEvent;
@@ -294,6 +309,11 @@ interface INavigationController {
   pushState(state: unknown, title: string, url?: string): void;
   /** Update the current entry's state without creating a new entry (history.replaceState). */
   replaceState(state: unknown, title: string, url?: string): void;
+  /**
+   * Record a server-side redirect: update the current entry's URL in place and
+   * emit `urlRedirected`. Does not start a new document fetch.
+   */
+  commitRedirectedUrl(url: string): void;
 
   // ── History state ──────────────────────────────────────────────────────────
   getCurrentEntry(): NavigationEntry | null;
@@ -833,6 +853,40 @@ class NavigationController implements INavigationController {
       state,
     };
     this.stack.replace(updated);
+  }
+
+  // ── redirect URL update ─────────────────────────────────────────────────────
+
+  /**
+   * Replace the current entry's URL to reflect a server-side redirect
+   * (same id/title/scroll/state — no new history entry, no re-fetch).
+   * Emits `urlRedirected` so UI surfaces (address bar, secure state) can
+   * follow the final URL without re-running the document pipeline.
+   */
+  commitRedirectedUrl(url: string): void {
+    const current = this.stack.current();
+    if (current === null || current.url === url) return;
+
+    let parsedUrl = current.parsedUrl;
+    try {
+      parsedUrl = this.parser.parse(new URL(url).href);
+    } catch {
+      return;
+    }
+
+    const updated: NavigationEntry = {
+      id:        current.id,
+      url,
+      title:     current.title,
+      timestamp: current.timestamp,
+      type:      current.type,
+      scrollX:   current.scrollX,
+      scrollY:   current.scrollY,
+      parsedUrl,
+      state:     current.state,
+    };
+    this.stack.replace(updated);
+    this.bus.emit({ kind: 'urlRedirected', url, entry: updated });
   }
 
   // ── History queries ────────────────────────────────────────────────────────
