@@ -411,7 +411,7 @@ class ApplicationBootstrap {
         const tlsHandler = ctx.resolve<ITlsHandler>(Tokens.TlsHandler);
         const proxyConfig = createProxyConfigFromEnv();
         let client: IHttpClient | undefined;
-        if (proxyConfig.socksProxy) {
+        if (proxyConfig.socksProxy || proxyConfig.httpProxy || proxyConfig.httpsProxy) {
           client = new ProxyAwareHttpClient(proxyConfig, undefined, tlsHandler);
         } else if (isNode) {
           client = new RawSocketHttpClient({ tlsHandler });

@@ -25,6 +25,7 @@ import { CertVerificationStatus, TlsCertificateError } from './tls-handler';
 import { ContentDecoder } from './content-encoding';
 import type { ContentCoding } from './content-encoding';
 import { connectThroughSocks, parseSocksProxyUrl } from './socks-connection';
+import { connectThroughHttpProxy, parseHttpProxyUrl } from './http-proxy-connect';
 
 export class RawSocketError extends Error {
   constructor(message: string) {
@@ -90,11 +91,13 @@ class RawSocketHttpClient implements IHttpClient {
   private readonly trustedCAs: Set<string>;
   private readonly contentDecoder: ContentDecoder;
   private readonly socksProxy?: string;
+  private readonly httpProxy?: string;
 
-  constructor(options?: { defaultTimeoutMs?: number; tlsHandler?: ITlsHandler; socksProxy?: string }) {
+  constructor(options?: { defaultTimeoutMs?: number; tlsHandler?: ITlsHandler; socksProxy?: string; httpProxy?: string }) {
     this.defaultTimeoutMs = options?.defaultTimeoutMs ?? 30_000;
     this.tlsHandler = options?.tlsHandler;
     this.socksProxy = options?.socksProxy;
+    this.httpProxy = options?.httpProxy;
     this.contentDecoder = new ContentDecoder();
 
     // Load system trust store once.
@@ -196,6 +199,18 @@ class RawSocketHttpClient implements IHttpClient {
               timeoutMs,
               signal,
             });
+          } else if (this.httpProxy) {
+            const proxyInfo = parseHttpProxyUrl(this.httpProxy);
+            if (!proxyInfo) {
+              throw new RawSocketError(`Invalid HTTP proxy URL: ${this.httpProxy}`);
+            }
+            rawSocket = await connectThroughHttpProxy({
+              proxy: proxyInfo,
+              targetHost: hostname,
+              targetPort: port,
+              timeoutMs,
+              signal,
+            });
           } else if (useTls) {
             // Use rejectUnauthorized: false so we can inspect the peer cert before deciding.
             rawSocket = tls.connect({ host: hostname, port, servername: hostname, rejectUnauthorized: false });
@@ -210,7 +225,7 @@ class RawSocketHttpClient implements IHttpClient {
           return;
         }
 
-        if (this.socksProxy && useTls) {
+        if ((this.socksProxy !== undefined || this.httpProxy !== undefined) && useTls) {
           // Wrap the tunneled socket with TLS; SNI still carries the real host.
           rawSocket = tls.connect({ socket: rawSocket, servername: hostname, rejectUnauthorized: false });
         }
@@ -263,8 +278,8 @@ class RawSocketHttpClient implements IHttpClient {
               socket.write(requestBytes);
             }
           });
-        } else if (this.socksProxy) {
-          // The SOCKS tunnel is already established — write immediately.
+        } else if (this.socksProxy !== undefined || this.httpProxy !== undefined) {
+          // The tunnel is already established — write immediately.
           socket.write(requestBytes);
         } else {
           // Plain TCP — send immediately on connect.

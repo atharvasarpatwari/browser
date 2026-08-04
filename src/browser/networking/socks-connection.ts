@@ -21,6 +21,7 @@
  */
 
 import type { Socket } from 'node:net';
+import { SocketReader } from './socket-reader';
 
 // ── SOCKS5 constants (RFC 1928) ──────────────────────────────────────────────
 const SOCKS5_VERSION       = 0x05;
@@ -199,88 +200,6 @@ function socks5RepText(rep: number): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SOCKET READ HELPER
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Buffered socket reader for the SOCKS handshake.
- *
- * A single `data` event can carry bytes for multiple protocol replies (TCP is
- * a byte stream), so surplus bytes are buffered and handed to later reads
- * instead of being consumed by the current one.
- */
-class SocketReader {
-  private buffer = Buffer.alloc(0);
-  private waiters: Array<{ min: number; resolve: (b: Buffer) => void; reject: (e: Error) => void }> = [];
-  private closed = false;
-
-  constructor(private readonly socket: Socket) {
-    socket.on('data', this.onData);
-    socket.on('error', this.onError);
-    socket.on('end', this.onEnd);
-    socket.on('close', this.onClose);
-  }
-
-  private onData = (chunk: Buffer): void => {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
-    this.flush();
-  };
-
-  private onError = (err: Error): void => {
-    this.fail(new SocksError(`SOCKS proxy error during the handshake: ${err.message}`, 'CONN_CLOSED'));
-  };
-
-  private onEnd = (): void => {
-    this.closed = true;
-    this.fail(new SocksError('SOCKS proxy closed the connection during the handshake', 'CONN_CLOSED'));
-  };
-
-  private onClose = (): void => {
-    this.closed = true;
-    this.fail(new SocksError('SOCKS proxy connection closed during the handshake', 'CONN_CLOSED'));
-  };
-
-  private fail(err: Error): void {
-    const pending = this.waiters;
-    this.waiters = [];
-    for (const w of pending) w.reject(err);
-  }
-
-  read(min: number): Promise<Buffer> {
-    if (this.closed) {
-      return Promise.reject(new SocksError('SOCKS proxy connection is closed', 'CONN_CLOSED'));
-    }
-    return new Promise((resolve, reject) => {
-      this.waiters.push({ min, resolve, reject });
-      this.flush();
-    });
-  }
-
-  private flush(): void {
-    while (this.waiters.length > 0 && this.buffer.length >= this.waiters[0]!.min) {
-      const w = this.waiters.shift()!;
-      const out = this.buffer.subarray(0, w.min);
-      this.buffer = this.buffer.subarray(w.min);
-      w.resolve(Buffer.from(out));
-    }
-  }
-
-  /**
-   * Stop listening and hand back any bytes not yet consumed by reads. Callers
-   * should re-emit non-empty leftovers into the tunnelled stream.
-   */
-  detach(): Buffer {
-    this.socket.removeListener('data', this.onData);
-    this.socket.removeListener('error', this.onError);
-    this.socket.removeListener('end', this.onEnd);
-    this.socket.removeListener('close', this.onClose);
-    const rest = this.buffer;
-    this.buffer = Buffer.alloc(0);
-    return rest;
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // HANDSHAKES
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -291,7 +210,11 @@ async function performSocks5Handshake(
   targetHost: string,
   targetPort: number,
 ): Promise<void> {
-  const reader = new SocketReader(socket);
+  const reader = new SocketReader(socket, (cause) =>
+    new SocksError(
+      `SOCKS proxy closed the connection during the handshake${cause ? `: ${cause.message}` : ''}`,
+      'CONN_CLOSED',
+    ));
   const hasCreds = proxy.username !== undefined;
   const methods = hasCreds ? [SOCKS5_NO_AUTH, SOCKS5_USER_PASS] : [SOCKS5_NO_AUTH];
 
@@ -378,7 +301,11 @@ async function performSocks4Handshake(
   targetHost: string,
   targetPort: number,
 ): Promise<void> {
-  const reader = new SocketReader(socket);
+  const reader = new SocketReader(socket, (cause) =>
+    new SocksError(
+      `SOCKS proxy closed the connection during the handshake${cause ? `: ${cause.message}` : ''}`,
+      'CONN_CLOSED',
+    ));
   const userid = Buffer.from(proxy.username ?? '', 'utf-8');
   const portBuf = Buffer.from([(targetPort >> 8) & 0xff, targetPort & 0xff]);
   const ipv4 = ipv4Bytes(targetHost);

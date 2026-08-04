@@ -389,33 +389,80 @@ class SftpHttpClient implements IHttpClient {
  *
  * Supported variables:
  *   NOVA_SOCKS_PROXY   socks://, socks4://, socks4a://, socks5:// or socks5h:// URL
- *   ALL_PROXY          only when it carries a socks scheme → socksProxy
+ *   ALL_PROXY          scheme-aware fallback: socks → socksProxy,
+ *                      http/https → httpProxy/httpsProxy
+ *   HTTP_PROXY         http:// or https:// proxy URL → httpProxy
+ *   HTTPS_PROXY        http:// or https:// proxy URL → httpsProxy
  *   NO_PROXY           comma-separated hostname bypass list ("localhost,127.0.0.1")
  *
- * Conventional HTTP_PROXY / HTTPS_PROXY variables are deliberately ignored:
- * the HTTP(S)-proxy CONNECT path is not yet exercised by the production
- * transport, and routing traffic through an untested tunnel is riskier than
- * staying direct.
+ * Malformed or unsupported URLs are ignored, so a mis-set variable never
+ * silently routes traffic through a broken tunnel.
  */
 export function createProxyConfigFromEnv(
   env: Readonly<Record<string, string | undefined>> = readProcessEnv(),
 ): Partial<ProxyConfig> {
-  const socks = env.NOVA_SOCKS_PROXY ?? env.ALL_PROXY;
+  const config: {
+    socksProxy?: string;
+    httpProxy?: string;
+    httpsProxy?: string;
+    noProxy?: string[];
+  } = {};
+
+  const novaSocks = env.NOVA_SOCKS_PROXY;
+  if (proxyUrlKind(novaSocks) === 'socks') config.socksProxy = novaSocks;
+
+  const allProxy = env.ALL_PROXY ?? env.all_proxy;
+  const allKind = proxyUrlKind(allProxy);
+  if (allKind === 'socks' && !config.socksProxy) config.socksProxy = allProxy;
+
+  const httpProxy = env.HTTP_PROXY ?? env.http_proxy;
+  const httpKind = proxyUrlKind(httpProxy);
+  if (httpKind === 'http' || httpKind === 'https') config.httpProxy = httpProxy;
+  else if (allKind === 'http') config.httpProxy = allProxy;
+
+  const httpsProxy = env.HTTPS_PROXY ?? env.https_proxy;
+  const httpsKind = proxyUrlKind(httpsProxy);
+  if (httpsKind === 'http' || httpsKind === 'https') config.httpsProxy = httpsProxy;
+  else if (allKind === 'https') config.httpsProxy = allProxy;
+
+  if (allKind === 'http' && !config.httpsProxy) config.httpsProxy = allProxy;
+  if (allKind === 'https' && !config.httpProxy) config.httpProxy = allProxy;
+
   const noProxy = env.NO_PROXY ?? env.no_proxy;
-  return {
-    ...(socks && isSocksUrl(socks) ? { socksProxy: socks } : {}),
-    ...(noProxy
-      ? { noProxy: noProxy.split(',').map(part => part.trim()).filter(Boolean) }
-      : {}),
-  };
+  if (noProxy) {
+    config.noProxy = noProxy.split(',').map(part => part.trim()).filter(Boolean);
+  }
+
+  return config;
 }
 
-function isSocksUrl(value: string): boolean {
+type ProxyUrlKind = 'socks' | 'http' | 'https' | null;
+
+function proxyUrlKind(value: string | undefined): ProxyUrlKind {
+  if (!value) return null;
   try {
-    return new URL(value).protocol.startsWith('socks');
+    const protocol = new URL(value).protocol;
+    if (protocol.startsWith('socks')) return 'socks';
+    if (protocol === 'http:') return 'http';
+    if (protocol === 'https:') return 'https';
+    return null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * Map a conventional `http://` / `https://` proxy URL onto the gateway
+ * registry's `http-proxy:` / `https-proxy:` schemes so `resolve()` classifies
+ * it as a proxy (standard browser-style proxy env vars use `http://` URLs).
+ */
+function normalizeProxyUrlForGateway(proxyUrl: string): string {
+  try {
+    const u = new URL(proxyUrl);
+    if (u.protocol === 'http:') return `http-proxy:${proxyUrl.slice('http:'.length)}`;
+    if (u.protocol === 'https:') return `https-proxy:${proxyUrl.slice('https:'.length)}`;
+  } catch { /* fall through */ }
+  return proxyUrl;
 }
 
 function readProcessEnv(): Readonly<Record<string, string | undefined>> {
@@ -442,6 +489,8 @@ class ProxyAwareHttpClient implements IHttpClient {
   private readonly proxyConfig: ProxyConfig;
   private socksTransport: IHttpClient | null = null;
   private socksTransportUrl: string | null = null;
+  private httpConnectTransport: IHttpClient | null = null;
+  private httpConnectTransportUrl: string | null = null;
   private readonly tlsHandler?: ITlsHandler;
 
   constructor(
@@ -467,7 +516,7 @@ class ProxyAwareHttpClient implements IHttpClient {
     const proxyUrl = this.selectProxyForRequest(request.url);
 
     if (proxyUrl !== null) {
-      const proxyResult = this.gatewayManager.resolve(proxyUrl);
+      const proxyResult = this.gatewayManager.resolve(normalizeProxyUrlForGateway(proxyUrl));
       if (proxyResult?.category === GatewayCategory.Proxy) {
         return this.sendViaProxy(request, signal, proxyUrl, proxyResult.protocol);
       }
@@ -550,6 +599,28 @@ class ProxyAwareHttpClient implements IHttpClient {
     signal: AbortSignal,
     proxyUrl: string,
   ): Promise<HttpResponseSpec> {
+    const isNode = typeof process !== 'undefined' && typeof (process as { versions?: { node?: string } }).versions?.node === 'string';
+    if (!isNode) {
+      // Raw sockets are unavailable outside Node — keep the previous behavior
+      // (absolute-URI request to the proxy via fetch).
+      return this.sendViaHttpProxyLegacy(request, signal, proxyUrl);
+    }
+
+    if (this.httpConnectTransport === null || this.httpConnectTransportUrl !== proxyUrl) {
+      this.httpConnectTransport = new RawSocketHttpClient({
+        httpProxy: proxyUrl,
+        tlsHandler: this.tlsHandler,
+      });
+      this.httpConnectTransportUrl = proxyUrl;
+    }
+    return this.httpConnectTransport.send(request, signal);
+  }
+
+  private async sendViaHttpProxyLegacy(
+    request: HttpRequestSpec,
+    signal: AbortSignal,
+    proxyUrl: string,
+  ): Promise<HttpResponseSpec> {
     // Use the proxy as the actual endpoint; the target URL goes into the
     // request line for non-CONNECT requests, or into the Host header.
     const proxyHeaders = new Map(request.headers);
@@ -567,11 +638,17 @@ class ProxyAwareHttpClient implements IHttpClient {
 
   /** Update proxy configuration at runtime. */
   updateProxyConfig(partial: Partial<ProxyConfig>): void {
-    const prevSocks = this.proxyConfig.socksProxy;
+    const prevSocks  = this.proxyConfig.socksProxy;
+    const prevHttp   = this.proxyConfig.httpProxy;
+    const prevHttps  = this.proxyConfig.httpsProxy;
     Object.assign(this.proxyConfig, partial);
     if (this.proxyConfig.socksProxy !== prevSocks) {
       this.socksTransport = null;
       this.socksTransportUrl = null;
+    }
+    if (this.proxyConfig.httpProxy !== prevHttp || this.proxyConfig.httpsProxy !== prevHttps) {
+      this.httpConnectTransport = null;
+      this.httpConnectTransportUrl = null;
     }
   }
 }
