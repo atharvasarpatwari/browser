@@ -51,6 +51,7 @@ import { runJS } from '../js/index';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
+import type { SecurityLayer } from '../media/security-layer';
 import { ReflowRepaintController } from '../rendering/reflow-repaint-controller';
 import type { LayerCompositor } from '../rendering/compositing/layer-compositor';
 
@@ -74,6 +75,8 @@ interface PageRendererDependencies {
   readonly scriptEnforcer?: CspScriptEnforcer;
   /** Optional CSP resource enforcer — passed to JS engine for fetch() connect-src checks. */
   readonly resourceEnforcer?: import('../security/csp-resource-enforcer').CspResourceEnforcer;
+  /** Optional security layer — enforces mixed-content/CSRF/SRI on sub-resources. */
+  readonly securityLayer?: SecurityLayer;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,6 +104,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     const { htmlParser, domTree, cssParser, layoutEngine, paintEngine, resourceLoader, prioritizer } = this.deps;
+
+    // 0. Apply response-time security policies (COOP/COEP/CORP, referrer-policy).
+    //    Top-level documents are not framed, so clickjacking is skipped here.
+    this.deps.securityLayer?.applyResponseHeaders(result.url, result.headers, { framed: false });
 
     // 1. Parse HTML
     const parseResult = htmlParser.parse(result.body, result.url);
@@ -321,9 +328,33 @@ class PageRenderer implements IPageRenderer, IDisposable {
       if (hasSrc) {
         const src = script.attributes.get('src') ?? '';
         const fullUrl = PageRenderer.resolveUrl(src, baseUrl);
+        const security = this.deps.securityLayer;
+
+        if (security) {
+          const check = security.checkSubresource(baseUrl, fullUrl, 'script');
+          if (!check.allowed) {
+            console.warn(
+              `[Security] Blocked external script: ${fullUrl} (${check.reason ?? 'denied'})`,
+            );
+            continue;
+          }
+        }
 
         try {
           const source = await resourceLoader.loadScript(fullUrl);
+
+          if (security) {
+            const integrity = script.attributes.get('integrity');
+            if (integrity && integrity.trim() !== '') {
+              const verified = security.verifySubresourceIntegrity(integrity, source);
+              if (verified.state === 'invalid' && security.subresourceIntegrity.isEnforce()) {
+                console.warn(
+                  `[Security] SRI integrity mismatch blocked script: ${fullUrl}`,
+                );
+                continue;
+              }
+            }
+          }
 
           if (isAsync) {
             asyncScripts.push({ source, el: script });

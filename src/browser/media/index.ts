@@ -131,6 +131,30 @@ export type { IClickjackingProtectionService, XFrameOptionsPolicy, ClickjackingD
 export { PermissionManagerService } from './permission-manager';
 export type { IPermissionManagerService, ManagerPermissionName, ManagerPermissionState, ManagerPermissionEntry, ManagerPermissionEvent, ManagerPermissionEventKind, ManagerPermissionEventHandler } from './permission-manager';
 
+export { DnsRebindingProtectionService } from './dns-rebinding-protection';
+export type { IDnsRebindingProtectionService, IpClass, DnsRebindingMode, DnsRebindingDecision, DnsRebindingEvent, DnsRebindingEventKind, DnsRebindingEventHandler } from './dns-rebinding-protection';
+
+export { HstsPreloadService, DEFAULT_PRELOAD_LIST } from './hsts-preload';
+export type { IHstsPreloadService, HstsPreloadEntry, HstsPreloadResult, HstsPreloadEvent, HstsPreloadEventKind, HstsPreloadEventHandler } from './hsts-preload';
+
+export { CertificateTransparencyService, DEFAULT_REQUIRED_SCTS } from './certificate-transparency';
+export type { ICertificateTransparencyService, SctEntry, SctValidity, CertificateTransparencyDecision, CertificateTransparencyEvent, CertificateTransparencyEventKind, CertificateTransparencyEventHandler } from './certificate-transparency';
+
+export { SubresourceIntegrityService, SUPPORTED_ALGORITHMS, bytesToBase64 } from './subresource-integrity';
+export type { ISubresourceIntegrityService, IntegrityAlgorithm, IntegrityHash, IntegrityVerificationResult, IntegrityVerificationState, SubresourceIntegrityEvent, SubresourceIntegrityEventKind, SubresourceIntegrityEventHandler } from './subresource-integrity';
+
+export { PrivateNetworkAccessService } from './private-network-access';
+export type { IPrivateNetworkAccessService, PnaAddressSpace, PnaMode, PnaDecision, PnaEvent, PnaEventKind, PnaEventHandler } from './private-network-access';
+
+export { CrossOriginPoliciesService, isSameOrigin, isSameSite } from './cross-origin-policies';
+export type { ICrossOriginPoliciesService, CoopValue, CoepValue, CorpValue, CoopDecision, CoepDecision, CorpRequestMode, CorpDecision, CrossOriginIsolationStatus, CrossOriginPoliciesEvent, CrossOriginPoliciesEventKind, CrossOriginPoliciesEventHandler } from './cross-origin-policies';
+
+export { ReferrerPolicyService, VALID_POLICIES } from './referrer-policy';
+export type { IReferrerPolicyService, ReferrerPolicyValue, ReferrerPolicyEvent, ReferrerPolicyEventKind, ReferrerPolicyEventHandler } from './referrer-policy';
+
+export { SecurityLayer } from './security-layer';
+export type { ISecurityLayer, SecurityDecision, NavigationCheckContext, NavigationSecurityCheck, SubresourceCheckContext, SubresourceSecurityCheck, ResponseHeadersContext, ResponseSecurityCheck, SecurityLayerStats, SecurityLayerEvent, SecurityLayerEventHandler } from './security-layer';
+
 export { CookieService } from './cookies';
 export type { ICookieService, CookieEvent, CookieEventKind, CookieEventHandler } from './cookies';
 

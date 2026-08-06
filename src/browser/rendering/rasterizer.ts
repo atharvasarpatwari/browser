@@ -590,6 +590,7 @@ export class Rasterizer {
       }
       case 'clip': {
         const [cx, cy, cw, ch] = cmd.params as [number, number, number, number];
+        if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(cw) || !Number.isFinite(ch)) break;
         const newCr: ClipRect = { x: cx, y: cy, w: cw, h: ch };
         const cur = this.state.clipRect;
         if (cur) {

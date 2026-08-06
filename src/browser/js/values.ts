@@ -696,7 +696,7 @@ export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]
   // Fast path: native functions can be called directly
   if (fn.isNative && fn.nativeFn) {
     try {
-      return fn.nativeFn(thisArg, args);
+      return fn.nativeFn(thisArg, args) as JSValue;
     } catch (err) {
       if (err instanceof JSError) throw err;
       throw new JSError(err instanceof Error ? err.message : String(err));

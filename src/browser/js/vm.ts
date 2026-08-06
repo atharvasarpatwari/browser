@@ -843,7 +843,7 @@ export class BytecodeVM {
     this.sp = funcIdx;
 
     if (jsFn.isNative && jsFn.nativeFn) {
-      const result = jsFn.nativeFn(undefined, args);
+      const result = jsFn.nativeFn(undefined, args) as JSValue;
       this.stack[this.sp++] = result;
       return;
     }
@@ -890,7 +890,7 @@ export class BytecodeVM {
 
     const jsFn = method as JSFunction;
     if (jsFn.isNative && jsFn.nativeFn) {
-      const result = jsFn.nativeFn(obj, args);
+      const result = jsFn.nativeFn(obj, args) as JSValue;
       this.stack[this.sp++] = result;
       return;
     }

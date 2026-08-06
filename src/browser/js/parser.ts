@@ -189,6 +189,10 @@ export class Parser {
       case TokenType.New:
         return this.parseNewExpression();
 
+      case TokenType.Undefined:
+        this.advance();
+        return { type: 'Literal', value: undefined, raw: 'undefined', loc: { line: tok.line, column: tok.column } };
+
       case TokenType.Super:
         this.advance();
         return { type: 'SuperExpression', loc: { line: tok.line, column: tok.column } };

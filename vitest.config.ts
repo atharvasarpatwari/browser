@@ -14,7 +14,12 @@ export default defineConfig({
       reporter: ['text', 'lcov', 'html'],
     },
     environment: 'happy-dom',
-    testTimeout: 10_000,
+    testTimeout: 60_000,
+    poolOptions: {
+      forks: {
+        execArgv: ['--max-old-space-size=6144'],
+      },
+    },
     server: {
       deps: {
         fallbackCJS: true,

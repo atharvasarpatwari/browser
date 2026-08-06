@@ -49,7 +49,7 @@ export interface Identifier {
 
 export interface Literal {
   type: 'Literal';
-  value: string | number | boolean | null | bigint | RegExpLiteral;
+  value: string | number | boolean | null | bigint | undefined | RegExpLiteral;
   raw: string;
   loc?: SourceLocation;
 }

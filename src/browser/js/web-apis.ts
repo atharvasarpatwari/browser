@@ -1889,7 +1889,7 @@ function createPromiseLike(value: unknown): JSObject {
       const onFulfilled = a[0];
       if (onFulfilled !== undefined && onFulfilled !== null) {
         if (typeof onFulfilled === 'function') {
-          onFulfilled(normalized);
+          (onFulfilled as (value: unknown) => void)(normalized);
         } else if (typeof onFulfilled === 'object' && ((onFulfilled as JSFunction).type === 'closure' || (onFulfilled as JSFunction).isNative)) {
           const fn = onFulfilled as JSFunction;
           if (fn.isNative) {

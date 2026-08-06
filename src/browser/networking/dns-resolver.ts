@@ -162,6 +162,17 @@ async function defaultSystemResolver(hostname: string): Promise<readonly string[
       if (v4.status === 'fulfilled') addresses.push(...v4.value);
       if (v6.status === 'fulfilled') addresses.push(...v6.value);
       if (addresses.length > 0) return addresses;
+      // dns.resolve* queries the DNS protocol only and ignores the hosts file
+      // (localhost and custom /etc/hosts entries are ENOTFOUND). Fall back to
+      // dns.lookup, which consults the hosts file.
+      try {
+        const lookedUp = await dns.lookup(hostname, { all: true }) as Array<{ address: string }>;
+        if (lookedUp.length > 0) {
+          return lookedUp.map(e => e.address);
+        }
+      } catch {
+        // lookup unavailable — fall through to DoH
+      }
     } catch {
       // dns module unavailable — fall through to DoH
     }

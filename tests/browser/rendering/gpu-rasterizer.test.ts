@@ -727,7 +727,7 @@ describe('ComputeOps — drawImage and fillText', () => {
       b.destroy();
     }
     for (const b of pending) {
-      expect(b.destroy.mock.calls.length).toBe(1);
+      expect((b.destroy as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
     }
   });
 });

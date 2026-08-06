@@ -59,7 +59,7 @@ function createEventObject(type: string, extra?: Record<string, JSValue>): JSObj
 
 function createMessageEvent(data: string | ArrayBuffer | ArrayBufferView, origin: string, lastEventId: string): JSObject {
   const e = createEventObject('message');
-  const jsData: JSValue = typeof data === 'string' ? data : (data as JSValue);
+  const jsData: JSValue = typeof data === 'string' ? data : (data as unknown as JSValue);
   e.properties.set('data', { value: jsData, writable: false, enumerable: true, configurable: false });
   e.properties.set('origin', { value: origin, writable: false, enumerable: true, configurable: false });
   e.properties.set('lastEventId', { value: lastEventId, writable: false, enumerable: true, configurable: false });

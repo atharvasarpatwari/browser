@@ -86,6 +86,7 @@ import { ThirdPartySecurityManager, extractOrigin } from '../browser/security/th
 import type { IThirdPartySecurityManager } from '../browser/security/third-party-security';
 import { createCspEnforcement, type CspEnforcement } from '../browser/security/csp-enforcement';
 import { HtmlSanitizer } from '../browser/security/html-sanitizer';
+import { SecurityLayer } from '../browser/media/security-layer';
 
 // Rendering
 import { DomTree } from '../browser/rendering/dom-tree';
@@ -169,6 +170,7 @@ const Tokens = Object.freeze({
   TrackerBlocker: Symbol('TrackerBlocker'),
   AdBlocker: Symbol('AdBlocker'),
   ThirdPartySecurityManager: Symbol('ThirdPartySecurityManager'),
+  SecurityLayer: Symbol('SecurityLayer'),
   DomTree: Symbol('DomTree'),
   CssParser: Symbol('CssParser'),
   LayoutEngine: Symbol('LayoutEngine'),
@@ -473,6 +475,13 @@ class ApplicationBootstrap {
       ServiceLifetime.Singleton,
     );
 
+    // 6c. Full security layer — aggregates all 18 media security modules
+    c.register<SecurityLayer>(
+      Tokens.SecurityLayer,
+      () => new SecurityLayer(),
+      ServiceLifetime.Singleton,
+    );
+
     // 7. Rendering pipeline
     c.register<IDomTree>(Tokens.DomTree, () => new DomTree(), ServiceLifetime.Singleton);
     c.register<ICssParser>(Tokens.CssParser, () => new CssParser(), ServiceLifetime.Singleton);
@@ -733,6 +742,10 @@ class ApplicationBootstrap {
     const cspEnforcement = this.container.resolve<CspEnforcement>('CspEnforcement' as any);
     navController.addGuard(cspEnforcement.navigationGuard);
 
+    // Wire the full security layer guard into the controller (HTTPS/HSTS/DNS/PNA)
+    const securityLayer = this.container.resolve<SecurityLayer>(Tokens.SecurityLayer);
+    navController.addGuard(securityLayer.navigationGuard);
+
     // Plug the networking layer into the browser engine as the page loader
     const engine = this.container.resolve<IBrowserEngine>(Tokens.BrowserEngine);
     const resourceLoader = this.container.resolve<IResourceLoader>(Tokens.ResourceLoader);
@@ -772,6 +785,16 @@ class ApplicationBootstrap {
       return true;
     });
 
+    // Add security-layer middleware (runs after routing, before fetching)
+    engine.addMiddleware(async (session) => {
+      const check = securityLayer.checkNavigation(session.entry.url);
+      if (!check.allowed) {
+        console.warn(`[SecurityLayer] Blocked navigation: ${session.entry.url} (${check.reason ?? 'denied'})`);
+        return false;
+      }
+      return true;
+    });
+
     // Plug the rendering pipeline as the page renderer
     const pageRenderer = new PageRenderer({
       htmlParser: new HtmlParser(),
@@ -785,6 +808,7 @@ class ApplicationBootstrap {
       sanitizer: new HtmlSanitizer(),
       scriptEnforcer: cspEnforcement.scriptEnforcer,
       resourceEnforcer: cspEnforcement.resourceEnforcer,
+      securityLayer,
     });
     engine.setPageRenderer(pageRenderer);
 

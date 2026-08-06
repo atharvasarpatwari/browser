@@ -246,10 +246,16 @@ class DownloadManager implements IDownloadManager {
   private readonly _items = new Map<string, DownloadItem>();
   private readonly bus = new DownloadManagerEventBus();
   private readonly speedTrackers = new Map<string, SpeedTracker>();
+  private readonly _order = new Map<string, number>();
+  private _seq = 0;
   private _initialized = false;
 
   get items(): readonly DownloadItem[] {
-    return [...this._items.values()].sort((a, b) => b.createdAt - a.createdAt);
+    return [...this._items.values()].sort((a, b) => {
+      const byTime = b.createdAt - a.createdAt;
+      if (byTime !== 0) return byTime;
+      return (this._order.get(b.id) ?? 0) - (this._order.get(a.id) ?? 0);
+    });
   }
 
   get activeCount(): number {
@@ -308,6 +314,7 @@ class DownloadManager implements IDownloadManager {
     };
 
     this._items.set(id, item);
+    this._order.set(id, ++this._seq);
     this.speedTrackers.set(id, new SpeedTracker());
     this.bus.emit({ kind: 'downloadCreated', item });
 

@@ -128,7 +128,7 @@ export class Interpreter {
   callFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]): JSValue {
     if (fn.isNative && fn.nativeFn) {
       try {
-        const result = fn.nativeFn(thisArg, args);
+        const result = fn.nativeFn(thisArg, args) as JSValue;
         if (fn.async && this.eventLoop) return wrapAsyncResult(result, this.eventLoop);
         return result;
       } catch (err) {
@@ -1019,7 +1019,7 @@ export class Interpreter {
       const fn = callee as JSFunction;
       if (fn.type === 'closure' && fn.isNative && fn.nativeFn) {
         try {
-          const result = fn.nativeFn(thisObj, args);
+          const result = fn.nativeFn(thisObj, args) as JSValue;
           if (fn.async && this.eventLoop) return wrapAsyncResult(result, this.eventLoop);
           return result;
         } catch (err) {
@@ -1073,7 +1073,7 @@ export class Interpreter {
 
     // Callable JSObject with nativeFn (e.g., Promise constructor)
     if (typeof callee === 'object' && callee !== null && 'callable' in callee && (callee as JSObject).callable && (callee as JSObject).nativeFn) {
-      return (callee as JSObject).nativeFn!(thisObj, args);
+      return (callee as JSObject).nativeFn!(thisObj, args) as JSValue;
     }
 
     if (typeof callee === 'function') {
