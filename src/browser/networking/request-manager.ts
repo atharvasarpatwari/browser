@@ -162,6 +162,12 @@ class FetchHttpClient implements IHttpClient {
     const headers = new Map<string, string>();
     res.headers.forEach((value, key) => headers.set(key.toLowerCase(), value));
 
+    // When the request went through the Vite dev proxy (which follows
+    // redirects server-side), report the final URL back to the caller so the
+    // address bar and history reflect where the document actually came from.
+    const proxyFinalUrl = headers.get('x-nova-proxy-url');
+    headers.delete('x-nova-proxy-url');
+
     // Detect binary content types (images, fonts, media)
     const contentType = headers.get('content-type') ?? '';
     const isBinary = contentType.startsWith('image/')
@@ -205,7 +211,7 @@ class FetchHttpClient implements IHttpClient {
     }
 
     return {
-      url:           request.url,   // caller (RequestManager) tracks the final URL itself
+      url:           proxyFinalUrl ?? request.url,   // caller (RequestManager) tracks the final URL itself
       statusCode:    res.status,
       statusText:    res.statusText,
       headers,

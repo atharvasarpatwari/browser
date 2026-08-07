@@ -15,11 +15,7 @@ export default defineConfig({
     },
     environment: 'happy-dom',
     testTimeout: 60_000,
-    poolOptions: {
-      forks: {
-        execArgv: ['--max-old-space-size=6144'],
-      },
-    },
+    execArgv: ['--max-old-space-size=6144'],
     server: {
       deps: {
         fallbackCJS: true,

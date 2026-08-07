@@ -66,6 +66,7 @@ import { ResourcePrioritizer } from '../browser/networking/resource-prioritizer'
 import { Firewall, applyBaselineRules } from '../browser/networking/firewall';
 import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from '../browser/networking/networking-setup';
 import { RawSocketHttpClient } from '../browser/networking/raw-socket-http-client';
+import { DevProxyHttpClient } from '../browser/networking/dev-proxy-http-client';
 import { ProxyAwareHttpClient, createProxyConfigFromEnv } from '../browser/networking/request-manager';
 import type { IHttpClient } from '../browser/networking/request-manager';
 import { TlsHandler } from '../browser/networking/tls-handler';
@@ -417,6 +418,12 @@ class ApplicationBootstrap {
           client = new ProxyAwareHttpClient(proxyConfig, undefined, tlsHandler);
         } else if (isNode) {
           client = new RawSocketHttpClient({ tlsHandler });
+        } else {
+          // Plain browser (Vite dev / web build): globalThis.fetch() is the only
+          // transport, and the host browser CORS-blocks cross-origin loads. Route
+          // http(s) requests through the Vite dev-server proxy during development
+          // so external sites load; outside dev this behaves as a plain fetch.
+          client = new DevProxyHttpClient();
         }
         const cache = ctx.resolve<ICacheManager>(Tokens.CacheManager);
         const loader = new ResourceLoader(

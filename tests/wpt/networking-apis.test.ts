@@ -225,11 +225,13 @@ describeWPT('Fetch API â€” Response', () => {
 
 describeWPT('Fetch API â€” fetch()', () => {
   it('fetch returns a Promise', () => {
-    const result = fetch('https://example.com');
-    expect(result).toBeInstanceOf(Promise);
-    // Abort to prevent actual network request
     const controller = new AbortController();
+    const result = fetch('https://example.com', {
+      signal: controller.signal,
+    }).catch(() => null);
+    expect(result).toBeInstanceOf(Promise);
     controller.abort();
+    return expect(result).resolves.toBe(null);
   });
 
   it('fetch with GET method', () => {

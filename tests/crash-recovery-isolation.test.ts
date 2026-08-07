@@ -812,10 +812,10 @@ describe('Multi-tab crash isolation', () => {
     const tab1 = manager.createContext();
     const tab2 = manager.createContext();
 
-    expect(tab1.domTree).not.toBe(tab2.domTree);
-    expect(tab1.layoutEngine).not.toBe(tab2.layoutEngine);
-    expect(tab1.paintEngine).not.toBe(tab2.paintEngine);
-    expect(tab1.eventLoop).not.toBe(tab2.eventLoop);
+    expect(tab1.domTree === tab2.domTree).toBe(false);
+    expect(tab1.layoutEngine === tab2.layoutEngine).toBe(false);
+    expect(tab1.paintEngine === tab2.paintEngine).toBe(false);
+    expect(tab1.eventLoop === tab2.eventLoop).toBe(false);
   });
 
   it('each tab has unique id', () => {
