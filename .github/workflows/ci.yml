@@ -1,0 +1,60 @@
+name: CI Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Typecheck + full unit suite ───────────────────────────────────────────
+  # windows-latest mirrors the locally-verified environment (the suite is only
+  # guaranteed green on Windows; move to linux later once Linux parity is shown).
+  check:
+    runs-on: windows-latest
+    name: typecheck + vitest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+  # ── Electron e2e (smoke + keep-alive + fidelity audit) ────────────────────
+  e2e:
+    runs-on: windows-latest
+    name: electron e2e
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
+
+      - name: Build web bundle
+        run: npm run build:web
+
+      - name: Electron e2e
+        run: npx playwright test --config=playwright-electron.config.cjs
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
