@@ -43,23 +43,30 @@ function invokeMiddleware(
   let nextCalled = false;
   let settled = false;
 
-  const res = {
-    statusCode: 200,
-    statusMessage: '',
-    headersSent: false,
-    writableEnded: false,
-    setHeader: (k: string, v: unknown) => {
-      headers[k.toLowerCase()] = v;
-    },
-    getHeader: (k: string) => headers[k.toLowerCase()],
-    end: (c?: Buffer | string) => {
-      if (c !== undefined) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c)));
-      if (!settled) {
-        settled = true;
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        done();
-      }
-    },
+  const res = new EventEmitter() as EventEmitter & {
+    statusCode: number;
+    statusMessage: string;
+    headersSent: boolean;
+    writableEnded: boolean;
+    setHeader: (k: string, v: unknown) => void;
+    getHeader: (k: string) => unknown;
+    end: (c?: Buffer | string) => void;
+  };
+  res.statusCode = 200;
+  res.statusMessage = '';
+  res.headersSent = false;
+  res.writableEnded = false;
+  res.setHeader = (k: string, v: unknown) => {
+    headers[k.toLowerCase()] = v;
+  };
+  res.getHeader = (k: string) => headers[k.toLowerCase()];
+  res.end = (c?: Buffer | string) => {
+    if (c !== undefined) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c)));
+    if (!settled) {
+      settled = true;
+      // eslint-disable-next-line @typescript-eslint/no-use-before-define
+      done();
+    }
   };
   let done!: () => void;
   const promise = new Promise<InvokeResult>((resolve) => {

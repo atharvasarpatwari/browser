@@ -457,6 +457,92 @@ describe('NavigationController', () => {
     const ctrl = new NavigationController(parser);
     expect(ctrl.getCurrentEntry()).toBeNull();
   });
+
+  // ── Deferred completion ────────────────────────────────────────────────────
+
+  it('stays Committed in deferred mode until completeNavigation is called', async () => {
+    const ctrl = new NavigationController(parser);
+    ctrl.setDeferredCompletion(true);
+
+    const completed = vi.fn();
+    ctrl.on('navigationCompleted', completed);
+
+    const result = await ctrl.navigate('https://example.com');
+    expect(result.success).toBe(true);
+    expect(result.state).toBe(NavigationState.Committed);
+    expect(ctrl.state).toBe(NavigationState.Committed);
+    expect(completed).not.toHaveBeenCalled();
+
+    const complete = ctrl.completeNavigation(result.entry!.id);
+    expect(complete.success).toBe(true);
+    expect(complete.state).toBe(NavigationState.Complete);
+    expect(ctrl.state).toBe(NavigationState.Complete);
+    expect(completed).toHaveBeenCalledTimes(1);
+  });
+
+  it('completes immediately when deferred mode is disabled (default)', async () => {
+    const ctrl = new NavigationController(parser);
+    const result = await ctrl.navigate('https://example.com');
+    expect(result.state).toBe(NavigationState.Complete);
+  });
+
+  it('completeNavigation fails when no entry exists', () => {
+    const ctrl = new NavigationController(parser);
+    ctrl.setDeferredCompletion(true);
+    const result = ctrl.completeNavigation();
+    expect(result.success).toBe(false);
+    expect(result.state).toBe(NavigationState.Error);
+  });
+
+  it('completeNavigation rejects a mismatched entry id', async () => {
+    const ctrl = new NavigationController(parser);
+    ctrl.setDeferredCompletion(true);
+    await ctrl.navigate('https://example.com/1');
+    const result = ctrl.completeNavigation('stale-entry-id');
+    expect(result.success).toBe(false);
+    expect(ctrl.state).toBe(NavigationState.Committed);
+  });
+
+  it('completeNavigation is idempotent for the current entry', async () => {
+    const ctrl = new NavigationController(parser);
+    ctrl.setDeferredCompletion(true);
+    const result = await ctrl.navigate('https://example.com');
+
+    const completed = vi.fn();
+    ctrl.on('navigationCompleted', completed);
+
+    ctrl.completeNavigation(result.entry!.id);
+    ctrl.completeNavigation(result.entry!.id);
+    expect(completed).toHaveBeenCalledTimes(2);
+  });
+
+  it('disabling deferred completion leaves a pending navigation in Committed', async () => {
+    const ctrl = new NavigationController(parser);
+    ctrl.setDeferredCompletion(true);
+    const result = await ctrl.navigate('https://example.com');
+    expect(result.state).toBe(NavigationState.Committed);
+
+    ctrl.setDeferredCompletion(false);
+    const next = await ctrl.navigate('https://example.com/page2');
+    expect(next.state).toBe(NavigationState.Complete);
+  });
+
+  it('back/forward clear the pending navigation state', async () => {
+    const ctrl = new NavigationController(parser);
+    ctrl.setDeferredCompletion(true);
+    await ctrl.navigate('https://example.com/1');
+    const second = await ctrl.navigate('https://example.com/2');
+    expect(second.state).toBe(NavigationState.Committed);
+
+    ctrl.back();
+    expect(ctrl.state).toBe(NavigationState.Complete);
+
+    // The old pending (entry 2) was cleared by back(), so completing the
+    // current entry succeeds. Without the clear it would have been rejected
+    // as "a different navigation is pending".
+    const complete = ctrl.completeNavigation();
+    expect(complete.success).toBe(true);
+  });
 });
 
 function makeEntry(url: string, type: NavigationType) {

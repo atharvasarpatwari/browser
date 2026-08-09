@@ -32,9 +32,16 @@ export {
 export {
   getTextMeasurer,
   setTextMeasurer,
+  getFontMetricsRegistry,
+  setFontMetricsProvider,
   HeuristicTextMeasurer,
+  CanvasTextMeasurer,
+  HeuristicFontMetricsProvider,
+  CanvasFontMetricsProvider,
+  FontMetricsRegistry,
   type TextMeasurer,
   type TextMetrics,
+  type FontMetricsProvider,
 } from './text-measure';
 
 export {

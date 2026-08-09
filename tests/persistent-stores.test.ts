@@ -5,6 +5,7 @@ import {
   PersistentBookmarkStore,
   PersistentHistoryStore,
   PersistentTokenStore,
+  PersistentPasswordStore,
 } from '../src/browser/storage/persistent-stores';
 import { AuthProtocol, CredentialType } from '../src/browser/auth/auth-provider';
 import type { CookieData } from '../src/browser/storage/cookie-store';
@@ -778,5 +779,145 @@ describe('PersistentTokenStore', () => {
     store.add(makeTokenEntry());
     store.dispose();
     expect(store.count()).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERSISTENT PASSWORD STORE
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('PersistentPasswordStore', () => {
+  let storage: MockStorage;
+  let store: PersistentPasswordStore;
+
+  beforeEach(() => {
+    storage = new MockStorage();
+    store = new PersistentPasswordStore(storage as unknown as Storage);
+  });
+
+  function makePasswordData(overrides: Record<string, unknown> = {}): import('../src/browser/storage/password-store').PasswordEntryData {
+    return {
+      id: 'pw-1',
+      url: 'https://example.com/login',
+      hostname: 'example.com',
+      username: 'user@example.com',
+      password: 'secret123',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      lastUsedAt: 0,
+      useCount: 0,
+      note: '',
+      tags: [],
+      ...overrides,
+    };
+  }
+
+  it('should persist additions to localStorage', async () => {
+    await store.init('master');
+    await store.add(makePasswordData());
+    const dump = storage.dump();
+    expect(dump['nova-passwords']).toBeDefined();
+    expect(JSON.parse(dump['nova-passwords'])).toHaveLength(1);
+  });
+
+  it('should reload entries from localStorage in a new instance', async () => {
+    await store.init('master');
+    await store.add(makePasswordData({ id: 'pw-1', url: 'https://example.com/login' }));
+    await store.add(makePasswordData({ id: 'pw-2', url: 'https://foo.org' }));
+
+    const store2 = new PersistentPasswordStore(storage as unknown as Storage);
+    expect(store2.count()).toBe(2);
+    expect(await store2.get('pw-1')).not.toBeNull();
+  });
+
+  it('should decrypt a reloaded entry with the master password', async () => {
+    await store.init('master');
+    await store.add(makePasswordData({ id: 'pw-1', url: 'https://example.com', username: 'u', password: 'hunter2' }));
+
+    const store2 = new PersistentPasswordStore(storage as unknown as Storage);
+    await store2.init('master');
+    const entry = await store2.get('pw-1');
+    expect(entry).not.toBeNull();
+    expect(await store2.decrypt(entry!.encryptedPayload)).toBe('hunter2');
+  });
+
+  it('should persist updates', async () => {
+    await store.init('master');
+    await store.add(makePasswordData({ id: 'pw-1' }));
+    await store.update('pw-1', { username: 'new-user' });
+
+    const store2 = new PersistentPasswordStore(storage as unknown as Storage);
+    const entry = await store2.get('pw-1');
+    expect(entry!.username).toBe('new-user');
+  });
+
+  it('should persist password change on update', async () => {
+    await store.init('master');
+    await store.add(makePasswordData({ id: 'pw-1', password: 'old-pass' }));
+    await store.update('pw-1', { password: 'new-pass' });
+
+    const store2 = new PersistentPasswordStore(storage as unknown as Storage);
+    await store2.init('master');
+    const entry = await store2.get('pw-1');
+    expect(await store2.decrypt(entry!.encryptedPayload)).toBe('new-pass');
+  });
+
+  it('should persist removal', async () => {
+    await store.init('master');
+    await store.add(makePasswordData({ id: 'pw-1' }));
+    expect(await store.remove('pw-1')).toBe(true);
+
+    const store2 = new PersistentPasswordStore(storage as unknown as Storage);
+    expect(store2.count()).toBe(0);
+  });
+
+  it('should persist removeByHostname', async () => {
+    await store.init('master');
+    await store.add(makePasswordData({ id: 'pw-1', url: 'https://example.com/login' }));
+    await store.add(makePasswordData({ id: 'pw-2', url: 'https://example.com/other' }));
+    expect(await store.removeByHostname('example.com')).toBe(2);
+
+    const store2 = new PersistentPasswordStore(storage as unknown as Storage);
+    expect(store2.count()).toBe(0);
+  });
+
+  it('should persist rotateMasterKey', async () => {
+    await store.init('old-master');
+    await store.add(makePasswordData({ id: 'pw-1', password: 'the-secret' }));
+    expect(await store.rotateMasterKey('old-master', 'new-master')).toBe(1);
+
+    const store2 = new PersistentPasswordStore(storage as unknown as Storage);
+    await store2.init('new-master');
+    const entry = await store2.get('pw-1');
+    expect(await store2.decrypt(entry!.encryptedPayload)).toBe('the-secret');
+  });
+
+  it('should persist importRaw', async () => {
+    await store.init('master');
+    await store.importRaw([
+      {
+        id: 'pw-x',
+        hostname: 'x.org',
+        url: 'https://x.org/',
+        username: 'u',
+        encryptedPayload: { data: 'aa', iv: 'bb', salt: 'cc' },
+        createdAt: 1,
+        updatedAt: 1,
+        lastUsedAt: 0,
+        useCount: 0,
+        note: '',
+        tags: [],
+      },
+    ]);
+
+    const store2 = new PersistentPasswordStore(storage as unknown as Storage);
+    expect(store2.count()).toBe(1);
+  });
+
+  it('should operate in-memory when no storage is available', async () => {
+    const noStorage = new PersistentPasswordStore();
+    await noStorage.init('master');
+    await noStorage.add(makePasswordData());
+    expect(noStorage.count()).toBe(1);
   });
 });

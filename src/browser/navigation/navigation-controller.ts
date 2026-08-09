@@ -315,6 +315,19 @@ interface INavigationController {
    */
   commitRedirectedUrl(url: string): void;
 
+  /**
+   * Complete a committed navigation. In deferred mode the controller remains in
+   * `Committed` until the document owner calls this after the page finishes
+   * loading. No-op-safe when no navigation is pending.
+   */
+  completeNavigation(entryId?: string): NavigationResult;
+  /**
+   * Toggle deferred completion. When disabled (default), `navigateTo` marks
+   * the navigation `Complete` immediately. When enabled, the engine calls
+   * {@link completeNavigation} once rendering finishes.
+   */
+  setDeferredCompletion(enabled: boolean): void;
+
   // ── History state ──────────────────────────────────────────────────────────
   getCurrentEntry(): NavigationEntry | null;
   canGoBack(): boolean;
@@ -539,6 +552,8 @@ class NavigationController implements INavigationController {
   private _state:          NavigationState = NavigationState.Idle;
   private _navStartTime    = 0;
   private _abortController: AbortController | null = null;
+  private _deferredCompletion = false;
+  private _pendingEntryId: string | null = null;
 
   constructor(parser: IUrlParser, maxHistorySize = 100) {
     this.parser = parser;
@@ -650,10 +665,14 @@ class NavigationController implements INavigationController {
     }
 
     // ── Step 7: Complete ─────────────────────────────────────────────────────
-    // BrowserEngine (not yet implemented) will listen for 'navigationCommitted'
-    // and call completeNavigation() when the document is fully loaded.
-    // Until that layer exists, we mark Complete immediately so the controller
-    // is testable in isolation.
+    // In deferred mode, the engine calls completeNavigation() once the document
+    // has finished rendering. Otherwise we mark Complete immediately so the
+    // controller remains testable in isolation.
+    if (this._deferredCompletion) {
+      this._pendingEntryId = entry.id;
+      return { success: true, entry, state: NavigationState.Committed };
+    }
+
     this._state = NavigationState.Complete;
     const elapsedMs = Date.now() - this._navStartTime;
     this.bus.emit({ kind: 'navigationCompleted', entry, elapsedMs });
@@ -681,6 +700,7 @@ class NavigationController implements INavigationController {
       this.bus.emit({ kind: 'canGoBackChanged', value: false });
     }
 
+    this._pendingEntryId = null;
     this._state = NavigationState.Complete;
     this.bus.emit({ kind: 'navigationCommitted', entry });
     return { success: true, entry, state: NavigationState.Complete };
@@ -704,6 +724,7 @@ class NavigationController implements INavigationController {
       this.bus.emit({ kind: 'canGoForwardChanged', value: false });
     }
 
+    this._pendingEntryId = null;
     this._state = NavigationState.Complete;
     this.bus.emit({ kind: 'navigationCommitted', entry });
     return { success: true, entry, state: NavigationState.Complete };
@@ -722,6 +743,7 @@ class NavigationController implements INavigationController {
           new NoEntryError('go'),
         );
       }
+      this._pendingEntryId = null;
       this._state = NavigationState.Complete;
       this.bus.emit({ kind: 'navigationCommitted', entry: current });
       return { success: true, entry: current, state: NavigationState.Complete };
@@ -735,6 +757,7 @@ class NavigationController implements INavigationController {
       );
     }
 
+    this._pendingEntryId = null;
     this._state = NavigationState.Complete;
     this.bus.emit({ kind: 'navigationCommitted', entry });
     return { success: true, entry, state: NavigationState.Complete };
@@ -767,9 +790,51 @@ class NavigationController implements INavigationController {
       this._abortController.abort();
       this._abortController = null;
     }
+    this._pendingEntryId = null;
     const current = this.stack.current();
     this._state = NavigationState.Stopped;
     this.bus.emit({ kind: 'navigationStopped', entry: current });
+  }
+
+  // ── deferred completion ────────────────────────────────────────────────────
+
+  setDeferredCompletion(enabled: boolean): void {
+    this._deferredCompletion = enabled;
+  }
+
+  /**
+   * Transition a committed navigation to `Complete` and emit
+   * `navigationCompleted`. Used by the engine once the document has finished
+   * rendering. Returns `failure` when there is nothing to complete or the
+   * supplied entry id does not match the current entry.
+   */
+  completeNavigation(entryId?: string): NavigationResult {
+    const current = this.stack.current();
+    if (current === null) {
+      return this.fail(
+        { url: '', type: NavigationType.Reload, userInitiated: false },
+        new NoEntryError('completeNavigation'),
+      );
+    }
+
+    // A caller error (stale id, mismatched pending) must not corrupt the
+    // navigation state machine — the load itself is still in flight.
+    if (entryId !== undefined && entryId !== current.id) {
+      const error = new Error('Cannot complete navigation: entry does not match the current entry.');
+      return { success: false, error, state: this._state };
+    }
+
+    if (this._pendingEntryId !== null && this._pendingEntryId !== current.id) {
+      const error = new Error('Cannot complete navigation: a different navigation is pending.');
+      return { success: false, error, state: this._state };
+    }
+
+    this._pendingEntryId = null;
+    this._state = NavigationState.Complete;
+    const elapsedMs = this._navStartTime > 0 ? Date.now() - this._navStartTime : 0;
+    this.bus.emit({ kind: 'navigationCompleted', entry: current, elapsedMs });
+
+    return { success: true, entry: current, state: NavigationState.Complete };
   }
 
   // ── replace ────────────────────────────────────────────────────────────────
@@ -1001,6 +1066,7 @@ class NavigationController implements INavigationController {
     };
     this.stack.replace(updated);
 
+    this._pendingEntryId = null;
     this._state = NavigationState.Complete;
     return { success: true, entry: updated, state: NavigationState.Complete };
   }

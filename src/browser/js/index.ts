@@ -75,6 +75,8 @@ export interface RunJSOptions {
   pageOrigin?: string;
   /** Optional HtmlParser for document.write()/document.open() support. */
   htmlParser?: IHtmlParser;
+  /** Optional base directory for persistent web storage (localStorage/IndexedDB). */
+  storageDir?: string;
 }
 
 export interface RunJSResult {
@@ -93,7 +95,7 @@ export interface RunJSResult {
  * It lexes, parses, and executes the source with full DOM bindings.
  */
 export function runJS(source: string, options: RunJSOptions): RunJSResult {
-  const { document: doc, domTree, eventLoop = new EventLoop(), globalEnv, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin, htmlParser } = options;
+  const { document: doc, domTree, eventLoop = new EventLoop(), globalEnv, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin, htmlParser, storageDir } = options;
 
   try {
     // 1. Lex (lazy — parser pulls tokens on demand for template interpolation support)
@@ -104,7 +106,7 @@ export function runJS(source: string, options: RunJSOptions): RunJSResult {
     const program = parser.parse();
 
     // 3. Execute
-    const env = globalEnv ?? createGlobalEnv(doc, domTree, eventLoop, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin, htmlParser);
+    const env = globalEnv ?? createGlobalEnv(doc, domTree, eventLoop, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin, htmlParser, storageDir);
     const interpreter = new Interpreter(env, eventLoop);
     const value = interpreter.run(program);
 
@@ -128,6 +130,7 @@ export function createGlobalEnv(
   scriptEnforcer?: CspScriptEnforcer,
   pageOrigin?: string,
   htmlParser?: IHtmlParser,
+  storageDir?: string,
 ): Environment {
   const env = new Environment(null);
 
@@ -1874,7 +1877,7 @@ export function createGlobalEnv(
   }
 
   // Storage APIs (localStorage, sessionStorage, indexedDB)
-  bindStorageAPIs(env, { origin: pageOrigin ?? 'https://localhost' });
+  bindStorageAPIs(env, { origin: pageOrigin ?? 'https://localhost', diskPath: storageDir });
 
   // Fullscreen API (methods on Element via global)
   const fullscreen = createFullscreenAPIMethods();

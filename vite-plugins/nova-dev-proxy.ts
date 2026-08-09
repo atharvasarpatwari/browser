@@ -117,7 +117,12 @@ export function createNovaDevProxyMiddleware(): NovaProxyMiddleware {
 
 /** Vite plugin that mounts the proxy on the dev server. */
 export function novaDevProxyPlugin(): { name: string; configureServer(server: {
-  middlewares: { use: (path: string, handler: NovaProxyMiddleware) => void };
+  middlewares: {
+    use: {
+      (path: string, handler: NovaProxyMiddleware): void;
+      (handler: NovaProxyMiddleware): void;
+    };
+  };
 }): void } {
   return {
     name: 'nova-dev-proxy',

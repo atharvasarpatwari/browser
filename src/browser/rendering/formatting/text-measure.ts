@@ -26,6 +26,20 @@ export interface TextMeasurer {
   measure(text: string, fontSize: number, fontFamily: string, fontWeight?: string): TextMetrics;
 }
 
+/**
+ * Pluggable font metrics provider.
+ *
+ * Extends {@link TextMeasurer} with a stable identity (`name`) and an
+ * availability probe so a registry can pick the best implementation for the
+ * current environment (canvas in a browser, heuristic in Node/bundlers).
+ */
+export interface FontMetricsProvider extends TextMeasurer {
+  /** Stable identifier used for diagnostics and tests. */
+  readonly name: string;
+  /** Whether this provider can measure text in the current environment. */
+  isAvailable(): boolean;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HEURISTIC MEASUREMENT
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,6 +171,11 @@ export class CanvasTextMeasurer implements TextMeasurer {
     }
   }
 
+  /** True when a 2D canvas context is available for real measurement. */
+  isAvailable(): boolean {
+    return this.ctx !== null;
+  }
+
   measure(text: string, fontSize: number, fontFamily: string, fontWeight?: string): TextMetrics {
     if (!this.ctx) {
       return this.fallback.measure(text, fontSize, fontFamily, fontWeight);
@@ -175,18 +194,95 @@ export class CanvasTextMeasurer implements TextMeasurer {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FONT METRICS PROVIDERS  (pluggable)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Heuristic provider — always available, works in every environment.
+ */
+export class HeuristicFontMetricsProvider implements FontMetricsProvider {
+  readonly name = 'heuristic';
+  private readonly measurer = new HeuristicTextMeasurer();
+
+  isAvailable(): boolean {
+    return true;
+  }
+
+  measure(text: string, fontSize: number, fontFamily: string, fontWeight?: string): TextMetrics {
+    return this.measurer.measure(text, fontSize, fontFamily, fontWeight);
+  }
+}
+
+/**
+ * Canvas provider — preferred in browsers, unavailable in Node/bundlers.
+ */
+export class CanvasFontMetricsProvider implements FontMetricsProvider {
+  readonly name = 'canvas';
+  private readonly measurer = new CanvasTextMeasurer();
+
+  isAvailable(): boolean {
+    return this.measurer.isAvailable();
+  }
+
+  measure(text: string, fontSize: number, fontFamily: string, fontWeight?: string): TextMetrics {
+    return this.measurer.measure(text, fontSize, fontFamily, fontWeight);
+  }
+}
+
+/**
+ * Registry that selects the first available provider.
+ *
+ * Consumers can plug in custom providers (measurement overrides, test mocks,
+ * native font engines) via {@link register} without touching measurement call
+ * sites. The best available provider is cached until the registry changes.
+ */
+export class FontMetricsRegistry {
+  private providers: FontMetricsProvider[] = [];
+  private selected: FontMetricsProvider | null = null;
+
+  /** Register a provider. Later registrations are lower priority. */
+  register(provider: FontMetricsProvider): void {
+    this.providers.push(provider);
+    this.selected = null;
+  }
+
+  /** All registered providers, in priority order. */
+  getProviders(): readonly FontMetricsProvider[] {
+    return this.providers;
+  }
+
+  /** The first available provider; falls back to the heuristic default. */
+  getBest(): FontMetricsProvider {
+    if (this.selected) return this.selected;
+    this.selected = this.providers.find(p => p.isAvailable())
+      ?? new HeuristicFontMetricsProvider();
+    return this.selected;
+  }
+
+  clear(): void {
+    this.providers = [];
+    this.selected = null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GLOBAL SINGLETON
 // ─────────────────────────────────────────────────────────────────────────────
 
 let _globalMeasurer: TextMeasurer | null = null;
 
+const _globalRegistry = new FontMetricsRegistry();
+_globalRegistry.register(new CanvasFontMetricsProvider());
+_globalRegistry.register(new HeuristicFontMetricsProvider());
+
 /**
  * Get the global text measurer.
- * Uses CanvasTextMeasurer if available, otherwise HeuristicTextMeasurer.
+ * Uses the best available FontMetricsProvider from the global registry
+ * (canvas in browsers, heuristic otherwise).
  */
 export function getTextMeasurer(): TextMeasurer {
   if (!_globalMeasurer) {
-    _globalMeasurer = new HeuristicTextMeasurer();
+    _globalMeasurer = _globalRegistry.getBest();
   }
   return _globalMeasurer;
 }
@@ -196,4 +292,24 @@ export function getTextMeasurer(): TextMeasurer {
  */
 export function setTextMeasurer(measurer: TextMeasurer): void {
   _globalMeasurer = measurer;
+}
+
+/**
+ * Get the global font metrics registry.
+ *
+ * Plug in custom providers with `getFontMetricsRegistry().register(provider)`.
+ * The highest-priority available provider is selected automatically.
+ */
+export function getFontMetricsRegistry(): FontMetricsRegistry {
+  return _globalRegistry;
+}
+
+/**
+ * Plug a custom provider into the global registry and refresh the selected
+ * measurer. Returns the registry for chaining.
+ */
+export function setFontMetricsProvider(provider: FontMetricsProvider): FontMetricsRegistry {
+  _globalRegistry.register(provider);
+  _globalMeasurer = null;
+  return _globalRegistry;
 }

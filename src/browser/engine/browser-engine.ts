@@ -333,6 +333,10 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
     this.config        = config;
     this.bus           = new EngineEventBus();
 
+    // Defer navigation completion until the page pipeline finishes rendering,
+    // so navigationCompleted reflects the real end of a load.
+    navController.setDeferredCompletion(true);
+
     // Create a stable bound reference for clean unsubscribe later.
     this.navCommittedHandler = (event: NavigationEvent) => {
       if (event.kind === 'navigationCommitted') {
@@ -452,6 +456,9 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
     try {
       await this.runPipeline(session);
+      // The document finished loading — complete the committed navigation so
+      // the controller's state machine matches the real page lifecycle.
+      this.navController.completeNavigation(session.entry.id);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       if (session.abortController.signal.aborted) {

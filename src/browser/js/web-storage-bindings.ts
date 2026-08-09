@@ -31,6 +31,7 @@ import {
   IDBIndex,
   IDBCursor,
   InMemoryIndexedDBBackend,
+  DiskIndexedDBBackend,
   type IIndexedDBBackend,
 } from '../storage/indexed-db';
 
@@ -276,7 +277,8 @@ export function bindStorageAPIs(
   // One factory per origin.
   let factory = indexedDBCache.get(origin);
   if (!factory) {
-    const backend = indexedDBBackend ?? new InMemoryIndexedDBBackend();
+    const backend = indexedDBBackend
+      ?? (diskPath ? new DiskIndexedDBBackend(diskPath) : new InMemoryIndexedDBBackend());
     factory = new IDBFactory(backend, origin);
     indexedDBCache.set(origin, factory);
   }
@@ -304,6 +306,7 @@ export {
   IDBIndex,
   IDBCursor,
   InMemoryIndexedDBBackend,
+  DiskIndexedDBBackend,
 };
 
 export type { IStorage, IStorageBackend, IIndexedDBBackend };

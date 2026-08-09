@@ -105,6 +105,99 @@ export class InMemoryIndexedDBBackend implements IIndexedDBBackend {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DISK BACKEND
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * IIndexedDBBackend that persists each origin's databases to a JSON file on
+ * disk. Mirrors {@link DiskStorageBackend}: Node-only, degrades to a silent
+ * no-op when `node:fs` is unavailable (browser/Android builds), and never
+ * throws — a failed read/write is treated as an empty/missing database.
+ *
+ * File layout: `indexeddb-<sanitized-origin>-<sanitized-name>.json` under a
+ * single base directory.
+ */
+export class DiskIndexedDBBackend implements IIndexedDBBackend {
+  private readonly basePath: string;
+
+  constructor(basePath: string) {
+    this.basePath = basePath;
+  }
+
+  loadDatabase(origin: string, name: string): SerializedDatabase | null {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('node:fs') as typeof import('node:fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('node:path') as typeof import('node:path');
+      const filePath = this.fileFor(path, origin, name);
+      if (fs.existsSync(filePath)) {
+        return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as SerializedDatabase;
+      }
+    } catch {
+      // Read failure → database does not exist
+    }
+    return null;
+  }
+
+  saveDatabase(origin: string, name: string, db: SerializedDatabase): void {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('node:fs') as typeof import('node:fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('node:path') as typeof import('node:path');
+      if (!fs.existsSync(this.basePath)) {
+        fs.mkdirSync(this.basePath, { recursive: true });
+      }
+      const filePath = this.fileFor(path, origin, name);
+      fs.writeFileSync(filePath, JSON.stringify(db, null, 2), 'utf-8');
+    } catch {
+      // Write failure → silent (data stays in-memory for this session)
+    }
+  }
+
+  deleteDatabase(origin: string, name: string): void {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('node:fs') as typeof import('node:fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('node:path') as typeof import('node:path');
+      const filePath = this.fileFor(path, origin, name);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch {
+      // Silent
+    }
+  }
+
+  listDatabases(origin: string): string[] {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('node:fs') as typeof import('node:fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('node:path') as typeof import('node:path');
+      const prefix = `indexeddb-${this.sanitize(origin)}-`;
+      if (!fs.existsSync(this.basePath)) return [];
+      return fs
+        .readdirSync(this.basePath)
+        .filter((f: string) => f.startsWith(prefix) && f.endsWith('.json'))
+        .map((f: string) => f.slice(prefix.length, -'.json'.length));
+    } catch {
+      return [];
+    }
+  }
+
+  private fileFor(path: typeof import('node:path'), origin: string, name: string): string {
+    return path.join(this.basePath, `indexeddb-${this.sanitize(origin)}-${this.sanitize(name)}.json`);
+  }
+
+  private sanitize(input: string): string {
+    return input.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 128);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // IDBRequest (W3C § 11.1)
 // ─────────────────────────────────────────────────────────────────────────────
 

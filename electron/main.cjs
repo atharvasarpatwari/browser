@@ -69,6 +69,9 @@ function createWindow() {
       nodeIntegration: true,
       contextIsolation: false,
       spellcheck: false,
+      // The renderer resolves its persistent web-storage directory from argv
+      // (see main.ts), avoiding main-only `app` APIs inside the renderer.
+      additionalArguments: [`--nova-storage-dir=${path.join(app.getPath('userData'), 'web-storage')}`],
     },
   })
 

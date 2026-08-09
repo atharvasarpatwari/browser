@@ -77,6 +77,8 @@ interface PageRendererDependencies {
   readonly resourceEnforcer?: import('../security/csp-resource-enforcer').CspResourceEnforcer;
   /** Optional security layer — enforces mixed-content/CSRF/SRI on sub-resources. */
   readonly securityLayer?: SecurityLayer;
+  /** Optional base directory for persistent page web storage (localStorage/IndexedDB). */
+  readonly storageDir?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -395,7 +397,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
           continue;
         }
       }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser });
+      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
       if (result2.error) {
         console.error(
           `[ScriptEngine] Error executing blocking script: ${result2.error.message}`,
@@ -413,7 +415,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
           continue;
         }
       }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser });
+      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
       if (result2.error) {
         console.error(
           `[ScriptEngine] Error executing defer script: ${result2.error.message}`,
@@ -432,7 +434,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
         }
       }
       // Fire and forget — async scripts don't block rendering
-      runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser });
+      runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
       void el; // used only for categorization
     }
   }

@@ -14,6 +14,8 @@ import type { ITokenStore, TokenEntry, TokenStoreConfig } from '../auth/token-st
 import type { AuthProtocol } from '../auth/auth-provider';
 import { encryptData, decryptData } from '../auth/token-store';
 import { generateSecureId } from '../bookmarks/bookmark-validator';
+import type { IPasswordStore, PasswordEntry, PasswordEntryData } from './password-store';
+import { InMemoryPasswordStore } from './password-store';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER
@@ -834,3 +836,79 @@ export {
   PersistentHistoryStore,
   PersistentTokenStore,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERSISTENT PASSWORD STORE
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PASSWORD_STORAGE_KEY = 'nova-passwords';
+
+/**
+ * localStorage-backed password store. Encrypted payloads (AES-GCM hex) are
+ * JSON-serializable, so the full entry set survives reloads. The master
+ * password itself is never persisted — it must be re-entered each session,
+ * matching how Chrome/Edge derive the vault key from the OS login.
+ */
+class PersistentPasswordStore extends InMemoryPasswordStore implements IPasswordStore {
+  private readonly storage: Storage | null;
+
+  constructor(storage?: Storage) {
+    super();
+    this.storage = storage ?? null;
+    const stored = loadJson<PasswordEntry[]>(this.storage, PASSWORD_STORAGE_KEY);
+    if (stored) {
+      for (const entry of stored) {
+        this.entries.set(entry.id, entry);
+      }
+    }
+  }
+
+  private persist(): void {
+    saveJson(this.storage, PASSWORD_STORAGE_KEY, [...this.entries.values()]);
+  }
+
+  override async add(data: PasswordEntryData): Promise<PasswordEntry> {
+    const entry = await super.add(data);
+    this.persist();
+    return entry;
+  }
+
+  override async update(
+    id: string,
+    changes: Partial<Pick<PasswordEntryData, 'username' | 'password' | 'note' | 'tags' | 'url'>>,
+  ): Promise<PasswordEntry | null> {
+    const updated = await super.update(id, changes);
+    if (updated) this.persist();
+    return updated;
+  }
+
+  override async remove(id: string): Promise<boolean> {
+    const removed = await super.remove(id);
+    if (removed) this.persist();
+    return removed;
+  }
+
+  override async removeByHostname(hostname: string): Promise<number> {
+    const removed = await super.removeByHostname(hostname);
+    if (removed > 0) this.persist();
+    return removed;
+  }
+
+  override async rotateMasterKey(oldPassword: string, newPassword: string): Promise<number> {
+    const rotated = await super.rotateMasterKey(oldPassword, newPassword);
+    if (rotated > 0) this.persist();
+    return rotated;
+  }
+
+  override async importRaw(entries: readonly PasswordEntry[]): Promise<number> {
+    const imported = await super.importRaw(entries);
+    if (imported > 0) this.persist();
+    return imported;
+  }
+
+  override dispose(): void {
+    super.dispose();
+  }
+}
+
+export { PersistentPasswordStore };

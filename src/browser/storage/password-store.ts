@@ -100,7 +100,7 @@ function matchesHostname(stored: string, requested: string): boolean {
 }
 
 class InMemoryPasswordStore implements IPasswordStore {
-  private readonly entries = new Map<string, PasswordEntry>();
+  protected readonly entries = new Map<string, PasswordEntry>();
   private _initialized = false;
   private _masterPassword = '';
 

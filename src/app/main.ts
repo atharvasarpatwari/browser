@@ -110,9 +110,11 @@ import {
   PersistentBookmarkStore,
   PersistentHistoryStore,
   PersistentTokenStore,
+  PersistentPasswordStore,
 } from '../browser/storage/persistent-stores';
 import type { ISessionsStore } from '../browser/storage/sessions-store';
 import type { ICookieStore } from '../browser/storage/cookie-store';
+import type { IPasswordStore } from '../browser/storage/password-store';
 import { SettingsStore } from '../browser/storage/settings-store';
 import type { ISettingsStore } from '../browser/storage/settings-store';
 import { SettingsService } from '../browser/storage/settings-service';
@@ -144,6 +146,8 @@ import type { IBrowserWindowPage } from '../ui/pages/browser-window';
 import { AuthManager } from '../browser/auth/auth-manager';
 import type { IAuthManager } from '../browser/auth/auth-manager';
 import type { ITokenStore } from '../browser/auth/token-store';
+import { PasswordManager } from '../browser/security/password-manager';
+import type { IPasswordManager } from '../browser/security/password-manager';
 
 // ── Service tokens ─────────────────────────────────────────────────────────────
 
@@ -188,6 +192,8 @@ const Tokens = Object.freeze({
   BrowserWindowPage: Symbol('BrowserWindowPage'),
   AuthManager: Symbol('AuthManager'),
   TokenStore: Symbol('TokenStore'),
+  PasswordStore: Symbol('PasswordStore'),
+  PasswordManager: Symbol('PasswordManager'),
   // Crash recovery / isolation
   ScriptGuard: Symbol('ScriptGuard'),
   ErrorBoundary: Symbol('ErrorBoundary'),
@@ -594,6 +600,18 @@ class ApplicationBootstrap {
       ServiceLifetime.Singleton,
     );
 
+    // 12b. Password vault (persistent, encrypted at rest)
+    c.register<IPasswordStore>(
+      Tokens.PasswordStore,
+      () => new PersistentPasswordStore(typeof window !== 'undefined' ? window.localStorage : undefined),
+      ServiceLifetime.Singleton,
+    );
+    c.register<IPasswordManager>(
+      Tokens.PasswordManager,
+      (ctx) => new PasswordManager(ctx.resolve<IPasswordStore>(Tokens.PasswordStore)),
+      ServiceLifetime.Singleton,
+    );
+
     // 13. Crash recovery / isolation
     c.register<IScriptGuard>(
       Tokens.ScriptGuard,
@@ -803,6 +821,17 @@ class ApplicationBootstrap {
     });
 
     // Plug the rendering pipeline as the page renderer
+    // Resolve the persistent web-storage directory injected by the Electron
+    // host via additionalArguments (--nova-storage-dir=...). Absent on web/
+    // Android hosts → storage stays in-memory.
+    let webStorageDir: string | undefined;
+    try {
+      const proc = (globalThis as { process?: { argv?: string[] } }).process;
+      const flag = proc?.argv?.find((a) => a.startsWith('--nova-storage-dir='));
+      webStorageDir = flag ? flag.slice('--nova-storage-dir='.length) : undefined;
+    } catch {
+      webStorageDir = undefined;
+    }
     const pageRenderer = new PageRenderer({
       htmlParser: new HtmlParser(),
       domTree: this.container.resolve<IDomTree>(Tokens.DomTree),
@@ -816,6 +845,7 @@ class ApplicationBootstrap {
       scriptEnforcer: cspEnforcement.scriptEnforcer,
       resourceEnforcer: cspEnforcement.resourceEnforcer,
       securityLayer,
+      storageDir: webStorageDir,
     });
     engine.setPageRenderer(pageRenderer);
 
