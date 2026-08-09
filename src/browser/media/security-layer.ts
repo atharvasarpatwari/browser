@@ -275,7 +275,9 @@ class SecurityLayer implements ISecurityLayer, IDisposable {
       }
 
       // 2. HTTPS enforcement — HTTPS-only mode upgrades every http navigation.
-      if (this.https.isEnforceHttps() && url.startsWith('http://')) {
+      //    Loopback hosts (localhost/127.x/::1) are exempt, matching Chromium:
+      //    local dev servers must stay reachable over plain HTTP.
+      if (this.https.isEnforceHttps() && url.startsWith('http://') && !isLoopbackHost(url)) {
         const target = this.https.upgradeUrl(url);
         return {
           allowed: false,
@@ -592,6 +594,18 @@ class SecurityLayer implements ISecurityLayer, IDisposable {
 
 function isHttpLike(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://');
+}
+
+/** Loopback/private-local hosts are exempt from HTTPS enforcement (like Chrome). */
+function isLoopbackHost(url: string): boolean {
+  const host = parseHost(url);
+  if (!host) return false;
+  return (
+    host === 'localhost' ||
+    host === '::1' ||
+    host === '127.0.0.1' ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+  );
 }
 
 function parseUrl(url: string): URL | null {
