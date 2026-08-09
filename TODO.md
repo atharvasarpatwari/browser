@@ -1,78 +1,55 @@
 # Nova Browser — TODO
 
-Last updated: 2026-07-19
+Last updated: 2026-08-09
 
 ## Priority: High
 
-### 1. BrowserEngine → PageLoader / PageRenderer Wiring
-- **File:** `src/browser/engine/browser-engine.ts`
-- `BrowserEngine` has `setPageLoader()` / `setPageRenderer()` plugin points but `main.ts` still uses `NullPageLoader` and `NullPageRenderer` stubs
-- The full page-load pipeline (network fetch → HTML parse → CSS parse → layout → paint) is not wired end-to-end through `BrowserEngine`
-- [x] PageLoader extracted — wraps `IResourceLoader.loadResource()`, 14 tests
-- [x] PageRenderer extracted — parses HTML→CSS→layout→paint→JS, 22 tests
-- [x] PageRenderer controller wiring — inline `<script>` blocks get `window.history`/`window.location`
-- [ ] Wire PageLoader + PageRenderer into BrowserEngine plugin points
+### 1. CI Gating (Phase 0)
+- `.github/workflows/release.yml` (tag → installer) and `native-build.yml` (Rust) exist, but no gate runs the full TS suite on push/PR
+- [ ] `ci.yml` — `npm run typecheck` + `npm test` (full vitest) + Electron e2e on push/PR to `main`
 
-### 2. IPC Channel Direction Configuration
-- **File:** `src/common/ipc/channel.ts:179`
-- Direction is hard-coded as `'main-to-renderer'`; needs config-driven bidirectional routing
-- [ ] Add direction metadata to channel definitions
-- [ ] Update `ChannelManager` to route based on config, not hard-coded string
-
-### 3. Real Image Decoding Integration
-- Image data is stored as synthetic `ImageData` (colored rectangles) on `DomElement`
-- [ ] Replace with actual JPEG/PNG/WEBP decoding via platform adapter
-- [ ] Wire decoded bitmap into paint engine's `drawImage`
+### 2. Fidelity Audit Drive
+- `tests/e2e/fidelity-audit.spec.ts` defines 11 crafted fixtures; the first run only captured `layout`, which rendered near-blank (`nonWhiteRatio: 0.0008`, empty `contentText`)
+- [ ] Run all 11 fixtures, triage rendering fidelity gaps (flex/grid/float, images, overflow, forms, fonts, animation, media, iframe, anchors, script)
+- [ ] Fix root causes found; re-run until each fixture shows real content clusters
 
 ## Priority: Medium
 
-### 4. Sticky Position Font Size Resolution
-- **File:** `src/browser/rendering/positioning.ts:361`
-- `fontSize` is hard-coded to `16`; should read from element's computed style
-- [ ] Resolve font size from `element.computedStyle.fontSize` in sticky offset calculation
+### 3. Native Rust Wiring (Phase 3, parallel track)
+- `nova-net` (DNS/TLS/HTTP) + `nova-bindings` (napi-rs) build locally; cross-platform CI matrix mostly commented out
+- [ ] Wire native DNS/TLS/HTTP into the JS `RawSocketHttpClient` layer with JS fallback
+- [ ] Activate the commented win/arm64 build jobs in `native-build.yml`
 
-### 5. Stacking Context — `transform`, `filter`, `will-change` Triggers
-- Currently only `position + z-index` and `opacity < 1` create stacking contexts
-- [ ] Add `transform: none` (any non-none value) → new stacking context
-- [ ] Add `filter: none` (any non-none value) → new stacking context
-- [ ] Add `will-change: transform|filter|opacity` → new stacking context
-
-### 6. JS Engine — Promise Microtask Queue
-- **File:** `src/browser/engine/js-engine/` (event loop)
-- Event loop has macrotask queue (setTimeout/setInterval) but microtask scheduling is a future feature
-- [ ] Implement microtask queue for Promise `.then`/`catch`/`finally` callbacks
-- [ ] Drain microtask queue after each macrotask completes
-
-### 7. SOCKS Proxy Support
-- **File:** `src/browser/netwroking/request-manager.ts:418-421`
-- `ProxyAwareHttpClient` falls back to direct connection with a warning when SOCKS is configured
-- [ ] Implement native SOCKS4/SOCKS5 proxy connect
+### 4. Multi-Process (Phase 2, parked)
+- Activate `child_process.fork()` transport in `ProcessManager`; per-tab/domain process models; OS-level crash isolation
 
 ## Priority: Low
 
-### 8. WebSocket Binary Data Handling
-- **File:** `src/browser/netwroking/request-manager.ts:210`
-- Binary data is stored as `'[binary data]'` placeholder
-- [ ] Read Blob asynchronously via `event.data.text()` or `event.data.arrayBuffer()`
+### 5. Product Shipping (Phase 4)
+- Electron packaging polish, auto-update, DevTools protocol; Android Play-ready; multi-platform release CI
+- WASM build fallback (`native:build:wasm`)
 
-### 9. Text Measurement — Pluggable Font Metrics
-- **File:** `src/browser/rendering/formatting/text-measure.ts:146`
-- Currently uses character-width heuristic when canvas is unavailable
-- [ ] Design pluggable `FontMetricsProvider` interface
-- [ ] Implement canvas-based measurement adapter
-
-### 10. Electron / Native Window Integration
-- **File:** `src/app/app-shell.ts` (4 TODOs)
-- `BrowserWindow.open()`, `close()`, `focus()`, `setTitle()` are stubs
-- [ ] Implement when Electron platform adapter is built (not applicable for pure-JS engine scope)
-
-### 11. Navigation Controller — Deferred Commit
-- **File:** `src/browser/navigation/navigation-controller.ts:605-608`
-- `NavigationState.Complete` is set immediately; designed for deferred completion after document load
-- [ ] Wire `BrowserEngine` commit callback for true deferred navigation completion
+### 6. Modern Web Platform (Phase 5)
+- Service Workers/PWA, WebRTC, WASM execution, CSS containment/subgrid/scroll-snap, JIT tiering
 
 ## Done (reference)
 
+- [x] Repo hygiene — `native/target/` untracked + gitignored, temp/debug files removed, stale TODO fixed (`2026-08-09-repo-hygiene-ci-gate.md`)
+- [x] CI gate `ci.yml` added — typecheck + full vitest + Electron e2e on push/PR (Phase 0, `2026-08-09-repo-hygiene-ci-gate.md`)
+- [x] Web storage disk persistence — localStorage + IndexedDB backends write per-origin JSON under `userData/web-storage`; storage dir injected by the Electron host via `additionalArguments` (`--nova-storage-dir=`) and read from renderer `process.argv` (9 tests, `2026-08-08-web-storage-disk-persistence.md`)
+- [x] Page storage plumbing — `storageDir` threaded through `runJS`/`createGlobalEnv`/`bindStorageAPIs`/`PageRenderer` (`2026-08-08-web-storage-disk-persistence.md`)
+- [x] Persistent password store — `PersistentPasswordStore`, only store left in-memory (Phase 1 session, `2026-08-08-phase1-persistence-plugins-deferred.md`)
+- [x] Text measurement — pluggable `FontMetricsProvider` (interface + heuristic/canvas adapters + registry) (old #9, `2026-08-08-phase1-persistence-plugins-deferred.md`)
+- [x] Navigation controller — deferred commit via `completeNavigation`/`setDeferredCompletion` (old #11, `2026-08-08-phase1-persistence-plugins-deferred.md`)
+- [x] BrowserEngine → PageLoader/PageRenderer wiring (old #1, wired in `src/app/main.ts`)
+- [x] IPC Channel Direction config (old #2, already config-driven)
+- [x] Real image decoding — PNG/JPEG/WebP into paint `drawImage` (old #3)
+- [x] JS Engine microtask queue (old #4)
+- [x] Electron / Native Window Integration (old #5, Electron shell shipped)
+- [x] SOCKS proxy support — native SOCKS4/4a/5 (old #7, `2026-08-03-socks-proxy-support.md`)
+- [x] WebSocket binary data handling — Blob read + close-code validation (old #8, `2026-07-26-websocket-binary-data-handling.md`)
+- [x] Sticky position font size — resolved from computed style, not hard-coded 16 (old #4, `2026-08-01-gap-implementations.md`)
+- [x] Stacking context `will-change` trigger (old #5, `2026-08-01-gap-implementations.md`)
 - [x] PageLoader + PageRenderer extraction and controller wiring (36 tests)
 - [x] History API + Location bindings — window.history, window.location, popstate/hashchange (65 tests)
 - [x] Resource prioritization — PriorityQueue, BandwidthEstimator, ResourcePrioritizer, cache (69 tests)

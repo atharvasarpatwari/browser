@@ -8,3 +8,14 @@ playwright-report/
 *.log
 .DS_Store
 Thumbs.db
+
+# Rust build outputs
+native/target/
+native/dist/
+
+# Fidelity audit output (regenerated each run)
+fidelity-report/
+
+# Temp debug redirects
+electron-err.tmp.txt
+electron-out.tmp.txt
