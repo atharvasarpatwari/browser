@@ -10,7 +10,7 @@ interface IContentRenderer extends IDisposable {
   setBrandName(name: string): void;
   setLinkHoverHandler(handler: (url: string | null) => void): void;
   renderHtml(html: string, options?: ContentRenderOptions): void;
-  renderFromImageData(imageData: ImageData): void;
+  renderFromImageData(imageData: ImageData, freshCanvas?: boolean): void;
   renderSearchResults(query: string, searchUrl: string, results: readonly SearchResult[]): void;
   renderError(title: string, message: string, url?: string): void;
   renderLoading(url: string): void;
@@ -64,17 +64,33 @@ class ContentRenderer implements IContentRenderer {
     this.wireLinkHoverTracking(doc);
   }
 
-  renderFromImageData(imageData: ImageData): void {
+  renderFromImageData(imageData: ImageData, freshCanvas = false): void {
     if (!this.container) return;
-    this.container.innerHTML = '';
 
-    const canvas = document.createElement('canvas');
-    canvas.width = imageData.width;
-    canvas.height = imageData.height;
-    canvas.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#fff;display:block;';
-    this.container.appendChild(canvas);
+    // Reuse the existing canvas when the page is only being repainted in place
+    // (e.g. per-frame animation updates). A fresh canvas is created on
+    // navigation so consumers can detect a new page by element identity.
+    const existing = this.container.querySelector('canvas');
+    const canvas = existing && !freshCanvas
+      ? existing
+      : null;
 
-    const ctx = canvas.getContext('2d');
+    if (!canvas) {
+      this.container.innerHTML = '';
+    }
+
+    const target = canvas ?? (() => {
+      const el = document.createElement('canvas');
+      el.width = imageData.width;
+      el.height = imageData.height;
+      el.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#fff;display:block;';
+      this.container!.appendChild(el);
+      return el;
+    })();
+
+    target.width = imageData.width;
+    target.height = imageData.height;
+    const ctx = target.getContext('2d');
     if (!ctx) return;
     ctx.putImageData(imageData, 0, 0);
   }

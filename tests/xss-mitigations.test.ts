@@ -41,12 +41,25 @@ describe('HtmlSanitizer', () => {
       expect(scripts.length).toBe(0);
     });
 
-    it('should remove <iframe> elements', () => {
-      const doc = buildTree('<div><iframe src="evil.com"></iframe><p>safe</p></div>');
+    it('should preserve <iframe> elements (rasterized script-free)', () => {
+      const doc = buildTree('<div><iframe src="https://example.com/child"></iframe><p>safe</p></div>');
+      const sanitizer = new HtmlSanitizer();
+      sanitizer.sanitize(doc, domTree);
+      // iframes are kept: the engine renders child documents through a
+      // script-free parse → style → layout → paint → rasterize pipeline
+      // (renderNestedDocument), so the element cannot execute code.
+      const iframes = domTree.getElementsByTagName('iframe');
+      expect(iframes.length).toBe(1);
+      expect(iframes[0]!.attributes.get('src')).toBe('https://example.com/child');
+    });
+
+    it('should strip dangerous URL schemes from <iframe src>', () => {
+      const doc = buildTree('<div><iframe src="javascript:alert(1)"></iframe></div>');
       const sanitizer = new HtmlSanitizer();
       sanitizer.sanitize(doc, domTree);
       const iframes = domTree.getElementsByTagName('iframe');
-      expect(iframes.length).toBe(0);
+      expect(iframes.length).toBe(1);
+      expect(iframes[0]!.attributes.has('src')).toBe(false);
     });
 
     it('should remove <object> elements', () => {
@@ -99,7 +112,7 @@ describe('HtmlSanitizer', () => {
     });
 
     it('should track removed count', () => {
-      const doc = buildTree('<div><script>a</script><iframe src="x"></iframe><p>safe</p></div>');
+      const doc = buildTree('<div><script>a</script><object data="evil"></object><p>safe</p></div>');
       const sanitizer = new HtmlSanitizer();
       sanitizer.sanitize(doc, domTree);
       expect(sanitizer.getRemovedCount()).toBe(2);
@@ -225,9 +238,10 @@ describe('HtmlSanitizer', () => {
     it('should sanitize and return removed count', () => {
       const doc = buildTree('<div><script>a</script><iframe src="x"></iframe><p>safe</p></div>');
       const count = sanitizeHtmlTree(doc, domTree);
-      expect(count).toBe(2);
+      expect(count).toBe(1);
       expect(domTree.getElementsByTagName('script').length).toBe(0);
-      expect(domTree.getElementsByTagName('iframe').length).toBe(0);
+      // iframes are preserved (rasterized script-free), not stripped
+      expect(domTree.getElementsByTagName('iframe').length).toBe(1);
     });
   });
 });

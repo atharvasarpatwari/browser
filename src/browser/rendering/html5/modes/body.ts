@@ -40,10 +40,19 @@ export function handleInBody(ctx: TreeBuilderContext, token: Token): void {
 function inBodyStartTag(ctx: TreeBuilderContext, token: Token): void {
   const tag = token.tagName!;
 
-  // Head-like elements: delegate to in-head
+  // Head-like elements: delegate to in-head. Raw-text elements (style/script)
+  // must NOT delegate through processInHeadToken: that temporarily sets
+  // insertionMode to IN_HEAD, which handleRawTextElement captures as
+  // originalInsertionMode, so after </style>/</script> the parser returns to
+  // IN_HEAD instead of IN_BODY and the next start tag spawns a spurious
+  // <body>. Handle them here so originalInsertionMode stays IN_BODY.
+  if (tag === 'style' || tag === 'script') {
+    ctx.handleRawTextElement(token);
+    if (tag === 'script') ctx.discoverResources(token);
+    return;
+  }
   if (tag === 'base' || tag === 'basefont' || tag === 'bgsound' ||
-      tag === 'link' || tag === 'meta' || tag === 'script' ||
-      tag === 'style' || tag === 'template') {
+      tag === 'link' || tag === 'meta' || tag === 'template') {
     ctx.processInHeadToken(token);
     return;
   }

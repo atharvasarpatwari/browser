@@ -37,6 +37,7 @@ class NavigationFetcher implements INavigationFetcher {
   start(): void {
     if (this.disposed) return;
     this.engine.on('pageLoadReady', this.engineHandler);
+    this.engine.on('pageRepainted', this.engineHandler);
     this.engine.on('pageLoadError', this.engineHandler);
     this.engine.on('pageLoadAborted', this.engineHandler);
     this.navController.on('navigationStarted', this.navHandler);
@@ -45,6 +46,7 @@ class NavigationFetcher implements INavigationFetcher {
 
   stop(): void {
     this.engine.off('pageLoadReady', this.engineHandler);
+    this.engine.off('pageRepainted', this.engineHandler);
     this.engine.off('pageLoadError', this.engineHandler);
     this.engine.off('pageLoadAborted', this.engineHandler);
     this.navController.off('navigationStarted', this.navHandler);
@@ -54,7 +56,13 @@ class NavigationFetcher implements INavigationFetcher {
   private handleEngineEvent(e: EngineEvent): void {
     switch (e.kind) {
       case 'pageLoadReady':
-        this.renderFromEngine(e.session);
+        // A navigation commits a new page: replace the content canvas.
+        this.renderFromEngine(e.session, true);
+        break;
+      case 'pageRepainted':
+        // In-place repaint (animation frames, async image loads): update the
+        // existing canvas so the DOM element stays stable while animating.
+        if (e.session) this.renderFromEngine(e.session, false);
         break;
       case 'pageLoadError':
         this.contentRenderer.renderError(
@@ -76,13 +84,13 @@ class NavigationFetcher implements INavigationFetcher {
     }
   }
 
-  private renderFromEngine(session: PageLoadSession): void {
+  private renderFromEngine(session: PageLoadSession, freshCanvas: boolean): void {
     const url = session.finalUrl ?? session.entry.url;
     const hostname = this.extractHostname(url);
     try {
       const imageData = this.paintEngine.rasterize();
       if (imageData.width > 0 && imageData.height > 0) {
-        this.contentRenderer.renderFromImageData(imageData);
+        this.contentRenderer.renderFromImageData(imageData, freshCanvas);
       } else {
         this.contentRenderer.renderHtml(
           `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f8f9fa;">

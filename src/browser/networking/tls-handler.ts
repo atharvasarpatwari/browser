@@ -30,6 +30,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
+import { loadNodeBuiltin } from './node-builtins';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENUMS
@@ -468,8 +469,11 @@ class TlsHandler implements ITlsHandler {
   }
 
   private static async buildCertificateChainReal(hostname: string, port: number): Promise<readonly CertificateInfo[]> {
-    const tls = await import('node:tls');
-    const net = await import('node:net');
+    const tls = loadNodeBuiltin<typeof import('node:tls')>('node:tls');
+    const net = loadNodeBuiltin<typeof import('node:net')>('node:net');
+    if (!tls || !net) {
+      throw new Error(`Node net/tls builtins are unavailable in this runtime`);
+    }
 
     return new Promise<readonly CertificateInfo[]>((resolve, reject) => {
       const timer = setTimeout(() => {

@@ -29,6 +29,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
+import { loadNodeBuiltin } from './node-builtins';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VALUE OBJECTS
@@ -154,7 +155,9 @@ async function defaultSystemResolver(hostname: string): Promise<readonly string[
   // ── Node.js path: use dns.promises ────────────────────────────────────
   if (typeof process !== 'undefined' && typeof require === 'function') {
     try {
-      const dns = await import('node:dns').then(m => m.promises);
+      const dnsModule = loadNodeBuiltin<typeof import('node:dns')>('node:dns');
+      if (!dnsModule) throw new Error('node:dns unavailable');
+      const dns = dnsModule.promises;
       const [v4, v6] = await Promise.allSettled([
         dns.resolve4(hostname).catch(() => []),
         dns.resolve6(hostname).catch(() => []),

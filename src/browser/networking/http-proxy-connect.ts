@@ -22,6 +22,7 @@
 
 import type { Socket } from 'node:net';
 import { SocketReader } from './socket-reader';
+import { loadNodeBuiltin } from './node-builtins';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -163,12 +164,16 @@ async function performConnectHandshake(
 export async function connectThroughHttpProxy(
   options: ConnectThroughHttpProxyOptions,
 ): Promise<Socket> {
-  const net = await import('node:net');
+  const net = loadNodeBuiltin<typeof import('node:net')>('node:net');
+  const tls = loadNodeBuiltin<typeof import('node:tls')>('node:tls');
+  if (!net || !tls) {
+    throw new HttpProxyError('Node net/tls builtins are unavailable in this runtime', 'NO_NODE');
+  }
   const { proxy, targetHost, targetPort } = options;
   const timeoutMs = options.timeoutMs ?? 30_000;
 
   const rawSocket = proxy.isTls
-    ? (await import('node:tls')).connect({
+    ? tls.connect({
         host: proxy.hostname,
         port: proxy.port,
         servername: proxy.hostname,

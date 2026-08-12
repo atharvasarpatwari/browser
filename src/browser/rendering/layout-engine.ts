@@ -1,8 +1,8 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { IDomTree, DomDocument, DomElement, DomNode, LayoutBox, TextRun } from './dom-tree';
+import type { IDomTree, DomDocument, DomElement, DomNode, DomTextNode, LayoutBox, TextRun } from './dom-tree';
 import { DamageTracker } from './damage-tracker';
 import { findContainingBlock as findContainingBlockForScheme, resolveOutOfFlow, applyInFlowOffset } from './positioning';
-import { classifyDisplay, isBlockLevel } from './formatting/types';
+import { classifyDisplay, type ClassifiedChild } from './formatting/types';
 import { classifyChildren, collapseMargins, isMarginCollapseBlocked } from './formatting/block-context';
 import { InlineFormattingContext } from './formatting/inline-context';
 import { FloatContext } from './formatting/float-context';
@@ -124,6 +124,26 @@ class LayoutEngine implements ILayoutEngine {
     // ── Second pass: lay out positioned elements ──────────────────────────
     this.layoutPositionedElements();
     this.floatContext = null;
+
+    // Clear layout-dirty flags so incremental reflow only re-lays-out nodes
+    // that actually change. Otherwise the first incremental frame would treat
+    // the whole tree as dirty and clear the paint-dirty flags of async-loaded
+    // content (e.g. images) before paintIncremental could re-rasterize them.
+    this.clearLayoutDirty(document);
+  }
+
+  private clearLayoutDirty(document: DomDocument): void {
+    const stack: DomNode[] = document.bodyElement
+      ? [document.bodyElement]
+      : [...document.children];
+    while (stack.length > 0) {
+      const n = stack.pop()!;
+      if (n.nodeType === 'element') {
+        const el = n as DomElement;
+        el._dirtyLayout = false;
+        for (const c of el.children) stack.push(c);
+      }
+    }
   }
 
   /**
@@ -193,7 +213,7 @@ class LayoutEngine implements ILayoutEngine {
     domTree?: IDomTree,
   ): number {
     const style = node.computedStyle ?? new Map();
-    const display = style.get('display') ?? 'inline';
+    const display = style.get('display') ?? 'block';
     const position = style.get('position') ?? 'static';
 
     if (display === 'none') return y;
@@ -248,6 +268,11 @@ class LayoutEngine implements ILayoutEngine {
     const specWidth = style.get('width');
     const specHeight = style.get('height');
 
+    // Intrinsic size from width/height HTML attributes for replaced elements
+    // (img, iframe, video, canvas, embed, object). Used when CSS does not
+    // specify a width/height, matching browser default sizing.
+    const intrinsic = this.resolveIntrinsicSize(node);
+
     // Parse aspect-ratio
     const rawAspectRatio = style.get('aspect-ratio') ?? 'auto';
     let aspectRatio: number | null = null;
@@ -272,6 +297,12 @@ class LayoutEngine implements ILayoutEngine {
         borderWidthBox = specified + paddingLeft + paddingRight + borderLeft + borderRight;
         borderWidthBox = Math.min(borderWidthBox, availableWidth);
       }
+    } else if (intrinsic.width != null) {
+      // width attribute supplies the intrinsic width (box-sizing aware).
+      const intrinsicBox = boxSizing === 'border-box'
+        ? intrinsic.width
+        : intrinsic.width + paddingLeft + paddingRight + borderLeft + borderRight;
+      borderWidthBox = Math.min(intrinsicBox, availableWidth);
     } else if (aspectRatio != null && specHeight && specHeight !== 'auto') {
       // Compute width from height × aspect-ratio
       const hContent = resolve('height', '0') - paddingTop - paddingBottom - borderTop - borderBottom;
@@ -293,6 +324,11 @@ class LayoutEngine implements ILayoutEngine {
       } else {
         specifiedContentHeight = resolve('height', '0');
       }
+    } else if (intrinsic.height != null) {
+      // height attribute supplies the intrinsic height (box-sizing aware).
+      specifiedContentHeight = boxSizing === 'border-box'
+        ? Math.max(0, intrinsic.height - paddingTop - paddingBottom - borderTop - borderBottom)
+        : intrinsic.height;
     } else if (aspectRatio != null && specWidth && specWidth !== 'auto') {
       // Compute height from width / aspect-ratio
       const wContent = borderWidthBox - paddingLeft - paddingRight - borderLeft - borderRight;
@@ -467,8 +503,13 @@ class LayoutEngine implements ILayoutEngine {
       }
     }
 
+    // Layout is done for this subtree — clear layout-dirty flags. The subtree
+    // must NOT have its paint-dirty flags cleared here: paint dirtiness can
+    // originate independently of layout (e.g. async image decode setting
+    // _dirtyPaint), and wiping it would drop the repaint. Instead, mark the
+    // re-laid-out subtree as needing paint so paintIncremental refreshes it.
+    domTree.markSubtreeDirty(node, 'paint');
     domTree.clearSubtreeDirty(node, 'layout');
-    domTree.clearSubtreeDirty(node, 'paint');
     return newEndY;
   }
 
@@ -504,10 +545,22 @@ class LayoutEngine implements ILayoutEngine {
     );
 
     let childY = contentY;
+    let inlineRun: ClassifiedChild[] = [];
+
+    const flushInlineRun = (): void => {
+      if (inlineRun.length === 0) return;
+      childY = this.layoutAnonymousBlock(parent, inlineRun, contentX, childY, availableWidth, parentFontSize, domTree);
+      inlineRun = [];
+    };
 
     for (const child of parent.children) {
       if (child.nodeType === 'text') {
-        childY += this.resolveLineHeight(style, parentFontSize);
+        const textNode = child as DomTextNode;
+        const text = textNode.text ?? '';
+        // Pure-whitespace text nodes between block boxes render nothing and
+        // must not create empty anonymous blocks that add stray line height.
+        if (text.trim() === '') continue;
+        inlineRun.push({ node: child, display: 'inline', isBlock: false });
         continue;
       }
       if (child.nodeType === 'element') {
@@ -517,6 +570,7 @@ class LayoutEngine implements ILayoutEngine {
 
         // Absolute/fixed children: queue for positioned pass
         if (childPos === 'absolute' || childPos === 'fixed') {
+          flushInlineRun();
           const childFontSize = this.resolveFontSize(childStyle, parentFontSize);
           const cb = childPos === 'fixed' ? null : findContainingBlockForScheme(childEl, childPos as 'absolute' | 'fixed' | 'sticky');
           this.positionedQueue.push({ element: childEl, containingBlock: cb, fontSize: childFontSize, availableWidth, domTree });
@@ -526,19 +580,32 @@ class LayoutEngine implements ILayoutEngine {
         // Handle float
         const floatVal = childStyle.get('float') ?? 'none';
         if (floatVal === 'left' || floatVal === 'right') {
+          flushInlineRun();
           this.layoutFloatElement(childEl, floatVal as 'left' | 'right', contentX, childY, availableWidth, parentFontSize, domTree);
           continue;
         }
 
-        // Handle clear — move below all floats on the cleared side
-        const clearVal = childStyle.get('clear') ?? 'none';
-        if (clearVal !== 'none') {
-          childY = this.floatContext.getYAfterClear(clearVal as 'left' | 'right' | 'both' | 'none', childY);
-        }
+        const display = childStyle.get('display') ?? 'block';
+        // display:none elements produce no layout box and are removed from flow
+        if (display === 'none') continue;
+        const childFmt = classifyDisplay(display);
+        const isBlockBox = childFmt === 'block' || childFmt === 'flex' || childFmt === 'grid' || childFmt === 'table';
+        if (isBlockBox) {
+          flushInlineRun();
 
-        childY = this.layoutNode(childEl, contentX, childY, availableWidth, parentFontSize, domTree);
+          // Handle clear — move below all floats on the cleared side
+          const clearVal = childStyle.get('clear') ?? 'none';
+          if (clearVal !== 'none') {
+            childY = this.floatContext.getYAfterClear(clearVal as 'left' | 'right' | 'both' | 'none', childY);
+          }
+
+          childY = this.layoutNode(childEl, contentX, childY, availableWidth, parentFontSize, domTree);
+        } else {
+          inlineRun.push({ node: childEl, display, isBlock: false });
+        }
       }
     }
+    flushInlineRun();
 
     this.floatContext = oldFloatContext;
     return childY;
@@ -668,6 +735,7 @@ class LayoutEngine implements ILayoutEngine {
    * anonymous block box.
    */
   private layoutAnonymousBlock(
+    parent: DomElement,
     children: Array<{ node: DomNode; display: string; isBlock: boolean }>,
     contentX: number,
     startY: number,
@@ -680,15 +748,15 @@ class LayoutEngine implements ILayoutEngine {
       exclusionZones,
       defaultFontSize: parentFontSize,
     });
+    const parentStyle = parent.computedStyle ?? new Map();
+    const parentLineHeight = this.resolveLineHeight(parentStyle, parentFontSize);
 
     for (const child of children) {
       if (child.node.nodeType === 'text') {
         const textNode = child.node as DomElement & { text?: string };
         const text = textNode.text ?? (child.node as unknown as { text: string }).text ?? '';
         if (text) {
-          ifc.addTextRun(text, parentFontSize, this.resolveLineHeight(
-            new Map(), parentFontSize,
-          ), 'sans-serif');
+          ifc.addTextRun(text, parentFontSize, parentLineHeight, 'sans-serif');
         }
         continue;
       }
@@ -719,7 +787,8 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     const totalHeight = ifc.finalize();
-    return startY + Math.max(totalHeight, this.resolveLineHeight(new Map(), parentFontSize));
+    this.populateTextRuns(parent, ifc, parentFontSize);
+    return startY + Math.max(totalHeight, parentLineHeight);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1480,12 +1549,18 @@ class LayoutEngine implements ILayoutEngine {
     const borderL = this.parseBorderWidth(elStyle.get('border-left-width') ?? '0');
     const borderR = this.parseBorderWidth(elStyle.get('border-right-width') ?? '0');
 
-    const contentW = availableWidth - marginL - marginR - padL - padR - borderL - borderR;
+    // Replaced elements (img, iframe, ...) size to their intrinsic
+    // width/height attributes when CSS does not override them.
+    const intrinsic = this.resolveIntrinsicSize(el);
+
+    const contentW = intrinsic.width != null
+      ? intrinsic.width
+      : availableWidth - marginL - marginR - padL - padR - borderL - borderR;
 
     // Register the element with a preliminary box for hit testing
     const box: LayoutBox = {
       x: 0, y: 0, width: marginL + padL + borderL + contentW + borderR + padR + marginR,
-      height: lineHeight,
+      height: intrinsic.height != null ? intrinsic.height : lineHeight,
       marginTop: 0, marginRight: marginR, marginBottom: 0, marginLeft: marginL,
       paddingTop: 0, paddingRight: padR, paddingBottom: 0, paddingLeft: padL,
       borderTop: 0, borderRight: borderR, borderBottom: 0, borderLeft: borderL,
@@ -1550,6 +1625,7 @@ class LayoutEngine implements ILayoutEngine {
     const borderR = this.parseBorderWidth(elStyle.get('border-right-width') ?? '0');
 
     const specWidth = elStyle.get('width');
+    const intrinsic = this.resolveIntrinsicSize(el);
     let innerWidth: number;
     if (specWidth && specWidth !== 'auto') {
       const specified = resolve('width', '0');
@@ -1559,6 +1635,8 @@ class LayoutEngine implements ILayoutEngine {
       } else {
         innerWidth = Math.min(specified, availableWidth);
       }
+    } else if (intrinsic.width != null) {
+      innerWidth = intrinsic.width;
     } else {
       innerWidth = availableWidth - marginL - marginR - padL - padR - borderL - borderR;
     }
@@ -1613,6 +1691,8 @@ class LayoutEngine implements ILayoutEngine {
       } else {
         contentHeight = resolve('height', '0');
       }
+    } else if (intrinsic.height != null) {
+      contentHeight = intrinsic.height;
     } else {
       contentHeight = childHeight;
     }
@@ -1678,6 +1758,30 @@ class LayoutEngine implements ILayoutEngine {
 
     const n = parseFloat(value);
     return isFinite(n) ? n : 0;
+  }
+
+  /**
+   * Resolves the intrinsic width/height for replaced elements from their
+   * `width`/`height` HTML attributes (a CSS width/height takes precedence and
+   * is handled separately). Non-numeric or missing attributes yield null.
+   */
+  private resolveIntrinsicSize(node: DomElement): { width: number | null; height: number | null } {
+    const tag = node.tagName.toLowerCase();
+    const isReplaced =
+      tag === 'img' || tag === 'iframe' || tag === 'video' || tag === 'canvas' ||
+      tag === 'embed' || tag === 'object' || tag === 'svg';
+    if (!isReplaced) return { width: null, height: null };
+
+    const parseAttr = (name: string): number | null => {
+      const raw = node.attributes.get(name);
+      if (raw == null) return null;
+      const trimmed = raw.trim();
+      if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
+      const n = parseFloat(trimmed);
+      return isFinite(n) ? n : null;
+    };
+
+    return { width: parseAttr('width'), height: parseAttr('height') };
   }
 
   private resolveFontSize(style: ReadonlyMap<string, string>, parentFontSize: number): number {

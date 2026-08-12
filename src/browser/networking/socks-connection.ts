@@ -22,6 +22,7 @@
 
 import type { Socket } from 'node:net';
 import { SocketReader } from './socket-reader';
+import { loadNodeBuiltin } from './node-builtins';
 
 // ── SOCKS5 constants (RFC 1928) ──────────────────────────────────────────────
 const SOCKS5_VERSION       = 0x05;
@@ -371,7 +372,10 @@ async function performSocks4Handshake(
 export async function connectThroughSocks(
   options: ConnectThroughSocksOptions,
 ): Promise<Socket> {
-  const net = await import('node:net');
+  const net = loadNodeBuiltin<typeof import('node:net')>('node:net');
+  if (!net) {
+    throw new SocksError('Node net builtin is unavailable in this runtime', 'NO_NODE');
+  }
   const { proxy, targetHost, targetPort } = options;
   const timeoutMs = options.timeoutMs ?? 30_000;
 

@@ -44,8 +44,11 @@ import type { IPageRenderer, PageLoadResult } from './browser-engine';
 import { HtmlParser } from '../rendering/html-parser';
 import { CssParser } from '../rendering/css-parser';
 import { LazyLoader } from '../rendering/lazy-loader';
+import { DomTree } from '../rendering/dom-tree';
+import { LayoutEngine } from '../rendering/layout-engine';
+import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
-import { computeComputedStyles } from '../rendering/css5/cascade';
+import { computeComputedStyles, collectKeyframes } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
 import { runJS } from '../js/index';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
@@ -54,6 +57,8 @@ import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
 import type { SecurityLayer } from '../media/security-layer';
 import { ReflowRepaintController } from '../rendering/reflow-repaint-controller';
 import type { LayerCompositor } from '../rendering/compositing/layer-compositor';
+import { CssAnimationAnimator } from '../rendering/css-animations';
+import { setAnimationRuntime } from '../js/dom-bindings';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTRUCTOR PARAMETERS
@@ -79,6 +84,8 @@ interface PageRendererDependencies {
   readonly securityLayer?: SecurityLayer;
   /** Optional base directory for persistent page web storage (localStorage/IndexedDB). */
   readonly storageDir?: string;
+  /** Optional callback invoked after each reflow/repaint frame (page repaint). */
+  readonly onFrameRendered?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -143,14 +150,39 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // 7. Lazy load images/iframes via IntersectionObserver
     const lazyLoader = new LazyLoader();
     lazyLoader.init(doc, domTree, resourceLoader, result.url);
+    // Async image/iframe loads must invalidate the painted subtree and
+    // schedule a reflow frame so the decoded resource appears on screen.
+    lazyLoader.onAnyLoad((event) => {
+      const el = event.target as DomElement;
+      this.reflowController?.invalidatePaint(el);
+      this.reflowController?.requestFrame();
+    });
     lazyLoader.scanForLazyElements(doc);
     lazyLoader.setViewport(1920, 1080); // Default viewport
 
     // 8. Paint
     paintEngine.paint(doc);
 
-    // 9. Wire the incremental reflow/repaint controller for post-load DOM
-    //    mutations (JS-triggered changes, scroll/scroll-triggered relayout).
+    // 9. Clear mutations recorded during the initial full style pass. They are
+    //    stale (already reflected in the laid-out, painted tree) and would
+    //    otherwise make the first incremental frame re-layout the whole tree,
+    //    wiping paint-dirty flags set by async loads (e.g. decoded images)
+    //    before paintIncremental could re-rasterize them.
+    domTree.clearMutations();
+
+    // 10. Render iframe child documents. Each iframe's src is fetched and
+    //     rasterized through a fresh sub-pipeline into el.imageData so the
+    //     parent paint pass composites the embedded page.
+    const iframeCount = await this.renderIframeChildren(doc, result.url);
+    if (iframeCount > 0) {
+      // Full repaint so embedded frames appear in the very first rasterized
+      // output rather than waiting for an incremental reflow frame.
+      paintEngine.paint(doc);
+      domTree.clearMutations();
+    }
+
+    // 11. Wire the incremental reflow/repaint controller for post-load DOM
+    //     mutations (JS-triggered changes, scroll/scroll-triggered relayout).
     this.initReflowController(doc);
   }
 
@@ -170,10 +202,26 @@ class PageRenderer implements IPageRenderer, IDisposable {
     controller.init(doc);
     // Incremental style recalc resolves _dirtyStyle nodes before layout.
     controller.setStyleRecalcCallback(() => this.recalcStylesIncremental());
+    // Notify the UI (via the engine) when a reflow frame repaints the page.
+    controller.setFrameCallback(() => this.deps.onFrameRendered?.());
     // Layer-based compositing when a compositor is available.
     const compositor = (paintEngine as { getLayerCompositor?: () => LayerCompositor | null }).getLayerCompositor?.();
     if (compositor) controller.setLayerCompositor(compositor);
+
+    // Animation bridge: CSS @keyframes and element.animate() drive animated
+    // opacity through the paint pipeline (overlay read at paint time).
+    const animator = new CssAnimationAnimator({
+      domTree,
+      timeline: controller.animationTimeline,
+      getKeyframes: () => (this._lastStylesheet ? collectKeyframes(this._lastStylesheet) : new Map()),
+    });
+    controller.setAnimationAnimator(animator);
+    paintEngine.setOpacityResolver((el) => animator.resolveOpacity(el));
+    setAnimationRuntime({ timeline: controller.animationTimeline, animator });
+
     this.reflowController = controller;
+    // Start the incremental loop; while animations are active it self-schedules.
+    controller.requestFrame();
   }
 
   // ── Private Helper Methods ──────────────────────────────────────────────
@@ -193,6 +241,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // Build a CSS5 stylesheet from legacy CssRule[] (reparse selectors once).
     const stylesheet = this.buildCss5Stylesheet(cssParser, rules);
+    this._lastStylesheet = stylesheet;
 
     // Determine container dimensions for percentage-based used-style resolution.
     const bodyEl = doc.bodyElement;
@@ -203,7 +252,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     const rootStyleables = this.buildStyleableTree(doc.children, null);
 
     // Pass 2: Compute and apply styles top-down.
-    this.applyStylesRecursive(doc.children, rootStyleables, stylesheet, null, containerWidth, containerHeight);
+    this.applyStylesRecursive(doc.children, rootStyleables, stylesheet, null, containerWidth, containerHeight, domTree);
   }
 
   /**
@@ -225,7 +274,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // Build a fresh stylesheet (rules may have changed).
     const legacyParser = cssParser;
     const stylesheet = this.buildCss5Stylesheet(legacyParser, this._lastRules);
-    if (!this._lastStylesheet) this._lastStylesheet = stylesheet;
+    this._lastStylesheet = stylesheet;
 
     for (const el of dirtyNodes) {
       const parentComputed = el.parent?.nodeType === 'element'
@@ -271,20 +320,33 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
   /**
    * Build a single StyleableElement wrapper for an element (for incremental recalc).
+   *
+   * Walks up to the topmost element so the built subtree contains the full
+   * ancestor chain (needed for CSS inheritance), then descends to return the
+   * styleable matching `el`. This avoids the mutual parent↔child recursion that
+   * previously overflowed the call stack.
    */
   private buildSingleStyleable(el: DomElement): StyleableElement {
-    const children: StyleableElement[] = el.children
-      .filter((c): c is DomElement => c.nodeType === 'element')
-      .map(c => this.buildSingleStyleable(c));
-    const parentStyleable = el.parent?.nodeType === 'element'
-      ? this.buildSingleStyleable(el.parent as DomElement)
-      : null;
-    return {
-      tagName: el.tagName,
-      attributes: el.attributes,
-      parent: parentStyleable,
-      children,
+    let top = el;
+    while (top.parent?.nodeType === 'element') top = top.parent as DomElement;
+
+    const nodes = new WeakMap<DomElement, StyleableElement>();
+    const build = (node: DomElement, parent: StyleableElement | null): StyleableElement => {
+      const styleable: StyleableElement = {
+        tagName: node.tagName,
+        attributes: node.attributes,
+        parent,
+        children: [],
+      };
+      nodes.set(node, styleable);
+      styleable.children = node.children
+        .filter((c): c is DomElement => c.nodeType === 'element')
+        .map(c => build(c, styleable));
+      return styleable;
     };
+
+    build(top, null);
+    return nodes.get(el)!;
   }
 
   /**
@@ -465,6 +527,24 @@ class PageRenderer implements IPageRenderer, IDisposable {
     for (const rule of rules) {
       if (rule.selector === '__external__') continue;
 
+      // @keyframes rules (selector === '') are carried through the legacy
+      // CssRule[] pipe so the animator can resolve them at runtime.
+      if (rule.keyframes) {
+        css5Rules.push({
+          type: 'keyframes',
+          name: rule.keyframes.name,
+          keyframes: rule.keyframes.frames.map((kf) => ({
+            selectors: kf.selectors,
+            declarations: Array.from(kf.declarations.entries()).map(([property, value]) => ({
+              property,
+              value,
+              important: false,
+            })),
+          })),
+        });
+        continue;
+      }
+
       const selector = parser.parseSelector(rule.selector);
       if (!selector) continue;
 
@@ -533,8 +613,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
     parentComputed: Map<string, string> | null,
     containerWidth: number,
     containerHeight: number,
+    domTree: IDomTree,
   ): void {
-    const { domTree } = this.deps;
     let i = 0;
     for (const node of domNodes) {
       if (node.nodeType !== 'element') continue;
@@ -561,7 +641,96 @@ class PageRenderer implements IPageRenderer, IDisposable {
         computed,
         containerWidth,
         containerHeight,
+        domTree,
       );
+    }
+  }
+
+  /**
+   * Fetches and rasterizes each `<iframe src=…>` child document in the given
+   * DOM tree into the iframe element's `imageData` so the parent paint pass
+   * composites the embedded page. Returns the number of iframes rendered.
+   */
+  private async renderIframeChildren(doc: DomDocument, baseUrl: string): Promise<number> {
+    const iframes: DomElement[] = [];
+    const walk = (nodes: readonly DomNode[]): void => {
+      for (const node of nodes) {
+        if (node.nodeType !== 'element') continue;
+        const el = node as DomElement;
+        if (el.tagName.toLowerCase() === 'iframe') iframes.push(el);
+        walk(el.children);
+      }
+    };
+    walk(doc.children);
+    if (iframes.length === 0) return 0;
+
+    let rendered = 0;
+    for (const iframe of iframes) {
+      const src = iframe.attributes.get('src');
+      if (!src) continue;
+      try {
+        const absolute = new URL(src, baseUrl).toString();
+        const res = await this.deps.resourceLoader.loadResource(absolute, 'document');
+        if (res.error || !res.body) continue;
+
+        // Size the embedded frame from the iframe's laid-out box.
+        const layoutBox = this.deps.layoutEngine.getLayoutBox(iframe.domId);
+        const width = Math.max(1, Math.round(layoutBox?.width ?? 400));
+        const height = Math.max(1, Math.round(layoutBox?.height ?? 200));
+
+        const imageData = this.renderNestedDocument(res.body, absolute, width, height);
+        if (imageData) {
+          iframe.imageData = imageData;
+          iframe.loadingState = 'loaded';
+          rendered++;
+        }
+      } catch {
+        // Ignore iframe fetch/render failures; the frame stays blank.
+      }
+    }
+    return rendered;
+  }
+
+  /**
+   * Renders a standalone HTML document (iframe child page) through a fresh
+   * parse → style → layout → paint → rasterize sub-pipeline. Returns the
+   * rasterized ImageData sized to the given width/height, or null on failure.
+   */
+  private renderNestedDocument(
+    body: string,
+    url: string,
+    width: number,
+    height: number,
+  ): ImageData | null {
+    try {
+      const htmlParser = new HtmlParser();
+      const cssParser = new CssParser();
+      const domTree = new DomTree();
+      const layoutEngine = new LayoutEngine();
+      const paintEngine = new PaintEngine();
+
+      const parseResult = htmlParser.parse(body, url);
+      const doc = domTree.buildFromHtml(parseResult.document);
+
+      const rules = cssParser.extractStylesFromDocument(parseResult.document);
+      const stylesheet = this.buildCss5Stylesheet(cssParser, rules);
+      const rootStyleables = this.buildStyleableTree(doc.children, null);
+      this.applyStylesRecursive(
+        doc.children,
+        rootStyleables,
+        stylesheet,
+        null,
+        width,
+        height,
+        domTree,
+      );
+
+      layoutEngine.layout(doc, domTree, { viewportWidth: width, viewportHeight: height });
+      paintEngine.updateConfig({ width, height, backgroundColor: '#ffffff' });
+      paintEngine.paint(doc);
+      return paintEngine.rasterize();
+    } catch {
+      return null;
     }
   }
 
@@ -626,6 +795,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    setAnimationRuntime(null);
     this.reflowController?.dispose();
     this.reflowController = null;
   }

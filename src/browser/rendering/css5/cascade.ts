@@ -1100,6 +1100,8 @@ export function expandShorthands(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const BLOCK_ELEMENTS = new Set([
+  'html',
+  'body',
   'div',
   'p',
   'h1',

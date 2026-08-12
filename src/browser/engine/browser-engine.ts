@@ -151,6 +151,7 @@ type EngineEventType =
   | 'pageLoadRouted'
   | 'pageLoadFetched'
   | 'pageLoadReady'
+  | 'pageRepainted'
   | 'pageLoadError'
   | 'pageLoadAborted';
 
@@ -158,6 +159,7 @@ interface PageLoadStartedEvent  { kind: 'pageLoadStarted';  session: PageLoadSes
 interface PageLoadRoutedEvent   { kind: 'pageLoadRouted';   session: PageLoadSession; result: RouteResult }
 interface PageLoadFetchedEvent  { kind: 'pageLoadFetched';  session: PageLoadSession; raw: PageLoadResult }
 interface PageLoadReadyEvent    { kind: 'pageLoadReady';    session: PageLoadSession; elapsedMs: number }
+interface PageRepaintedEvent    { kind: 'pageRepainted';    session: PageLoadSession | null }
 interface PageLoadErrorEvent    { kind: 'pageLoadError';    session: PageLoadSession; error: Error }
 interface PageLoadAbortedEvent  { kind: 'pageLoadAborted';  session: PageLoadSession }
 
@@ -166,6 +168,7 @@ type EngineEvent =
   | PageLoadRoutedEvent
   | PageLoadFetchedEvent
   | PageLoadReadyEvent
+  | PageRepaintedEvent
   | PageLoadErrorEvent
   | PageLoadAbortedEvent;
 
@@ -211,6 +214,8 @@ interface IBrowserEngine extends ISharedService {
   // ── Events ────────────────────────────────────────────────────────────────
   on(type: EngineEventType, handler: (event: EngineEvent) => void): void;
   off(type: EngineEventType, handler: (event: EngineEvent) => void): void;
+  /** Notify listeners that the page was repainted (e.g. after async loads). */
+  notifyPageRepainted(): void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -430,6 +435,14 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   off(type: EngineEventType, handler: (event: EngineEvent) => void): void {
     this.bus.off(type, handler);
+  }
+
+  /**
+   * Emit a repaint notification to listeners (e.g. after async image loads
+   * finish decoding and a reflow frame re-rasterized the page).
+   */
+  notifyPageRepainted(): void {
+    this.bus.emit({ kind: 'pageRepainted', session: this._session });
   }
 
   // ── Private: page load pipeline ───────────────────────────────────────────

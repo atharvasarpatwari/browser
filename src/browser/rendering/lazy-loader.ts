@@ -55,6 +55,7 @@ export class LazyLoader {
   private decoder: ImageDecoder | null = null;
   private baseUrl = '';
   private eventHandlers = new Map<DomElement, Set<LoadEventHandler>>();
+  private globalEventHandlers = new Set<LoadEventHandler>();
   private pendingElements = new Set<DomElement>();
   private disposed = false;
 
@@ -108,6 +109,10 @@ export class LazyLoader {
       if (el.loadingState === 'lazy') {
         this.pendingElements.add(el);
         this.observer.observe(el);
+      } else if (el.loadingState === 'none' && el.tagName.toLowerCase() === 'img') {
+        // Eager images load immediately (placeholder first, async decode
+        // kicks off in the background and updates imageData on completion).
+        this.loadElement(el);
       }
     }
 
@@ -154,6 +159,7 @@ export class LazyLoader {
     this.observer = null;
     this.pendingElements.clear();
     this.eventHandlers.clear();
+    this.globalEventHandlers.clear();
     this.scheduler?.cancel();
     this.scheduler = null;
     this.domTree = null;
@@ -173,6 +179,16 @@ export class LazyLoader {
   /** Remove a handler from a lazy element. */
   offLoad(el: DomElement, handler: LoadEventHandler): void {
     this.eventHandlers.get(el)?.delete(handler);
+  }
+
+  /** Register a handler invoked for every element load event. */
+  onAnyLoad(handler: LoadEventHandler): void {
+    this.globalEventHandlers.add(handler);
+  }
+
+  /** Remove a global load-event handler. */
+  offAnyLoad(handler: LoadEventHandler): void {
+    this.globalEventHandlers.delete(handler);
   }
 
   // ── Intersection handling ───────────────────────────────────────────
@@ -366,6 +382,11 @@ export class LazyLoader {
         try { h(event); } catch (err) {
           console.error('[LazyLoader] Handler error:', err);
         }
+      }
+    }
+    for (const h of this.globalEventHandlers) {
+      try { h(event); } catch (err) {
+        console.error('[LazyLoader] Global handler error:', err);
       }
     }
   }

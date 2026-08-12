@@ -100,6 +100,7 @@ interface IPaintEngine extends IDisposable {
   updateConfig(config: Partial<PaintConfig>): void;
   on(type: PaintEventType, handler: (event: PaintEventUnion) => void): void;
   off(type: PaintEventType, handler: (event: PaintEventUnion) => void): void;
+  setOpacityResolver(resolver: ((el: DomElement) => number | null) | null): void;
 }
 
 let _layerSeq = 0;
@@ -121,6 +122,9 @@ class PaintEngine implements IPaintEngine {
   private layerTree: LayerTree | null = null;
   private layerPromoter: LayerPromoter = new LayerPromoter();
 
+  /** Overlay opacity resolver for animated values (e.g. CSS animations). */
+  private _opacityResolver: ((el: DomElement) => number | null) | null = null;
+
   constructor(config?: Partial<PaintConfig>) {
     this.config = { ...DEFAULT_PAINT_CONFIG, ...config };
     this.rasterizer = this.createRasterizer();
@@ -135,7 +139,7 @@ class PaintEngine implements IPaintEngine {
     const root = document.htmlElement ?? document.bodyElement;
     if (!root) return;
 
-    this.stackingTree = buildStackingContextTree(root);
+    this.stackingTree = buildStackingContextTree(root, this.stackingBuildOptions());
     this.renderTree = buildRenderObject(root);
 
     // Build compositing layer tree from stacking context
@@ -174,7 +178,7 @@ class PaintEngine implements IPaintEngine {
     const root = document.htmlElement ?? document.bodyElement;
     if (!root) return paintDamage;
 
-    this.stackingTree = buildStackingContextTree(root);
+    this.stackingTree = buildStackingContextTree(root, this.stackingBuildOptions());
     this.renderTree = buildRenderObject(root);
 
     const allElements: DomElement[] = [];
@@ -183,10 +187,13 @@ class PaintEngine implements IPaintEngine {
 
     for (const el of allElements) {
       const lb = el.layoutBox;
-      if (!lb || lb.width === 0 && lb.height === 0) continue;
-
+      if (!lb || lb.width === 0 && lb.height === 0) {
+        continue;
+      }
       const cached = this.elementCommands.get(el);
-      if (cached && !el._dirtyPaint) continue;
+      if (cached && !el._dirtyPaint) {
+        continue;
+      }
 
       this.elementCommands.delete(el);
       this.getElementPaintCommands(el);
@@ -352,7 +359,10 @@ class PaintEngine implements IPaintEngine {
    */
   private getElementPaintCommands(node: DomElement): PaintCommand[] {
     const cached = this.elementCommands.get(node);
-    if (cached) return cached;
+    if (cached) {
+      this.syncStackingBgCommands(node, cached);
+      return cached;
+    }
 
     const commands: PaintCommand[] = [];
     const style = node.computedStyle ?? new Map();
@@ -365,7 +375,16 @@ class PaintEngine implements IPaintEngine {
       const bh = layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom;
 
       // ── Background (enhanced with gradients + multi-layer) ────────────
-      const bgColor = style.get('background-color') ?? style.get('background') ?? 'transparent';
+      // The computed-style pipeline always resolves `background-color` (default
+      // `transparent`) alongside the `background` shorthand. Fall back to the
+      // shorthand when the longhand is transparent so `background:#ff0` paints.
+      let bgColor = style.get('background-color') ?? 'transparent';
+      if (bgColor === 'transparent') {
+        const bgShorthand = style.get('background');
+        if (bgShorthand && bgShorthand !== 'none' && bgShorthand !== 'transparent') {
+          bgColor = bgShorthand;
+        }
+      }
       const bgImage = style.get('background-image') ?? 'none';
       const bgSize = style.get('background-size') ?? 'auto';
       const bgPos = style.get('background-position') ?? '0% 0%';
@@ -609,17 +628,25 @@ class PaintEngine implements IPaintEngine {
     }
 
     this.elementCommands.set(node, commands);
+    this.syncStackingBgCommands(node, commands);
 
-    // If this element creates a stacking context, populate bgCommands
-    // by finding it in the tree and setting its bg commands
+    return commands;
+  }
+
+  /**
+   * If the element forms a stacking context, keep its context's bgCommands
+   * in sync with the (possibly cached) paint commands. The stacking tree is
+   * rebuilt every incremental paint, so this must run on cache hits too or
+   * animated opacity/transform groups would paint nothing after the first
+   * two frames.
+   */
+  private syncStackingBgCommands(node: DomElement, commands: PaintCommand[]): void {
     if (this.stackingTree) {
       const ctx = this.findStackingContext(this.stackingTree, node);
       if (ctx) {
         ctx.bgCommands = commands;
       }
     }
-
-    return commands;
   }
 
   /**
@@ -656,10 +683,11 @@ class PaintEngine implements IPaintEngine {
 
     const commands = this.getElementPaintCommands(node);
 
+    const animatedOpacity = this._opacityResolver?.(node);
     const layer: PaintLayer = {
       id: nextLayerId(),
       zIndex: layerZIndex,
-      opacity: parseFloat(style.get('opacity') ?? '1') || 1,
+      opacity: (animatedOpacity ?? parseFloat(style.get('opacity') ?? '1')) || 1,
       commands,
       bounds: (node as { layoutBox: LayoutBox | null }).layoutBox ?? null,
     };
@@ -691,6 +719,21 @@ class PaintEngine implements IPaintEngine {
    */
   setLayerCompositor(compositor: LayerCompositor): void {
     this.layerCompositor = compositor;
+  }
+
+  /**
+   * Set an overlay opacity resolver (e.g. CSS animation values). The resolver
+   * returns the current animated opacity for an element or null to fall back
+   * to the computed style.
+   */
+  setOpacityResolver(resolver: ((el: DomElement) => number | null) | null): void {
+    this._opacityResolver = resolver;
+  }
+
+  private stackingBuildOptions() {
+    return this._opacityResolver
+      ? { opacityResolver: this._opacityResolver as (el: DomElement) => number | null }
+      : undefined;
   }
 
   /**

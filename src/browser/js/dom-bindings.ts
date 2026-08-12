@@ -1,5 +1,6 @@
 import type { DomDocument, DomElement, DomNode, DomTextNode, IDomTree } from '../rendering/dom-tree';
 import { Animation, AnimationTimeline, KeyframeEffect, createAnimation, type Keyframe, type KeyframeEffectOptions } from '../rendering/compositing/animation-engine';
+import type { CssAnimationAnimator } from '../rendering/css-animations';
 import {
   type JSValue, type JSObject, type JSFunction,
   createObject, createArray, createNativeFunction,
@@ -406,6 +407,26 @@ function parseAnimationOptions(optionsArg: JSValue): KeyframeEffectOptions {
 
 // ── Shared animation timeline for JS-created animations ──
 const jsAnimationTimeline = new AnimationTimeline();
+
+// ── Active animation runtime ────────────────────────────────────────────────
+// Set by the page renderer so JS-created animations (element.animate()) share
+// the reflow controller's timeline and are resolved at paint time by the
+// animator. Falls back to the module timeline when unset (unit-test contexts).
+export interface AnimationRuntime {
+  timeline: AnimationTimeline;
+  animator: CssAnimationAnimator;
+}
+
+let activeAnimationRuntime: AnimationRuntime | null = null;
+
+/** Set (or clear) the active animation runtime for JS-created animations. */
+export function setAnimationRuntime(runtime: AnimationRuntime | null): void {
+  activeAnimationRuntime = runtime;
+}
+
+function getAnimationRuntime(): AnimationRuntime | null {
+  return activeAnimationRuntime;
+}
 
 /**
  * Create a JSObject wrapper around a real Animation engine instance.
@@ -1036,9 +1057,13 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
         emptyAnim.finish();
         return wrapAnimation(emptyAnim);
       }
+      const runtime = getAnimationRuntime();
+      const timeline = runtime?.timeline ?? jsAnimationTimeline;
       const effect = new KeyframeEffect(el.domId, keyframes, options);
-      const anim = new Animation(effect, jsAnimationTimeline);
+      const anim = new Animation(effect, timeline);
       anim.start();
+      // Route through the animator so animated values render at paint time.
+      runtime?.animator.registerAnimation(anim);
       // Track by element for getAnimations()
       getElementAnimations(el.domId).push(anim);
       // Clean up when finished
@@ -1049,6 +1074,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
           const idx = list.indexOf(anim);
           if (idx >= 0) list.splice(idx, 1);
         }
+        runtime?.animator.unregisterAnimation(anim);
         if (origFinish) origFinish(evt);
       };
       return wrapAnimation(anim);

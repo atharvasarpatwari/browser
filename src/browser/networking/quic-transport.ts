@@ -1,6 +1,7 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { HttpHeaderPair } from './http-protocol';
 import { HttpProtocolVersion } from './http-protocol';
+import { loadNodeBuiltin } from './node-builtins';
 
 enum QuicPacketType {
   Initial       = 0x00,
@@ -136,7 +137,10 @@ class QuicConnection implements IQuicConnection {
     this.srcConnectionId = this.generateConnectionId();
     this.destConnectionId = this.generateConnectionId();
 
-    const dgram = await import('node:dgram');
+    const dgram = loadNodeBuiltin<typeof import('node:dgram')>('node:dgram');
+    if (!dgram) {
+      throw new QuicError('Node dgram builtin is unavailable in this runtime', 0);
+    }
     this.socket = dgram.createSocket('udp4');
 
     return new Promise<void>((resolve, reject) => {

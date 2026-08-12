@@ -27,6 +27,17 @@ interface CssRule {
   readonly declarations: ReadonlyMap<string, string>;
   readonly source: 'inline' | 'style-tag' | 'external';
   readonly sourceUrl: string | null;
+  /**
+   * Present only for @keyframes rules (selector === ''). Lets the legacy
+   * CssRule[] pipe carry keyframes through to the CSS5 stylesheet rebuild so
+   * CSS-driven animations resolve their keyframes at runtime.
+   */
+  readonly keyframes?: { readonly name: string; readonly frames: readonly CssKeyframeDecl[] };
+}
+
+interface CssKeyframeDecl {
+  readonly selectors: readonly string[];
+  readonly declarations: ReadonlyMap<string, string>;
 }
 
 interface CssSpecificity {
@@ -146,6 +157,7 @@ class CssParser implements ICssParser {
 
     for (const rule of allRules) {
       if (rule.selector === '__external__') continue;
+      if (rule.keyframes) continue;
 
       // Parse the selector string using CSS5 parser
       const selector = this.css5.parseSelector(rule.selector);
@@ -192,6 +204,22 @@ class CssParser implements ICssParser {
   // ─────────────────────────────────────────────────────────────────────────
 
   private convertRule(rule: Css5Rule, order: number, sourceUrl: string | null): CssRule[] {
+    if (rule.type === 'keyframes') {
+      return [{
+        selector: '',
+        specificity: { id: 0, class: 0, tag: 0 },
+        declarations: new Map(),
+        source: 'style-tag' as const,
+        sourceUrl,
+        keyframes: {
+          name: rule.name,
+          frames: rule.keyframes.map((kf) => ({
+            selectors: kf.selectors,
+            declarations: new Map(kf.declarations.map((d) => [d.property, d.value] as const)),
+          })),
+        },
+      }];
+    }
     if (rule.type !== 'style') return [];
 
     return rule.selectors.map((selector) => {

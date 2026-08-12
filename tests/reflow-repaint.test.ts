@@ -210,7 +210,7 @@ describe('LayoutEngine incremental layout', () => {
     expect(cBoxAfter!.y).toBe(cBoxBefore!.y);
   });
 
-  it('dirty flags should be cleared after incremental layout', () => {
+  it('dirty flags should be cleared after incremental layout and paint', () => {
     const engine = new LayoutEngine({ viewportWidth: 800, viewportHeight: 600, defaultFontSize: 16 });
     const { tree, doc } = buildDoc('<html><body><div id="a" style="width:200px;height:100px"></div></body></html>');
 
@@ -222,7 +222,13 @@ describe('LayoutEngine incremental layout', () => {
 
     engine.layoutIncremental(doc, tree);
 
+    // Layout flags are consumed by incremental layout...
     expect(a._dirtyLayout).toBe(false);
+    // ...but the re-laid-out subtree stays paint-dirty until it is repainted
+    expect(a._dirtyPaint).toBe(true);
+
+    const paint = new PaintEngine({ width: 800, height: 600, backgroundColor: '#ffffff', devicePixelRatio: 1, showDebugBorders: false });
+    paint.paintIncremental(doc, new DamageTracker());
     expect(a._dirtyPaint).toBe(false);
   });
 });

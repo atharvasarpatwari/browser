@@ -262,6 +262,7 @@ interface CanvasStats {
   nonWhiteRatio: number;
   colorClusters: number;
   topColors: Array<{ hex: string; count: number }>;
+  signature: string;
 }
 
 async function canvasStats(page: Page): Promise<CanvasStats | null> {
@@ -269,7 +270,7 @@ async function canvasStats(page: Page): Promise<CanvasStats | null> {
     const c = document.querySelector('.content-area canvas') as HTMLCanvasElement | null;
     if (!c) return null;
     const ctx = c.getContext('2d');
-    if (!ctx) return { width: c.width, height: c.height, context: 'missing', opaqueRatio: 0, nonWhiteRatio: 0, colorClusters: 0, topColors: [] };
+    if (!ctx) return { width: c.width, height: c.height, context: 'missing', opaqueRatio: 0, nonWhiteRatio: 0, colorClusters: 0, topColors: [], signature: '' };
     const d = ctx.getImageData(0, 0, c.width, c.height).data;
     const total = d.length / 4;
     let alphaPx = 0;
@@ -298,6 +299,13 @@ async function canvasStats(page: Page): Promise<CanvasStats | null> {
         const hex = `#${toHex((q >> 10) & 31)}${toHex((q >> 5) & 31)}${toHex(q & 31)}`;
         return { hex, count };
       });
+    // Deterministic pixel signature: a 32-bit hash over the quantized
+    // histogram so frame-to-frame comparison reflects real pixel changes.
+    let hash = 5381;
+    for (const [q, count] of histogram) {
+      hash = ((hash * 33) ^ (q + 1)) >>> 0;
+      hash = ((hash * 33) ^ (count + 1)) >>> 0;
+    }
     return {
       width: c.width,
       height: c.height,
@@ -306,6 +314,7 @@ async function canvasStats(page: Page): Promise<CanvasStats | null> {
       nonWhiteRatio: +(nonWhite / total).toFixed(4),
       colorClusters: seen.size,
       topColors,
+      signature: (hash >>> 0).toString(16),
     };
   });
 }
@@ -426,6 +435,8 @@ test('Nova fidelity audit over crafted fixtures', async () => {
   let pageErrors: string[] = [];
 
   page.on('console', (msg) => {
+    // eslint-disable-next-line no-console
+    console.log(`[page-console] ${msg.type()}: ${msg.text().slice(0, 300)}`);
     if (msg.type() === 'error') consoleErrors.push(msg.text().slice(0, 300));
   });
   page.on('pageerror', (err) => pageErrors.push(String(err).slice(0, 300)));
@@ -465,10 +476,9 @@ test('Nova fidelity audit over crafted fixtures', async () => {
           await page.waitForTimeout(600);
           const second = await canvasStats(page);
           if (second) {
-            // Two separate quantized-signature snapshots; a live animation changes them.
-            const sig1 = JSON.stringify([canvas.nonWhiteRatio, canvas.colorClusters]);
-            const sig2 = JSON.stringify([second.nonWhiteRatio, second.colorClusters]);
-            frameDeltaClusters = sig1 === sig2 ? 0 : 1;
+            // Two separate quantized pixel signatures; a live animation changes
+            // the rendered pixels between captures.
+            frameDeltaClusters = canvas.signature === second.signature ? 0 : 1;
           }
         }
 
@@ -531,15 +541,53 @@ test('Nova fidelity audit over crafted fixtures', async () => {
     server.close();
   }
 
+  // ── Hard assertions ──────────────────────────────────────────────────────
+  // Every fixture must render to a canvas, must not emit console/page errors
+  // (the only permitted console line is the benign GPU-rasterizer warning,
+  // which is a `warning`, not an `error`), and must hit its content floor.
+  // Page text lives in the engine's internal document and is rasterized, so
+  // content floors are expressed as quantized-color signatures on the canvas.
+  for (const r of results) {
+    expect(r.canvas, `${r.name}: fixture must produce a canvas (status: ${r.status})`).toBeTruthy();
+    expect(r.consoleErrors, `${r.name}: must have no console errors`).toHaveLength(0);
+    expect(r.pageErrors, `${r.name}: must have no page errors`).toHaveLength(0);
+    if (r.name !== 'blank') {
+      expect(r.canvas?.nonWhiteRatio ?? 0, `${r.name}: must render non-background content`).toBeGreaterThan(0);
+      expect(r.canvas?.colorClusters ?? 0, `${r.name}: must render distinct content regions`).toBeGreaterThan(1);
+    }
+  }
+
   const basic = results.find((r) => r.name === 'basic');
   if (basic) {
-    expect(basic.canvas, `basic fixture must produce a canvas (content: ${basic.contentText || '-'})`).toBeTruthy();
     expect(basic.canvas?.colorClusters, 'basic fixture must render text/content (clusters > 1)').toBeGreaterThan(1);
   }
 
   const blank = results.find((r) => r.name === 'blank');
   if (blank) {
     expect(blank.canvas, 'blank fixture should have produced a canvas').toBeTruthy();
+    // Near-white floor: a blank page must rasterize uniformly near-white
+    // (quantized #383838 = 0xE0E0E0) — not a black box, not an error page.
+    expect(blank.canvas?.nonWhiteRatio, 'blank fixture must be uniformly near-white').toBe(0);
+    expect(blank.canvas?.colorClusters, 'blank fixture must be a single color region').toBe(1);
+    expect(blank.canvas?.topColors[0]?.hex, 'blank fixture top color must be near-white').toBe('#383838');
+  }
+
+  const images = results.find((r) => r.name === 'images');
+  if (images) {
+    const hexes = new Set(images.canvas?.topColors.map((t) => t.hex));
+    // Checkerboard PNG has 4 distinct color quadrants (red/green/blue/yellow);
+    // all four must surface in the rasterized output for a correct image render.
+    for (const quadrant of ['#380000', '#002800', '#000038', '#383000']) {
+      expect(hexes.has(quadrant), `images fixture must show checker quadrant ${quadrant}`).toBe(true);
+    }
+  }
+
+  const iframe = results.find((r) => r.name === 'iframe');
+  if (iframe) {
+    const hexes = new Set(iframe.canvas?.topColors.map((t) => t.hex));
+    // #303838 is the quantized #ddeeff background of the nested child page —
+    // present only when the iframe's child document was rasterized in place.
+    expect(hexes.has('#303838'), 'iframe fixture must embed the child page (blue background)').toBe(true);
   }
 
   // Surface per-fixture findings in the run log for triage.

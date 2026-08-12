@@ -26,6 +26,7 @@ import { ContentDecoder } from './content-encoding';
 import type { ContentCoding } from './content-encoding';
 import { connectThroughSocks, parseSocksProxyUrl } from './socks-connection';
 import { connectThroughHttpProxy, parseHttpProxyUrl } from './http-proxy-connect';
+import { loadNodeBuiltin } from './node-builtins';
 
 export class RawSocketError extends Error {
   constructor(message: string) {
@@ -148,9 +149,13 @@ class RawSocketHttpClient implements IHttpClient {
     const rawRequest = headerLines.join('\r\n');
     const requestBytes = Buffer.from(rawRequest, 'utf-8');
 
-    // Dynamic import of Node.js modules
-    const net = await import('node:net');
-    const tls = await import('node:tls');
+    // Load Node.js builtins lazily (require works in the Electron renderer;
+    // dynamic import() is rewritten to a shim by the Vite build).
+    const net = loadNodeBuiltin<typeof import('node:net')>('node:net');
+    const tls = loadNodeBuiltin<typeof import('node:tls')>('node:tls');
+    if (!net || !tls) {
+      throw new RawSocketError('Node net/tls builtins are unavailable in this runtime');
+    }
 
     return new Promise<HttpResponseSpec>((resolve, reject) => {
       let settled = false;

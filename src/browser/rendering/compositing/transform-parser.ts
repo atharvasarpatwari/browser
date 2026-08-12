@@ -325,6 +325,21 @@ export function parseTransform(transformStr: string | null | undefined): ParsedT
   return { is3D, matrix: result };
 }
 
+/** True when the matrix is a pure translation (no rotation/scale/skew/perspective). */
+export function isPureTranslation4x4(m: DOMMatrix4x4): boolean {
+  return Math.abs(m.m11 - 1) < 1e-6 && Math.abs(m.m22 - 1) < 1e-6 && Math.abs(m.m33 - 1) < 1e-6 &&
+    Math.abs(m.m44 - 1) < 1e-6 &&
+    Math.abs(m.m12) < 1e-6 && Math.abs(m.m13) < 1e-6 && Math.abs(m.m14) < 1e-6 &&
+    Math.abs(m.m21) < 1e-6 && Math.abs(m.m23) < 1e-6 && Math.abs(m.m24) < 1e-6 &&
+    Math.abs(m.m31) < 1e-6 && Math.abs(m.m32) < 1e-6 && Math.abs(m.m34) < 1e-6 &&
+    Math.abs(m.m43) < 1e-6;
+}
+
+/** Extract the (x, y) translation component of a 4x4 matrix. */
+export function translationOf4x4(m: DOMMatrix4x4): { x: number; y: number } {
+  return { x: m.m41, y: m.m42 };
+}
+
 export function applyTransform2D(point: { x: number; y: number }, m: DOMMatrix2D): { x: number; y: number } {
   return {
     x: m.a * point.x + m.c * point.y + m.e,

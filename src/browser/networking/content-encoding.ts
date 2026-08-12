@@ -1,4 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
+import { loadNodeBuiltin } from './node-builtins';
 
 enum ContentCoding {
   Gzip    = 'gzip',
@@ -29,7 +30,10 @@ class ContentDecoder implements IContentDecoder {
   async decode(encoding: ContentCoding, data: Buffer): Promise<Buffer> {
     if (encoding === ContentCoding.Identity || !data.length) return data;
 
-    const zlib = await import('node:zlib');
+    const zlib = loadNodeBuiltin<typeof import('node:zlib')>('node:zlib');
+    if (!zlib) {
+      throw new ContentEncodingError('node:zlib is unavailable in this runtime');
+    }
 
     switch (encoding) {
       case ContentCoding.Gzip:

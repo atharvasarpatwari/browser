@@ -1,5 +1,6 @@
 import type { DomElement, DomNode } from '../dom-tree';
 import { classifyDisplay } from './types';
+import { parseTransform, isPureTranslation4x4 } from '../compositing/transform-parser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STACKING CONTEXT
@@ -46,6 +47,8 @@ export interface StackingContext {
   readonly isGrouped: boolean;
   /** The resolved opacity for group compositing. */
   readonly groupOpacity: number;
+  /** Pure-translation overlay (e.g. animated transform) to apply at paint time. */
+  readonly translate: { x: number; y: number } | null;
   /** The will-change CSS property value, if any. */
   readonly willChange: string | null;
 }
@@ -122,9 +125,17 @@ function parseZIndex(raw: string | undefined): number {
  * 5. filter != none
  * 6. isolation: isolate
  */
+export interface StackingBuildOptions {
+  /** Optional overlay opacity resolver for animated values (e.g. CSS animations). */
+  opacityResolver?: (el: DomElement) => number | null;
+  /** Optional overlay transform resolver returning an animated transform string. */
+  transformResolver?: (el: DomElement) => string | null;
+}
+
 export function createsStackingContext(
   el: DomElement,
   isRoot: boolean,
+  options?: StackingBuildOptions,
 ): boolean {
   if (isRoot) return true;
 
@@ -136,8 +147,14 @@ export function createsStackingContext(
     if (zRaw !== undefined && zRaw !== 'auto') return true;
   }
 
-  // opacity < 1
-  if (getOpacity(style) < 1) return true;
+  // opacity < 1 (animated overlay value wins over the cascade)
+  const animatedOpacity = options?.opacityResolver?.(el);
+  const opacity = animatedOpacity ?? getOpacity(style);
+  if (opacity < 1) return true;
+
+  // Animated transform overlay creates a context just like a static transform.
+  const animatedTransform = options?.transformResolver?.(el);
+  if (animatedTransform && animatedTransform !== 'none') return true;
 
   // transform != none
   const transform = getTransform(style);
@@ -177,14 +194,24 @@ export function createsStackingContext(
  * @param root - The root element (typically <html>)
  * @returns The root StackingContext
  */
-export function buildStackingContextTree(root: DomElement): StackingContext {
-  const tree = createContext(root, true);
+export function buildStackingContextTree(root: DomElement, options?: StackingBuildOptions): StackingContext {
+  const tree = createContext(root, true, options);
   return tree;
 }
 
-function createContext(el: DomElement, isRoot: boolean): StackingContext {
+function createContext(el: DomElement, isRoot: boolean, options?: StackingBuildOptions): StackingContext {
   const style = getStyle(el);
-  const opacity = getOpacity(style);
+  const animatedOpacity = options?.opacityResolver?.(el);
+  const opacity = animatedOpacity ?? getOpacity(style);
+
+  const animatedTransform = options?.transformResolver?.(el);
+  let translate: { x: number; y: number } | null = null;
+  if (animatedTransform && animatedTransform !== 'none') {
+    const parsed = parseTransform(animatedTransform);
+    if (parsed && isPureTranslation4x4(parsed.matrix)) {
+      translate = { x: parsed.matrix.m41, y: parsed.matrix.m42 };
+    }
+  }
 
   const ctx: StackingContext = {
     element: el,
@@ -197,10 +224,11 @@ function createContext(el: DomElement, isRoot: boolean): StackingContext {
     positionedAutoEntries: [],
     isGrouped: opacity < 1,
     groupOpacity: opacity,
+    translate,
     willChange: getWillChange(style) ?? null,
   };
 
-  classifyChildrenIntoContext(ctx, el, isRoot);
+  classifyChildrenIntoContext(ctx, el, isRoot, options);
   sortChildContexts(ctx);
 
   return ctx;
@@ -217,6 +245,7 @@ function classifyChildrenIntoContext(
   ctx: StackingContext,
   el: DomElement,
   _isRootCtx: boolean,
+  options?: StackingBuildOptions,
 ): void {
   for (const child of el.children) {
     if (!child || child.nodeType !== 'element') continue;
@@ -225,9 +254,9 @@ function classifyChildrenIntoContext(
     const display = getDisplay(childStyle);
     if (display === 'none') continue;
 
-    if (createsStackingContext(childEl, false)) {
+    if (createsStackingContext(childEl, false, options)) {
       // Child creates its own stacking context
-      const childCtx = createContext(childEl, false);
+      const childCtx = createContext(childEl, false, options);
       const position = getPosition(childStyle);
       if (isPositionedElement(childStyle)) {
         childCtx.zIndex = parseZIndex(getZIndexRaw(childStyle));
@@ -239,7 +268,7 @@ function classifyChildrenIntoContext(
       // Child participates in parent context — classify into sub-layer
       classifyElementIntoLayer(ctx, childEl);
       // Also recurse into this child's descendants
-      classifyChildrenIntoContext(ctx, childEl, false);
+      classifyChildrenIntoContext(ctx, childEl, false, options);
     }
   }
 }

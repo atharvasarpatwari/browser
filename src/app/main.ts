@@ -846,6 +846,7 @@ class ApplicationBootstrap {
       resourceEnforcer: cspEnforcement.resourceEnforcer,
       securityLayer,
       storageDir: webStorageDir,
+      onFrameRendered: () => engine.notifyPageRepainted(),
     });
     engine.setPageRenderer(pageRenderer);
 

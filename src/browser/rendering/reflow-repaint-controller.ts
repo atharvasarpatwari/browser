@@ -15,6 +15,7 @@ import type { IPaintEngine } from './paint-engine';
 import type { LayerCompositor } from './compositing/layer-compositor';
 import type { LayerTree } from './compositing/layer-tree';
 import { AnimationTimeline } from './compositing/animation-engine';
+import { CssAnimationAnimator } from './css-animations';
 
 // ─── TYPES ──────────────────────────────────────────────────────────────────
 
@@ -56,8 +57,12 @@ export class ReflowRepaintController {
   private lastCompositedImageData: ImageData | null = null;
   /** Optional callback for incremental style recalc before layout. */
   private _styleRecalcCallback: (() => void) | null = null;
+  /** Optional callback invoked after each processed frame. */
+  private _frameCallback: (() => void) | null = null;
   /** Animation timeline for ticking active animations each frame. */
   private _animationTimeline: AnimationTimeline = new AnimationTimeline();
+  /** Optional animator bridging CSS/WAAPI animations into the paint loop. */
+  private _animator: CssAnimationAnimator | null = null;
 
   constructor(
     private layoutEngine: ILayoutEngine,
@@ -91,6 +96,27 @@ export class ReflowRepaintController {
    */
   setStyleRecalcCallback(cb: (() => void) | null): void {
     this._styleRecalcCallback = cb;
+  }
+
+  /**
+   * Set a callback invoked after every processed frame.
+   * Useful for pushing the composited result to the UI (page repaint).
+   */
+  setFrameCallback(cb: (() => void) | null): void {
+    this._frameCallback = cb;
+  }
+
+  /**
+   * Set the animation animator that bridges CSS @keyframes / Web Animations
+   * API into the paint loop. When animations are active, the controller keeps
+   * scheduling frames so animated values reach the rasterizer.
+   */
+  setAnimationAnimator(animator: CssAnimationAnimator | null): void {
+    this._animator = animator;
+  }
+
+  getAnimationAnimator(): CssAnimationAnimator | null {
+    return this._animator;
   }
 
   // ── Invalidation ──────────────────────────────────────────────────
@@ -165,6 +191,10 @@ export class ReflowRepaintController {
         this._styleRecalcCallback();
       }
 
+      // 1.5. Sync CSS animations (create/destroy from computed styles) so
+      //      animated values are resolved before layout/paint consume them.
+      this._animator?.sync(this.document);
+
       // 2. Incremental layout — returns the layout damage tracker
       const layoutDamage = this.layoutEngine.layoutIncremental(
         this.document,
@@ -187,6 +217,18 @@ export class ReflowRepaintController {
       this.paintDamage.clear();
     } finally {
       this.processing = false;
+    }
+
+    // 6. Notify listeners that a frame was processed (page repaint).
+    try {
+      this._frameCallback?.();
+    } catch {
+      // Listener errors must not break the reflow loop.
+    }
+
+    // 7. Keep the frame loop alive while animations are producing frames.
+    if (this._animator?.hasActiveAnimations()) {
+      this.requestFrame();
     }
   }
 
@@ -220,6 +262,8 @@ export class ReflowRepaintController {
     this.document = null;
     this.processing = false;
     this.lastCompositedImageData = null;
+    this._animator?.dispose();
+    this._animator = null;
     this._animationTimeline.dispose();
   }
 }

@@ -8,8 +8,12 @@ export interface HtmlSanitizerConfig {
   readonly keepScriptElements?: boolean;
 }
 
+// `iframe` is intentionally NOT stripped: the engine renders iframe child
+// documents through a script-free parse→style→layout→paint→rasterize pipeline
+// (page-renderer.renderNestedDocument), so the element cannot execute code or
+// load third-party frames; it is embedded as pixels only.
 const DEFAULT_STRIPPED_ELEMENTS = new Set([
-  'script', 'iframe', 'object', 'embed', 'applet', 'base', 'template',
+  'script', 'object', 'embed', 'applet', 'base', 'template',
 ]);
 
 const DEFAULT_STRIPPED_ATTRIBUTES = new Set([

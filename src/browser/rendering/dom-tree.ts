@@ -2,6 +2,7 @@ import type { IDisposable } from '../../app/dependency-container';
 import type { HtmlDocument, HtmlElement, HtmlNode } from './html-parser';
 import { NodeType } from './html-parser';
 import { querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll, type SelectableElement } from './css5/selector';
+import { CssParser as Css5Parser } from './css5/parser';
 
 type DomNodeType = 'document' | 'element' | 'text' | 'comment';
 
@@ -177,6 +178,12 @@ interface IDomTree extends IDisposable {
 let _domNodeSeq = 0;
 function nextDomNodeId(): string {
   return `dom-${(++_domNodeSeq).toString(36)}`;
+}
+
+let _inlineStyleParser: Css5Parser | null = null;
+function parseInlineStyleAttr(styleAttr: string): Map<string, string> {
+  if (!_inlineStyleParser) _inlineStyleParser = new Css5Parser();
+  return _inlineStyleParser.parseInlineStyle(styleAttr);
 }
 
 /**
@@ -554,6 +561,11 @@ class DomTree implements IDomTree {
       const loadingAttr = el.attributes.get('loading');
       const loadingState: DomElement['loadingState'] =
         loadingAttr === 'lazy' ? 'lazy' : 'none';
+      // Inline style="" declarations are default presentation — apply them
+      // at build time so layout works even without a stylesheet cascade
+      // (the cascade overwrites these with fully-computed values later).
+      const styleAttr = el.attributes.get('style');
+      const computedStyle = styleAttr ? parseInlineStyleAttr(styleAttr) : null;
 
       const domEl: DomElement = {
         domId: nextDomNodeId(),
@@ -562,7 +574,7 @@ class DomTree implements IDomTree {
         attributes: el.attributes,
         parent,
         children: [],
-        computedStyle: null,
+        computedStyle,
         usedStyle: null,
         layoutBox: null,
         imageData: null,
