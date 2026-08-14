@@ -387,6 +387,8 @@ interface RasterState {
   borderRadius: BorderRadius | null;
   borderBox: { x: number; y: number; w: number; h: number } | null;
   clipRect: ClipRect | null;
+  translateX: number;
+  translateY: number;
 }
 
 function defaultState(): RasterState {
@@ -403,6 +405,8 @@ function defaultState(): RasterState {
     borderRadius: null,
     borderBox: null,
     clipRect: null,
+    translateX: 0,
+    translateY: 0,
   };
 }
 
@@ -418,8 +422,10 @@ function cloneState(s: RasterState): RasterState {
     fillGradient: s.fillGradient,
     blendMode: s.blendMode,
     borderRadius: s.borderRadius,
-    borderBox: s.borderBox,
-    clipRect: s.clipRect,
+    borderBox: s.borderBox ? { ...s.borderBox } : null,
+    clipRect: s.clipRect ? { ...s.clipRect } : null,
+    translateX: s.translateX,
+    translateY: s.translateY,
   };
 }
 

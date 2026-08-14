@@ -74,7 +74,7 @@ class BrowserViewModel : ViewModel() {
         }
         tabs.clear()
         tabs.addAll(parsed)
-        activeTabId.value = if (obj.isNull("activeTabId")) null else obj.optString("activeTabId")
+        activeTabId.value = if (obj.isNull("activeTabId")) null else obj.optString("activeTabId", null)
         addressBarText.value = obj.optString("addressValue", addressBarText.value)
         canGoBack.value = obj.optBoolean("canGoBack", false)
         canGoForward.value = obj.optBoolean("canGoForward", false)

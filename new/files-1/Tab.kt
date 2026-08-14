@@ -1,7 +1,5 @@
 package com.nova.browser.model
 
-import java.util.UUID
-
 /**
  * Mirrors one entry of the engine's ChromeStateSnapshot.tabs (see
  * src/ui/pages/browser-window.ts). The engine — not this Kotlin layer — owns
@@ -18,15 +16,17 @@ data class Tab(
     val loading: Boolean
 )
 
+/** Mirrors one entry from the engine's real BookmarkService (see listBookmarksExternal() in browser-window.ts). */
 data class Bookmark(
-    val id: String = UUID.randomUUID().toString(),
+    val id: String,
     val title: String,
     val url: String
 )
 
+/** Mirrors one entry from the engine's real HistoryService (see listHistoryExternal() in browser-window.ts). */
 data class HistoryEntry(
-    val id: String = UUID.randomUUID().toString(),
+    val id: String,
     val title: String,
     val url: String,
-    val visitedAt: Long = System.currentTimeMillis()
+    val visitedAt: Long
 )

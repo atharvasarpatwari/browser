@@ -1,0 +1,927 @@
+/*
+ * NOVA BROWSER — WORLD-CLASS CHROME UI
+ * File: nova-browser.css
+ *
+ * Designed for Nova's desktop web chrome:
+ *   .browser-window
+ *   .toolbar / .address-bar-slot
+ *   .tab-bar / .tab-strip
+ *   .bookmark-bar
+ *   .status-bar
+ *   .content-area
+ *
+ * The Android build uses native Jetpack Compose chrome when the native bridge
+ * is present, so this stylesheet is intentionally scoped to the web/desktop UI.
+ */
+
+@layer reset, theme, shell, tabs, toolbar, bookmarks, status, overlays, responsive, accessibility;
+
+@layer reset {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  button {
+    border: 0;
+    padding: 0;
+  }
+}
+
+@layer theme {
+  :root {
+    color-scheme: dark;
+
+    /* Nova identity */
+    --nova-accent: #8b7cff;
+    --nova-accent-strong: #a99fff;
+    --nova-accent-soft: color-mix(in srgb, var(--nova-accent) 15%, transparent);
+    --nova-success: #46d39a;
+    --nova-warning: #f2c66d;
+    --nova-danger: #ff6f7d;
+    --nova-info: #69b7ff;
+
+    /* Surfaces */
+    --nova-bg: #090a0f;
+    --nova-surface-0: #0c0e14;
+    --nova-surface-1: #11141c;
+    --nova-surface-2: #171a24;
+    --nova-surface-3: #1d212d;
+    --nova-surface-hover: #222735;
+    --nova-surface-active: #292e3e;
+
+    /* Text */
+    --nova-text: #f5f7fb;
+    --nova-text-2: #c7cbd6;
+    --nova-text-3: #8d94a5;
+    --nova-text-disabled: #5d6372;
+
+    /* Borders */
+    --nova-border: rgba(255, 255, 255, 0.075);
+    --nova-border-strong: rgba(255, 255, 255, 0.13);
+    --nova-focus-ring: color-mix(in srgb, var(--nova-accent) 70%, white);
+
+    /* Geometry */
+    --nova-radius-xs: 6px;
+    --nova-radius-sm: 9px;
+    --nova-radius-md: 12px;
+    --nova-radius-lg: 16px;
+    --nova-radius-xl: 20px;
+    --nova-radius-pill: 999px;
+
+    /* Motion */
+    --nova-ease: cubic-bezier(.2, .8, .2, 1);
+    --nova-ease-spring: cubic-bezier(.16, 1, .3, 1);
+    --nova-fast: 120ms;
+    --nova-normal: 180ms;
+    --nova-slow: 280ms;
+
+    /* Shadows */
+    --nova-shadow-sm:
+      0 1px 2px rgba(0, 0, 0, .28),
+      0 4px 14px rgba(0, 0, 0, .14);
+
+    --nova-shadow-lg:
+      0 16px 48px rgba(0, 0, 0, .42),
+      0 2px 12px rgba(0, 0, 0, .28);
+
+    /* Layout */
+    --nova-toolbar-height: 58px;
+    --nova-tab-height: 38px;
+    --nova-bookmark-height: 34px;
+    --nova-status-height: 24px;
+    --nova-content-min-width: 240px;
+
+    /* Typography */
+    --nova-font-ui:
+      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", sans-serif;
+
+    --nova-font-mono:
+      "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  .nova-light,
+  [data-theme="light"] {
+    color-scheme: light;
+
+    --nova-bg: #f4f6fa;
+    --nova-surface-0: #ffffff;
+    --nova-surface-1: #f8f9fc;
+    --nova-surface-2: #eef1f6;
+    --nova-surface-3: #e5e9f1;
+    --nova-surface-hover: #e0e5ee;
+    --nova-surface-active: #d8deea;
+
+    --nova-text: #151821;
+    --nova-text-2: #414756;
+    --nova-text-3: #70778a;
+    --nova-text-disabled: #a0a6b3;
+
+    --nova-border: rgba(18, 24, 38, .09);
+    --nova-border-strong: rgba(18, 24, 38, .15);
+
+    --nova-shadow-sm:
+      0 1px 2px rgba(28, 35, 50, .08),
+      0 4px 14px rgba(28, 35, 50, .06);
+
+    --nova-shadow-lg:
+      0 18px 50px rgba(28, 35, 50, .16),
+      0 2px 12px rgba(28, 35, 50, .08);
+  }
+
+  .browser-window,
+  .browser-window * {
+    font-family: var(--nova-font-ui);
+  }
+}
+
+@layer shell {
+  .browser-window {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    color: var(--nova-text);
+    background:
+      radial-gradient(
+        900px 320px at 50% -160px,
+        color-mix(in srgb, var(--nova-accent) 8%, transparent),
+        transparent 70%
+      ),
+      var(--nova-bg);
+    font-size: 13px;
+    line-height: 1.4;
+    letter-spacing: -0.005em;
+    user-select: none;
+  }
+
+  .browser-window::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(
+        180deg,
+        rgba(255,255,255,.018),
+        transparent 18%
+      );
+  }
+
+  .browser-window :focus-visible {
+    outline: 2px solid var(--nova-focus-ring);
+    outline-offset: 2px;
+  }
+
+  .content-area,
+  .browser-content,
+  .content-renderer {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: var(--nova-content-min-width);
+    min-height: 0;
+    overflow: auto;
+    background: #fff;
+    color: #111;
+    user-select: text;
+  }
+
+  .browser-window .toolbar,
+  .browser-window .tab-bar,
+  .browser-window .bookmark-bar,
+  .browser-window .status-bar {
+    flex: 0 0 auto;
+  }
+}
+
+@layer tabs {
+  .browser-window .tab-bar,
+  .browser-window .tab-strip,
+  .browser-window [data-nova="tab-strip"] {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    width: 100%;
+    height: var(--nova-tab-height);
+    min-height: var(--nova-tab-height);
+    padding: 4px 8px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--nova-surface-0) 96%, black),
+        var(--nova-surface-1)
+      );
+    border-bottom: 1px solid var(--nova-border);
+  }
+
+  .browser-window .tab-bar::-webkit-scrollbar,
+  .browser-window .tab-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .browser-window .tab,
+  .browser-window [data-tab-id] {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 0 1 220px;
+    width: 220px;
+    min-width: 120px;
+    max-width: 260px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0 8px 0 11px;
+    gap: 8px;
+    border: 1px solid transparent;
+    border-bottom: 0;
+    border-radius: 11px 11px 0 0;
+    color: var(--nova-text-3);
+    background: transparent;
+    cursor: pointer;
+    transition:
+      color var(--nova-fast) var(--nova-ease),
+      background var(--nova-fast) var(--nova-ease),
+      border-color var(--nova-fast) var(--nova-ease),
+      transform var(--nova-fast) var(--nova-ease);
+  }
+
+  .browser-window .tab:hover,
+  .browser-window [data-tab-id]:hover {
+    color: var(--nova-text-2);
+    background: color-mix(in srgb, var(--nova-surface-2) 70%, transparent);
+  }
+
+  .browser-window .tab.active,
+  .browser-window .tab[aria-selected="true"],
+  .browser-window [data-tab-id][data-active="true"] {
+    color: var(--nova-text);
+    background:
+      linear-gradient(
+        180deg,
+        var(--nova-surface-3),
+        var(--nova-surface-2)
+      );
+    border-color: var(--nova-border);
+    box-shadow:
+      0 -1px 0 rgba(255,255,255,.025) inset,
+      0 1px 0 rgba(0,0,0,.18);
+  }
+
+  .browser-window .tab.active::after,
+  .browser-window .tab[aria-selected="true"]::after {
+    content: "";
+    position: absolute;
+    left: 18%;
+    right: 18%;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--nova-accent);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--nova-accent) 50%, transparent);
+  }
+
+  .browser-window .tab-title,
+  .browser-window .tab .title {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    color: inherit;
+    font-size: 12px;
+    font-weight: 520;
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .browser-window .tab-favicon,
+  .browser-window .tab-icon,
+  .browser-window .favicon {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    object-fit: contain;
+  }
+
+  .browser-window .tab-close,
+  .browser-window .close-tab {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 22px;
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    color: var(--nova-text-3);
+    background: transparent;
+    cursor: pointer;
+    opacity: .72;
+    transition:
+      background var(--nova-fast) var(--nova-ease),
+      color var(--nova-fast) var(--nova-ease),
+      opacity var(--nova-fast) var(--nova-ease);
+  }
+
+  .browser-window .tab-close:hover,
+  .browser-window .close-tab:hover {
+    color: var(--nova-danger);
+    background: color-mix(in srgb, var(--nova-danger) 14%, transparent);
+    opacity: 1;
+  }
+
+  .browser-window .tab.loading .tab-favicon,
+  .browser-window .tab[data-loading="true"] .tab-favicon {
+    animation: nova-spin .8s linear infinite;
+  }
+
+  .browser-window .new-tab,
+  .browser-window .new-tab-button {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    margin: 0 0 2px 3px;
+    border-radius: 9px;
+    color: var(--nova-text-3);
+    background: transparent;
+    cursor: pointer;
+    transition:
+      color var(--nova-fast) var(--nova-ease),
+      background var(--nova-fast) var(--nova-ease),
+      transform var(--nova-fast) var(--nova-ease);
+  }
+
+  .browser-window .new-tab:hover,
+  .browser-window .new-tab-button:hover {
+    color: var(--nova-text);
+    background: var(--nova-surface-hover);
+    transform: translateY(-1px);
+  }
+
+  .browser-window .pinned-tab {
+    flex: 0 0 42px;
+    width: 42px;
+    justify-content: center;
+  }
+
+  .browser-window .pinned-tab .tab-title {
+    display: none;
+  }
+}
+
+@layer toolbar {
+  .browser-window .toolbar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: var(--nova-toolbar-height);
+    height: var(--nova-toolbar-height);
+    padding: 8px 12px;
+    background:
+      linear-gradient(
+        180deg,
+        var(--nova-surface-1),
+        var(--nova-surface-0)
+      );
+    border-bottom: 1px solid var(--nova-border);
+  }
+
+  .browser-window .toolbar::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--nova-accent) 12%, transparent),
+      transparent
+    );
+  }
+
+  .browser-window .toolbar-button,
+  .browser-window .nav-button,
+  .browser-window .toolbar button {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    color: var(--nova-text-3);
+    background: transparent;
+    cursor: pointer;
+    transition:
+      color var(--nova-fast) var(--nova-ease),
+      background var(--nova-fast) var(--nova-ease),
+      transform var(--nova-fast) var(--nova-ease);
+  }
+
+  .browser-window .toolbar-button:hover,
+  .browser-window .nav-button:hover,
+  .browser-window .toolbar button:hover {
+    color: var(--nova-text);
+    background: var(--nova-surface-hover);
+  }
+
+  .browser-window .toolbar-button:active,
+  .browser-window .nav-button:active,
+  .browser-window .toolbar button:active {
+    transform: scale(.94);
+  }
+
+  .browser-window .toolbar-button:disabled,
+  .browser-window .nav-button:disabled,
+  .browser-window .toolbar button:disabled {
+    color: var(--nova-text-disabled);
+    background: transparent;
+    cursor: default;
+    opacity: .55;
+    transform: none;
+  }
+
+  .browser-window .address-bar-slot {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 160px;
+  }
+
+  .browser-window .address-bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 40px;
+    height: 40px;
+    padding: 0 10px 0 13px;
+    gap: 8px;
+    border: 1px solid var(--nova-border);
+    border-radius: var(--nova-radius-pill);
+    color: var(--nova-text);
+    background:
+      linear-gradient(
+        180deg,
+        var(--nova-surface-2),
+        var(--nova-surface-1)
+      );
+    box-shadow:
+      0 1px 0 rgba(255,255,255,.025) inset,
+      0 1px 4px rgba(0,0,0,.12);
+    transition:
+      border-color var(--nova-normal) var(--nova-ease),
+      box-shadow var(--nova-normal) var(--nova-ease),
+      background var(--nova-normal) var(--nova-ease);
+  }
+
+  .browser-window .address-bar:hover {
+    border-color: var(--nova-border-strong);
+    background: var(--nova-surface-3);
+  }
+
+  .browser-window .address-bar:focus-within {
+    border-color: color-mix(in srgb, var(--nova-accent) 62%, var(--nova-border));
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--nova-accent) 12%, transparent),
+      0 8px 24px rgba(0,0,0,.14);
+  }
+
+  .browser-window .address-bar-icon,
+  .browser-window .security-icon {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 22px;
+    width: 22px;
+    height: 22px;
+    color: var(--nova-text-3);
+  }
+
+  .browser-window .security-icon.secure,
+  .browser-window .address-bar.secure .security-icon {
+    color: var(--nova-success);
+  }
+
+  .browser-window .security-icon.warning,
+  .browser-window .address-bar.warning .security-icon {
+    color: var(--nova-warning);
+  }
+
+  .browser-window .address-bar input,
+  .browser-window .address-input {
+    min-width: 0;
+    flex: 1;
+    height: 100%;
+    border: 0;
+    outline: 0;
+    padding: 0;
+    color: var(--nova-text);
+    background: transparent;
+    font-size: 13px;
+    font-weight: 450;
+    letter-spacing: -.003em;
+  }
+
+  .browser-window .address-bar input::placeholder,
+  .browser-window .address-input::placeholder {
+    color: var(--nova-text-3);
+  }
+
+  .browser-window .address-bar .action,
+  .browser-window .address-bar-action {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    color: var(--nova-text-3);
+    background: transparent;
+    cursor: pointer;
+    transition:
+      color var(--nova-fast) var(--nova-ease),
+      background var(--nova-fast) var(--nova-ease);
+  }
+
+  .browser-window .address-bar .action:hover,
+  .browser-window .address-bar-action:hover {
+    color: var(--nova-text);
+    background: color-mix(in srgb, var(--nova-text) 7%, transparent);
+  }
+
+  .browser-window .address-bar .bookmark.active,
+  .browser-window .address-bar .bookmarked {
+    color: var(--nova-accent-strong);
+  }
+
+  .browser-window .loading-indicator,
+  .browser-window .progress-bar {
+    position: absolute;
+    left: 0;
+    bottom: -1px;
+    height: 2px;
+    width: 100%;
+    overflow: hidden;
+    border-radius: 2px;
+    pointer-events: none;
+    background: transparent;
+  }
+
+  .browser-window .loading-indicator::after,
+  .browser-window .progress-bar::after {
+    content: "";
+    display: block;
+    width: 36%;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--nova-accent);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--nova-accent) 60%, transparent);
+    animation: nova-progress 1.15s var(--nova-ease) infinite;
+  }
+
+  .browser-window .toolbar .menu-button {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+  }
+}
+
+@layer bookmarks {
+  .browser-window .bookmark-bar {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    min-height: var(--nova-bookmark-height);
+    height: var(--nova-bookmark-height);
+    padding: 3px 9px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    background: var(--nova-surface-0);
+    border-bottom: 1px solid var(--nova-border);
+  }
+
+  .browser-window .bookmark-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .browser-window .bookmark-item,
+  .browser-window .bookmark-bar a {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: 220px;
+    height: 27px;
+    padding: 0 9px;
+    gap: 7px;
+    border-radius: 7px;
+    color: var(--nova-text-2);
+    background: transparent;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition:
+      color var(--nova-fast) var(--nova-ease),
+      background var(--nova-fast) var(--nova-ease);
+  }
+
+  .browser-window .bookmark-item:hover,
+  .browser-window .bookmark-bar a:hover {
+    color: var(--nova-text);
+    background: var(--nova-surface-hover);
+  }
+
+  .browser-window .bookmark-item .favicon {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+@layer status {
+  .browser-window .status-bar {
+    display: flex;
+    align-items: center;
+    min-height: var(--nova-status-height);
+    height: var(--nova-status-height);
+    padding: 0 9px;
+    gap: 8px;
+    color: var(--nova-text-3);
+    background: var(--nova-surface-0);
+    border-top: 1px solid var(--nova-border);
+    font-size: 11px;
+  }
+
+  .browser-window .status-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .browser-window .status-spacer {
+    flex: 1;
+  }
+
+  .browser-window .shield-active,
+  .browser-window .security-active {
+    color: var(--nova-success);
+  }
+
+  .browser-window .zoom-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 4px;
+    border-radius: 6px;
+  }
+
+  .browser-window .zoom-control:hover {
+    background: var(--nova-surface-hover);
+    color: var(--nova-text);
+  }
+}
+
+@layer overlays {
+  .browser-window .context-menu,
+  .browser-window .menu,
+  .browser-window .popover,
+  .browser-window .dropdown,
+  .browser-window [role="menu"] {
+    position: fixed;
+    z-index: 1000;
+    min-width: 190px;
+    padding: 6px;
+    border: 1px solid var(--nova-border-strong);
+    border-radius: 12px;
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--nova-surface-3) 96%, transparent),
+        var(--nova-surface-2)
+      );
+    box-shadow: var(--nova-shadow-lg);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+  }
+
+  .browser-window .context-menu-item,
+  .browser-window .menu-item,
+  .browser-window [role="menuitem"] {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 34px;
+    padding: 0 10px;
+    gap: 9px;
+    border-radius: 8px;
+    color: var(--nova-text-2);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      color var(--nova-fast) var(--nova-ease),
+      background var(--nova-fast) var(--nova-ease);
+  }
+
+  .browser-window .context-menu-item:hover,
+  .browser-window .menu-item:hover,
+  .browser-window [role="menuitem"]:hover {
+    color: var(--nova-text);
+    background: var(--nova-accent-soft);
+  }
+
+  .browser-window .separator {
+    height: 1px;
+    margin: 5px 6px;
+    background: var(--nova-border);
+  }
+
+  .browser-window .modal-backdrop,
+  .browser-window [data-overlay="backdrop"] {
+    position: fixed;
+    z-index: 900;
+    inset: 0;
+    background: rgba(0, 0, 0, .42);
+    backdrop-filter: blur(4px);
+  }
+
+  .browser-window .modal,
+  .browser-window .dialog {
+    position: fixed;
+    z-index: 901;
+    min-width: 320px;
+    max-width: min(680px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+    padding: 20px;
+    border: 1px solid var(--nova-border-strong);
+    border-radius: 18px;
+    background: var(--nova-surface-2);
+    color: var(--nova-text);
+    box-shadow: var(--nova-shadow-lg);
+  }
+
+  .browser-window .toast,
+  .browser-window .notification {
+    position: fixed;
+    right: 18px;
+    bottom: 32px;
+    z-index: 1100;
+    max-width: 360px;
+    padding: 11px 14px;
+    border: 1px solid var(--nova-border-strong);
+    border-radius: 12px;
+    color: var(--nova-text);
+    background: var(--nova-surface-3);
+    box-shadow: var(--nova-shadow-lg);
+    animation: nova-toast-in var(--nova-slow) var(--nova-ease-spring) both;
+  }
+}
+
+@layer responsive {
+  @media (max-width: 900px) {
+    .browser-window .tab,
+    .browser-window [data-tab-id] {
+      flex-basis: 170px;
+      width: 170px;
+    }
+
+    .browser-window .toolbar {
+      gap: 5px;
+      padding-inline: 8px;
+    }
+
+    .browser-window .toolbar-button,
+    .browser-window .nav-button,
+    .browser-window .toolbar button {
+      flex-basis: 32px;
+      width: 32px;
+      height: 32px;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .browser-window .tab-bar,
+    .browser-window .bookmark-bar,
+    .browser-window .toolbar {
+      display: none;
+    }
+
+    .browser-window .mobile-header,
+    .browser-window [data-nova="mobile-header"] {
+      display: flex;
+    }
+
+    .browser-window .content-area,
+    .browser-window .browser-content {
+      min-width: 0;
+    }
+
+    .browser-window .status-bar {
+      min-height: 22px;
+      height: 22px;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .browser-window .mobile-header,
+    .browser-window [data-nova="mobile-header"] {
+      display: none;
+    }
+  }
+}
+
+@layer accessibility {
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      scroll-behavior: auto !important;
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+    }
+  }
+
+  @media (forced-colors: active) {
+    .browser-window .tab.active,
+    .browser-window .address-bar,
+    .browser-window .toolbar-button:focus-visible,
+    .browser-window .nav-button:focus-visible {
+      border: 1px solid CanvasText;
+    }
+  }
+}
+
+@keyframes nova-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes nova-progress {
+  0% { transform: translateX(-120%); }
+  50% { transform: translateX(180%); }
+  100% { transform: translateX(320%); }
+}
+
+@keyframes nova-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Native Android bridge:
+ * browser-window.ts hides these DOM regions itself when hideChromeUI=true.
+ * Keeping this selector makes the stylesheet safe if the host toggles the
+ * state through a class/attribute in the future.
+ */
+.browser-window[data-hide-chrome="true"] .toolbar,
+.browser-window[data-hide-chrome="true"] .tab-bar,
+.browser-window[data-hide-chrome="true"] .bookmark-bar {
+  display: none !important;
+}

@@ -246,16 +246,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.statusBarView = new StatusBarView(this.statusBar);
         this.statusBarView.attach(areas.statusBar);
       }
-      if (this.config.hideChromeUI) {
-        // Same contract as the desktop branch below: keep all internal wiring
-        // intact but hide the engine's own mobile chrome (status bar, address
-        // bar, bottom nav) when a native shell (e.g. Android Compose) is
-        // driving navigation instead. The phone-sized WebView reports
-        // innerWidth < 768, so MobileLayout — not DesktopLayout — is mounted.
-        if (areas.addressBar) areas.addressBar.style.display = 'none';
-        if (areas.statusBar) areas.statusBar.style.display = 'none';
-        if (areas.bottomNav) areas.bottomNav.style.display = 'none';
-      }
     } else {
       if (areas.toolbar) {
         this.toolbarView = new ToolbarView(this.toolbar);

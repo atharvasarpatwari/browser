@@ -11,16 +11,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Reflects the engine's tab/navigation state (pushed via NovaStateBridge from
- * window.novaNative — see android-native-bridge.ts / browser-window.ts) and
- * dispatches user actions back into the engine through window.novaNative.*,
- * called via WebView.evaluateJavascript(). This ViewModel does not own
- * navigation state itself — the engine is the single source of truth; this
- * is a thin, one-way-mirrored read model plus an action-dispatch surface.
+ * Reflects the engine's tab/navigation/bookmark/history state (pushed via
+ * NovaStateBridge from window.novaNative — see android-native-bridge.ts /
+ * browser-window.ts) and dispatches user actions back into the engine
+ * through window.novaNative.*, called via WebView.evaluateJavascript().
  *
- * Bookmarks/history remain locally-owned for now (the engine has its own
- * bookmark/history services, but syncing them is a separate follow-up —
- * not wired yet).
+ * This ViewModel owns none of that state itself — the engine's
+ * NavigationController/TabManager/BookmarkService/HistoryService are the
+ * single source of truth, shared with desktop. This is a thin, one-way-
+ * mirrored read model plus an action-dispatch surface. Bookmark/history
+ * mutations are fire-and-forget: the resulting change arrives back through
+ * the next onBookmarksChanged/onHistoryChanged push, same pattern tabs use.
  */
 class BrowserViewModel : ViewModel() {
 
@@ -37,7 +38,7 @@ class BrowserViewModel : ViewModel() {
     val bookmarks = mutableStateListOf<Bookmark>()
     val history = mutableStateListOf<HistoryEntry>()
 
-    /** Set once by MainActivity right after the single engine WebView is created. */
+    /** Set once by EngineWebView right after the single engine WebView is created. */
     private var webView: WebView? = null
 
     fun attachWebView(webView: WebView) {
@@ -74,10 +75,37 @@ class BrowserViewModel : ViewModel() {
         }
         tabs.clear()
         tabs.addAll(parsed)
-        activeTabId.value = if (obj.isNull("activeTabId")) null else obj.optString("activeTabId")
+        activeTabId.value = if (obj.isNull("activeTabId")) null else obj.optString("activeTabId", null)
         addressBarText.value = obj.optString("addressValue", addressBarText.value)
         canGoBack.value = obj.optBoolean("canGoBack", false)
         canGoForward.value = obj.optBoolean("canGoForward", false)
+    }
+
+    /** Parses the full bookmark list pushed from listBookmarksExternal() (browser-window.ts). */
+    fun applyBookmarksSnapshot(json: String) {
+        val arr = JSONArray(json)
+        val parsed = (0 until arr.length()).map { i ->
+            val b = arr.getJSONObject(i)
+            Bookmark(id = b.getString("id"), title = b.getString("title"), url = b.getString("url"))
+        }
+        bookmarks.clear()
+        bookmarks.addAll(parsed)
+    }
+
+    /** Parses the full recent-history list pushed from listHistoryExternal() (browser-window.ts). */
+    fun applyHistorySnapshot(json: String) {
+        val arr = JSONArray(json)
+        val parsed = (0 until arr.length()).map { i ->
+            val h = arr.getJSONObject(i)
+            HistoryEntry(
+                id = h.getString("id"),
+                title = h.getString("title"),
+                url = h.getString("url"),
+                visitedAt = h.optLong("visitedAt", System.currentTimeMillis())
+            )
+        }
+        history.clear()
+        history.addAll(parsed)
     }
 
     private fun callEngine(expr: String) {
@@ -122,23 +150,30 @@ class BrowserViewModel : ViewModel() {
         callEngine("window.novaNative && window.novaNative.activateTab(${jsString(id)});")
     }
 
+    /** Toggles a bookmark for the active tab through the engine's real BookmarkService. */
     fun toggleBookmark() {
         val tab = activeTab ?: return
         val existing = bookmarks.firstOrNull { it.url == tab.url }
         if (existing != null) {
-            bookmarks.remove(existing)
+            callEngine("window.novaNative && window.novaNative.removeBookmark(${jsString(existing.id)});")
         } else {
-            bookmarks.add(0, Bookmark(title = tab.title, url = tab.url))
+            callEngine("window.novaNative && window.novaNative.addBookmark(${jsString(tab.title)}, ${jsString(tab.url)});")
         }
     }
 
     fun isBookmarked(url: String): Boolean = bookmarks.any { it.url == url }
 
     fun removeBookmark(id: String) {
-        bookmarks.removeAll { it.id == id }
+        callEngine("window.novaNative && window.novaNative.removeBookmark(${jsString(id)});")
     }
 
-    fun clearHistory() = history.clear()
+    fun removeHistoryEntry(id: String) {
+        callEngine("window.novaNative && window.novaNative.removeHistoryEntry(${jsString(id)});")
+    }
+
+    fun clearHistory() {
+        callEngine("window.novaNative && window.novaNative.clearHistory();")
+    }
 
     /** Normalizes address-bar text into a navigable URL: adds scheme, or builds a search query. */
     fun resolveInput(input: String): String {

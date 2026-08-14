@@ -33,7 +33,8 @@ type PaintCommandType =
   | 'setFillGradient' | 'setBlendMode'
   | 'applyBoxShadow' | 'applyTextShadow'
   | 'applyFilterList' | 'applyClipShape' | 'setBorderRadius'
-  | 'applyMask';
+  | 'applyMask'
+  | 'translate';
 
 interface PaintCommand {
   readonly type: PaintCommandType;
@@ -101,6 +102,7 @@ interface IPaintEngine extends IDisposable {
   on(type: PaintEventType, handler: (event: PaintEventUnion) => void): void;
   off(type: PaintEventType, handler: (event: PaintEventUnion) => void): void;
   setOpacityResolver(resolver: ((el: DomElement) => number | null) | null): void;
+  setTransformResolver(resolver: ((el: DomElement) => string | null) | null): void;
 }
 
 let _layerSeq = 0;
@@ -124,6 +126,9 @@ class PaintEngine implements IPaintEngine {
 
   /** Overlay opacity resolver for animated values (e.g. CSS animations). */
   private _opacityResolver: ((el: DomElement) => number | null) | null = null;
+
+  /** Overlay transform resolver for animated values (e.g. CSS animations). */
+  private _transformResolver: ((el: DomElement) => string | null) | null = null;
 
   constructor(config?: Partial<PaintConfig>) {
     this.config = { ...DEFAULT_PAINT_CONFIG, ...config };
@@ -730,10 +735,15 @@ class PaintEngine implements IPaintEngine {
     this._opacityResolver = resolver;
   }
 
+  setTransformResolver(resolver: ((el: DomElement) => string | null) | null): void {
+    this._transformResolver = resolver;
+  }
+
   private stackingBuildOptions() {
-    return this._opacityResolver
-      ? { opacityResolver: this._opacityResolver as (el: DomElement) => number | null }
-      : undefined;
+    const opts: { opacityResolver?: (el: DomElement) => number | null; transformResolver?: (el: DomElement) => string | null } = {};
+    if (this._opacityResolver) opts.opacityResolver = this._opacityResolver;
+    if (this._transformResolver) opts.transformResolver = this._transformResolver;
+    return Object.keys(opts).length ? opts : undefined;
   }
 
   /**

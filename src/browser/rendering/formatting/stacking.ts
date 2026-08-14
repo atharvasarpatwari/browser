@@ -349,10 +349,16 @@ export function renderStackingContext(
 ): PaintCmd[] {
   const commands: PaintCmd[] = [];
 
-  // Wrap in group opacity if needed
+  const hasTranslate = ctx.translate && (ctx.translate.x !== 0 || ctx.translate.y !== 0);
+  const groupOpened = ctx.isGrouped || hasTranslate;
+
   if (ctx.isGrouped) {
     commands.push({ type: 'save', params: [] });
     commands.push({ type: 'setGlobalAlpha', params: [ctx.groupOpacity] });
+  }
+  if (hasTranslate) {
+    if (!ctx.isGrouped) commands.push({ type: 'save', params: [] });
+    commands.push({ type: 'translate', params: [ctx.translate!.x, ctx.translate!.y] });
   }
 
   // ── Layer 0: Background/borders of the context-forming element ─────
@@ -399,6 +405,10 @@ export function renderStackingContext(
     }
   }
 
+  // Close translate
+  if (hasTranslate) {
+    if (!ctx.isGrouped) commands.push({ type: 'restore', params: [] });
+  }
   // Close group opacity
   if (ctx.isGrouped) {
     commands.push({ type: 'restore', params: [] });
