@@ -10,6 +10,8 @@ import android.webkit.JavascriptInterface
  *   - onStateChanged(json)     -> ChromeStateSnapshot (tabs/nav state)
  *   - onBookmarksChanged(json) -> full bookmark list, on install + every change
  *   - onHistoryChanged(json)   -> full history list, on install + every change
+ *   - onDownloadRequested(json)-> engine-initiated download: {url, filename?, mimeType?, referrer?}
+ *   - onContextMenuRequested(json) -> long-press menu: {x, y, pageUrl, pageTitle, linkUrl?, linkText?, imageUrl?, imageAlt?}
  * (see browser-window.ts for the exact shapes). The Kotlin -> JS half is
  * window.novaNative.*, driven from BrowserViewModel via evaluateJavascript.
  *
@@ -20,12 +22,15 @@ import android.webkit.JavascriptInterface
 class NovaStateBridge(
     private val onSnapshot: (json: String) -> Unit,
     private val onBookmarks: (json: String) -> Unit,
-    private val onHistory: (json: String) -> Unit
+    private val onHistory: (json: String) -> Unit,
+    private val onDownloadRequest: (json: String) -> Unit,
+    private val onContextMenu: (json: String) -> Unit
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @JavascriptInterface
     fun onStateChanged(json: String) {
+        Log.d(TAG, "onStateChanged len=${json.length}")
         mainHandler.post {
             try { onSnapshot(json) } catch (e: Exception) { Log.e(TAG, "Failed to handle state snapshot", e) }
         }
@@ -33,6 +38,7 @@ class NovaStateBridge(
 
     @JavascriptInterface
     fun onBookmarksChanged(json: String) {
+        Log.d(TAG, "onBookmarksChanged len=${json.length}")
         mainHandler.post {
             try { onBookmarks(json) } catch (e: Exception) { Log.e(TAG, "Failed to handle bookmarks snapshot", e) }
         }
@@ -40,8 +46,25 @@ class NovaStateBridge(
 
     @JavascriptInterface
     fun onHistoryChanged(json: String) {
+        Log.d(TAG, "onHistoryChanged len=${json.length}")
         mainHandler.post {
             try { onHistory(json) } catch (e: Exception) { Log.e(TAG, "Failed to handle history snapshot", e) }
+        }
+    }
+
+    @JavascriptInterface
+    fun onDownloadRequested(json: String) {
+        Log.d(TAG, "onDownloadRequested len=${json.length}")
+        mainHandler.post {
+            try { onDownloadRequest(json) } catch (e: Exception) { Log.e(TAG, "Failed to handle download request", e) }
+        }
+    }
+
+    @JavascriptInterface
+    fun onContextMenuRequested(json: String) {
+        Log.d(TAG, "onContextMenuRequested len=${json.length}")
+        mainHandler.post {
+            try { onContextMenu(json) } catch (e: Exception) { Log.e(TAG, "Failed to handle context menu request", e) }
         }
     }
 

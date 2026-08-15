@@ -9,7 +9,8 @@
 //
 // Two-way contract:
 //   JS  -> Kotlin: window.NovaStateBridge.onStateChanged(jsonString)
-//                  called on every tab/nav change (ChromeStateSnapshot JSON).
+//                  called on every tab/nav change (ChromeStateSnapshot JSON),
+//                  plus onBookmarksChanged/onHistoryChanged/onDownloadRequested.
 //   Kotlin -> JS:  window.novaNative.navigate/back/forward/reload/stop/
 //                  createTab/closeTab/activateTab(...), called via
 //                  webView.evaluateJavascript(...) from BrowserViewModel.
@@ -21,6 +22,8 @@ interface NovaStateBridgeHost {
   onStateChanged(json: string): void;
   onBookmarksChanged(json: string): void;
   onHistoryChanged(json: string): void;
+  onDownloadRequested(json: string): void;
+  onContextMenuRequested(json: string): void;
 }
 
 declare global {
@@ -42,6 +45,12 @@ declare global {
       removeHistoryEntry: (id: string) => void;
       clearHistory: () => void;
       refreshHistory: () => void;
+      /** Ask the native host to start a download. `optionsJson` is optional: `{filename?, mimeType?, referrer?}`. */
+      download: (url: string, optionsJson?: string) => void;
+      /** Open a URL in a fresh engine tab (used by context-menu / target=_blank flows). */
+      openInNewTab: (url: string) => void;
+      /** Toggle the engine's incognito (private browsing) session. */
+      setIncognito: (enabled: boolean) => void;
     };
   }
 }
@@ -75,7 +84,27 @@ export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
     removeHistoryEntry: (id: string) => { void page.removeHistoryEntryExternal(id); },
     clearHistory: () => { void page.clearHistoryExternal(); },
     refreshHistory: () => { void pushHistory(); },
+    download: (url: string, optionsJson?: string) => {
+      let options: Record<string, unknown> = {};
+      if (optionsJson) {
+        try { options = JSON.parse(optionsJson) as Record<string, unknown>; } catch { options = {}; }
+      }
+      window.NovaStateBridge?.onDownloadRequested(JSON.stringify({
+        url,
+        filename: options.filename ?? null,
+        mimeType: options.mimeType ?? null,
+        referrer: options.referrer ?? null,
+      }));
+    },
+    openInNewTab: (url: string) => {
+      page.createTab(url);
+    },
+    setIncognito: (enabled: boolean) => {
+      page.setIncognitoExternal(enabled);
+    },
   };
+
+  wireContextMenuDetection(page);
 
   const pushBookmarks = async (): Promise<void> => {
     try {
@@ -119,4 +148,112 @@ export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
   }
 
   console.log('[AndroidNativeBridge] Native host detected — window.novaNative installed, chrome UI hidden.');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTEXT-MENU (LONG-PRESS) DETECTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Long-press dwell before a context menu is requested (ms). */
+const LONG_PRESS_DELAY_MS = 550;
+
+/** The most recently installed page that document-level context-menu listeners delegate to. */
+let activeContextPage: IBrowserWindowPage | null = null;
+/** Guards against installing the document listeners more than once (test installs, HMR). */
+let contextMenuWired = false;
+
+/**
+ * Drives a native context menu from long-presses on the engine's content area.
+ * The engine renders page content to a canvas, so the WebView's own
+ * HitTestResult never sees page links/images — the engine must resolve the
+ * element under the pointer itself (page.resolveContextTarget → layout
+ * engine hit-test) and push the result to the native host.
+ *
+ * Reacts to the DOM `contextmenu` event where the platform fires it, and
+ * falls back to explicit pointer-down dwell detection for engines (Chrome for
+ * Android) that only fire it on selectable content.
+ */
+function wireContextMenuDetection(page: IBrowserWindowPage): void {
+  activeContextPage = page;
+  if (contextMenuWired) return;
+  contextMenuWired = true;
+
+  let pressTimer = 0;
+  let pressX = 0;
+  let pressY = 0;
+  /** Set when a dwell already opened a menu; swallows the click released on top of it. */
+  let suppressNextClick = false;
+
+  const cancelPress = (): void => {
+    window.clearTimeout(pressTimer);
+    pressTimer = 0;
+  };
+
+  const requestContextMenu = (x: number, y: number): void => {
+    cancelPress();
+    suppressNextClick = true;
+    const page = activeContextPage;
+    if (!page) return;
+    let target: ReturnType<IBrowserWindowPage['resolveContextTarget']>;
+    try {
+      target = page.resolveContextTarget(x, y);
+    } catch (err) {
+      console.error('[AndroidNativeBridge] resolveContextTarget failed:', err);
+      target = null;
+    }
+    const state = page.getChromeState();
+    try {
+      window.NovaStateBridge?.onContextMenuRequested(JSON.stringify({
+        x,
+        y,
+        pageUrl: state.addressValue,
+        pageTitle: state.activeTabId
+          ? (state.tabs.find((t) => t.id === state.activeTabId)?.title ?? '') : '',
+        linkUrl: target?.linkUrl ?? null,
+        linkText: target?.linkText ?? null,
+        imageUrl: target?.imageUrl ?? null,
+        imageAlt: target?.imageAlt ?? null,
+      }));
+    } catch (err) {
+      console.error('[AndroidNativeBridge] Failed to push context menu to native host:', err);
+    }
+  };
+
+  const onContextMenuEvent = (e: Event): void => {
+    e.preventDefault();
+    const mouse = e as MouseEvent;
+    requestContextMenu(mouse.clientX, mouse.clientY);
+  };
+
+  const onPointerDown = (e: PointerEvent): void => {
+    pressX = e.clientX;
+    pressY = e.clientY;
+    cancelPress();
+    pressTimer = window.setTimeout(() => {
+      requestContextMenu(pressX, pressY);
+    }, LONG_PRESS_DELAY_MS);
+  };
+
+  const onPointerMove = (e: PointerEvent): void => {
+    if (pressTimer === 0) return;
+    if (Math.abs(e.clientX - pressX) > 12 || Math.abs(e.clientY - pressY) > 12) {
+      cancelPress();
+    }
+  };
+
+  const onPointerEnd = (): void => cancelPress();
+
+  const onClick = (e: Event): void => {
+    if (!suppressNextClick) return;
+    suppressNextClick = false;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
+
+  document.addEventListener('contextmenu', onContextMenuEvent, true);
+  document.addEventListener('pointerdown', onPointerDown, true);
+  document.addEventListener('pointermove', onPointerMove, true);
+  document.addEventListener('pointerup', onPointerEnd, true);
+  document.addEventListener('pointercancel', onPointerEnd, true);
+  document.addEventListener('click', onClick, true);
 }

@@ -53,6 +53,7 @@ import type {
 } from '../navigation/navigation-controller';
 import type { IRouter, RouteResult } from '../navigation/router';
 import { RouteType }                  from '../navigation/router';
+import type { ILayoutEngine }         from '../rendering/layout-engine';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PAGE LOAD STATE
@@ -130,6 +131,8 @@ interface IPageLoader {
  */
 interface IPageRenderer {
   render(result: PageLoadResult, signal: AbortSignal): Promise<void>;
+  /** The layout engine backing the most recently rendered page (null before any page / for the null renderer). */
+  getLayoutEngine(): ILayoutEngine | null;
 }
 
 /** Raw document received from the network. */
@@ -208,6 +211,8 @@ interface IBrowserEngine extends ISharedService {
   setPageLoader(loader: IPageLoader): void;
   /** Plug in a real IPageRenderer when the rendering layer is ready. */
   setPageRenderer(renderer: IPageRenderer): void;
+  /** The layout engine of the currently rendered page (null before any page renders). */
+  getPageLayoutEngine(): ILayoutEngine | null;
   /** Add a middleware that runs after routing, before fetching. */
   addMiddleware(mw: EngineMiddleware): void;
 
@@ -268,6 +273,9 @@ class NullPageLoader implements IPageLoader {
 class NullPageRenderer implements IPageRenderer {
   async render(result: PageLoadResult, _signal: AbortSignal): Promise<void> {
     console.log(`[NullPageRenderer] Would render ${result.url} (${result.contentType})`);
+  }
+  getLayoutEngine(): ILayoutEngine | null {
+    return null;
   }
 }
 
@@ -421,6 +429,10 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
   setPageRenderer(renderer: IPageRenderer): void {
     this.renderer = renderer;
     this.log('PageRenderer plugged in');
+  }
+
+  getPageLayoutEngine(): ILayoutEngine | null {
+    return this.renderer.getLayoutEngine();
   }
 
   addMiddleware(mw: EngineMiddleware): void {

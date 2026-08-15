@@ -31,7 +31,7 @@ import java.util.zip.InflaterInputStream
  * Accept-Encoding: identity and gzip/deflate responses are decompressed so the
  * engine's JS never needs Node's zlib.
  */
-class NovaFetchBridge(private val webView: WebView) {
+class NovaFetchBridge(private val webView: WebView, private val downloader: NativeDownloader) {
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private val active = ConcurrentHashMap<String, HttpURLConnection>()
@@ -63,12 +63,47 @@ class NovaFetchBridge(private val webView: WebView) {
             }
 
             active[id] = connection
+            var handedOff = false
             try {
                 if (connection.doOutput && !body.isNullOrEmpty()) {
                     connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
                 }
 
                 val code = connection.responseCode
+
+                // ── Download interception ─────────────────────────────────────
+                // Content-Disposition: attachment means "save this, don't render
+                // it". Hand the already-open connection to the native downloader
+                // (it streams straight to disk — the body is NEVER read into JS
+                // memory) and resolve the engine's fetch with a benign empty page.
+                val contentDisposition = connection.getHeaderField("Content-Disposition") ?: ""
+                val contentType = connection.getHeaderField("Content-Type") ?: ""
+                if (code in 200..399 && contentDisposition.contains("attachment", ignoreCase = true)) {
+                    handedOff = true
+                    active.remove(id)
+                    downloader.startFromConnection(
+                        url = connection.url.toString(),
+                        connection = connection,
+                        disposition = contentDisposition,
+                        mimeType = contentType.split(";")[0].trim().ifEmpty { null },
+                        requestHeaders = requestHeadersMap(headersJson)
+                    )
+                    val benign = JSONObject()
+                    benign.put("status", 200)
+                    benign.put("statusText", "OK")
+                    val respHeaders = JSONObject()
+                    respHeaders.put("Content-Type", "text/html; charset=utf-8")
+                    benign.put("headers", respHeaders)
+                    benign.put("finalUrl", connection.url.toString())
+                    benign.put(
+                        "bodyText",
+                        "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head><body></body></html>"
+                    )
+                    Log.i(TAG, "result[$id] download handoff: ${connection.url} ($contentDisposition)")
+                    postResult(id, benign)
+                    return@execute
+                }
+
                 val headers = JSONObject()
                 connection.headerFields.forEach { (key, values) ->
                     if (key != null && !values.isNullOrEmpty()) {
@@ -94,7 +129,6 @@ class NovaFetchBridge(private val webView: WebView) {
                     headers.remove("Content-Length")
                 }
 
-                val contentType = connection.getHeaderField("Content-Type") ?: ""
                 val isBinary = contentType.startsWith("image/") || contentType.startsWith("font/") ||
                     contentType.startsWith("audio/") || contentType.startsWith("video/")
 
@@ -117,7 +151,7 @@ class NovaFetchBridge(private val webView: WebView) {
                 postResult(id, errorPayload(e))
             } finally {
                 active.remove(id)
-                connection.disconnect()
+                if (!handedOff) connection.disconnect()
             }
         }
     }
@@ -132,6 +166,22 @@ class NovaFetchBridge(private val webView: WebView) {
         result.put("status", 0)
         result.put("error", e.toString())
         return result
+    }
+
+    /** Extracts the JS-supplied request headers for the downloader to reuse (needed for resume). */
+    private fun requestHeadersMap(headersJson: String): Map<String, String> {
+        val map = LinkedHashMap<String, String>()
+        try {
+            val headers = JSONObject(headersJson)
+            val keys = headers.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                map[key] = headers.getString(key)
+            }
+        } catch (_: Exception) {
+        }
+        map["Accept-Encoding"] = "identity"
+        return map
     }
 
     private companion object {

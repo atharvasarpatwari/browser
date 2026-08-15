@@ -10,19 +10,26 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nova.browser.model.Tab
+
+private val IncognitoBarColor = Color(0xFF1B1B2F)
+private val IncognitoBarContentColor = Color(0xFFE0E0FF)
 
 @Composable
 fun TabsBar(
     tabs: List<Tab>,
     activeTabId: String,
+    incognito: Boolean,
+    onToggleIncognito: () -> Unit,
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
     onNewTab: () -> Unit,
@@ -31,7 +38,9 @@ fun TabsBar(
     LazyRow(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
+            .background(
+                if (incognito) IncognitoBarColor else MaterialTheme.colorScheme.background
+            )
             .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -44,7 +53,7 @@ fun TabsBar(
                     .background(if (selected) MaterialTheme.colorScheme.surfaceVariant else Color_Transparent())
                     .border(
                         width = if (selected) 0.dp else 1.dp,
-                        color = MaterialTheme.colorScheme.outline,
+                        color = if (incognito) IncognitoBarContentColor.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outline,
                         shape = RoundedCornerShape(14.dp)
                     )
                     .clickable { onSelect(tab.id) }
@@ -54,20 +63,40 @@ fun TabsBar(
                 Text(
                     text = tab.title.ifBlank { "New Tab" },
                     style = MaterialTheme.typography.bodyMedium,
+                    color = if (incognito) IncognitoBarContentColor else LocalContentColor.current,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
                 )
                 Spacer(Modifier.width(4.dp))
                 IconButton(onClick = { onClose(tab.id) }, modifier = Modifier.size(20.dp)) {
-                    Icon(Icons.Filled.Close, contentDescription = "Close tab", modifier = Modifier.size(14.dp))
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Close tab",
+                        modifier = Modifier.size(14.dp),
+                        tint = if (incognito) IncognitoBarContentColor else LocalContentColor.current
+                    )
                 }
             }
         }
 
         item {
+            IconButton(onClick = onToggleIncognito) {
+                Icon(
+                    Icons.Filled.VisibilityOff,
+                    contentDescription = "Incognito",
+                    tint = if (incognito) IncognitoBarContentColor else MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        item {
             IconButton(onClick = onNewTab) {
-                Icon(Icons.Filled.Add, contentDescription = "New tab")
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = "New tab",
+                    tint = if (incognito) IncognitoBarContentColor else LocalContentColor.current
+                )
             }
         }
     }

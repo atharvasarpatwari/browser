@@ -26,6 +26,7 @@ fun LibrarySheet(
     history: List<HistoryEntry>,
     onOpen: (String) -> Unit,
     onRemoveBookmark: (String) -> Unit,
+    onRemoveHistory: (String) -> Unit,
     onClearHistory: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -50,7 +51,7 @@ fun LibrarySheet(
         Box(modifier = Modifier.heightIn(min = 200.dp, max = 480.dp)) {
             when (tab) {
                 LibraryTab.BOOKMARKS -> BookmarksList(bookmarks, onOpen, onRemoveBookmark)
-                LibraryTab.HISTORY -> HistoryList(history, onOpen, onClearHistory)
+                LibraryTab.HISTORY -> HistoryList(history, onOpen, onRemoveHistory, onClearHistory)
             }
         }
 
@@ -88,6 +89,7 @@ private fun BookmarksList(
 private fun HistoryList(
     history: List<HistoryEntry>,
     onOpen: (String) -> Unit,
+    onRemove: (String) -> Unit,
     onClear: () -> Unit
 ) {
     if (history.isEmpty()) {
@@ -108,6 +110,11 @@ private fun HistoryList(
                 ListItem(
                     headlineContent = { Text(entry.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     supportingContent = { Text(entry.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    trailingContent = {
+                        IconButton(onClick = { onRemove(entry.id) }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Remove history entry")
+                        }
+                    },
                     modifier = Modifier.clickable { onOpen(entry.url) }
                 )
             }

@@ -13,7 +13,19 @@ data class Tab(
     val title: String,
     val active: Boolean,
     val pinned: Boolean,
-    val loading: Boolean
+    val loading: Boolean,
+    /** Load error from the last failed navigation, null when the tab is healthy. */
+    val error: PageError?
+)
+
+/**
+ * Mirrors the per-tab `error` object pushed in ChromeStateSnapshot (code /
+ * description / url), rendered by the native error page.
+ */
+data class PageError(
+    val code: String,
+    val description: String,
+    val url: String
 )
 
 /** Mirrors one entry from the engine's real BookmarkService (see listBookmarksExternal() in browser-window.ts). */

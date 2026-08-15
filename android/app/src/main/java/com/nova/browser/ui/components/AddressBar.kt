@@ -35,10 +35,13 @@ fun AddressBar(
     onReload: () -> Unit,
     onStop: () -> Unit,
     onToggleBookmark: () -> Unit,
+    onCopyUrl: () -> Unit,
+    onShareUrl: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var isEditing by remember { mutableStateOf(false) }
     var draft by remember(text) { mutableStateOf(text) }
+    var showOverflow by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
 
     Column(modifier = modifier) {
@@ -98,6 +101,35 @@ fun AddressBar(
                     contentDescription = "Bookmark",
                     tint = if (isBookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+
+            Box {
+                IconButton(
+                    onClick = { showOverflow = true },
+                    enabled = text.isNotBlank()
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "More",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                DropdownMenu(expanded = showOverflow, onDismissRequest = { showOverflow = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Copy URL") },
+                        onClick = {
+                            showOverflow = false
+                            onCopyUrl()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Share URL") },
+                        onClick = {
+                            showOverflow = false
+                            onShareUrl()
+                        }
+                    )
+                }
             }
         }
 

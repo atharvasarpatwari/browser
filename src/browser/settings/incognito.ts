@@ -6,7 +6,29 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
-import { randomUUID } from 'crypto';
+
+/**
+ * UUID v4 with graceful fallback. The engine bundles for both Node and the
+ * browser WebView, where `import { randomUUID } from 'crypto'` resolves to a
+ * shim without a usable randomUUID — so prefer globalThis.crypto.randomUUID
+ * and fall back to a getRandomValues/PRNG-based UUID.
+ */
+function randomUUID(): string {
+  const cryptoApi = (globalThis as { crypto?: Crypto }).crypto;
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+    return cryptoApi.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (cryptoApi?.getRandomValues) {
+    cryptoApi.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES

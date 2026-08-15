@@ -1,9 +1,11 @@
 package com.nova.browser.ui.components
 
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.util.Log
 import android.view.View
 import android.webkit.ConsoleMessage
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -54,6 +56,8 @@ fun EngineWebView(
                     mediaPlaybackRequiresUserGesture = false
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     javaScriptCanOpenWindowsAutomatically = true
+                    setSupportMultipleWindows(true)
+                    setGeolocationEnabled(true)
                 }
                 setLayerType(View.LAYER_TYPE_HARDWARE, null)
                 isVerticalScrollBarEnabled = false
@@ -93,10 +97,89 @@ fun EngineWebView(
                         Log.d(TAG, "[engine:${msg.messageLevel().name}] ${msg.message()} @ ${msg.sourceId()}:${msg.lineNumber()}")
                         return true
                     }
+
+                    /**
+                     * <input type=file> — hand the callback to the ViewModel, which
+                     * surfaces it as an OpenDocument launcher in BrowserScreen.
+                     */
+                    override fun onShowFileChooser(
+                        webView: WebView,
+                        filePathCallback: ValueCallback<Array<Uri>>,
+                        fileChooserParams: FileChooserParams
+                    ): Boolean {
+                        Log.i(TAG, "onShowFileChooser mode=${fileChooserParams.mode}")
+                        viewModel.openFileChooser(filePathCallback)
+                        return true
+                    }
+
+                    /**
+                     * Camera/mic/midi/permission requests from page JS. Requests that
+                     * need a runtime grant surface an Android permission dialog via
+                     * BrowserScreen; the grant result resolves this request.
+                     */
+                    override fun onPermissionRequest(request: android.webkit.PermissionRequest) {
+                        val needed = viewModel.androidPermissionFor(request)
+                        if (needed == null) {
+                            Log.i(TAG, "onPermissionRequest auto-grant: ${request.resources.joinToString()}")
+                            request.grant(request.resources)
+                        } else {
+                            Log.i(TAG, "onPermissionRequest waiting for runtime grant: $needed")
+                            viewModel.onPermissionRequested(request)
+                        }
+                    }
+
+                    /**
+                     * Geolocation prompt — auto-grant: the engine resolves coordinates
+                     * in-process (its own Geolocation shim), so there is no separate
+                     * origin to gate; an explicit runtime permission (if ever needed)
+                     * is handled by onPermissionRequest.
+                     */
+                    override fun onGeolocationPermissionsShowPrompt(
+                        origin: String,
+                        callback: android.webkit.GeolocationPermissions.Callback
+                    ) {
+                        Log.i(TAG, "onGeolocationPermissionsShowPrompt origin=$origin (auto-grant)")
+                        callback.invoke(origin, true, false)
+                    }
+
+                    /**
+                     * window.open()/target=_blank at the WebView level. The engine owns
+                     * tabs, so instead of rendering a real popup we spin up a blank
+                     * transport view whose navigations are swallowed and forwarded to
+                     * the engine as a new tab (openInNewTab -> createTab).
+                     */
+                    override fun onCreateWindow(
+                        view: WebView,
+                        isDialog: Boolean,
+                        isUserGesture: Boolean,
+                        resultMsg: android.os.Message
+                    ): Boolean {
+                        Log.i(TAG, "onCreateWindow requested (userGesture=$isUserGesture) -> engine tab")
+                        val popup = WebView(view.context).apply {
+                            settings.javaScriptEnabled = false
+                            webChromeClient = object : WebChromeClient() {}
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    v: WebView,
+                                    request: WebResourceRequest
+                                ): Boolean {
+                                    val url = request.url.toString()
+                                    Log.i(TAG, "Popup navigation forwarded to engine tab: $url")
+                                    viewModel.openInNewTab(url)
+                                    return true
+                                }
+                            }
+                        }
+                        (resultMsg.obj as? WebView.WebViewTransport)?.webView = popup
+                        resultMsg.sendToTarget()
+                        return true
+                    }
                 }
 
                 // NovaFetchBridge: outbound networking for the engine (unchanged).
-                addJavascriptInterface(NovaFetchBridge(this), "NovaFetchBridge")
+                // Attachment responses (Content-Disposition) hand off to the
+                // native downloader instead of being buffered into JS memory.
+                addJavascriptInterface(NovaFetchBridge(this, viewModel.nativeDownloader), "NovaFetchBridge")
 
                 // NovaStateBridge: JS -> Kotlin tab/nav state pushes. Registering
                 // this BEFORE loadUrl() is what makes isNativeHostPresent() true
@@ -106,10 +189,21 @@ fun EngineWebView(
                     NovaStateBridge(
                         onSnapshot = { json -> viewModel.applySnapshot(json) },
                         onBookmarks = { json -> viewModel.applyBookmarksSnapshot(json) },
-                        onHistory = { json -> viewModel.applyHistorySnapshot(json) }
+                        onHistory = { json -> viewModel.applyHistorySnapshot(json) },
+                        onDownloadRequest = { json -> viewModel.startDownloadFromBridge(json) },
+                        onContextMenu = { json -> viewModel.onContextMenuRequested(json) }
                     ),
                     "NovaStateBridge"
                 )
+
+                // DownloadListener: safety net for WebView-level attachment
+                // navigations that never pass through NovaFetchBridge. In this
+                // architecture all page content flows through the engine's fetch
+                // shim, so this is a backstop, not the primary path.
+                setDownloadListener { url, _, contentDisposition, mimeType, _ ->
+                    Log.i(TAG, "DownloadListener: $url ($contentDisposition)")
+                    viewModel.startDownloadFromDisposition(url, contentDisposition, mimeType)
+                }
 
                 viewModel.attachWebView(this)
                 loadUrl(ENGINE_URL)

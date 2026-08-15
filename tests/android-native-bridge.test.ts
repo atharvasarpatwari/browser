@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { BrowserWindowPage } from '../src/ui/pages/browser-window';
 import type { IBrowserWindowPage } from '../src/ui/pages/browser-window';
+import type { DomElement } from '../src/browser/rendering/dom-tree';
 import { BookmarkService } from '../src/browser/bookmarks/bookmark-services';
 import { HistoryService } from '../src/browser/history/history-service';
+import { NavigationController } from '../src/browser/navigation/navigation-controller';
+import { UrlParser } from '../src/browser/navigation/url-parser';
 import { isNativeHostPresent, installAndroidNativeBridge } from '../src/app/android-native-bridge';
 
 describe('BrowserWindowPage — native chrome bridge', () => {
@@ -121,6 +124,86 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     expect(count).toBe(afterFirst);
   });
 
+  it('getChromeState() exposes a per-tab error field, null for healthy tabs', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    const tab = page.getChromeState().tabs[0];
+    expect(tab).toBeDefined();
+    expect(tab!.error).toBeNull();
+  });
+
+  it('getChromeState() records a per-tab error when the active-tab navigation fails', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    const controller = new NavigationController(new UrlParser());
+    page.setNavigationController(controller);
+    const id = page.getChromeState().activeTabId!;
+    await controller.navigate('not a valid url');
+    const tab = page.getChromeState().tabs.find((t) => t.id === id);
+    expect(tab!.error).not.toBeNull();
+    expect(tab!.error!.url).toBe('not a valid url');
+    expect(tab!.error!.description).toBeTruthy();
+    expect(tab!.error!.code).toBeTruthy();
+  });
+
+  it('a subsequent successful navigation clears the per-tab error', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    const controller = new NavigationController(new UrlParser());
+    page.setNavigationController(controller);
+    const id = page.getChromeState().activeTabId!;
+    await controller.navigate('not a valid url');
+    expect(page.getChromeState().tabs.find((t) => t.id === id)!.error).not.toBeNull();
+    await controller.navigate('about:blank');
+    expect(page.getChromeState().tabs.find((t) => t.id === id)!.error).toBeNull();
+  });
+
+  it('errors are recorded per-tab and stay on the correct tab across switches', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    const controller = new NavigationController(new UrlParser());
+    page.setNavigationController(controller);
+    const firstId = page.getChromeState().activeTabId!;
+    await controller.navigate('not a valid url');
+    expect(page.getChromeState().tabs.find((t) => t.id === firstId)!.error).not.toBeNull();
+
+    // A second tab is healthy even though the first carries an error.
+    const secondId = page.createTab('https://example.com/');
+    expect(page.getChromeState().tabs.find((t) => t.id === secondId)!.error).toBeNull();
+    expect(page.getChromeState().tabs.find((t) => t.id === firstId)!.error).not.toBeNull();
+  });
+
+  it('records a per-tab error from engine pageLoadError and clears it on pageLoadStarted', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    const handlers: Record<string, Array<(e: unknown) => void>> = {};
+    const fakeEngine = {
+      on: (type: string, h: (e: unknown) => void) => { (handlers[type] ??= []).push(h); },
+      off: (type: string, h: (e: unknown) => void) => {
+        handlers[type] = (handlers[type] ?? []).filter((x) => x !== h);
+      },
+    } as unknown as Parameters<typeof page.setBrowserEngine>[0];
+    page.setBrowserEngine(fakeEngine);
+    const id = page.getChromeState().activeTabId!;
+
+    handlers.pageLoadError![0]({
+      kind: 'pageLoadError',
+      session: { entry: { url: 'http://127.0.0.1:1/' } },
+      error: new Error('connect ECONNREFUSED 127.0.0.1:1'),
+    });
+    expect(page.getChromeState().tabs.find((t) => t.id === id)!.error).toEqual({
+      code: 'PageLoadError',
+      description: 'connect ECONNREFUSED 127.0.0.1:1',
+      url: 'http://127.0.0.1:1/',
+    });
+
+    handlers.pageLoadStarted![0]({
+      kind: 'pageLoadStarted',
+      session: { entry: { url: 'http://127.0.0.1:1/' } },
+    });
+    expect(page.getChromeState().tabs.find((t) => t.id === id)!.error).toBeNull();
+  });
+
   it('bookmark add/remove round-trips through the real BookmarkService and fires onLibraryChanged', async () => {
     page = new BrowserWindowPage({ hideChromeUI: true });
     await page.mount(container);
@@ -160,6 +243,110 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     await page.clearHistoryExternal();
     expect(await page.listHistoryExternal()).toHaveLength(0);
   });
+
+  it('setIncognitoExternal() toggles the incognito session and reflects in getChromeState()', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    expect(page.isIncognito()).toBe(false);
+    expect(page.getChromeState().incognito).toBe(false);
+
+    page.setIncognitoExternal(true);
+    expect(page.isIncognito()).toBe(true);
+    expect(page.getChromeState().incognito).toBe(true);
+
+    page.setIncognitoExternal(false);
+    expect(page.isIncognito()).toBe(false);
+    expect(page.getChromeState().incognito).toBe(false);
+  });
+
+  it('resolveContextTarget() returns link URL/text from a layout hit-test', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+
+    const anchor = {
+      domId: 'a1',
+      nodeType: 'element',
+      tagName: 'A',
+      attributes: new Map([['href', 'https://example.com/about']]),
+      parent: null,
+      children: [
+        { domId: 't1', nodeType: 'text', text: 'About us', parent: null, children: [] },
+      ],
+    } as unknown as DomElement;
+
+    const fakeEngine = {
+      getPageLayoutEngine: () => ({
+        getElementAtPoint: () => anchor,
+      }),
+    } as unknown as Parameters<typeof page.setBrowserEngine>[0];
+
+    page.setBrowserEngine(fakeEngine);
+    const target = page.resolveContextTarget(100, 100);
+    expect(target).not.toBeNull();
+    expect(target!.linkUrl).toBe('https://example.com/about');
+    expect(target!.linkText).toBe('About us');
+    expect(target!.imageUrl).toBeNull();
+  });
+
+  it('resolveContextTarget() returns image URL when the hit element is an img inside a link', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+
+    const img = {
+      domId: 'i1',
+      nodeType: 'element',
+      tagName: 'IMG',
+      attributes: new Map([['src', 'https://cdn.example.com/pic.png'], ['alt', 'A picture']]),
+      parent: {
+        domId: 'a1',
+        nodeType: 'element',
+        tagName: 'A',
+        attributes: new Map([['href', 'https://example.com/gallery']]),
+        parent: null,
+        children: [],
+      },
+      children: [],
+    } as unknown as DomElement;
+
+    const fakeEngine = {
+      getPageLayoutEngine: () => ({
+        getElementAtPoint: () => img,
+      }),
+    } as unknown as Parameters<typeof page.setBrowserEngine>[0];
+    page.setBrowserEngine(fakeEngine);
+
+    const target = page.resolveContextTarget(50, 50);
+    expect(target!.linkUrl).toBe('https://example.com/gallery');
+    expect(target!.imageUrl).toBe('https://cdn.example.com/pic.png');
+    expect(target!.imageAlt).toBe('A picture');
+  });
+
+  it('resolveContextTarget() returns null when nothing is hit and when hit has no link/image', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+
+    const fakeEngine = {
+      getPageLayoutEngine: () => ({
+        getElementAtPoint: () => null,
+      }),
+    } as unknown as Parameters<typeof page.setBrowserEngine>[0];
+    page.setBrowserEngine(fakeEngine);
+    expect(page.resolveContextTarget(10, 10)).toBeNull();
+
+    const plain = {
+      domId: 'd1',
+      nodeType: 'element',
+      tagName: 'DIV',
+      attributes: new Map(),
+      parent: null,
+      children: [],
+    } as unknown as DomElement;
+    void plain;
+    page.setBrowserEngine({
+      getPageLayoutEngine: () => ({ getElementAtPoint: () => plain }),
+    } as unknown as Parameters<typeof page.setBrowserEngine>[0]);
+    expect(page.resolveContextTarget(10, 10)).toBeNull();
+  });
 });
 
 describe('android-native-bridge', () => {
@@ -168,8 +355,8 @@ describe('android-native-bridge', () => {
     delete (window as any).novaNative;
   });
 
-  const emptySnapshot: { tabs: unknown[]; activeTabId: string | null; addressValue: string; canGoBack: boolean; canGoForward: boolean } =
-    { tabs: [], activeTabId: null, addressValue: '', canGoBack: false, canGoForward: false };
+  const emptySnapshot: { tabs: unknown[]; activeTabId: string | null; addressValue: string; canGoBack: boolean; canGoForward: boolean; incognito: boolean } =
+    { tabs: [], activeTabId: null, addressValue: '', canGoBack: false, canGoForward: false, incognito: false };
 
   function makeFakePage(overrides: Record<string, unknown> = {}) {
     return {
@@ -191,6 +378,9 @@ describe('android-native-bridge', () => {
       listHistoryExternal: async (_max?: number) => [],
       removeHistoryEntryExternal: async (_id: string) => {},
       clearHistoryExternal: async () => {},
+      setIncognitoExternal: (_enabled: boolean) => {},
+      isIncognito: () => false,
+      resolveContextTarget: (_x: number, _y: number) => null,
       ...overrides,
     } as unknown as IBrowserWindowPage;
   }
@@ -307,5 +497,149 @@ describe('android-native-bridge', () => {
     window.novaNative!.clearHistory();
     await Promise.resolve();
     expect(cleared).toBe(true);
+  });
+
+  it('window.novaNative.download forwards a download request to the native host', async () => {
+    const downloadCalls: string[] = [];
+    (window as any).NovaStateBridge = {
+      onStateChanged: () => {},
+      onBookmarksChanged: () => {},
+      onHistoryChanged: () => {},
+      onDownloadRequested: (json: string) => downloadCalls.push(json),
+    };
+    installAndroidNativeBridge(makeFakePage());
+
+    window.novaNative!.download('https://example.com/file.pdf', JSON.stringify({ filename: 'file.pdf', mimeType: 'application/pdf' }));
+    expect(downloadCalls.length).toBe(1);
+    expect(JSON.parse(downloadCalls[0])).toEqual({
+      url: 'https://example.com/file.pdf',
+      filename: 'file.pdf',
+      mimeType: 'application/pdf',
+      referrer: null,
+    });
+  });
+
+  it('window.novaNative.download tolerates a missing/invalid options JSON', () => {
+    const downloadCalls: string[] = [];
+    (window as any).NovaStateBridge = {
+      onStateChanged: () => {},
+      onBookmarksChanged: () => {},
+      onHistoryChanged: () => {},
+      onDownloadRequested: (json: string) => downloadCalls.push(json),
+    };
+    installAndroidNativeBridge(makeFakePage());
+
+    window.novaNative!.download('https://example.com/data.zip');
+    window.novaNative!.download('https://example.com/data2.zip', 'not-json{');
+    expect(downloadCalls.length).toBe(2);
+    expect(JSON.parse(downloadCalls[0])).toEqual({
+      url: 'https://example.com/data.zip',
+      filename: null,
+      mimeType: null,
+      referrer: null,
+    });
+    expect(JSON.parse(downloadCalls[1]).url).toBe('https://example.com/data2.zip');
+  });
+
+  it('window.novaNative.setIncognito delegates to the page and reflects in isIncognito', () => {
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: () => {} };
+    const calls: boolean[] = [];
+    const fakePage = makeFakePage({
+      setIncognitoExternal: (enabled: boolean) => { calls.push(enabled); },
+      isIncognito: () => true,
+    });
+
+    installAndroidNativeBridge(fakePage);
+    window.novaNative!.setIncognito(true);
+    window.novaNative!.setIncognito(false);
+    expect(calls).toEqual([true, false]);
+  });
+
+  it('window.novaNative.openInNewTab delegates to the page createTab', () => {
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: () => {} };
+    let createdUrl: string | undefined;
+    const fakePage = makeFakePage({
+      createTab: (url?: string) => { createdUrl = url; return 'new-tab'; },
+    });
+
+    installAndroidNativeBridge(fakePage);
+    window.novaNative!.openInNewTab('https://example.com/new');
+    expect(createdUrl).toBe('https://example.com/new');
+  });
+
+  it('contextmenu event on the document pushes onContextMenuRequested with the resolved target', () => {
+    const menuCalls: string[] = [];
+    (window as any).NovaStateBridge = {
+      onStateChanged: () => {},
+      onBookmarksChanged: () => {},
+      onHistoryChanged: () => {},
+      onContextMenuRequested: (json: string) => menuCalls.push(json),
+    };
+    const fakePage = makeFakePage({
+      getChromeState: () => ({
+        tabs: [{ id: 't1', url: 'https://example.com/', title: 'Example', active: true, pinned: false, loading: false }],
+        activeTabId: 't1',
+        addressValue: 'https://example.com/',
+        canGoBack: false,
+        canGoForward: false,
+        incognito: false,
+      }),
+      resolveContextTarget: (_x: number, _y: number) => ({
+        linkUrl: 'https://example.com/about',
+        linkText: 'About us',
+        imageUrl: null,
+        imageAlt: null,
+      }),
+    });
+
+    installAndroidNativeBridge(fakePage);
+    document.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: 120, clientY: 240,
+    }));
+
+    expect(menuCalls.length).toBe(1);
+    expect(JSON.parse(menuCalls[0])).toEqual({
+      x: 120,
+      y: 240,
+      pageUrl: 'https://example.com/',
+      pageTitle: 'Example',
+      linkUrl: 'https://example.com/about',
+      linkText: 'About us',
+      imageUrl: null,
+      imageAlt: null,
+    });
+  });
+
+  it('contextmenu on the document is prevented so no native WebView menu appears', () => {
+    (window as any).NovaStateBridge = {
+      onStateChanged: () => {},
+      onBookmarksChanged: () => {},
+      onHistoryChanged: () => {},
+      onContextMenuRequested: () => {},
+    };
+    installAndroidNativeBridge(makeFakePage());
+
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+    document.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('contextmenu push is robust when the page has no layout engine (null target)', () => {
+    const menuCalls: string[] = [];
+    (window as any).NovaStateBridge = {
+      onStateChanged: () => {},
+      onBookmarksChanged: () => {},
+      onHistoryChanged: () => {},
+      onContextMenuRequested: (json: string) => menuCalls.push(json),
+    };
+    installAndroidNativeBridge(makeFakePage()); // resolveContextTarget -> null
+
+    document.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: 5, clientY: 5,
+    }));
+    expect(menuCalls.length).toBe(1);
+    const payload = JSON.parse(menuCalls[0]);
+    expect(payload.linkUrl).toBeNull();
+    expect(payload.imageUrl).toBeNull();
   });
 });

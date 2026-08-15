@@ -12,7 +12,7 @@ import type { IAdBlocker } from '../../browser/security/ad-blocker';
 import type { IUrlParser } from '../../browser/navigation/url-parser';
 import type { IContentRenderer } from '../components/content-renderer/content-renderer';
 import type { INavigationBridge } from '../components/navigation-bridge';
-import type { IBrowserEngine } from '../../browser/engine/browser-engine';
+import type { IBrowserEngine, EngineEvent } from '../../browser/engine/browser-engine';
 import type { INavigationController } from '../../browser/navigation/navigation-controller';
 import type { IPaintEngine } from '../../browser/rendering/paint-engine';
 import type { IDownloadManager } from '../../browser/downloads/download-manager';
@@ -43,6 +43,9 @@ import { NavigationBridge } from '../components/navigation-bridge';
 import { ContentRenderer } from '../components/content-renderer/content-renderer';
 import { NavigationFetcher } from '../components/navigation-fetcher';
 import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
+import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
+import type { DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
+import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
 import { SettingsPage } from './settings-page';
 import { DownloadsPage } from './downloads-page';
 import type { ISettingsPage } from './settings-page';
@@ -91,6 +94,8 @@ interface ChromeStateSnapshot {
     readonly active: boolean;
     readonly pinned: boolean;
     readonly loading: boolean;
+    /** Load error from the last failed navigation, null when the tab is healthy. */
+    readonly error: { readonly code: string; readonly description: string; readonly url: string } | null;
   }>;
   readonly activeTabId: string | null;
   readonly addressValue: string;
@@ -100,6 +105,19 @@ interface ChromeStateSnapshot {
   readonly homeUrl: string;
   /** Default search URL template with a `%s` placeholder (see `defaultSearchEngine`). */
   readonly searchTemplate: string;
+  /** True while an incognito (private) session is active. */
+  readonly incognito: boolean;
+}
+
+/**
+ * Element info resolved for a context-menu (long-press) position. At least one
+ * of link/image fields is non-null whenever the engine can identify a target.
+ */
+interface ContextTarget {
+  readonly linkUrl: string | null;
+  readonly linkText: string | null;
+  readonly imageUrl: string | null;
+  readonly imageAlt: string | null;
 }
 
 interface IBrowserWindowPage extends IDisposable {
@@ -132,6 +150,14 @@ interface IBrowserWindowPage extends IDisposable {
   createTab(url?: string): string;
   closeTab(tabId: string): boolean;
   activateTabExternal(tabId: string): boolean;
+
+  // ── Incognito (private browsing) session toggle for external chrome ────────
+  setIncognitoExternal(enabled: boolean): void;
+  isIncognito(): boolean;
+
+  // ── Context-menu (long-press) element resolution for external chrome ───────
+  /** Resolve the link/image under page coordinates, if any. Returns null when no target is found. */
+  resolveContextTarget(x: number, y: number): ContextTarget | null;
 
   // ── Bookmarks/history for external chrome (shared with desktop's own data) ──
   onLibraryChanged(handler: () => void): void;
@@ -179,7 +205,55 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private pipelineController: INavigationController | null = null;
   private localController: INavigationController | null = null;
   private readonly onBridgeUrlNavigated = () => { this.syncAll(); };
-  private readonly onBridgeLoadingChanged = () => { this.syncAll(); };
+
+  /** Per-tab load errors (keyed by tab id) recorded from navigationFailed bridge events. */
+  private readonly tabErrors = new Map<string, { code: string; description: string; url: string }>();
+
+  /** Engine-bus handlers (unregistered on re-set so a long-lived page leaks no subscriptions). */
+  private readonly engineLoadErrorHandler = (event: EngineEvent): void => {
+    if (event.kind !== 'pageLoadError') return;
+    const activeTabId = this.tabManager?.activeTabId ?? null;
+    if (activeTabId) {
+      this.tabErrors.set(activeTabId, {
+        code: 'PageLoadError',
+        description: event.error?.message || 'The page could not be loaded.',
+        url: event.session.finalUrl ?? event.session.entry.url,
+      });
+    }
+    this.syncAll();
+  };
+  private readonly engineLoadStartedHandler = (event: EngineEvent): void => {
+    if (event.kind !== 'pageLoadStarted') return;
+    const activeTabId = this.tabManager?.activeTabId ?? null;
+    if (activeTabId) this.tabErrors.delete(activeTabId);
+    this.syncAll();
+  };
+
+  /**
+   * Tracks navigation failure/success on the bridge so pushed ChromeStateSnapshot
+   * objects can carry a per-tab `error` (drives the native error page). The bridge
+   * operates on the active tab, so events are attributed to it.
+   */
+  private readonly onBridgeNavState = (event: { kind: string; url?: string; error?: Error }): void => {
+    const activeTabId = this.tabManager?.activeTabId ?? null;
+    switch (event.kind) {
+      case 'navigationStarted':
+      case 'navigationCompleted':
+      case 'urlNavigated':
+        if (activeTabId) this.tabErrors.delete(activeTabId);
+        break;
+      case 'navigationFailed':
+        if (activeTabId) {
+          this.tabErrors.set(activeTabId, {
+            code: event.error?.name || 'NavigationError',
+            description: event.error?.message || 'The page could not be loaded.',
+            url: event.url ?? this.currentUrl,
+          });
+        }
+        break;
+    }
+    this.syncAll();
+  };
 
   // DI-injected services
   private browserEngine: IBrowserEngine | null = null;
@@ -195,6 +269,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private historyEventHandler: ((event: { kind: string }) => void) | null = null;
   private bookmarkEventHandler: ((event: { kind: string }) => void) | null = null;
   private contextMenu: ContextMenu | null = null;
+  private incognitoManager: IIncognitoManager | null = null;
   private tabSessionBridge: TabSessionBridge | null = null;
   private tabPersistence: TabPersistenceManager | null = null;
   private contextManager: TabContextManager | null = null;
@@ -1029,22 +1104,33 @@ class BrowserWindowPage implements IBrowserWindowPage {
   }
 
   getChromeState(): ChromeStateSnapshot {
-    const tabs = (this.tabManager?.tabs ?? []).map((t) => ({
+    const activeTabId = this.tabManager?.activeTabId ?? null;
+    const currentTabs = this.tabManager?.tabs ?? [];
+    const tabs = currentTabs.map((t) => ({
       id: t.id,
       url: t.url,
       title: t.title || t.url,
-      active: t.id === this.tabManager?.activeTabId,
+      active: t.id === activeTabId,
       pinned: t.pinned,
       loading: t.loading,
+      error: this.tabErrors.get(t.id) ?? null,
     }));
+    // Drop error entries for tabs that no longer exist (keeps the map bounded).
+    if (this.tabErrors.size > 0) {
+      const ids = new Set(currentTabs.map((t) => t.id));
+      for (const id of [...this.tabErrors.keys()]) {
+        if (!ids.has(id)) this.tabErrors.delete(id);
+      }
+    }
     return {
       tabs,
-      activeTabId: this.tabManager?.activeTabId ?? null,
+      activeTabId,
       addressValue: this.addressBar?.state.value ?? this.currentUrl,
       canGoBack: this.navigationBridge?.canGoBack ?? false,
       canGoForward: this.navigationBridge?.canGoForward ?? false,
       homeUrl: this.getHomeUrl(),
       searchTemplate: this.getSearchTemplate(),
+      incognito: this.incognitoManager?.isActive() ?? false,
     };
   }
 
@@ -1078,6 +1164,75 @@ class BrowserWindowPage implements IBrowserWindowPage {
     return result;
   }
 
+  // ── Incognito (private browsing) ───────────────────────────────────────────
+
+  setIncognitoExternal(enabled: boolean): void {
+    if (!this.incognitoManager) this.incognitoManager = new IncognitoManager();
+    if (enabled) {
+      if (!this.incognitoManager.isActive()) this.incognitoManager.activate();
+    } else {
+      this.incognitoManager.deactivate();
+    }
+    this.syncAll();
+  }
+
+  isIncognito(): boolean {
+    return this.incognitoManager?.isActive() ?? false;
+  }
+
+  // ── Context-menu (long-press) element resolution ───────────────────────────
+
+  resolveContextTarget(x: number, y: number): ContextTarget | null {
+    const layout: ILayoutEngine | null = this.browserEngine?.getPageLayoutEngine?.() ?? null;
+    if (!layout) return null;
+    const hit = layout.getElementAtPoint(x, y);
+    if (!hit) return null;
+
+    let link: DomElement | null = null;
+    let image: DomElement | null = null;
+    let node: DomElement | null = hit;
+    let guard = 0;
+    while (node && guard++ < 64) {
+      const tag = node.tagName.toLowerCase();
+      if (tag === 'a' && node.attributes.has('href')) link ??= node;
+      if (tag === 'img' && node.attributes.has('src')) image ??= node;
+      node = node.parent as DomElement | null;
+    }
+    if (!link && !image) return null;
+
+    return {
+      linkUrl: link ? this.resolveContextUrl(link.attributes.get('href')!) : null,
+      linkText: link ? this.linkTextOf(link) : null,
+      imageUrl: image ? this.resolveContextUrl(image.attributes.get('src')!) : null,
+      imageAlt: image ? image.attributes.get('alt') ?? null : null,
+    };
+  }
+
+  private resolveContextUrl(raw: string): string {
+    try {
+      return new URL(raw, this.currentUrl || undefined).href;
+    } catch {
+      return raw;
+    }
+  }
+
+  /** Best-effort visible text of an anchor (deep-first text node scan, depth-capped). */
+  private linkTextOf(el: DomElement): string | null {
+    const parts: string[] = [];
+    const walk = (node: DomNode, depth: number): void => {
+      if (depth > 8 || parts.length > 32) return;
+      if (node.nodeType === 'text') {
+        const text = (node as DomTextNode).text;
+        if (text.trim()) parts.push(text.trim());
+      } else if (node.children) {
+        for (const child of node.children) walk(child, depth + 1);
+      }
+    };
+    walk(el, 0);
+    const text = parts.join(' ').trim();
+    return text.length > 0 ? text : (el.attributes.get('title') ?? null);
+  }
+
   getActiveSettingsPage(): ISettingsPage | null {
     return this.activeSettingsPage;
   }
@@ -1087,7 +1242,13 @@ class BrowserWindowPage implements IBrowserWindowPage {
   }
 
   setBrowserEngine(engine: IBrowserEngine): void {
+    // Unsubscribe previous engine (a long-lived page may be re-wired). Optional
+    // chaining keeps the call robust to hit-test-only fakes in tests.
+    this.browserEngine?.off?.('pageLoadError', this.engineLoadErrorHandler);
+    this.browserEngine?.off?.('pageLoadStarted', this.engineLoadStartedHandler);
     this.browserEngine = engine;
+    engine.on?.('pageLoadError', this.engineLoadErrorHandler);
+    engine.on?.('pageLoadStarted', this.engineLoadStartedHandler);
     this.syncNavigationPipeline();
   }
 
@@ -1151,10 +1312,13 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.navigationBridge.on('urlNavigated', this.onBridgeUrlNavigated);
       // Also re-sync on loading start/end so pushed chrome-state snapshots
       // (e.g. to a native Android host) reflect the loading spinner promptly
-      // instead of only updating on tab create/remove/activate/navigate.
-      this.navigationBridge.on('navigationStarted', this.onBridgeLoadingChanged);
-      this.navigationBridge.on('navigationCompleted', this.onBridgeLoadingChanged);
-      this.navigationBridge.on('navigationFailed', this.onBridgeLoadingChanged);
+      // instead of only updating on tab create/remove/activate/navigate. The
+      // nav-state handler additionally records per-tab load errors for the
+      // native error page.
+      this.navigationBridge.on('navigationStarted', this.onBridgeNavState);
+      this.navigationBridge.on('navigationCompleted', this.onBridgeNavState);
+      this.navigationBridge.on('navigationFailed', this.onBridgeNavState);
+      this.navigationBridge.on('urlNavigated', this.onBridgeNavState);
     }
 
     if (needsFetcher) {
