@@ -103,7 +103,11 @@ fun EngineWebView(
                 // when android-native-bridge.ts runs (it checks for this exact
                 // global at page-mount time).
                 addJavascriptInterface(
-                    NovaStateBridge { json -> viewModel.applySnapshot(json) },
+                    NovaStateBridge(
+                        onSnapshot = { json -> viewModel.applySnapshot(json) },
+                        onBookmarks = { json -> viewModel.applyBookmarksSnapshot(json) },
+                        onHistory = { json -> viewModel.applyHistorySnapshot(json) }
+                    ),
                     "NovaStateBridge"
                 )
 

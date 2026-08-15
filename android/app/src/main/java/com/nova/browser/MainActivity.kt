@@ -1,5 +1,6 @@
 package com.nova.browser
 
+import android.content.ComponentCallbacks2
 import android.os.Bundle
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
@@ -17,6 +18,9 @@ import com.nova.browser.ui.theme.NovaBrowserTheme
  * this Activity's only jobs are (1) mount the Compose UI, (2) let the
  * ViewModel dispatch native actions into the engine via evaluateJavascript,
  * and (3) receive engine state pushes back via NovaStateBridge.
+ *
+ * Back navigation is handled by Compose's BackHandler in BrowserScreen, so no
+ * onBackPressed() override is needed here.
  */
 class MainActivity : ComponentActivity() {
 
@@ -34,11 +38,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onBackPressed() {
-        if (viewModel.canGoBack.value) {
-            viewModel.goBack()
-        } else {
-            super.onBackPressed()
+    override fun onPause() {
+        super.onPause()
+        viewModel.pause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.resume()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_MODERATE) {
+            viewModel.trimMemory()
         }
     }
 

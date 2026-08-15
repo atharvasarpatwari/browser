@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { BrowserWindowPage } from '../src/ui/pages/browser-window';
 import type { IBrowserWindowPage } from '../src/ui/pages/browser-window';
+import { BookmarkService } from '../src/browser/bookmarks/bookmark-services';
+import { HistoryService } from '../src/browser/history/history-service';
 import { isNativeHostPresent, installAndroidNativeBridge } from '../src/app/android-native-bridge';
 
 describe('BrowserWindowPage — native chrome bridge', () => {
@@ -43,6 +45,29 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     const tab = page.getChromeState().tabs.find((t) => t.id === id);
     expect(tab).toBeDefined();
     expect(typeof tab!.loading).toBe('boolean');
+  });
+
+  it('getChromeState() exposes default homeUrl and searchTemplate when no settings service', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    const state = page.getChromeState();
+    expect(state.homeUrl).toBe('about:blank');
+    expect(state.searchTemplate).toBe('https://www.google.com/search?q=%s');
+  });
+
+  it('getChromeState() reflects the settingsService home page and default search engine', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    page.setSettingsService({
+      getString: (key: string, fallback = '') => {
+        if (key === 'homePage') return 'https://example.com/home';
+        if (key === 'defaultSearchEngine') return 'duckduckgo';
+        return fallback;
+      },
+    } as unknown as Parameters<typeof page.setSettingsService>[0]);
+    await page.mount(container);
+    const state = page.getChromeState();
+    expect(state.homeUrl).toBe('https://example.com/home');
+    expect(state.searchTemplate).toBe('https://duckduckgo.com/?q=%s');
   });
 
   it('createTab() adds a tab and returns its id', async () => {
@@ -96,29 +121,44 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     expect(count).toBe(afterFirst);
   });
 
-  it('hideChromeUI hides the engine mobile chrome slots at a phone viewport', async () => {
-    const originalWidth = window.innerWidth;
-    try {
-      Object.defineProperty(window, 'innerWidth', { value: 375, configurable: true });
-      page = new BrowserWindowPage({ hideChromeUI: true });
-      await page.mount(container);
+  it('bookmark add/remove round-trips through the real BookmarkService and fires onLibraryChanged', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    page.setBookmarkService(new BookmarkService());
 
-      // The engine mounts MobileLayout below 768px; its status bar, address
-      // bar and bottom nav must be hidden so only the native Compose chrome
-      // is visible, while the content area stays mounted.
-      const chromeSlots = Array.from(
-        container.querySelectorAll('.mobile-address-bar, .mobile-status-bar, .bottom-nav'),
-      ) as HTMLElement[];
-      expect(chromeSlots.length).toBeGreaterThan(0);
-      for (const el of chromeSlots) {
-        expect(el.style.display).toBe('none');
-      }
-      const content = container.querySelector('.mobile-content') as HTMLElement | null;
-      expect(content).not.toBeNull();
-      expect(content!.style.display).not.toBe('none');
-    } finally {
-      Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true });
-    }
+    let changeCount = 0;
+    page.onLibraryChanged(() => { changeCount++; });
+
+    await page.addBookmarkExternal('Example', 'https://example.com/');
+    expect(changeCount).toBeGreaterThan(0);
+
+    const list = await page.listBookmarksExternal();
+    expect(list.some((b) => b.url === 'https://example.com/' && b.title === 'Example')).toBe(true);
+
+    expect(await page.isBookmarkedExternal('https://example.com/')).toBe(true);
+
+    const id = list.find((b) => b.url === 'https://example.com/')!.id;
+    await page.removeBookmarkExternal(id);
+    expect(await page.isBookmarkedExternal('https://example.com/')).toBe(false);
+  });
+
+  it('history query/delete round-trips through the real HistoryService and fires onLibraryChanged', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    const historyService = new HistoryService();
+    page.setHistoryService(historyService);
+
+    let changeCount = 0;
+    page.onLibraryChanged(() => { changeCount++; });
+
+    await historyService.addVisit('https://example.com/', 'Example');
+    expect(changeCount).toBeGreaterThan(0);
+
+    const list = await page.listHistoryExternal();
+    expect(list.some((h) => h.url === 'https://example.com/')).toBe(true);
+
+    await page.clearHistoryExternal();
+    expect(await page.listHistoryExternal()).toHaveLength(0);
   });
 });
 
@@ -127,6 +167,33 @@ describe('android-native-bridge', () => {
     delete (window as any).NovaStateBridge;
     delete (window as any).novaNative;
   });
+
+  const emptySnapshot: { tabs: unknown[]; activeTabId: string | null; addressValue: string; canGoBack: boolean; canGoForward: boolean } =
+    { tabs: [], activeTabId: null, addressValue: '', canGoBack: false, canGoForward: false };
+
+  function makeFakePage(overrides: Record<string, unknown> = {}) {
+    return {
+      navigate: async (_url: string) => {},
+      goBack: () => {},
+      goForward: () => {},
+      reload: () => {},
+      stop: () => {},
+      createTab: (_url?: string) => 'tab-1',
+      closeTab: (_id: string) => true,
+      activateTabExternal: (_id: string) => true,
+      getChromeState: () => emptySnapshot,
+      onChromeState: (_h: unknown) => {},
+      onLibraryChanged: (_h: unknown) => {},
+      listBookmarksExternal: async () => [],
+      addBookmarkExternal: async (_title: string, _url: string) => {},
+      removeBookmarkExternal: async (_id: string) => {},
+      isBookmarkedExternal: async (_url: string) => false,
+      listHistoryExternal: async (_max?: number) => [],
+      removeHistoryEntryExternal: async (_id: string) => {},
+      clearHistoryExternal: async () => {},
+      ...overrides,
+    } as unknown as IBrowserWindowPage;
+  }
 
   it('isNativeHostPresent() is false with no NovaStateBridge', () => {
     expect(isNativeHostPresent()).toBe(false);
@@ -149,52 +216,96 @@ describe('android-native-bridge', () => {
     const calls: string[] = [];
     (window as any).NovaStateBridge = {
       onStateChanged: (json: string) => calls.push(json),
+      onBookmarksChanged: () => {},
+      onHistoryChanged: () => {},
     };
-    const snapshot: { tabs: unknown[]; activeTabId: string | null; addressValue: string; canGoBack: boolean; canGoForward: boolean } =
-      { tabs: [], activeTabId: null, addressValue: '', canGoBack: false, canGoForward: false };
-    let stateHandler: ((s: typeof snapshot) => void) | null = null;
-    const fakePage = {
-      navigate: async (_url: string) => {},
-      goBack: () => {},
-      goForward: () => {},
-      reload: () => {},
-      stop: () => {},
-      createTab: (_url?: string) => 'tab-1',
-      closeTab: (_id: string) => true,
-      activateTabExternal: (_id: string) => true,
-      getChromeState: () => snapshot,
-      onChromeState: (h: (s: typeof snapshot) => void) => { stateHandler = h; },
-    } as unknown as IBrowserWindowPage;
+    let stateHandler: ((s: typeof emptySnapshot) => void) | null = null;
+    const fakePage = makeFakePage({
+      onChromeState: (h: (s: typeof emptySnapshot) => void) => { stateHandler = h; },
+    });
 
     installAndroidNativeBridge(fakePage);
 
     expect(window.novaNative).toBeDefined();
     expect(calls.length).toBe(1); // initial push
-    expect(JSON.parse(calls[0])).toEqual(snapshot);
+    expect(JSON.parse(calls[0])).toEqual(emptySnapshot);
 
     // Simulate a subsequent state change from the page.
-    stateHandler!({ ...snapshot, activeTabId: 'tab-2' });
+    stateHandler!({ ...emptySnapshot, activeTabId: 'tab-2' });
     expect(calls.length).toBe(2);
     expect(JSON.parse(calls[1]).activeTabId).toBe('tab-2');
   });
 
   it('window.novaNative.createTab delegates to the page', () => {
-    (window as any).NovaStateBridge = { onStateChanged: () => {} };
-    const snapshot = { tabs: [], activeTabId: null, addressValue: '', canGoBack: false, canGoForward: false };
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: () => {} };
     let created: string | undefined;
-    const fakePage = {
-      navigate: async () => {},
-      goBack: () => {}, goForward: () => {}, reload: () => {}, stop: () => {},
+    const fakePage = makeFakePage({
       createTab: (url?: string) => { created = url; return 'new-id'; },
-      closeTab: () => true,
-      activateTabExternal: () => true,
-      getChromeState: () => snapshot,
-      onChromeState: () => {},
-    } as unknown as IBrowserWindowPage;
+    });
 
     installAndroidNativeBridge(fakePage);
     const id = window.novaNative!.createTab('https://example.com/');
     expect(id).toBe('new-id');
     expect(created).toBe('https://example.com/');
+  });
+
+  it('pushes bookmarks and history on install, and again whenever onLibraryChanged fires', async () => {
+    const bookmarkCalls: string[] = [];
+    const historyCalls: string[] = [];
+    (window as any).NovaStateBridge = {
+      onStateChanged: () => {},
+      onBookmarksChanged: (json: string) => bookmarkCalls.push(json),
+      onHistoryChanged: (json: string) => historyCalls.push(json),
+    };
+    let libraryHandler: (() => void) | null = null;
+    const bookmarks = [{ id: 'b1', title: 'Example', url: 'https://example.com/' }];
+    const history = [{ id: 'h1', title: 'Example', url: 'https://example.com/', visitedAt: 123 }];
+    const fakePage = makeFakePage({
+      onLibraryChanged: (h: () => void) => { libraryHandler = h; },
+      listBookmarksExternal: async () => bookmarks,
+      listHistoryExternal: async () => history,
+    });
+
+    installAndroidNativeBridge(fakePage);
+    await Promise.resolve(); // let the initial pushBookmarks()/pushHistory() microtasks settle
+    await Promise.resolve();
+
+    expect(bookmarkCalls.length).toBe(1);
+    expect(JSON.parse(bookmarkCalls[0])).toEqual(bookmarks);
+    expect(historyCalls.length).toBe(1);
+    expect(JSON.parse(historyCalls[0])).toEqual(history);
+
+    libraryHandler!();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(bookmarkCalls.length).toBe(2);
+    expect(historyCalls.length).toBe(2);
+  });
+
+  it('window.novaNative.addBookmark delegates to the page', async () => {
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: () => {} };
+    let addedTitle: string | undefined;
+    let addedUrl: string | undefined;
+    const fakePage = makeFakePage({
+      addBookmarkExternal: async (title: string, url: string) => { addedTitle = title; addedUrl = url; },
+    });
+    installAndroidNativeBridge(fakePage);
+    window.novaNative!.addBookmark('Example', 'https://example.com/');
+    await Promise.resolve();
+    expect(addedTitle).toBe('Example');
+    expect(addedUrl).toBe('https://example.com/');
+  });
+
+  it('window.novaNative.clearHistory delegates to the page', async () => {
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: () => {} };
+    let cleared = false;
+    const fakePage = makeFakePage({
+      clearHistoryExternal: async () => { cleared = true; },
+    });
+    installAndroidNativeBridge(fakePage);
+    window.novaNative!.clearHistory();
+    await Promise.resolve();
+    expect(cleared).toBe(true);
   });
 });

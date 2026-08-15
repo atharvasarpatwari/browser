@@ -6,10 +6,11 @@ import android.util.Log
 import android.webkit.JavascriptInterface
 
 /**
- * Receives window.NovaStateBridge.onStateChanged(json) calls pushed by the
- * engine's android-native-bridge.ts every time tabs/navigation state changes
- * (see ChromeStateSnapshot in src/ui/pages/browser-window.ts). This is the
- * JS -> Kotlin half of the hybrid bridge; the Kotlin -> JS half is
+ * Receives all JS -> Kotlin pushes from the engine's android-native-bridge.ts:
+ *   - onStateChanged(json)     -> ChromeStateSnapshot (tabs/nav state)
+ *   - onBookmarksChanged(json) -> full bookmark list, on install + every change
+ *   - onHistoryChanged(json)   -> full history list, on install + every change
+ * (see browser-window.ts for the exact shapes). The Kotlin -> JS half is
  * window.novaNative.*, driven from BrowserViewModel via evaluateJavascript.
  *
  * @JavascriptInterface methods are invoked on a WebView-internal thread, not
@@ -17,18 +18,30 @@ import android.webkit.JavascriptInterface
  * touching any Compose state.
  */
 class NovaStateBridge(
-    private val onSnapshot: (json: String) -> Unit
+    private val onSnapshot: (json: String) -> Unit,
+    private val onBookmarks: (json: String) -> Unit,
+    private val onHistory: (json: String) -> Unit
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @JavascriptInterface
     fun onStateChanged(json: String) {
         mainHandler.post {
-            try {
-                onSnapshot(json)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to handle state snapshot", e)
-            }
+            try { onSnapshot(json) } catch (e: Exception) { Log.e(TAG, "Failed to handle state snapshot", e) }
+        }
+    }
+
+    @JavascriptInterface
+    fun onBookmarksChanged(json: String) {
+        mainHandler.post {
+            try { onBookmarks(json) } catch (e: Exception) { Log.e(TAG, "Failed to handle bookmarks snapshot", e) }
+        }
+    }
+
+    @JavascriptInterface
+    fun onHistoryChanged(json: String) {
+        mainHandler.post {
+            try { onHistory(json) } catch (e: Exception) { Log.e(TAG, "Failed to handle history snapshot", e) }
         }
     }
 

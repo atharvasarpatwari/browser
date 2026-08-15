@@ -19,6 +19,8 @@ import type { IBrowserWindowPage } from '../ui/pages/browser-window';
 
 interface NovaStateBridgeHost {
   onStateChanged(json: string): void;
+  onBookmarksChanged(json: string): void;
+  onHistoryChanged(json: string): void;
 }
 
 declare global {
@@ -34,6 +36,12 @@ declare global {
       closeTab: (tabId: string) => boolean;
       activateTab: (tabId: string) => boolean;
       getState: () => string;
+      addBookmark: (title: string, url: string) => void;
+      removeBookmark: (id: string) => void;
+      refreshBookmarks: () => void;
+      removeHistoryEntry: (id: string) => void;
+      clearHistory: () => void;
+      refreshHistory: () => void;
     };
   }
 }
@@ -61,7 +69,38 @@ export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
     closeTab: (tabId: string) => page.closeTab(tabId),
     activateTab: (tabId: string) => page.activateTabExternal(tabId),
     getState: () => JSON.stringify(page.getChromeState()),
+    addBookmark: (title: string, url: string) => { void page.addBookmarkExternal(title, url); },
+    removeBookmark: (id: string) => { void page.removeBookmarkExternal(id); },
+    refreshBookmarks: () => { void pushBookmarks(); },
+    removeHistoryEntry: (id: string) => { void page.removeHistoryEntryExternal(id); },
+    clearHistory: () => { void page.clearHistoryExternal(); },
+    refreshHistory: () => { void pushHistory(); },
   };
+
+  const pushBookmarks = async (): Promise<void> => {
+    try {
+      const list = await page.listBookmarksExternal();
+      window.NovaStateBridge?.onBookmarksChanged(JSON.stringify(list));
+    } catch (err) {
+      console.error('[AndroidNativeBridge] Failed to push bookmarks to native host:', err);
+    }
+  };
+
+  const pushHistory = async (): Promise<void> => {
+    try {
+      const list = await page.listHistoryExternal();
+      window.NovaStateBridge?.onHistoryChanged(JSON.stringify(list));
+    } catch (err) {
+      console.error('[AndroidNativeBridge] Failed to push history to native host:', err);
+    }
+  };
+
+  page.onLibraryChanged(() => {
+    void pushBookmarks();
+    void pushHistory();
+  });
+  void pushBookmarks();
+  void pushHistory();
 
   page.onChromeState((snapshot) => {
     try {

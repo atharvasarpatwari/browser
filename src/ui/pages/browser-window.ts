@@ -75,6 +75,13 @@ const DEFAULT_PAGE_CONFIG: BrowserWindowPageConfig = {
   hideChromeUI: false,
 };
 
+/** Search-URL templates keyed by the `defaultSearchEngine` setting value. */
+const SEARCH_URL_TEMPLATES: Record<string, string> = {
+  google: 'https://www.google.com/search?q=%s',
+  bing: 'https://www.bing.com/search?q=%s',
+  duckduckgo: 'https://duckduckgo.com/?q=%s',
+};
+
 /** Serializable snapshot pushed to onChromeState() listeners (e.g. a native host bridge). */
 interface ChromeStateSnapshot {
   readonly tabs: ReadonlyArray<{
@@ -89,6 +96,10 @@ interface ChromeStateSnapshot {
   readonly addressValue: string;
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
+  /** New-tab/home URL resolved from the `homePage` setting. */
+  readonly homeUrl: string;
+  /** Default search URL template with a `%s` placeholder (see `defaultSearchEngine`). */
+  readonly searchTemplate: string;
 }
 
 interface IBrowserWindowPage extends IDisposable {
@@ -121,6 +132,17 @@ interface IBrowserWindowPage extends IDisposable {
   createTab(url?: string): string;
   closeTab(tabId: string): boolean;
   activateTabExternal(tabId: string): boolean;
+
+  // ── Bookmarks/history for external chrome (shared with desktop's own data) ──
+  onLibraryChanged(handler: () => void): void;
+  offLibraryChanged(handler: () => void): void;
+  listBookmarksExternal(): Promise<ReadonlyArray<{ id: string; title: string; url: string }>>;
+  addBookmarkExternal(title: string, url: string): Promise<void>;
+  removeBookmarkExternal(id: string): Promise<void>;
+  isBookmarkedExternal(url: string): Promise<boolean>;
+  listHistoryExternal(maxResults?: number): Promise<ReadonlyArray<{ id: string; title: string; url: string; visitedAt: number }>>;
+  removeHistoryEntryExternal(id: string): Promise<void>;
+  clearHistoryExternal(): Promise<void>;
 }
 
 class BrowserWindowPage implements IBrowserWindowPage {
@@ -177,6 +199,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private tabPersistence: TabPersistenceManager | null = null;
   private contextManager: TabContextManager | null = null;
   private readonly chromeStateHandlers = new Set<(snapshot: ChromeStateSnapshot) => void>();
+  private readonly libraryChangedHandlers = new Set<() => void>();
 
   constructor(config?: Partial<BrowserWindowPageConfig>) {
     this.config = { ...DEFAULT_PAGE_CONFIG, ...config };
@@ -245,16 +268,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
       if (areas.statusBar) {
         this.statusBarView = new StatusBarView(this.statusBar);
         this.statusBarView.attach(areas.statusBar);
-      }
-      if (this.config.hideChromeUI) {
-        // Same contract as the desktop branch below: keep all internal wiring
-        // intact but hide the engine's own mobile chrome (status bar, address
-        // bar, bottom nav) when a native shell (e.g. Android Compose) is
-        // driving navigation instead. The phone-sized WebView reports
-        // innerWidth < 768, so MobileLayout — not DesktopLayout — is mounted.
-        if (areas.addressBar) areas.addressBar.style.display = 'none';
-        if (areas.statusBar) areas.statusBar.style.display = 'none';
-        if (areas.bottomNav) areas.bottomNav.style.display = 'none';
       }
     } else {
       if (areas.toolbar) {
@@ -1030,7 +1043,20 @@ class BrowserWindowPage implements IBrowserWindowPage {
       addressValue: this.addressBar?.state.value ?? this.currentUrl,
       canGoBack: this.navigationBridge?.canGoBack ?? false,
       canGoForward: this.navigationBridge?.canGoForward ?? false,
+      homeUrl: this.getHomeUrl(),
+      searchTemplate: this.getSearchTemplate(),
     };
+  }
+
+  /** Reads the `homePage` setting (fallback `about:blank`). */
+  private getHomeUrl(): string {
+    return this.settingsService?.getString('homePage', 'about:blank') || 'about:blank';
+  }
+
+  /** Resolves the `defaultSearchEngine` setting into a `%s` search URL template. */
+  private getSearchTemplate(): string {
+    const id = this.settingsService?.getString('defaultSearchEngine', 'google') || 'google';
+    return SEARCH_URL_TEMPLATES[id] ?? SEARCH_URL_TEMPLATES.google;
   }
 
   createTab(url?: string): string {
@@ -1150,10 +1176,75 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.bookmarkService = service;
     // Sync the BookmarkBar model to use the same DI-registered service instance.
     this.bookmarkBar?.setService(service);
+    const notify = () => this.emitLibraryChanged();
+    service.on('bookmarkCreated', notify);
+    service.on('bookmarkRemoved', notify);
+    service.on('bookmarkUpdated', notify);
+    service.on('bookmarkMoved', notify);
   }
 
   setHistoryService(service: IHistoryService): void {
     this.historyService = service;
+    const notify = () => this.emitLibraryChanged();
+    service.on('entryAdded', notify);
+    service.on('entriesDeleted', notify);
+    service.on('cleared', notify);
+  }
+
+  private emitLibraryChanged(): void {
+    for (const handler of this.libraryChangedHandlers) {
+      try { handler(); } catch (err) {
+        console.error('[BrowserWindowPage] onLibraryChanged handler threw:', err);
+      }
+    }
+  }
+
+  onLibraryChanged(handler: () => void): void {
+    this.libraryChangedHandlers.add(handler);
+  }
+
+  offLibraryChanged(handler: () => void): void {
+    this.libraryChangedHandlers.delete(handler);
+  }
+
+  async listBookmarksExternal(): Promise<ReadonlyArray<{ id: string; title: string; url: string }>> {
+    if (!this.bookmarkService) return [];
+    const tree = await this.bookmarkService.getTree();
+    const flat: Array<{ id: string; title: string; url: string }> = [];
+    const walk = (nodes: readonly (typeof tree)[number][]): void => {
+      for (const node of nodes) {
+        if (!node.folder && node.url) flat.push({ id: node.id, title: node.title, url: node.url });
+        if (node.children.length) walk(node.children);
+      }
+    };
+    walk(tree);
+    return flat;
+  }
+
+  async addBookmarkExternal(title: string, url: string): Promise<void> {
+    await this.bookmarkService?.addBookmark(title, url);
+  }
+
+  async removeBookmarkExternal(id: string): Promise<void> {
+    await this.bookmarkService?.removeBookmark(id);
+  }
+
+  async isBookmarkedExternal(url: string): Promise<boolean> {
+    return (await this.bookmarkService?.isBookmarked(url)) ?? false;
+  }
+
+  async listHistoryExternal(maxResults = 200): Promise<ReadonlyArray<{ id: string; title: string; url: string; visitedAt: number }>> {
+    if (!this.historyService) return [];
+    const entries = await this.historyService.getRecent(maxResults);
+    return entries.map((e) => ({ id: e.id, title: e.title, url: e.url, visitedAt: e.lastVisitTime }));
+  }
+
+  async removeHistoryEntryExternal(id: string): Promise<void> {
+    await this.historyService?.deleteEntry(id);
+  }
+
+  async clearHistoryExternal(): Promise<void> {
+    await this.historyService?.deleteAll();
   }
 
   setTrackerBlocker(blocker: ITrackerBlocker): void {

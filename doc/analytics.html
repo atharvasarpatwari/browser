@@ -416,10 +416,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   </div>
   <h1 class="sr-only">Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num">61</span> Documents</span>
-    <span><span class="num">6</span> Days</span>
-    <span><span class="num">4,393</span> Total Suite Tests</span>
-    <span>Generated <span class="num">2026-07-23</span></span>
+    <span><span class="num">183</span> Documents</span>
+    <span><span class="num">24</span> Days</span>
+    <span><span class="num">8,705</span> Total Suite Tests</span>
+    <span>Generated <span class="num">2026-08-14</span></span>
   </p>
 </header>
 
@@ -449,10 +449,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <div class="kpi-row" id="kpis">
-  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">59</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
-  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">3,967</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
-  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">84</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
-  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">151</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">183</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">8,794</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
+  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">352</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">993</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
   <div class="kpi amber glass"><span class="icon">📐</span><div class="value" id="kpiCompliance">~72%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
 </div>
 
@@ -655,7 +655,7 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </main>
 
 <footer>
-  Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-07-22 (refreshed)
+  Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-08-14 (refreshed)
   <div class="kbd-hint">Press <kbd>/</kbd> to search · <kbd>Ctrl</kbd>+<kbd>K</kbd> for quick search · <kbd>?</kbd> for all shortcuts · click a row for details</div>
 </footer>
 
@@ -815,6 +815,7 @@ const DOCS=[
 {file:"2026-07-18-html5-tree-builder-modular-architecture.md",date:"2026-07-18",title:"HTML5 Tree Builder Rewrite",category:"HTML5",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:25},
 {file:"2026-07-18-ip-protocol.md",date:"2026-07-18",title:"IP Protocol & Firewall",category:"IPC/Networking",tests:103,status:"Completed",rootCauses:0,filesModified:0,filesCreated:8},
 {file:"2026-07-18-ipc-design.md",date:"2026-07-18",title:"IPC System Design",category:"IPC/Networking",tests:64,status:"Completed",rootCauses:5,filesModified:4,filesCreated:2},
+{file:"2026-07-18-javascript-engine.md",date:"2026-07-18",title:"JavaScript Engine",category:"JavaScript",tests:107,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
 {file:"2026-07-18-layout-engine-rewrite.md",date:"2026-07-18",title:"Layout Engine Rewrite",category:"Layout",tests:122,status:"Completed",rootCauses:0,filesModified:2,filesCreated:0},
 {file:"2026-07-18-lazy-loading.md",date:"2026-07-18",title:"Lazy Loading",category:"Rendering",tests:45,status:"Completed",rootCauses:0,filesModified:0,filesCreated:3},
 {file:"2026-07-18-line-breaking-text-measure-floats.md",date:"2026-07-18",title:"Line Breaking & Floats",category:"CSS",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:3},
@@ -829,25 +830,28 @@ const DOCS=[
 {file:"2026-07-18-stacking-contexts-paint-order.md",date:"2026-07-18",title:"Stacking Contexts & Paint Order",category:"CSS",tests:26,status:"Completed",rootCauses:0,filesModified:2,filesCreated:0},
 {file:"2026-07-18-text-rendering.md",date:"2026-07-18",title:"Text Rendering",category:"HTML5",tests:0,status:"Completed",rootCauses:0,filesModified:2,filesCreated:0},
 {file:"2026-07-18-ui-cleanup-and-formatting-tests.md",date:"2026-07-18",title:"UI Cleanup & Formatting Tests",category:"UI",tests:67,status:"Completed",rootCauses:1,filesModified:2,filesCreated:3},
+{file:"benchmark-2026-07-18.md",date:"2026-07-18",title:"Benchmark Report",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-19-analytics-dashboard.md",date:"2026-07-19",title:"Documentation Analytics Dashboard",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1},
 {file:"2026-07-19-bookmarks-history-ui.md",date:"2026-07-19",title:"Bookmarks/History UI",category:"UI",tests:48,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
 {file:"2026-07-19-content-security-policy.md",date:"2026-07-19",title:"Content Security Policy",category:"Security",tests:179,status:"Completed",rootCauses:6,filesModified:5,filesCreated:1},
+{file:"2026-07-19-crash-recovery-isolation-tests.md",date:"2026-07-19",title:"Crash Recovery & Site Isolation Tests",category:"Architecture",tests:105,status:"Completed",rootCauses:4,filesModified:0,filesCreated:1},
 {file:"2026-07-19-devtools.md",date:"2026-07-19",title:"Developer Tools",category:"UI",tests:99,status:"Completed",rootCauses:0,filesModified:0,filesCreated:2},
+{file:"2026-07-19-fetch-api-implementation.md",date:"2026-07-19",title:"Fetch API Implementation + EventLoop Fix",category:"JavaScript",tests:36,status:"Completed",rootCauses:4,filesModified:7,filesCreated:3},
+{file:"2026-07-19-history-api-location-bindings.md",date:"2026-07-19",title:"History API & Location Bindings",category:"JavaScript",tests:65,status:"Completed",rootCauses:3,filesModified:5,filesCreated:2},
 {file:"2026-07-19-navigation-bridge.md",date:"2026-07-19",title:"Navigation Bridge",category:"UI",tests:29,status:"Completed",rootCauses:3,filesModified:2,filesCreated:1},
 {file:"2026-07-19-page-loader-renderer.md",date:"2026-07-19",title:"PageLoader & PageRenderer",category:"Architecture",tests:36,status:"Completed",rootCauses:1,filesModified:1,filesCreated:4},
 {file:"2026-07-19-page-loader-renderer-plan.md",date:"2026-07-19",title:"PageLoader/Renderer Plan",category:"Plan",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-19-promise-microtask-fixes.md",date:"2026-07-19",title:"Promise + Microtask Bug Fixes",category:"JavaScript",tests:31,status:"Completed",rootCauses:3,filesModified:4,filesCreated:0},
 {file:"2026-07-19-settings-integration.md",date:"2026-07-19",title:"Settings Integration",category:"UI",tests:39,status:"Completed",rootCauses:0,filesModified:1,filesCreated:4},
 {file:"2026-07-19-site-isolation.md",date:"2026-07-19",title:"Site Isolation Tests",category:"Security",tests:142,status:"Completed",rootCauses:1,filesModified:1,filesCreated:1},
 {file:"2026-07-19-site-isolation-plan.md",date:"2026-07-19",title:"Site Isolation Plan",category:"Plan",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
 {file:"2026-07-19-spec-adherence-audit.md",date:"2026-07-19",title:"Spec Adherence Audit",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
-{file:"benchmark-2026-07-18.md",date:"2026-07-18",title:"Benchmark Report",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
-{file:"2026-07-18-javascript-engine.md",date:"2026-07-18",title:"JavaScript Engine",category:"JavaScript",tests:107,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
 {file:"2026-07-19-spec-adherence-phase1.md",date:"2026-07-19",title:"Spec Adherence Phase 1",category:"Architecture",tests:19,status:"Completed",rootCauses:5,filesModified:9,filesCreated:0},
 {file:"2026-07-19-spec-adherence-phase1-complete.md",date:"2026-07-19",title:"Spec Adherence Phase 1 Complete",category:"Rendering",tests:25,status:"Completed",rootCauses:3,filesModified:5,filesCreated:0},
-{file:"2026-07-19-promise-microtask-fixes.md",date:"2026-07-19",title:"Promise + Microtask Bug Fixes",category:"JavaScript",tests:31,status:"Completed",rootCauses:3,filesModified:4,filesCreated:0},
-{file:"2026-07-19-history-api-location-bindings.md",date:"2026-07-19",title:"History API & Location Bindings",category:"JavaScript",tests:65,status:"Completed",rootCauses:3,filesModified:5,filesCreated:2},
-{file:"2026-07-19-analytics-dashboard.md",date:"2026-07-19",title:"Documentation Analytics Dashboard",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1},
+{file:"gpu-acceleration-plan.md",date:"2026-07-19",title:"GPU Acceleration Plan",category:"Rendering",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
 {file:"promise-microtask-plan.md",date:"2026-07-19",title:"Promise + Microtask Queue Plan",category:"JavaScript",tests:55,status:"Planned",rootCauses:0,filesModified:4,filesCreated:2},
 {file:"fetch-api-xhr-plan.md",date:"2026-07-19",title:"Fetch API & XMLHttpRequest Plan",category:"JavaScript",tests:0,status:"Planned",rootCauses:0,filesModified:2,filesCreated:5},
+{file:"xss-mitigations-plan.md",date:"2026-07-19",title:"XSS/Injection Mitigations",category:"Security",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
 {file:"2026-07-20-gpu-acceleration-phase1.md",date:"2026-07-20",title:"GPU Acceleration Phase 1",category:"Rendering",tests:44,status:"Completed",rootCauses:0,filesModified:3,filesCreated:8},
 {file:"2026-07-20-gpu-acceleration-phase2.md",date:"2026-07-20",title:"GPU Acceleration Phase 2",category:"Rendering",tests:61,status:"Completed",rootCauses:0,filesModified:2,filesCreated:3},
 {file:"2026-07-20-gpu-acceleration-phase3.md",date:"2026-07-20",title:"GPU Acceleration Phase 3",category:"Rendering",tests:68,status:"Completed",rootCauses:2,filesModified:3,filesCreated:1},
@@ -855,16 +859,134 @@ const DOCS=[
 {file:"2026-07-20-js-engine-critical-gaps.md",date:"2026-07-20",title:"JS Engine Critical Gaps",category:"JavaScript",tests:158,status:"Completed",rootCauses:4,filesModified:6,filesCreated:0},
 {file:"2026-07-21-customizable-browser-name.md",date:"2026-07-21",title:"Customizable Browser Name",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:5,filesCreated:2},
 {file:"2026-07-21-ui-backend-wiring.md",date:"2026-07-21",title:"UI Backend Wiring",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:4,filesCreated:0},
-{file:"2026-07-22-vm-closure-upvalue-fixes.md",date:"2026-07-22",title:"VM Closure & Upvalue Fixes",category:"JavaScript",tests:141,status:"Completed",rootCauses:7,filesModified:4,filesCreated:0},
-{file:"2026-07-22-jit-wasm-codegen.md",date:"2026-07-22",title:"JIT WASM Codegen & Tier Manager",category:"JavaScript",tests:37,status:"Completed",rootCauses:0,filesModified:3,filesCreated:2},
-{file:"2026-07-23-xhr-implementation.md",date:"2026-07-23",title:"XMLHttpRequest Implementation",category:"JavaScript",tests:58,status:"Completed",rootCauses:2,filesModified:1,filesCreated:3},
-{file:"2026-07-23-web-workers.md",date:"2026-07-23",title:"Web Workers",category:"JavaScript",tests:59,status:"Completed",rootCauses:3,filesModified:1,filesCreated:2},
+{file:"jit-compilation-plan.md",date:"2026-07-21",title:"JIT Compilation Plan",category:"JavaScript",tests:0,status:"Planned",rootCauses:0,filesModified:4,filesCreated:0},
+{file:"process-model-design-report.md",date:"2026-07-21",title:"Process Model Design Report",category:"Architecture",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-22-android-apk-setup.md",date:"2026-07-22",title:"Android APK Build Setup",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:2},
 {file:"2026-07-22-garbage-collection.md",date:"2026-07-22",title:"Garbage Collection",category:"JavaScript",tests:62,status:"Completed",rootCauses:3,filesModified:4,filesCreated:3},
-{file:"2026-07-22-tab-management-overhaul.md",date:"2026-07-22",title:"Tab Management Overhaul",category:"UI",tests:148,status:"Completed",rootCauses:0,filesModified:3,filesCreated:8},
+{file:"2026-07-22-jit-wasm-codegen.md",date:"2026-07-22",title:"JIT WASM Codegen & Tier Manager",category:"JavaScript",tests:37,status:"Completed",rootCauses:0,filesModified:3,filesCreated:2},
 {file:"2026-07-22-navigation-bridge-test-suite.md",date:"2026-07-22",title:"NavigationBridge Test Suite",category:"UI",tests:25,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
 {file:"2026-07-22-tab-context-tests.md",date:"2026-07-22",title:"TabContext Test Suite",category:"UI",tests:25,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
+{file:"2026-07-22-tab-management-overhaul.md",date:"2026-07-22",title:"Tab Management Overhaul",category:"UI",tests:148,status:"Completed",rootCauses:0,filesModified:3,filesCreated:8},
 {file:"2026-07-22-tab-persistence.md",date:"2026-07-22",title:"Tab Persistence",category:"UI",tests:20,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
-{file:"2026-07-22-vite-dev-server.md",date:"2026-07-22",title:"Vite Dev Server",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1}
+{file:"2026-07-22-vite-dev-server.md",date:"2026-07-22",title:"Vite Dev Server",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1},
+{file:"2026-07-22-vm-closure-upvalue-fixes.md",date:"2026-07-22",title:"VM Closure & Upvalue Fixes",category:"JavaScript",tests:141,status:"Completed",rootCauses:7,filesModified:4,filesCreated:0},
+{file:"tab-management-overhaul-plan.md",date:"2026-07-22",title:"Tab Management Overhaul",category:"UI",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-23-cors-security.md",date:"2026-07-23",title:"CORS Security Module",category:"Security",tests:80,status:"Completed",rootCauses:2,filesModified:2,filesCreated:1},
+{file:"2026-07-23-csp-evaluator-tests.md",date:"2026-07-23",title:"CSP Evaluator Test Suite",category:"Security",tests:127,status:"Completed",rootCauses:1,filesModified:0,filesCreated:1},
+{file:"2026-07-23-persistent-storage-networking.md",date:"2026-07-23",title:"Persistent Storage & Networking Pipeline",category:"IPC/Networking",tests:0,status:"Completed",rootCauses:3,filesModified:1,filesCreated:1},
+{file:"2026-07-23-process-separation.md",date:"2026-07-23",title:"Renderer/Browser Process Separation",category:"Architecture",tests:51,status:"Completed",rootCauses:0,filesModified:4,filesCreated:8},
+{file:"2026-07-23-real-networking.md",date:"2026-07-23",title:"Real Networking (TCP/TLS/DNS)",category:"IPC/Networking",tests:15,status:"Completed",rootCauses:3,filesModified:2,filesCreated:2},
+{file:"2026-07-23-test-suite-expansion.md",date:"2026-07-23",title:"Test Suite Expansion for Untested Modules",category:"Architecture",tests:274,status:"Completed",rootCauses:0,filesModified:0,filesCreated:9},
+{file:"2026-07-23-web-workers.md",date:"2026-07-23",title:"Web Workers",category:"JavaScript",tests:59,status:"Completed",rootCauses:3,filesModified:1,filesCreated:2},
+{file:"2026-07-23-websocket-api.md",date:"2026-07-23",title:"WebSocket API Implementation",category:"JavaScript",tests:24,status:"Completed",rootCauses:6,filesModified:2,filesCreated:1},
+{file:"2026-07-23-wpt-spec-compliance.md",date:"2026-07-23",title:"WPT & Spec Compliance",category:"JavaScript",tests:501,status:"Completed",rootCauses:0,filesModified:0,filesCreated:4},
+{file:"2026-07-23-xhr-implementation.md",date:"2026-07-23",title:"XMLHttpRequest Implementation",category:"JavaScript",tests:58,status:"Completed",rootCauses:2,filesModified:1,filesCreated:3},
+{file:"android-apk-build-guide.md",date:"2026-07-23",title:"Android APK Build Guide",category:"UI",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-24-cascade-inheritance-resolution.md",date:"2026-07-24",title:"CSS Cascade & Inheritance Resolution",category:"CSS",tests:91,status:"Completed",rootCauses:0,filesModified:2,filesCreated:6},
+{file:"2026-07-24-compositing-layers.md",date:"2026-07-24",title:"Compositing Layers Implementation",category:"Rendering",tests:75,status:"Completed",rootCauses:0,filesModified:8,filesCreated:13},
+{file:"2026-07-24-css-tokenizer-parser-bugfixes.md",date:"2026-07-24",title:"CSS5 Tokenizer & Parser Bugfixes",category:"CSS",tests:52,status:"Completed",rootCauses:16,filesModified:5,filesCreated:1},
+{file:"compositing-layers-plan.md",date:"2026-07-24",title:"Compositing Layers Implementation Plan",category:"Rendering",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-25-canvas-2d-api.md",date:"2026-07-25",title:"Canvas 2D Graphics API",category:"Rendering",tests:67,status:"Completed",rootCauses:7,filesModified:2,filesCreated:8},
+{file:"2026-07-25-cascade-features.md",date:"2026-07-25",title:"CSS Cascade Feature Additions",category:"CSS",tests:0,status:"Completed",rootCauses:0,filesModified:5,filesCreated:0},
+{file:"2026-07-25-computed-style-resolution.md",date:"2026-07-25",title:"Computed Style Resolution Bug Fixes",category:"CSS",tests:130,status:"Completed",rootCauses:6,filesModified:5,filesCreated:1},
+{file:"2026-07-25-custom-properties-order-fix.md",date:"2026-07-25",title:"CSS Custom Properties Audit & Fixes",category:"CSS",tests:22,status:"Completed",rootCauses:4,filesModified:4,filesCreated:0},
+{file:"2026-07-25-event-loop-task-queues.md",date:"2026-07-25",title:"Event Loop & Task Queue Improvements",category:"JavaScript",tests:24,status:"Completed",rootCauses:0,filesModified:5,filesCreated:2},
+{file:"2026-07-25-media-query-audit.md",date:"2026-07-25",title:"Media Query Parser & Evaluator Audit",category:"CSS",tests:41,status:"Completed",rootCauses:4,filesModified:3,filesCreated:0},
+{file:"2026-07-26-certificate-validation-implementation.md",date:"2026-07-26",title:"Certificate Validation Implementation",category:"Security",tests:16,status:"Completed",rootCauses:3,filesModified:4,filesCreated:1},
+{file:"2026-07-26-composed-flag-event-dispatch.md",date:"2026-07-26",title:"Composed Flag Support for Event Dispatch",category:"HTML5",tests:6,status:"Completed",rootCauses:2,filesModified:3,filesCreated:0},
+{file:"2026-07-26-css-math-functions.md",date:"2026-07-26",title:"CSS Math Functions (calc/clamp/min/max)",category:"CSS",tests:42,status:"Completed",rootCauses:2,filesModified:2,filesCreated:2},
+{file:"2026-07-26-dom-token-list.md",date:"2026-07-26",title:"DOMTokenList Implementation",category:"HTML5",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1},
+{file:"2026-07-26-five-next-steps-canvas-css-engine.md",date:"2026-07-26",title:"Five Next Steps: Canvas & CSS Engine",category:"CSS",tests:67,status:"Completed",rootCauses:5,filesModified:5,filesCreated:1},
+{file:"2026-07-26-getElementsByClassName.md",date:"2026-07-26",title:"getElementsByClassName support",category:"HTML5",tests:0,status:"Completed",rootCauses:0,filesModified:3,filesCreated:0},
+{file:"2026-07-26-ipc-infrastructure-fixes.md",date:"2026-07-26",title:"IPC Infrastructure Fixes",category:"IPC/Networking",tests:6,status:"Completed",rootCauses:5,filesModified:5,filesCreated:0},
+{file:"2026-07-26-ipc-overhaul.md",date:"2026-07-26",title:"IPC Infrastructure Overhaul",category:"IPC/Networking",tests:33,status:"Completed",rootCauses:3,filesModified:5,filesCreated:3},
+{file:"2026-07-26-js-builtins-global-env.md",date:"2026-07-26",title:"JS Built-ins Global Environment Wiring",category:"JavaScript",tests:113,status:"Completed",rootCauses:5,filesModified:2,filesCreated:2},
+{file:"2026-07-26-phase2-spec-adherence.md",date:"2026-07-26",title:"Phase 2 Spec Adherence Implementation",category:"JavaScript",tests:27,status:"Completed",rootCauses:0,filesModified:14,filesCreated:1},
+{file:"2026-07-26-same-origin-policy.md",date:"2026-07-26",title:"Same-Origin Policy Implementation",category:"Security",tests:63,status:"Completed",rootCauses:0,filesModified:7,filesCreated:2},
+{file:"2026-07-26-sandboxing-process-isolation.md",date:"2026-07-26",title:"Sandboxing and Process Isolation",category:"Security",tests:129,status:"Completed",rootCauses:1,filesModified:1,filesCreated:11},
+{file:"2026-07-26-spec-adherence-phase3.md",date:"2026-07-26",title:"Spec Adherence Phase 3 — TDZ, ASI, super",category:"JavaScript",tests:42,status:"Completed",rootCauses:3,filesModified:4,filesCreated:1},
+{file:"2026-07-26-strict-mode-detection.md",date:"2026-07-26",title:"Strict Mode Detection",category:"JavaScript",tests:0,status:"Completed",rootCauses:0,filesModified:4,filesCreated:0},
+{file:"2026-07-26-typed-arrays-test-fixes.md",date:"2026-07-26",title:"Typed Arrays — Test Fixes",category:"JavaScript",tests:0,status:"Completed",rootCauses:4,filesModified:4,filesCreated:0},
+{file:"2026-07-26-web-apis-permissions.md",date:"2026-07-26",title:"Permission-Gated Web APIs",category:"JavaScript",tests:40,status:"Completed",rootCauses:0,filesModified:0,filesCreated:2},
+{file:"2026-07-26-web-storage-implementation.md",date:"2026-07-26",title:"Web Storage Implementation",category:"JavaScript",tests:84,status:"Completed",rootCauses:0,filesModified:4,filesCreated:4},
+{file:"2026-07-26-websocket-binary-data-handling.md",date:"2026-07-26",title:"WebSocket Binary Data Handling Fixes",category:"IPC/Networking",tests:14,status:"Completed",rootCauses:3,filesModified:2,filesCreated:0},
+{file:"2026-07-26-worker-constructor-global-env-promise-worker.md",date:"2026-07-26",title:"Worker Constructor + Promise in Workers",category:"JavaScript",tests:5,status:"Completed",rootCauses:0,filesModified:3,filesCreated:0},
+{file:"same-origin-policy-plan.md",date:"2026-07-26",title:"Same-Origin Policy Implementation Plan",category:"Security",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-27-native-build-backbone.md",date:"2026-07-27",title:"Native Build Backbone — Cargo/Rust + napi-rs",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:8,filesCreated:3},
+{file:"2026-07-27-web-api-support.md",date:"2026-07-27",title:"Modern Web API Support",category:"JavaScript",tests:134,status:"Completed",rootCauses:8,filesModified:4,filesCreated:1},
+{file:"2026-07-27-xss-injection-mitigations.md",date:"2026-07-27",title:"XSS / Injection Mitigations",category:"Security",tests:48,status:"Completed",rootCauses:0,filesModified:8,filesCreated:2},
+{file:"2026-07-28-browser-engine-features.md",date:"2026-07-28",title:"Browser Engine Features",category:"Architecture",tests:142,status:"Completed",rootCauses:0,filesModified:2,filesCreated:10},
+{file:"2026-07-28-settings-features.md",date:"2026-07-28",title:"Settings Page Features",category:"UI",tests:115,status:"Completed",rootCauses:4,filesModified:3,filesCreated:9},
+{file:"2026-07-29-compositing-enhancements.md",date:"2026-07-29",title:"Compositing Enhancements — Bug Fixes",category:"Rendering",tests:0,status:"Completed",rootCauses:5,filesModified:3,filesCreated:0},
+{file:"2026-07-29-credential-system.md",date:"2026-07-29",title:"Credential System",category:"Security",tests:54,status:"Completed",rootCauses:0,filesModified:0,filesCreated:6},
+{file:"2026-07-29-devtools-9-panels.md",date:"2026-07-29",title:"DevTools — 9-Panel Implementation",category:"UI",tests:85,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-29-extension-test-fixes.md",date:"2026-07-29",title:"Extension System Test Fixes",category:"UI",tests:0,status:"Completed",rootCauses:5,filesModified:3,filesCreated:0},
+{file:"2026-07-29-graphics-modules.md",date:"2026-07-29",title:"Graphics Modules",category:"Rendering",tests:119,status:"Completed",rootCauses:2,filesModified:0,filesCreated:7},
+{file:"2026-07-29-js-engine-modules.md",date:"2026-07-29",title:"JS Engine Modules",category:"JavaScript",tests:54,status:"Completed",rootCauses:2,filesModified:1,filesCreated:5},
+{file:"2026-07-29-js-language-test-fixes.md",date:"2026-07-29",title:"JS Language Test Fixes",category:"JavaScript",tests:0,status:"Completed",rootCauses:6,filesModified:5,filesCreated:0},
+{file:"2026-07-29-layout-enhanced-table-parser-fix.md",date:"2026-07-29",title:"Layout Enhanced Table Parser Fix",category:"HTML5",tests:0,status:"Completed",rootCauses:3,filesModified:2,filesCreated:0},
+{file:"2026-07-29-media-modules.md",date:"2026-07-29",title:"Media Modules",category:"JavaScript",tests:103,status:"Completed",rootCauses:2,filesModified:0,filesCreated:8},
+{file:"2026-07-29-navigation-controls.md",date:"2026-07-29",title:"Navigation Controls System",category:"UI",tests:89,status:"Completed",rootCauses:0,filesModified:0,filesCreated:16},
+{file:"2026-07-29-omnibox-system.md",date:"2026-07-29",title:"Omnibox System",category:"UI",tests:52,status:"Completed",rootCauses:0,filesModified:0,filesCreated:8},
+{file:"2026-07-29-rendering-enhanced-test-fixes.md",date:"2026-07-29",title:"Rendering Enhanced Test Fixes",category:"CSS",tests:0,status:"Completed",rootCauses:5,filesModified:5,filesCreated:0},
+{file:"2026-07-29-runtime-modules.md",date:"2026-07-29",title:"Runtime Modules",category:"JavaScript",tests:58,status:"Completed",rootCauses:0,filesModified:1,filesCreated:6},
+{file:"2026-07-29-screen-reader-support.md",date:"2026-07-29",title:"Screen Reader Support",category:"UI",tests:86,status:"Completed",rootCauses:0,filesModified:0,filesCreated:3},
+{file:"2026-07-29-security-modules.md",date:"2026-07-29",title:"Security Policy Modules",category:"Security",tests:69,status:"Completed",rootCauses:0,filesModified:1,filesCreated:12},
+{file:"2026-07-29-storage-modules.md",date:"2026-07-29",title:"Storage API Modules",category:"JavaScript",tests:58,status:"Completed",rootCauses:1,filesModified:1,filesCreated:8},
+{file:"2026-07-29-web-apis-modules.md",date:"2026-07-29",title:"Web APIs Modules",category:"JavaScript",tests:87,status:"Completed",rootCauses:0,filesModified:0,filesCreated:15},
+{file:"2026-07-30-analysis-report-monitor.md",date:"2026-07-30",title:"Analysis Report Monitor Dashboard",category:"Architecture",tests:0,status:"Completed",rootCauses:2,filesModified:0,filesCreated:9},
+{file:"2026-07-30-css-animations-web-animations-api.md",date:"2026-07-30",title:"CSS Animations + Web Animations API",category:"Rendering",tests:31,status:"Completed",rootCauses:3,filesModified:8,filesCreated:0},
+{file:"2026-07-30-css-container-nesting.md",date:"2026-07-30",title:"CSS Container Queries & Nesting",category:"CSS",tests:33,status:"Completed",rootCauses:2,filesModified:5,filesCreated:1},
+{file:"2026-07-30-css-style-pipeline.md",date:"2026-07-30",title:"CSS Style Pipeline",category:"CSS",tests:54,status:"Completed",rootCauses:4,filesModified:2,filesCreated:9},
+{file:"2026-07-30-document-write.md",date:"2026-07-30",title:"document.write() Implementation",category:"HTML5",tests:5,status:"Completed",rootCauses:0,filesModified:5,filesCreated:0},
+{file:"2026-07-30-layout-features.md",date:"2026-07-30",title:"Layout Features",category:"Layout",tests:0,status:"Completed",rootCauses:4,filesModified:1,filesCreated:1},
+{file:"2026-07-30-networking-gap-fixes.md",date:"2026-07-30",title:"Networking Gap Fixes",category:"IPC/Networking",tests:0,status:"Completed",rootCauses:4,filesModified:4,filesCreated:0},
+{file:"2026-07-30-range-selection-api.md",date:"2026-07-30",title:"Range & Selection API",category:"HTML5",tests:66,status:"Completed",rootCauses:0,filesModified:1,filesCreated:0},
+{file:"2026-07-30-rendering-features.md",date:"2026-07-30",title:"Rendering Features",category:"Rendering",tests:12,status:"Completed",rootCauses:6,filesModified:2,filesCreated:0},
+{file:"2026-07-30-tokenizer-edge-case-tests.md",date:"2026-07-30",title:"Tokenizer Edge Case Tests",category:"CSS",tests:11,status:"Completed",rootCauses:2,filesModified:2,filesCreated:0},
+{file:"2026-07-31-analysis-report-standalone.md",date:"2026-07-31",title:"Analysis Report Standalone",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:2},
+{file:"2026-07-31-android-apk-build-config.md",date:"2026-07-31",title:"Android APK Build Config",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:2,filesCreated:0},
+{file:"2026-07-31-code-map-placement-audit.md",date:"2026-07-31",title:"Code Map & Placement Audit",category:"Architecture",tests:0,status:"Completed",rootCauses:2,filesModified:2,filesCreated:0},
+{file:"2026-07-31-electron-launch-implementation.md",date:"2026-07-31",title:"Electron Launch Implementation",category:"UI",tests:1,status:"Completed",rootCauses:5,filesModified:9,filesCreated:5},
+{file:"2026-07-31-electron-launch-plan.md",date:"2026-07-31",title:"Electron Launch Plan",category:"Plan",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-31-gpu-acceleration-enabled.md",date:"2026-07-31",title:"GPU Acceleration Enabled",category:"Rendering",tests:0,status:"Completed",rootCauses:0,filesModified:3,filesCreated:0},
+{file:"2026-07-31-js-engine-feature-check.md",date:"2026-07-31",title:"JS Engine Feature Verification",category:"JavaScript",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-31-layout-box-model-debug.md",date:"2026-07-31",title:"Layout Box Model Debug",category:"Layout",tests:0,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0},
+{file:"2026-07-31-navigation-feature-check.md",date:"2026-07-31",title:"Navigation & Browser Feature Check",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-07-31-platform-input-window-controls.md",date:"2026-07-31",title:"Platform Input & Window Controls",category:"UI",tests:23,status:"Completed",rootCauses:2,filesModified:3,filesCreated:2},
+{file:"2026-07-31-structural-cleanup.md",date:"2026-07-31",title:"Structural Cleanup",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:9,filesCreated:2},
+{file:"2026-08-01-android-icon-and-standalone-refresh.md",date:"2026-08-01",title:"Android Launcher Icon + Standalone Refresh",category:"UI",tests:0,status:"Completed",rootCauses:4,filesModified:4,filesCreated:2},
+{file:"2026-08-01-android-mobile-build-verification.md",date:"2026-08-01",title:"Android Mobile Build Verification",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-08-01-electron-ui-mount-fix.md",date:"2026-08-01",title:"Electron UI Mount Fix",category:"JavaScript",tests:0,status:"Completed",rootCauses:2,filesModified:2,filesCreated:0},
+{file:"2026-08-01-gap-implementations.md",date:"2026-08-01",title:"Gap Implementations",category:"Rendering",tests:0,status:"Completed",rootCauses:4,filesModified:5,filesCreated:1},
+{file:"2026-08-01-js-runtime-web-api-fixes.md",date:"2026-08-01",title:"JS Runtime Web API Fixes",category:"JavaScript",tests:0,status:"Completed",rootCauses:3,filesModified:5,filesCreated:1},
+{file:"2026-08-01-mobile-android-integration-summary.md",date:"2026-08-01",title:"Mobile Android Integration Summary",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-08-01-protocols-and-rendering-inventory.md",date:"2026-08-01",title:"Protocols & Rendering Tools Inventory",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-08-01-src-typecheck-cleanup.md",date:"2026-08-01",title:"src/ Typecheck Cleanup",category:"Architecture",tests:0,status:"Completed",rootCauses:13,filesModified:13,filesCreated:1},
+{file:"2026-08-01-tests-typecheck-cleanup.md",date:"2026-08-01",title:"tests/ Typecheck Cleanup",category:"Architecture",tests:0,status:"Completed",rootCauses:11,filesModified:52,filesCreated:1},
+{file:"2026-08-02-mail-redirect-gpu-fallback.md",date:"2026-08-02",title:"mail.com Redirect + GPU Fallback",category:"IPC/Networking",tests:4,status:"Completed",rootCauses:2,filesModified:3,filesCreated:0},
+{file:"2026-08-02-miniweb-android-build.md",date:"2026-08-02",title:"MiniWeb Android Build Setup",category:"UI",tests:0,status:"Completed",rootCauses:4,filesModified:3,filesCreated:4},
+{file:"2026-08-02-nova-android-native-browser.md",date:"2026-08-02",title:"Nova Native Android Browser",category:"UI",tests:0,status:"Completed",rootCauses:2,filesModified:7,filesCreated:11},
+{file:"2026-08-02-nova-engine-android-rendering-fix.md",date:"2026-08-02",title:"Nova Engine Android Rendering Fix",category:"Rendering",tests:0,status:"Completed",rootCauses:3,filesModified:4,filesCreated:1},
+{file:"2026-08-02-redirect-url-address-bar.md",date:"2026-08-02",title:"Address Bar Commits Post-Redirect URL",category:"UI",tests:2,status:"Completed",rootCauses:2,filesModified:7,filesCreated:0},
+{file:"2026-08-02-static-build-keepalive.md",date:"2026-08-02",title:"Static Build Keep-Alive",category:"UI",tests:1,status:"Completed",rootCauses:2,filesModified:2,filesCreated:2},
+{file:"2026-08-02-webgpu-submit-destroy-fix.md",date:"2026-08-02",title:"WebGPU Submit-Time Buffer Destroy Fix",category:"Rendering",tests:1,status:"Completed",rootCauses:3,filesModified:3,filesCreated:1},
+{file:"2026-08-03-socks-proxy-support.md",date:"2026-08-03",title:"SOCKS4 / SOCKS4a / SOCKS5 Proxy Support",category:"IPC/Networking",tests:29,status:"Completed",rootCauses:5,filesModified:8,filesCreated:5},
+{file:"2026-08-04-documentation-inventory.md",date:"2026-08-04",title:"Documentation Inventory",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1},
+{file:"2026-08-04-http-connect-proxy.md",date:"2026-08-04",title:"HTTP(S) Proxy CONNECT Tunneling",category:"IPC/Networking",tests:24,status:"Completed",rootCauses:3,filesModified:5,filesCreated:4},
+{file:"2026-08-06-security-layer-integration.md",date:"2026-08-06",title:"Full Security Layer Integration",category:"Security",tests:26,status:"Completed",rootCauses:2,filesModified:3,filesCreated:2},
+{file:"2026-08-06-security-protocol-modules.md",date:"2026-08-06",title:"Security Enforcement Protocol Modules",category:"Security",tests:79,status:"Completed",rootCauses:5,filesModified:1,filesCreated:8},
+{file:"2026-08-07-max-level-css-design-system.md",date:"2026-08-07",title:"Max Level CSS Design System",category:"CSS",tests:0,status:"Completed",rootCauses:0,filesModified:2,filesCreated:1},
+{file:"2026-08-07-test-suite-green.md",date:"2026-08-07",title:"Test Suite Green",category:"Architecture",tests:0,status:"Completed",rootCauses:3,filesModified:3,filesCreated:0},
+{file:"2026-08-08-css-recreation.md",date:"2026-08-08",title:"CSS Recreation",category:"CSS",tests:0,status:"Completed",rootCauses:0,filesModified:2,filesCreated:1},
+{file:"2026-08-08-future-scope-plan.md",date:"2026-08-08",title:"Future Scope Plan",category:"Plan",tests:0,status:"Planned",rootCauses:2,filesModified:2,filesCreated:1},
+{file:"2026-08-08-phase1-persistence-plugins-deferred.md",date:"2026-08-08",title:"Phase 1 Persistence & Font Metrics",category:"Layout",tests:29,status:"Completed",rootCauses:0,filesModified:10,filesCreated:0},
+{file:"2026-08-08-web-storage-disk-persistence.md",date:"2026-08-08",title:"Web Storage Disk Persistence",category:"JavaScript",tests:9,status:"Completed",rootCauses:3,filesModified:6,filesCreated:2},
+{file:"2026-08-09-repo-hygiene-ci-gate.md",date:"2026-08-09",title:"Repo Hygiene + CI Gate",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:5,filesCreated:2},
+{file:"2026-08-12-animation-fidelity-flip.md",date:"2026-08-12",title:"Animation Fidelity Flip",category:"Rendering",tests:0,status:"Completed",rootCauses:3,filesModified:5,filesCreated:1},
+{file:"2026-08-12-fidelity-audit-fixes.md",date:"2026-08-12",title:"Fidelity Audit Fixes",category:"Layout",tests:1,status:"Completed",rootCauses:5,filesModified:6,filesCreated:0},
+{file:"2026-08-12-next-implementation-plan.md",date:"2026-08-12",title:"Next Implementation Plan",category:"Plan",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-08-14-hybrid-native-chrome-bridge.md",date:"2026-08-14",title:"Hybrid Native Chrome Bridge",category:"UI",tests:14,status:"Completed",rootCauses:3,filesModified:9,filesCreated:3}
 ];
 
 const CAT_COLORS={CSS:'#60a5fa',HTML5:'#f472b6',JavaScript:'#fbbf24',Layout:'#34d399',Rendering:'#a855f7',Security:'#f87171','IPC/Networking':'#00f0ff',UI:'#f472b6',Architecture:'#94a3b8',Plan:'#fbbf24'};
