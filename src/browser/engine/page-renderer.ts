@@ -41,6 +41,7 @@ import type {
   CssStyleRule,
 } from '../rendering/css5/types';
 import type { IPageRenderer, PageLoadResult } from './browser-engine';
+import { CssTransitionEngine } from '../rendering/css-transitions';
 import { HtmlParser } from '../rendering/html-parser';
 import { CssParser } from '../rendering/css-parser';
 import { LazyLoader } from '../rendering/lazy-loader';
@@ -48,7 +49,7 @@ import { DomTree } from '../rendering/dom-tree';
 import { LayoutEngine } from '../rendering/layout-engine';
 import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
-import { computeComputedStyles, collectKeyframes } from '../rendering/css5/cascade';
+import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
 import { runJS } from '../js/index';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
@@ -58,7 +59,7 @@ import type { SecurityLayer } from '../media/security-layer';
 import { ReflowRepaintController } from '../rendering/reflow-repaint-controller';
 import type { LayerCompositor } from '../rendering/compositing/layer-compositor';
 import { CssAnimationAnimator } from '../rendering/css-animations';
-import { setAnimationRuntime } from '../js/dom-bindings';
+import { setAnimationRuntime, dispatchAnimationEventToElement } from '../js/dom-bindings';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTRUCTOR PARAMETERS
@@ -96,6 +97,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
   private readonly deps: PageRendererDependencies;
   private disposed = false;
   private reflowController: ReflowRepaintController | null = null;
+  private transitionEngine: CssTransitionEngine | null = null;
 
   constructor(deps: PageRendererDependencies) {
     this.deps = deps;
@@ -217,7 +219,22 @@ class PageRenderer implements IPageRenderer, IDisposable {
     });
     controller.setAnimationAnimator(animator);
     paintEngine.setOpacityResolver((el) => animator.resolveOpacity(el));
+    paintEngine.setTransformResolver((el) => animator.resolveTransform(el));
     setAnimationRuntime({ timeline: controller.animationTimeline, animator });
+    animator.onAnimationEvent = (event) => {
+      dispatchAnimationEventToElement(event);
+    };
+
+    this.transitionEngine = new CssTransitionEngine({
+      domTree,
+      timeline: controller.animationTimeline,
+      registerAnimation: (anim) => animator.registerAnimation(anim),
+      unregisterAnimation: (anim) => animator.unregisterAnimation(anim),
+    });
+    controller.setTransitionSyncCallback(() => {
+      animator.prefersReducedMotion = evaluatePrefersReducedMotion();
+      this.transitionEngine?.sync(doc);
+    });
 
     this.reflowController = controller;
     // Start the incremental loop; while animations are active it self-schedules.
@@ -796,6 +813,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
     if (this.disposed) return;
     this.disposed = true;
     setAnimationRuntime(null);
+    this.transitionEngine?.dispose();
+    this.transitionEngine = null;
     this.reflowController?.dispose();
     this.reflowController = null;
   }

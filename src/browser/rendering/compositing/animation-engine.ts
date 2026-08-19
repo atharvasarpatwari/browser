@@ -78,6 +78,15 @@ function sampleCubicBezierY(t: number, y1: number, y2: number): number {
 
 export type AnimationPropertyValue = string | number | DOMMatrix4x4;
 
+export interface AnimationLifecycleEvent {
+  type: 'animationstart' | 'animationiteration' | 'animationend';
+  target: string;
+  animationName: string;
+  currentTime: number;
+}
+
+export type AnimationLifecycleEventHandler = (event: AnimationLifecycleEvent) => void;
+
 function interpolateProperty(name: string, a: string, b: string, t: number): string {
   if (name === 'opacity' || name === 'transform') {
     const numA = parseFloat(a);
@@ -93,6 +102,15 @@ function interpolateProperty(name: string, a: string, b: string, t: number): str
       return `matrix3d(${lerped.m11},${lerped.m12},${lerped.m13},${lerped.m14},${lerped.m21},${lerped.m22},${lerped.m23},${lerped.m24},${lerped.m31},${lerped.m32},${lerped.m33},${lerped.m34},${lerped.m41},${lerped.m42},${lerped.m43},${lerped.m44})`;
     }
     return t < 0.5 ? a : b;
+  }
+  if (name === 'color' || name === 'background-color' || name === 'border-color'
+      || name === 'border-top-color' || name === 'border-right-color'
+      || name === 'border-bottom-color' || name === 'border-left-color'
+      || name === 'outline-color' || name === 'text-decoration-color'
+      || name === 'column-rule-color' || name === 'caret-color') {
+    if (a.startsWith('#') || a.startsWith('rgb')) {
+      return lerpColor(a, b, t);
+    }
   }
   const numA = parseFloat(a);
   const numB = parseFloat(b);
@@ -257,6 +275,18 @@ export class AnimationTimeline {
     }
   }
 
+  pauseAll(): void {
+    for (const anim of this._animations) {
+      if (anim.playState === 'running') anim.pause();
+    }
+  }
+
+  resumeAll(): void {
+    for (const anim of this._animations) {
+      if (anim.playState === 'paused') anim.start();
+    }
+  }
+
   private startLoop(): void {
     if (this._isRunning) return;
     this._isRunning = true;
@@ -324,8 +354,11 @@ export class Animation {
   private _onFinish: AnimationEventHandler | null = null;
   private _onCancel: AnimationEventHandler | null = null;
   private _onRemove: AnimationEventHandler | null = null;
+  private _onAnimationEvent: AnimationLifecycleEventHandler | null = null;
   private _replaceState: 'active' | 'removed' | 'persisted' = 'active';
   private _pendingPlayTime: number | null = null;
+  private _lastIteration = -1;
+  private _started = false;
 
   onFinish: AnimationEventHandler | null;
   onCancel: AnimationEventHandler | null;
@@ -361,6 +394,8 @@ export class Animation {
     this._startTime = this.timeline.currentTime;
     this._holdTime = null;
     this._pendingPlayTime = null;
+    this._started = false;
+    this._lastIteration = -1;
     this.timeline.attach(this);
   }
 
@@ -400,10 +435,9 @@ export class Animation {
     this._pendingPlayTime = null;
     this.timeline.detach(this);
 
+    this._dispatchEvent('animationend');
+
     if (this._finishResolve) this._finishResolve();
-    if (this.onFinish) {
-      this.onFinish({ currentTime: this._currentTime, target: this });
-    }
   }
 
   reverse(): void {
@@ -444,12 +478,41 @@ export class Animation {
 
     this._currentTime = localTime;
     this._holdTime = localTime;
+
+    const totalDuration = this.effect.duration * this.effect.iterations;
+    const currentIteration = Math.floor(localTime / this.effect.duration);
+
+    if (!this._started) {
+      this._started = true;
+      this._dispatchEvent('animationstart');
+    } else if (currentIteration > this._lastIteration && this._lastIteration >= 0) {
+      this._dispatchEvent('animationiteration');
+    }
+    this._lastIteration = currentIteration;
   }
 
   getComputedProperties(time?: number): Record<string, string> {
     const t = time ?? this.currentTime;
     if (this._playState === 'idle') return {};
     return this.effect.compute(t);
+  }
+
+  setEventHandler(handler: AnimationLifecycleEventHandler | null): void {
+    this._onAnimationEvent = handler;
+  }
+
+  private _dispatchEvent(type: AnimationLifecycleEvent['type']): void {
+    if (this._onAnimationEvent) {
+      this._onAnimationEvent({
+        type,
+        target: this.effect.target,
+        animationName: '',
+        currentTime: this._currentTime,
+      });
+    }
+    if (this.onFinish && type === 'animationend') {
+      this.onFinish({ currentTime: this._currentTime, target: this });
+    }
   }
 
   dispose(): void {

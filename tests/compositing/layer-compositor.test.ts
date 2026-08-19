@@ -65,6 +65,7 @@ function makeCtx(el: DomElement, zIndex: number = 0, children: StackingContext[]
     isGrouped: false,
     groupOpacity: 1,
     willChange: null,
+    translate: null,
   };
 }
 

@@ -109,6 +109,7 @@ function createMockPaintEngine(): IPaintEngine {
     on: vi.fn(),
     off: vi.fn(),
     setOpacityResolver: vi.fn(),
+    setTransformResolver: vi.fn(),
     dispose: vi.fn(),
   };
 }

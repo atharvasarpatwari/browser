@@ -189,6 +189,9 @@ export class CssAnimationAnimator {
   private readonly domTree: IDomTree;
   private readonly timeline: AnimationTimeline;
   private readonly getKeyframes: KeyframesProvider;
+  private document: DomDocument | null = null;
+  private _prefersReducedMotion = false;
+  onAnimationEvent: ((event: { type: string; target: DomElement; animationName: string; currentTime: number }) => void) | null = null;
 
   constructor(options: CssAnimationAnimatorOptions) {
     this.domTree = options.domTree;
@@ -200,12 +203,21 @@ export class CssAnimationAnimator {
     return this.timeline;
   }
 
+  set prefersReducedMotion(value: boolean) {
+    this._prefersReducedMotion = value;
+  }
+
+  get prefersReducedMotion(): boolean {
+    return this._prefersReducedMotion;
+  }
+
   /**
    * Reconcile CSS-driven animations against the current document's computed
    * styles. Called once per processed frame, after style recalc.
    */
   sync(document: DomDocument | null): void {
     if (!document) return;
+    this.document = document;
     const keyframes = this.getKeyframes();
     const seen = new Set<string>();
 
@@ -226,6 +238,7 @@ export class CssAnimationAnimator {
           next.push(existing);
         } else {
           if (existing) this.destroy(existing.animation);
+          if (this._prefersReducedMotion) continue;
           const anim = this.createCssAnimation(el, spec, keyframes.get(spec.name)!);
           if (anim) {
             next.push({ spec, animation: anim });
@@ -330,6 +343,21 @@ export class CssAnimationAnimator {
     this.targets.clear();
   }
 
+  private dispatchAnimationEvent(event: import('./compositing/animation-engine').AnimationLifecycleEvent): void {
+    if (!this.document) return;
+    const el = this.domTree.getElementById(event.target);
+    if (!el) return;
+    const domEvent = {
+      type: event.type,
+      target: el,
+      animationName: event.animationName,
+      currentTime: event.currentTime,
+    };
+    if (this.onAnimationEvent) {
+      this.onAnimationEvent(domEvent);
+    }
+  }
+
   private createCssAnimation(
     el: DomElement,
     spec: CssAnimationSpec,
@@ -346,6 +374,9 @@ export class CssAnimationAnimator {
       easing: spec.easing,
     });
     const anim = new Animation(effect, this.timeline);
+    anim.setEventHandler((event) => {
+      this.dispatchAnimationEvent(event);
+    });
     anim.start();
     this.registerAnimation(anim);
     return anim;

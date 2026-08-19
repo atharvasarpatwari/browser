@@ -377,6 +377,15 @@ export function lerpColor(a: string, b: string, t: number): string {
         255,
       ];
     }
+    const rgba = c.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+))?\s*\)$/);
+    if (rgba) {
+      return [
+        Math.round(parseFloat(rgba[1]!)),
+        Math.round(parseFloat(rgba[2]!)),
+        Math.round(parseFloat(rgba[3]!)),
+        rgba[4] !== undefined ? Math.round(parseFloat(rgba[4]!) * 255) : 255,
+      ];
+    }
     return [0, 0, 0, 255];
   };
 

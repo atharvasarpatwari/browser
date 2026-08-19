@@ -48,6 +48,7 @@ function makeCtx(
     isGrouped: false,
     groupOpacity: 1,
     willChange: el.computedStyle?.get('will-change') ?? null,
+    translate: null,
   };
 }
 

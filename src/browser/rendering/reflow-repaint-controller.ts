@@ -59,6 +59,8 @@ export class ReflowRepaintController {
   private _styleRecalcCallback: (() => void) | null = null;
   /** Optional callback invoked after each processed frame. */
   private _frameCallback: (() => void) | null = null;
+  /** Optional callback for CSS transition diffing after style recalc. */
+  private _transitionSyncCallback: (() => void) | null = null;
   /** Animation timeline for ticking active animations each frame. */
   private _animationTimeline: AnimationTimeline = new AnimationTimeline();
   /** Optional animator bridging CSS/WAAPI animations into the paint loop. */
@@ -87,6 +89,15 @@ export class ReflowRepaintController {
     this.viewportHeight = height;
   }
 
+  /** Pause animations when page is hidden, resume when visible. */
+  handleVisibilityChange(hidden: boolean): void {
+    if (hidden) {
+      this._animationTimeline.pauseAll();
+    } else {
+      this._animationTimeline.resumeAll();
+    }
+  }
+
   // ── Style Recalc ──────────────────────────────────────────────────
 
   /**
@@ -104,6 +115,14 @@ export class ReflowRepaintController {
    */
   setFrameCallback(cb: (() => void) | null): void {
     this._frameCallback = cb;
+  }
+
+  /**
+   * Set a callback for CSS transition diffing.
+   * Called once per processFrame() after style recalc and animation sync.
+   */
+  setTransitionSyncCallback(cb: (() => void) | null): void {
+    this._transitionSyncCallback = cb;
   }
 
   /**
@@ -194,6 +213,11 @@ export class ReflowRepaintController {
       // 1.5. Sync CSS animations (create/destroy from computed styles) so
       //      animated values are resolved before layout/paint consume them.
       this._animator?.sync(this.document);
+
+      // 1.6. Sync CSS transitions (diff computed styles, spawn transition animations).
+      if (this._transitionSyncCallback) {
+        this._transitionSyncCallback();
+      }
 
       // 2. Incremental layout — returns the layout damage tracker
       const layoutDamage = this.layoutEngine.layoutIncremental(

@@ -1720,3 +1720,9 @@ function setInitialValues(computed: Map<string, string>): void {
     }
   }
 }
+
+export function evaluatePrefersReducedMotion(viewport?: Viewport): boolean {
+  const vp: Viewport = viewport ?? DEFAULT_VIEWPORT;
+  const feature: CssMediaFeature = { name: 'prefers-reduced-motion', value: 'no-preference', range: null };
+  return !evaluateMediaFeature(feature, vp);
+}

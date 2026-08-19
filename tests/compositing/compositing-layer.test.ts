@@ -74,6 +74,7 @@ function makeStackingContext(
     isGrouped,
     groupOpacity,
     willChange: null,
+    translate: null,
   };
 }
 

@@ -429,6 +429,23 @@ function getAnimationRuntime(): AnimationRuntime | null {
 }
 
 /**
+ * Dispatch an animation event to element's addEventListener listeners.
+ * Called by CssAnimationAnimator when animations fire start/iteration/end.
+ */
+export function dispatchAnimationEventToElement(
+  event: { type: string; target: DomElement; animationName: string; currentTime: number },
+): void {
+  const jsEvent = createObject(null);
+  jsEvent.properties.set('type', { value: event.type, writable: true, enumerable: true, configurable: true });
+  jsEvent.properties.set('target', { value: event.target as unknown as JSValue, writable: true, enumerable: true, configurable: true });
+  jsEvent.properties.set('animationName', { value: event.animationName, writable: true, enumerable: true, configurable: true });
+  jsEvent.properties.set('currentTime', { value: event.currentTime, writable: true, enumerable: true, configurable: true });
+  jsEvent.properties.set('bubbles', { value: false, writable: true, enumerable: true, configurable: true });
+  jsEvent.properties.set('cancelable', { value: false, writable: true, enumerable: true, configurable: true });
+  invokeDomListeners(event.target, event.type, jsEvent, false);
+}
+
+/**
  * Create a JSObject wrapper around a real Animation engine instance.
  */
 export function wrapAnimation(anim: Animation): JSObject {
@@ -444,6 +461,9 @@ export function wrapAnimation(anim: Animation): JSObject {
     obj.properties.set('onfinish', { value: obj.properties.get('onfinish')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
     obj.properties.set('oncancel', { value: obj.properties.get('oncancel')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
     obj.properties.set('onremove', { value: obj.properties.get('onremove')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('onanimationstart', { value: obj.properties.get('onanimationstart')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('onanimationiteration', { value: obj.properties.get('onanimationiteration')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
+    obj.properties.set('onanimationend', { value: obj.properties.get('onanimationend')?.value ?? undefined, writable: true, enumerable: true, configurable: true });
   };
 
   syncProps();
@@ -466,6 +486,17 @@ export function wrapAnimation(anim: Animation): JSObject {
     }
     syncProps();
   };
+
+  // Wire animationstart/iteration/end to dispatch DOM events on the element
+  anim.setEventHandler((event) => {
+    const propKey = event.type === 'animationstart' ? 'onanimationstart'
+      : event.type === 'animationiteration' ? 'onanimationiteration'
+      : 'onanimationend';
+    const cb = obj.properties.get(propKey)?.value;
+    if (typeof cb === 'object' && cb !== null && (cb as any).type === 'closure') {
+      callJSFunction(cb as JSFunction, obj, []);
+    }
+  });
 
   obj.properties.set('play', {
     value: createNativeFunction('play', () => { anim.start(); syncProps(); return obj; }),
