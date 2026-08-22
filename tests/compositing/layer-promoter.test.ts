@@ -1,7 +1,7 @@
 ﻿import { describe, it, expect } from 'vitest';
-import { LayerPromoter } from '../../src/browser/rendering/compositing/layer-promoter';
-import type { StackingContext } from '../../src/browser/rendering/formatting/stacking';
-import type { DomElement } from '../../src/browser/rendering/dom-tree';
+import { LayerPromoter } from '@/browser/rendering/compositing/layer-promoter';
+import type { StackingContext } from '@/browser/rendering/formatting/stacking';
+import type { DomElement } from '@/browser/rendering/dom-tree';
 
 function makeEl(id: string, style: Record<string, string> = {}, box?: { width: number; height: number }): DomElement {
   const map = new Map(Object.entries(style));

@@ -812,7 +812,7 @@ function expandBackgroundShorthand(value: string): Map<string, string> {
   // Simplified: pick out obvious tokens.
   let color: string | null = null;
   let image: string | null = null;
-  let position: string[] = [];
+  const position: string[] = [];
   let repeat = 'repeat';
   let attachment = 'scroll';
 
@@ -1045,7 +1045,7 @@ export function expandShorthands(
   declarations: readonly CssDeclaration[],
 ): CssDeclaration[] {
   const result: CssDeclaration[] = [];
-  let order = 0;
+  const order = 0;
 
   for (const decl of declarations) {
     const prop = decl.property.toLowerCase();

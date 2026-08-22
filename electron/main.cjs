@@ -1,6 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, Menu, nativeImage } = require('electron')
+const { app, BrowserWindow, Menu, nativeImage, session } = require('electron')
 const path = require('path')
 const url = require('url')
 const fs = require('fs')
@@ -40,6 +40,82 @@ function resolveIcon() {
   return undefined
 }
 
+// ── Security hardening ─────────────────────────────────────────────────────
+
+function installSecurityPolicies(win) {
+  // 1. Content-Security-Policy: restrict sources for scripts, styles, etc.
+  //    Nova's renderer loads arbitrary URLs, so we allow * for connect/img/media
+  //    but restrict script/style/object to 'self' + inline (needed for engine).
+  const CSP_DIRECTIVES = [
+    "default-src 'self' https: http:",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https: http:",
+    "media-src 'self' https: http:",
+    "connect-src 'self' https: http: wss: ws:",
+    "font-src 'self' data: https:",
+    "object-src 'none'",
+    "frame-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self' https: http:",
+  ].join('; ')
+
+  win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'content-security-policy': [CSP_DIRECTIVES],
+        'x-content-type-options': ['nosniff'],
+        'x-frame-options': ['DENY'],
+        'referrer-policy': ['strict-origin-when-cross-origin'],
+      },
+    })
+  })
+
+  // 2. Block top-level navigation away from the app (phishing prevention).
+  win.webContents.on('will-navigate', (event, navigationUrl) => {
+    const parsed = new URL(navigationUrl)
+    const appUrl = DEV_SERVER_URL || `file://${path.join(__dirname, '..', 'dist', 'index.html')}`
+    const appParsed = new URL(appUrl)
+    if (parsed.origin !== appParsed.origin) {
+      console.warn(`[Nova] Blocked top-level navigation to ${parsed.origin}`)
+      writeHealthLog(`NAVIGATION_BLOCKED url=${parsed.origin}`)
+      event.preventDefault()
+    }
+  })
+
+  // 3. Block new window / popup creation (use tabs instead).
+  win.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+    console.warn(`[Nova] Blocked new window: ${openUrl}`)
+    writeHealthLog(`NEW_WINDOW_BLOCKED url=${openUrl}`)
+    return { action: 'deny' }
+  })
+
+  // 4. Block permissions for sensitive APIs (camera, mic, geolocation, etc.)
+  //    unless explicitly allowed by the engine's capability system.
+  win.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
+    // Allow clipboard and notifications — deny everything else at Electron level.
+    // Nova's own permission system handles camera/mic/geolocation for web content.
+    const allowed = ['clipboard-read', 'clipboard-sanitized-write', 'notifications']
+    if (allowed.includes(permission)) {
+      callback(true)
+    } else {
+      writeHealthLog(`PERMISSION_DENIED perm=${permission}`)
+      callback(false)
+    }
+  })
+
+  // 5. Restrict keyboard shortcuts that could bypass the engine's controls.
+  win.webContents.on('before-input-event', (event, input) => {
+    // Block Ctrl/Cmd+Shift+I (DevTools toggle) in production.
+    if (!DEV_SERVER_URL && input.control && input.shift && input.key.toLowerCase() === 'i') {
+      event.preventDefault()
+    }
+  })
+
+  writeHealthLog('SECURITY_POLICIES_INSTALLED')
+}
+
 // ── Watchdog state ──────────────────────────────────────────────────────────
 
 let mainWindow = null
@@ -74,6 +150,8 @@ function createWindow() {
       additionalArguments: [`--nova-storage-dir=${path.join(app.getPath('userData'), 'web-storage')}`],
     },
   })
+
+  installSecurityPolicies(win)
 
   if (DEV_SERVER_URL) {
     win.loadURL(DEV_SERVER_URL)

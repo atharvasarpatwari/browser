@@ -102,7 +102,7 @@ class RawSocketHttpClient implements IHttpClient {
     this.contentDecoder = new ContentDecoder();
 
     // Load system trust store once.
-    let cas = new Set<string>();
+    const cas = new Set<string>();
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { rootCertificates } = require('node:tls') as typeof import('node:tls');

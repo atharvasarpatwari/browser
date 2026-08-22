@@ -53,7 +53,7 @@ const DEFAULT_CONFIG: AppConfig = {
   version: '1.0.0',
   debug: false,
   maxTabs: 20,
-  homePage: 'about:blank',
+  homePage: 'about:newtab',
   userAgent: 'NovaBrowser/1.0',
   browserName: 'Nova Browser',
   processModel: DEFAULT_PROCESS_MODEL,

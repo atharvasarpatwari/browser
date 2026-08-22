@@ -1129,7 +1129,7 @@ export class IDBFactory {
     const targetVersion = version ?? 1;
 
     // Load existing database or create new.
-    let serialized = this.backend.loadDatabase(this.origin, name);
+    const serialized = this.backend.loadDatabase(this.origin, name);
     let db: IDBDatabase;
 
     if (serialized) {

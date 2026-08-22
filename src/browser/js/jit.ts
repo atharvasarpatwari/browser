@@ -114,7 +114,7 @@ export class JITManager {
   recordLoopIterations(fn: BytecodeFunction, iterations: number): void {
     if (!this.enabled) return;
 
-    let profile = this.profiles.get(fn.name);
+    const profile = this.profiles.get(fn.name);
     if (!profile) return;
 
     profile.loopIterations += iterations;

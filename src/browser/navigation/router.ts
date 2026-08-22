@@ -497,6 +497,7 @@ class Router implements IRouter {
 
     // ── Internal nova:// pages (exact match) ─────────────────────────────────
     const internalPages: Array<[string, string, string]> = [
+      ['nova://newtab',     'newtab',     'New Tab'],
       ['nova://settings',   'settings',   'Settings'],
       ['nova://downloads',  'downloads',  'Downloads'],
       ['nova://history',    'history',    'History'],

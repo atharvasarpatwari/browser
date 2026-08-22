@@ -253,7 +253,7 @@ export class CssTokenizer {
     const startLine = this.line;
     const startCol = this.column;
 
-    let value = this.consumeIdent();
+    const value = this.consumeIdent();
 
     // Check if it's followed by ( — making it a function token
     // Save position before skipping whitespace so we can restore if not a function

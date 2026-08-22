@@ -25,6 +25,7 @@ export default defineConfig({
   resolve: {
     alias: {
       'electron': path.resolve(__dirname, 'tests/helpers/electron-mock.ts'),
+      '@': path.resolve(__dirname, 'src'),
     },
   },
 });

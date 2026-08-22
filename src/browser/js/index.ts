@@ -9,8 +9,8 @@ import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction } from './values';
-import type { JSValue, JSObject } from './values';
+import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta } from './values';
+import type { JSValue, JSObject, JSObjectWithMeta } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
 import {
   createHeadersClass, createResponseClass, createRequestClass,
@@ -513,10 +513,10 @@ export function createGlobalEnv(
     const desc = args.length > 0 ? toString(args[0]) : '';
     const id = symbolId.value++;
     symbolRegistry.set(id, { description: desc });
-    const sym = createObject(symbolProto);
-    (sym as any).__type_override = 'symbol';
-    (sym as any).symbolId = id;
-    (sym as any).symbolDescription = desc;
+    const sym = createObject(symbolProto) as JSObjectWithMeta;
+    sym.__type_override = 'symbol';
+    sym.symbolId = id;
+    sym.symbolDescription = desc;
     return sym;
   });
   const symbolCtorObj = createObject(null);
@@ -530,10 +530,10 @@ export function createGlobalEnv(
       if (cached) return cached;
       const id = symbolId.value++;
       symbolRegistry.set(id, { description: key });
-      const sym = createObject(symbolProto);
-      (sym as any).__type_override = 'symbol';
-      (sym as any).symbolId = id;
-      (sym as any).symbolDescription = key;
+      const sym = createObject(symbolProto) as JSObjectWithMeta;
+      sym.__type_override = 'symbol';
+      sym.symbolId = id;
+      sym.symbolDescription = key;
       symbolObjectCache.set(key, sym);
       return sym;
     }),
@@ -542,8 +542,8 @@ export function createGlobalEnv(
   symbolCtorObj.properties.set('keyFor', {
     value: createNativeFunction('keyFor', (_this, args) => {
       const sym = args[0];
-      if (typeof sym === 'object' && sym !== null && (sym as any).__type_override === 'symbol') {
-        const id = (sym as any).symbolId;
+      if (typeof sym === 'object' && sym !== null && isJSObjectWithMeta(sym) && sym.__type_override === 'symbol' && sym.symbolId !== undefined) {
+        const id = sym.symbolId;
         const entry = symbolRegistry.get(id);
         if (entry) return entry.description;
       }
@@ -558,18 +558,18 @@ export function createGlobalEnv(
   for (const name of wellKnownSymbols) {
     const id = symbolId.value++;
     symbolRegistry.set(id, { description: name });
-    const sym = createObject(symbolProto);
-    (sym as any).__type_override = 'symbol';
-    (sym as any).symbolId = id;
-    (sym as any).symbolDescription = name;
+    const sym = createObject(symbolProto) as JSObjectWithMeta;
+    sym.__type_override = 'symbol';
+    sym.symbolId = id;
+    sym.symbolDescription = name;
     symbolCtorObj.properties.set(name, { value: sym, writable: false, enumerable: false, configurable: false });
   }
 
   // Date constructor
   const dateProto = createObject(null);
   const dateCtor = createNativeFunction('Date', (_this, args) => {
-    const dateObj = createObject(dateProto);
-    (dateObj as any).__type_override = 'date';
+    const dateObj = createObject(dateProto) as JSObjectWithMeta;
+    dateObj.__type_override = 'date';
     let nativeDate: Date;
     if (args.length === 0) {
       nativeDate = new Date();
@@ -593,7 +593,7 @@ export function createGlobalEnv(
         args.length > 6 ? toNumber(args[6]) : 0,
       );
     }
-    (dateObj as any).nativeDate = nativeDate;
+    dateObj.nativeDate = nativeDate;
     return dateObj;
   });
   const dateCtorObj = createObject(null);
@@ -604,8 +604,8 @@ export function createGlobalEnv(
   for (const method of dateMethods) {
     dateProto.properties.set(method, {
       value: createNativeFunction(method, (_this, args) => {
-        if (typeof _this !== 'object' || _this === null || !(_this as any).nativeDate) return NaN;
-        const d = (_this as any).nativeDate as Date;
+        if (typeof _this !== 'object' || _this === null || !isJSObjectWithMeta(_this) || !_this.nativeDate) return NaN;
+        const d = _this.nativeDate;
         switch (method) {
           case 'toString': return d.toString();
           case 'toISOString': return d.toISOString();
@@ -676,9 +676,9 @@ export function createGlobalEnv(
     const pattern = toString(args[0]);
     const flags = args.length > 1 ? toString(args[1]) : '';
     const re = new RegExp(pattern, flags);
-    const reObj = createObject(regExpProto);
-    (reObj as any).__type_override = 'regexp';
-    (reObj as any).nativeRegExp = re;
+    const reObj = createObject(regExpProto) as JSObjectWithMeta;
+    reObj.__type_override = 'regexp';
+    reObj.nativeRegExp = re;
     return reObj;
   });
   const regExpCtorObj = createObject(null);
@@ -688,8 +688,8 @@ export function createGlobalEnv(
   for (const method of ['exec', 'test', 'toString']) {
     regExpProto.properties.set(method, {
       value: createNativeFunction(method, (_this, args) => {
-        if (typeof _this !== 'object' || _this === null || !(_this as any).nativeRegExp) return null;
-        const re = (_this as any).nativeRegExp as RegExp;
+        if (typeof _this !== 'object' || _this === null || !isJSObjectWithMeta(_this) || !_this.nativeRegExp) return null;
+        const re = _this.nativeRegExp;
         const str = toString(args[0] ?? '');
         if (method === 'exec') {
           const m = re.exec(str);
@@ -721,14 +721,15 @@ export function createGlobalEnv(
     return { isObj: false, primKey: toString(k) };
   }
   function mapGetStore(m: JSObject) {
-    if (!(m as any).__mapObj) (m as any).__mapObj = new Map<JSObject, JSValue>();
-    if (!(m as any).__mapPrim) (m as any).__mapPrim = new Map<string, JSValue>();
-    return { obj: (m as any).__mapObj as Map<JSObject, JSValue>, prim: (m as any).__mapPrim as Map<string, JSValue> };
+    const mm = m as JSObjectWithMeta;
+    if (!mm.__mapObj) mm.__mapObj = new Map<JSObject, JSValue>();
+    if (!mm.__mapPrim) mm.__mapPrim = new Map<string, JSValue>();
+    return { obj: mm.__mapObj!, prim: mm.__mapPrim! };
   }
 
   mapProto.properties.set('get', {
     value: createNativeFunction('get', (_this, args) => {
-      if (typeof _this !== 'object' || _this === null || !((_this as any).__mapObj || (_this as any).__mapPrim)) return undefined;
+      if (typeof _this !== 'object' || _this === null || !isJSObjectWithMeta(_this) || (!_this.__mapObj && !_this.__mapPrim)) return undefined;
       const s = mapGetStore(_this as JSObject);
       const k = mapResolveKey(args);
       return k.isObj ? s.obj.get(k.objKey!) : s.prim.get(k.primKey!);
@@ -747,7 +748,7 @@ export function createGlobalEnv(
   });
   mapProto.properties.set('has', {
     value: createNativeFunction('has', (_this, args) => {
-      if (typeof _this !== 'object' || _this === null || !((_this as any).__mapObj || (_this as any).__mapPrim)) return false;
+      if (typeof _this !== 'object' || _this === null || !isJSObjectWithMeta(_this) || (!_this.__mapObj && !_this.__mapPrim)) return false;
       const s = mapGetStore(_this as JSObject);
       const k = mapResolveKey(args);
       return k.isObj ? s.obj.has(k.objKey!) : s.prim.has(k.primKey!);
@@ -756,7 +757,7 @@ export function createGlobalEnv(
   });
   mapProto.properties.set('delete', {
     value: createNativeFunction('delete', (_this, args) => {
-      if (typeof _this !== 'object' || _this === null || !((_this as any).__mapObj || (_this as any).__mapPrim)) return false;
+      if (typeof _this !== 'object' || _this === null || !isJSObjectWithMeta(_this) || (!_this.__mapObj && !_this.__mapPrim)) return false;
       const s = mapGetStore(_this as JSObject);
       const k = mapResolveKey(args);
       return k.isObj ? s.obj.delete(k.objKey!) : s.prim.delete(k.primKey!);
@@ -774,7 +775,7 @@ export function createGlobalEnv(
     writable: true, enumerable: false, configurable: true,
   });
   mapProto.properties.set('size', {
-    value: undefined as any,
+    value: undefined as unknown as JSValue,
     getter: createNativeFunction('get size', (_this) => {
       if (typeof _this !== 'object' || _this === null) return 0;
       const s = mapGetStore(_this as JSObject);
@@ -819,10 +820,10 @@ export function createGlobalEnv(
     value: createNativeFunction('forEach', (_this, args) => {
       const fn = args[0];
       if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof fn !== 'object' || fn === null || (fn as any).type !== 'closure') return undefined;
+      if (typeof fn !== 'object' || fn === null || (fn as JSFunction).type !== 'closure') return undefined;
       const s = mapGetStore(_this as JSObject);
-      for (const [k, v] of s.obj) callJSFunction(fn as any, _this, [v, k, _this]);
-      for (const [k, v] of s.prim) callJSFunction(fn as any, _this, [v, k, _this]);
+      for (const [k, v] of s.obj) callJSFunction(fn as JSFunction, _this, [v, k, _this]);
+      for (const [k, v] of s.prim) callJSFunction(fn as JSFunction, _this, [v, k, _this]);
       return undefined;
     }),
     writable: true, enumerable: false, configurable: true,
@@ -832,18 +833,18 @@ export function createGlobalEnv(
     writable: true, enumerable: false, configurable: true,
   });
   const mapCtor = createNativeFunction('Map', (_this, args) => {
-    const mapObj = createObject(mapProto);
-    (mapObj as any).__type_override = 'map';
-    (mapObj as any).__mapObj = new Map<JSObject, JSValue>();
-    (mapObj as any).__mapPrim = new Map<string, JSValue>();
+    const mapObj = createObject(mapProto) as JSObjectWithMeta;
+    mapObj.__type_override = 'map';
+    mapObj.__mapObj = new Map<JSObject, JSValue>();
+    mapObj.__mapPrim = new Map<string, JSValue>();
     const iterable = args[0];
-    if (typeof iterable === 'object' && iterable !== null && (iterable as any).type === 'array') {
-      const len = Number((iterable as any).properties.get('length')?.value ?? 0);
+    if (typeof iterable === 'object' && iterable !== null && isJSObjectWithMeta(iterable) && iterable.type === 'array') {
+      const len = Number(iterable.properties.get('length')?.value ?? 0);
       for (let i = 0; i < len; i++) {
-        const entry = (iterable as any).properties.get(String(i))?.value;
-        if (typeof entry === 'object' && entry !== null && (entry as any).type === 'array') {
-          const key = (entry as any).properties.get('0')?.value;
-          const val = (entry as any).properties.get('1')?.value;
+        const entry = iterable.properties.get(String(i))?.value;
+        if (typeof entry === 'object' && entry !== null && isJSObjectWithMeta(entry) && entry.type === 'array') {
+          const key = entry.properties.get('0')?.value;
+          const val = entry.properties.get('1')?.value;
           const k = mapResolveKey([key]);
           const s = mapGetStore(mapObj);
           if (k.isObj) s.obj.set(k.objKey!, val); else s.prim.set(k.primKey!, val);
@@ -862,9 +863,10 @@ export function createGlobalEnv(
   // Set constructor
   const setProto = createObject(null);
   function setGetStore(s: JSObject) {
-    if (!(s as any).__setObj) (s as any).__setObj = new Set<JSObject>();
-    if (!(s as any).__setPrim) (s as any).__setPrim = new Set<string>();
-    return { obj: (s as any).__setObj as Set<JSObject>, prim: (s as any).__setPrim as Set<string> };
+    const ss = s as JSObjectWithMeta;
+    if (!ss.__setObj) ss.__setObj = new Set<JSObject>();
+    if (!ss.__setPrim) ss.__setPrim = new Set<string>();
+    return { obj: ss.__setObj!, prim: ss.__setPrim! };
   }
   function setResolveKey(args: JSValue[]): { isObj: boolean; objKey?: JSObject; primKey?: string } {
     const k = args[0];
@@ -911,7 +913,7 @@ export function createGlobalEnv(
     writable: true, enumerable: false, configurable: true,
   });
   setProto.properties.set('size', {
-    value: undefined as any,
+    value: undefined as unknown as JSValue,
     getter: createNativeFunction('get size', (_this) => {
       if (typeof _this !== 'object' || _this === null) return 0;
       const s = setGetStore(_this as JSObject);
@@ -942,7 +944,7 @@ export function createGlobalEnv(
     value: createNativeFunction('keys', (_this) => {
       const setValuesFn = setProto.properties.get('values')?.value;
       if (setValuesFn && typeof setValuesFn === 'object' && 'nativeFn' in setValuesFn) {
-        return (setValuesFn as any).nativeFn(_this, []);
+        return (setValuesFn as JSFunction).nativeFn!(_this, []);
       }
       return createArray([]);
     }),
@@ -972,9 +974,9 @@ export function createGlobalEnv(
     value: createNativeFunction('forEach', (_this, args) => {
       const fn = args[0];
       if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof fn !== 'object' || fn === null || (fn as any).type !== 'closure') return undefined;
+      if (typeof fn !== 'object' || fn === null || (fn as JSFunction).type !== 'closure') return undefined;
       const s = setGetStore(_this as JSObject);
-      for (const v of s.obj) callJSFunction(fn as any, _this, [v, v, _this]);
+      for (const v of s.obj) callJSFunction(fn as JSFunction, _this, [v, v, _this]);
       for (const v of s.prim) {
         let parsed: JSValue = v;
         if (v === 'undefined') parsed = undefined;
@@ -983,7 +985,7 @@ export function createGlobalEnv(
         else if (v === 'true') parsed = true;
         else if (v === 'false') parsed = false;
         else if (/^-?\d+(\.\d+)?$/.test(v)) parsed = Number(v);
-        callJSFunction(fn as any, _this, [parsed, parsed, _this]);
+        callJSFunction(fn as JSFunction, _this, [parsed, parsed, _this]);
       }
       return undefined;
     }),
@@ -1013,20 +1015,20 @@ export function createGlobalEnv(
   function setFromArgs(_this: JSObject, args: JSValue[]): void {
     const iterable = args[0];
     const s = setGetStore(_this);
-    if (typeof iterable === 'object' && iterable !== null && (iterable as any).type === 'array') {
-      const len = Number((iterable as any).properties.get('length')?.value ?? 0);
+    if (typeof iterable === 'object' && iterable !== null && (iterable as JSObject).type === 'array') {
+      const len = Number((iterable as JSObject).properties.get('length')?.value ?? 0);
       for (let i = 0; i < len; i++) {
-        const val = (iterable as any).properties.get(String(i))?.value;
+        const val = (iterable as JSObject).properties.get(String(i))?.value;
         const k = setResolveKey([val]);
         if (k.isObj) s.obj.add(k.objKey!); else s.prim.add(k.primKey!);
       }
     }
   }
   function setCreateFromValues(proto: JSObject, vals: JSValue[]): JSObject {
-    const obj = createObject(proto);
-    (obj as any).__type_override = 'set';
-    (obj as any).__setObj = new Set<JSObject>();
-    (obj as any).__setPrim = new Set<string>();
+    const obj = createObject(proto) as JSObjectWithMeta;
+    obj.__type_override = 'set';
+    obj.__setObj = new Set<JSObject>();
+    obj.__setPrim = new Set<string>();
     for (const v of vals) {
       const k = setResolveKey([v]);
       const s = setGetStore(obj);
@@ -1041,10 +1043,10 @@ export function createGlobalEnv(
         if (typeof _this !== 'object' || _this === null) return createObject(setProto);
         const otherRaw = args[0];
         const otherArr: JSValue[] = [];
-        if (typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as any).type === 'array') {
-          const len = Number((otherRaw as any).properties.get('length')?.value ?? 0);
-          for (let i = 0; i < len; i++) otherArr.push((otherRaw as any).properties.get(String(i))?.value);
-        } else if (typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as any).__setObj) {
+        if (typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as JSObject).type === 'array') {
+          const len = Number((otherRaw as JSObject).properties.get('length')?.value ?? 0);
+          for (let i = 0; i < len; i++) otherArr.push((otherRaw as JSObject).properties.get(String(i))?.value);
+        } else if (typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as JSObjectWithMeta).__setObj) {
           otherArr.push(...setToArray(otherRaw as JSObject));
         }
         const thisArr = setToArray(_this as JSObject);
@@ -1052,14 +1054,14 @@ export function createGlobalEnv(
         if (method === 'intersection') {
           result = thisArr.filter(v => {
             const k = setResolveKey([v]);
-            const s = typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as any).__setObj ? setGetStore(otherRaw as JSObject) : null;
+            const s = typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as JSObjectWithMeta).__setObj ? setGetStore(otherRaw as JSObject) : null;
             if (s) return k.isObj ? s.obj.has(k.objKey!) : s.prim.has(k.primKey!);
             return otherArr.some(o => toString(o) === toString(v));
           });
         } else if (method === 'difference') {
           result = thisArr.filter(v => {
             const k = setResolveKey([v]);
-            const s = typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as any).__setObj ? setGetStore(otherRaw as JSObject) : null;
+            const s = typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as JSObjectWithMeta).__setObj ? setGetStore(otherRaw as JSObject) : null;
             if (s) return !(k.isObj ? s.obj.has(k.objKey!) : s.prim.has(k.primKey!));
             return !otherArr.some(o => toString(o) === toString(v));
           });
@@ -1082,7 +1084,7 @@ export function createGlobalEnv(
         const thisArr = setToArray(_this as JSObject);
         if (method === 'isSubsetOf') {
           return thisArr.every(v => {
-            if (typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as any).__setObj) {
+            if (typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as JSObjectWithMeta).__setObj) {
               const k = setResolveKey([v]);
               const s = setGetStore(otherRaw as JSObject);
               return k.isObj ? s.obj.has(k.objKey!) : s.prim.has(k.primKey!);
@@ -1090,7 +1092,7 @@ export function createGlobalEnv(
             return false;
           });
         } else if (method === 'isSupersetOf') {
-          if (typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as any).__setObj) {
+          if (typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as JSObjectWithMeta).__setObj) {
             const otherArr = setToArray(otherRaw as JSObject);
             return otherArr.every(v => {
               const k = setResolveKey([v]);
@@ -1100,7 +1102,7 @@ export function createGlobalEnv(
           }
           return false;
         } else {
-          if (typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as any).__setObj) {
+          if (typeof otherRaw === 'object' && otherRaw !== null && (otherRaw as JSObjectWithMeta).__setObj) {
             const otherArr = setToArray(otherRaw as JSObject);
             for (const v of otherArr) {
               const k = setResolveKey([v]);
@@ -1117,10 +1119,10 @@ export function createGlobalEnv(
   }
 
   const setCtor = createNativeFunction('Set', (_this, args) => {
-    const setObj = createObject(setProto);
-    (setObj as any).__type_override = 'set';
-    (setObj as any).__setObj = new Set<JSObject>();
-    (setObj as any).__setPrim = new Set<string>();
+    const setObj = createObject(setProto) as JSObjectWithMeta;
+    setObj.__type_override = 'set';
+    setObj.__setObj = new Set<JSObject>();
+    setObj.__setPrim = new Set<string>();
     setFromArgs(setObj, args);
     return setObj;
   });
@@ -1135,8 +1137,8 @@ export function createGlobalEnv(
   const weakMapProto = createObject(null);
   weakMapProto.properties.set('get', {
     value: createNativeFunction('get', (_this, args) => {
-      if (typeof _this !== 'object' || _this === null || !(_this as any).__weakMapEntries) return undefined;
-      const entries = (_this as any).__weakMapEntries as Map<JSObject, JSValue>;
+      if (typeof _this !== 'object' || _this === null || !(_this as JSObjectWithMeta).__weakMapEntries) return undefined;
+      const entries = (_this as JSObjectWithMeta).__weakMapEntries as Map<JSObject, JSValue>;
       const k = args[0];
       if (typeof k === 'object' && k !== null) return entries.get(k as JSObject);
       return undefined;
@@ -1146,44 +1148,44 @@ export function createGlobalEnv(
   weakMapProto.properties.set('set', {
     value: createNativeFunction('set', (_this, args) => {
       if (typeof _this !== 'object' || _this === null) return _this;
-      if (!(_this as any).__weakMapEntries) (_this as any).__weakMapEntries = new Map<JSObject, JSValue>();
+      if (!(_this as JSObjectWithMeta).__weakMapEntries) (_this as JSObjectWithMeta).__weakMapEntries = new Map<JSObject, JSValue>();
       const k = args[0];
-      if (typeof k === 'object' && k !== null) (_this as any).__weakMapEntries.set(k as JSObject, args[1]);
+      if (typeof k === 'object' && k !== null) (_this as JSObjectWithMeta).__weakMapEntries!.set(k as JSObject, args[1]);
       return _this;
     }),
     writable: true, enumerable: false, configurable: true,
   });
   weakMapProto.properties.set('has', {
     value: createNativeFunction('has', (_this, args) => {
-      if (typeof _this !== 'object' || _this === null || !(_this as any).__weakMapEntries) return false;
+      if (typeof _this !== 'object' || _this === null || !(_this as JSObjectWithMeta).__weakMapEntries) return false;
       const k = args[0];
-      if (typeof k === 'object' && k !== null) return (_this as any).__weakMapEntries.has(k as JSObject);
+      if (typeof k === 'object' && k !== null) return (_this as JSObjectWithMeta).__weakMapEntries!.has(k as JSObject);
       return false;
     }),
     writable: true, enumerable: false, configurable: true,
   });
   weakMapProto.properties.set('delete', {
     value: createNativeFunction('delete', (_this, args) => {
-      if (typeof _this !== 'object' || _this === null || !(_this as any).__weakMapEntries) return false;
+      if (typeof _this !== 'object' || _this === null || !(_this as JSObjectWithMeta).__weakMapEntries) return false;
       const k = args[0];
-      if (typeof k === 'object' && k !== null) return (_this as any).__weakMapEntries.delete(k as JSObject);
+      if (typeof k === 'object' && k !== null) return (_this as JSObjectWithMeta).__weakMapEntries!.delete(k as JSObject);
       return false;
     }),
     writable: true, enumerable: false, configurable: true,
   });
   const weakMapCtor = createNativeFunction('WeakMap', (_this, args) => {
-    const wmObj = createObject(weakMapProto);
-    (wmObj as any).__type_override = 'weakmap';
-    (wmObj as any).__weakMapEntries = new Map<JSObject, JSValue>();
+    const wmObj = createObject(weakMapProto) as JSObjectWithMeta;
+    wmObj.__type_override = 'weakmap';
+    wmObj.__weakMapEntries = new Map<JSObject, JSValue>();
     const iterable = args[0];
-    if (typeof iterable === 'object' && iterable !== null && (iterable as any).type === 'array') {
-      const len = Number((iterable as any).properties.get('length')?.value ?? 0);
+    if (typeof iterable === 'object' && iterable !== null && isJSObjectWithMeta(iterable) && iterable.type === 'array') {
+      const len = Number(iterable.properties.get('length')?.value ?? 0);
       for (let i = 0; i < len; i++) {
-        const entry = (iterable as any).properties.get(String(i))?.value;
-        if (typeof entry === 'object' && entry !== null && (entry as any).type === 'array') {
-          const key = (entry as any).properties.get('0')?.value;
-          const val = (entry as any).properties.get('1')?.value;
-          if (typeof key === 'object' && key !== null) (wmObj as any).__weakMapEntries.set(key as JSObject, val);
+        const entry = iterable.properties.get(String(i))?.value;
+        if (typeof entry === 'object' && entry !== null && isJSObjectWithMeta(entry) && entry.type === 'array') {
+          const key = entry.properties.get('0')?.value;
+          const val = entry.properties.get('1')?.value;
+          if (typeof key === 'object' && key !== null) wmObj.__weakMapEntries!.set(key as JSObject, val);
         }
       }
     }
@@ -1201,35 +1203,35 @@ export function createGlobalEnv(
   weakSetProto.properties.set('add', {
     value: createNativeFunction('add', (_this, args) => {
       if (typeof _this !== 'object' || _this === null) return _this;
-      if (!(_this as any).__weakSetEntries) (_this as any).__weakSetEntries = new Set<JSObject>();
+      if (!(_this as JSObjectWithMeta).__weakSetEntries) (_this as JSObjectWithMeta).__weakSetEntries = new Set<JSObject>();
       const k = args[0];
-      if (typeof k === 'object' && k !== null) (_this as any).__weakSetEntries.add(k as JSObject);
+      if (typeof k === 'object' && k !== null) (_this as JSObjectWithMeta).__weakSetEntries!.add(k as JSObject);
       return _this;
     }),
     writable: true, enumerable: false, configurable: true,
   });
   weakSetProto.properties.set('has', {
     value: createNativeFunction('has', (_this, args) => {
-      if (typeof _this !== 'object' || _this === null || !(_this as any).__weakSetEntries) return false;
+      if (typeof _this !== 'object' || _this === null || !(_this as JSObjectWithMeta).__weakSetEntries) return false;
       const k = args[0];
-      if (typeof k === 'object' && k !== null) return (_this as any).__weakSetEntries.has(k as JSObject);
+      if (typeof k === 'object' && k !== null) return (_this as JSObjectWithMeta).__weakSetEntries!.has(k as JSObject);
       return false;
     }),
     writable: true, enumerable: false, configurable: true,
   });
   weakSetProto.properties.set('delete', {
     value: createNativeFunction('delete', (_this, args) => {
-      if (typeof _this !== 'object' || _this === null || !(_this as any).__weakSetEntries) return false;
+      if (typeof _this !== 'object' || _this === null || !(_this as JSObjectWithMeta).__weakSetEntries) return false;
       const k = args[0];
-      if (typeof k === 'object' && k !== null) return (_this as any).__weakSetEntries.delete(k as JSObject);
+      if (typeof k === 'object' && k !== null) return (_this as JSObjectWithMeta).__weakSetEntries!.delete(k as JSObject);
       return false;
     }),
     writable: true, enumerable: false, configurable: true,
   });
   const weakSetCtor = createNativeFunction('WeakSet', (_this) => {
-    const wsObj = createObject(weakSetProto);
-    (wsObj as any).__type_override = 'weakset';
-    (wsObj as any).__weakSetEntries = new Set<JSObject>();
+    const wsObj = createObject(weakSetProto) as JSObjectWithMeta;
+    wsObj.__type_override = 'weakset';
+    wsObj.__weakSetEntries = new Set<JSObject>();
     return wsObj;
   });
   const weakSetCtorObj = createObject(null);
@@ -1258,7 +1260,7 @@ export function createGlobalEnv(
     arrCtorObj.properties.set('from', {
       value: createNativeFunction('from', (_this, args) => {
         const source = args[0];
-        const mapFn = args[1] as any;
+        const mapFn = args[1] as JSFunction | undefined;
         if (typeof source !== 'object' || source === null) return createArray([]);
         const srcObj = source as JSObject;
         if (srcObj.type === 'array') {
@@ -1455,31 +1457,31 @@ export function createGlobalEnv(
     },
     map: (_this, callback) => {
       if (typeof _this !== 'object' || _this === null) return createArray([]);
-      if (typeof callback !== 'object' || callback === null || (callback as any).type !== 'closure') return createArray([]);
+      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return createArray([]);
       const obj = _this as JSObject;
       const len = Number(obj.properties.get('length')?.value ?? 0);
       const result: JSValue[] = [];
       for (let i = 0; i < len; i++) {
         const val = obj.properties.get(String(i))?.value;
-        result.push(callJSFunction(callback as any, undefined, [val, i, _this]));
+        result.push(callJSFunction(callback as JSFunction, undefined, [val, i, _this]));
       }
       return createArray(result);
     },
     filter: (_this, callback) => {
       if (typeof _this !== 'object' || _this === null) return createArray([]);
-      if (typeof callback !== 'object' || callback === null || (callback as any).type !== 'closure') return createArray([]);
+      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return createArray([]);
       const obj = _this as JSObject;
       const len = Number(obj.properties.get('length')?.value ?? 0);
       const result: JSValue[] = [];
       for (let i = 0; i < len; i++) {
         const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as any, undefined, [val, i, _this])) result.push(val);
+        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) result.push(val);
       }
       return createArray(result);
     },
     reduce: (_this, callback, initialValue) => {
       if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof callback !== 'object' || callback === null || (callback as any).type !== 'closure') return undefined;
+      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return undefined;
       const obj = _this as JSObject;
       const len = Number(obj.properties.get('length')?.value ?? 0);
       let acc: JSValue = initialValue;
@@ -1491,62 +1493,62 @@ export function createGlobalEnv(
       }
       for (let i = startIdx; i < len; i++) {
         const val = obj.properties.get(String(i))?.value;
-        acc = callJSFunction(callback as any, undefined, [acc, val, i, _this]);
+        acc = callJSFunction(callback as JSFunction, undefined, [acc, val, i, _this]);
       }
       return acc;
     },
     find: (_this, callback) => {
       if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof callback !== 'object' || callback === null || (callback as any).type !== 'closure') return undefined;
+      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return undefined;
       const obj = _this as JSObject;
       const len = Number(obj.properties.get('length')?.value ?? 0);
       for (let i = 0; i < len; i++) {
         const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as any, undefined, [val, i, _this])) return val;
+        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return val;
       }
       return undefined;
     },
     findIndex: (_this, callback) => {
       if (typeof _this !== 'object' || _this === null) return -1;
-      if (typeof callback !== 'object' || callback === null || (callback as any).type !== 'closure') return -1;
+      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return -1;
       const obj = _this as JSObject;
       const len = Number(obj.properties.get('length')?.value ?? 0);
       for (let i = 0; i < len; i++) {
         const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as any, undefined, [val, i, _this])) return i;
+        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return i;
       }
       return -1;
     },
     some: (_this, callback) => {
       if (typeof _this !== 'object' || _this === null) return false;
-      if (typeof callback !== 'object' || callback === null || (callback as any).type !== 'closure') return false;
+      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return false;
       const obj = _this as JSObject;
       const len = Number(obj.properties.get('length')?.value ?? 0);
       for (let i = 0; i < len; i++) {
         const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as any, undefined, [val, i, _this])) return true;
+        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return true;
       }
       return false;
     },
     every: (_this, callback) => {
       if (typeof _this !== 'object' || _this === null) return true;
-      if (typeof callback !== 'object' || callback === null || (callback as any).type !== 'closure') return true;
+      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return true;
       const obj = _this as JSObject;
       const len = Number(obj.properties.get('length')?.value ?? 0);
       for (let i = 0; i < len; i++) {
         const val = obj.properties.get(String(i))?.value;
-        if (!callJSFunction(callback as any, undefined, [val, i, _this])) return false;
+        if (!callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return false;
       }
       return true;
     },
     forEach: (_this, callback) => {
       if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof callback !== 'object' || callback === null || (callback as any).type !== 'closure') return undefined;
+      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return undefined;
       const obj = _this as JSObject;
       const len = Number(obj.properties.get('length')?.value ?? 0);
       for (let i = 0; i < len; i++) {
         const val = obj.properties.get(String(i))?.value;
-        callJSFunction(callback as any, undefined, [val, i, _this]);
+        callJSFunction(callback as JSFunction, undefined, [val, i, _this]);
       }
       return undefined;
     },
@@ -1573,8 +1575,8 @@ export function createGlobalEnv(
         items.push([i, obj.properties.get(String(i))?.value]);
       }
       items.sort((a, b) => {
-        if (compareFn !== undefined && typeof compareFn === 'object' && compareFn !== null && (compareFn as any).type === 'closure') {
-          const result = toNumber(callJSFunction(compareFn as any, undefined, [a[1], b[1]]));
+        if (compareFn !== undefined && typeof compareFn === 'object' && compareFn !== null && (compareFn as JSFunction).type === 'closure') {
+          const result = toNumber(callJSFunction(compareFn as JSFunction, undefined, [a[1], b[1]]));
           return result;
         }
         const sa = a[1] !== undefined && a[1] !== null ? toString(a[1]) : '';
@@ -1604,12 +1606,12 @@ export function createGlobalEnv(
   const arrayProto = createObject(null);
   for (const [name, fn] of Object.entries(arrProtoMethods)) {
     arrayProto.properties.set(name, {
-      value: createNativeFunction(name, fn as any),
+      value: createNativeFunction(name, fn as NativeFunction),
       writable: true, enumerable: false, configurable: true,
     });
   }
   arrayProto.properties.set('length', { value: 0, writable: true, enumerable: false, configurable: true });
-  arrayProto.properties.set(Symbol.for('iterator') as any, {
+  arrayProto.properties.set(Symbol.for('iterator') as unknown as string, {
     value: createNativeFunction('[Symbol.iterator]', (_this) => {
       if (typeof _this !== 'object' || _this === null) return undefined;
       const obj = _this as JSObject;
@@ -1840,7 +1842,7 @@ export function createGlobalEnv(
       value: createNativeFunction('observe', (_t, a) => {
         const wrapped = a[0] as JSObject;
         if (wrapped && typeof wrapped === 'object' && '__domNode' in wrapped) {
-          const el = (wrapped as any).__domNode as DomElement;
+          const el = (wrapped as unknown as { __domNode: DomElement }).__domNode as DomElement;
           nativeIO.observe(el);
           observed.add(el.domId);
         }
@@ -1851,7 +1853,7 @@ export function createGlobalEnv(
       value: createNativeFunction('unobserve', (_t, a) => {
         const wrapped = a[0] as JSObject;
         if (wrapped && typeof wrapped === 'object' && '__domNode' in wrapped) {
-          const el = (wrapped as any).__domNode as DomElement;
+          const el = (wrapped as unknown as { __domNode: DomElement }).__domNode as DomElement;
           nativeIO.unobserve(el);
           observed.delete(el.domId);
         }

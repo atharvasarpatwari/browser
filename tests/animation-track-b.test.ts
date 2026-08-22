@@ -5,7 +5,7 @@ import {
   AnimationTimeline,
   createAnimation,
 } from '../src/browser/rendering/compositing/animation-engine';
-import { parseTransform, lerpMatrices, lerpColor, lerpNumber } from '../src/browser/rendering/compositing/transform-parser';
+import { parseTransform, lerpMatrices, lerpColor, lerpNumber } from '../src/browser/rendering/transform-parser';
 import { CssTransitionEngine } from '../src/browser/rendering/css-transitions';
 import type { IDomTree, DomElement, DomDocument } from '../src/browser/rendering/dom-tree';
 import { evaluatePrefersReducedMotion } from '../src/browser/rendering/css5/cascade';

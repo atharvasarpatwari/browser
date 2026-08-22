@@ -37,7 +37,7 @@ class BookmarkSuggestionsProvider implements IBookmarkSuggestionsProvider {
 
   private toResults(entries: BookmarkEntry[], query: string, maxResults: number): OmniboxResult[] {
     const results: OmniboxResult[] = [];
-    let score = 95;
+    const score = 95;
 
     const scored = entries
       .filter(e => !e.folder && e.url)

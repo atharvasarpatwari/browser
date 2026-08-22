@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { LayerDamageTracker } from '../../src/browser/rendering/compositing/layer-damage-tracker';
-import type { LayoutBox } from '../../src/browser/rendering/dom-tree';
+import { LayerDamageTracker } from '@/browser/rendering/compositing/layer-damage-tracker';
+import type { LayoutBox } from '@/browser/rendering/dom-tree';
 
 function makeBox(x: number, y: number, w: number, h: number): LayoutBox {
   return {

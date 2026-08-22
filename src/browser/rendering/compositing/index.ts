@@ -17,8 +17,8 @@ export {
   parseTransform, identity2D, identity4x4, isIdentity2D, isIdentity4x4,
   multiply2D, multiply4x4, to4x4, applyTransform2D, applyTransform,
   lerpNumber, lerpColor, lerpMatrices, decomposeMatrix,
-} from './transform-parser';
-export type { DOMMatrix2D, DOMMatrix4x4 } from './transform-parser';
+} from '../transform-parser';
+export type { DOMMatrix2D, DOMMatrix4x4 } from '../transform-parser';
 
 export {
   ScrollCompositor, createScrollableContainer, scrollTo, scrollBy,

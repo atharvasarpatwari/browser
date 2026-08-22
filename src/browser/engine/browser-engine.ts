@@ -54,6 +54,10 @@ import type {
 import type { IRouter, RouteResult } from '../navigation/router';
 import { RouteType }                  from '../navigation/router';
 import type { ILayoutEngine }         from '../rendering/layout-engine';
+import type { IPageLoader, PageLoadResult } from './engine-types';
+
+// Re-export shared types (also imported by networking to avoid circular dep).
+export type { IPageLoader, PageLoadResult } from './engine-types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PAGE LOAD STATE
@@ -118,14 +122,6 @@ interface PageLoadSession {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Fetches the raw document for a URL.
- * Implemented by networking/request-manager.ts (Session 7).
- */
-interface IPageLoader {
-  load(url: string, signal: AbortSignal): Promise<PageLoadResult>;
-}
-
-/**
  * Parses and renders a fetched document into the visible view.
  * Implemented by the rendering pipeline (Sessions 11–15).
  */
@@ -133,16 +129,6 @@ interface IPageRenderer {
   render(result: PageLoadResult, signal: AbortSignal): Promise<void>;
   /** The layout engine backing the most recently rendered page (null before any page / for the null renderer). */
   getLayoutEngine(): ILayoutEngine | null;
-}
-
-/** Raw document received from the network. */
-interface PageLoadResult {
-  readonly url: string;
-  readonly statusCode: number;
-  readonly contentType: string;
-  readonly body: string;
-  readonly headers: ReadonlyMap<string, string>;
-  readonly loadedAt: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -597,10 +583,8 @@ export {
 
 export type {
   IBrowserEngine,
-  IPageLoader,
   IPageRenderer,
   PageLoadSession,
-  PageLoadResult,
   EngineEvent,
   EngineEventType,
   EngineMiddleware,

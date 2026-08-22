@@ -7,12 +7,14 @@ on:
     branches: [main]
 
 jobs:
-  # ── Typecheck + full unit suite ───────────────────────────────────────────
-  # windows-latest mirrors the locally-verified environment (the suite is only
-  # guaranteed green on Windows; move to linux later once Linux parity is shown).
+  # ── Typecheck + full unit suite (multi-platform) ──────────────────────────
   check:
-    runs-on: windows-latest
-    name: typecheck + vitest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    name: typecheck + vitest (${{ matrix.os }})
 
     steps:
       - uses: actions/checkout@v4
@@ -29,8 +31,37 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint
+        run: npm run lint -- --max-warnings 1000
+        continue-on-error: true
+
       - name: Unit tests
         run: npm test
+
+  # ── Vite build verification ───────────────────────────────────────────────
+  build:
+    runs-on: ubuntu-latest
+    name: vite build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web bundle
+        run: npm run build:web
+
+      - name: Verify build output
+        run: |
+          test -f dist/index.html || (echo "Missing dist/index.html" && exit 1)
+          echo "Build output verified"
 
   # ── Electron e2e (smoke + keep-alive + fidelity audit) ────────────────────
   e2e:

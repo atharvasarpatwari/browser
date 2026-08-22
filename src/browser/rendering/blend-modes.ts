@@ -22,8 +22,8 @@ function setLum(r: number, g: number, b: number, l: number): { r: number; g: num
 
 function clipColor(r: number, g: number, b: number, a: number): { r: number; g: number; b: number } {
   const l = lum(r, g, b);
-  let n = Math.min(r, g, b);
-  let x = Math.max(r, g, b);
+  const n = Math.min(r, g, b);
+  const x = Math.max(r, g, b);
   if (n < 0) return setLum(r, g, b, l + (n * (l - 255)) / (n - 255));
   if (x > 255) return setLum(r, g, b, l + ((x - 255) * (255 - l)) / (x - l));
   return { r, g, b };

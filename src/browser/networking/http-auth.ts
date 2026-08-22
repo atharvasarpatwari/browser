@@ -281,7 +281,7 @@ class HttpAuthenticator implements IHttpAuthenticator {
 
     for (let i = 0; i < msg.length; i += 16) {
       const X = Array.from({ length: 16 }, (_, j) => msg[i + j]!);
-      let AA = a, BB = b, CC = c, DD = d;
+      const AA = a, BB = b, CC = c, DD = d;
 
       for (let j = 0; j < 48; j++) {
         const k = j < 16 ? j : (j < 32 ? (5 * j + 1) % 16 : (3 * j + 5) % 16);

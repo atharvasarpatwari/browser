@@ -1426,7 +1426,7 @@ function consumeAtRuleFromText(
   while (i < css.length && isWhitespace(css[i]!)) i++;
 
   // Collect prelude until { or ;
-  let preludeStart = i;
+  const preludeStart = i;
   let prelude = '';
   while (i < css.length) {
     const ch = css[i]!;
@@ -1643,7 +1643,7 @@ function consumeKeyframesBlock(body: string): CssKeyframe[] {
     if (i >= cleaned.length) break;
 
     // Collect keyframe selectors until {
-    let selectors: string[] = [];
+    const selectors: string[] = [];
     while (i < cleaned.length && cleaned[i] !== '{') {
       while (i < cleaned.length && isWhitespace(cleaned[i]!)) i++;
       if (cleaned[i] === '{') break;

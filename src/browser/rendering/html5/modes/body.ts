@@ -117,7 +117,7 @@ function inBodyStartTag(ctx: TreeBuilderContext, token: Token): void {
     case 'address': case 'article': case 'aside': case 'blockquote':
     case 'center': case 'details': case 'dialog': case 'dir':
     case 'div': case 'fieldset': case 'figcaption': case 'figure':
-    case 'footer': case 'header': case 'hgroup': case 'listing':
+    case 'footer': case 'header': case 'hgroup':
     case 'main': case 'menu': case 'nav': case 'ol': case 'search':
       case 'section': case 'summary': case 'ul': {
         if (ctx.isInButtonScope('p')) {

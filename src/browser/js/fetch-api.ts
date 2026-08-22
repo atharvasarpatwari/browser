@@ -684,7 +684,7 @@ export function createFetchFn(
 
     let url: string;
     let method = 'GET';
-    let headers: Record<string, string> = {};
+    const headers: Record<string, string> = {};
     let body: string | undefined;
     let signalObj: JSObject | undefined;
     let mode = CorsMode.Cors;
@@ -794,7 +794,7 @@ export function createFetchFn(
 
     // If CORS engine is available, run pre-request check
     let corsDecision: string | null = null;
-    let corsRequestHeaders = new Map<string, string>();
+    const corsRequestHeaders = new Map<string, string>();
     if (corsEngine && corsReqOrigin && requestOrigin !== corsReqOrigin && mode !== CorsMode.Navigate) {
       const corsReq: CorsRequest = {
         url,

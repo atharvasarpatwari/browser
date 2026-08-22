@@ -48,6 +48,7 @@ import type { DomElement, DomNode, DomTextNode } from '../../browser/rendering/d
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
 import { SettingsPage } from './settings-page';
 import { DownloadsPage } from './downloads-page';
+import { NewTabPage } from './new-tab-page';
 import type { ISettingsPage } from './settings-page';
 import type { ISettingsService } from '../../browser/storage/settings-service';
 import type { IBrowserName } from '../../browser/config/browser-name';
@@ -198,6 +199,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private contentNavigateHandler: ((e: Event) => void) | null = null;
   private activeSettingsPage: ISettingsPage | null = null;
   private activeDownloadsPage: DownloadsPage | null = null;
+  private activeNewTabPage: NewTabPage | null = null;
   private activeContentPanel: HTMLElement | null = null;
   private settingsService: ISettingsService | null = null;
   private navigationBridge: INavigationBridge | null = null;
@@ -620,6 +622,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.contentRenderer?.clear();
         break;
 
+      case 'about:newtab':
+      case 'nova://newtab':
+        this.renderNewTabPage();
+        break;
+
       case 'nova://settings':
       case 'about:settings':
         this.renderSettingsPanel();
@@ -662,6 +669,54 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.activeSettingsPage.mount(container);
     if (this.settingsService) {
       this.settingsService.init(this.activeSettingsPage);
+    }
+  }
+
+  private renderNewTabPage(): void {
+    if (!this.contentArea) return;
+    this.cleanupContentPanel();
+    const container = document.createElement('div');
+    container.style.cssText = 'width:100%;height:100%;';
+    this.contentArea.appendChild(container);
+    this.activeContentPanel = container;
+    this.activeNewTabPage = new NewTabPage();
+
+    const searchEngine = this.settingsService?.getString('defaultSearchEngine', 'google') ?? 'google';
+    this.activeNewTabPage.setSearchEngine(searchEngine);
+
+    this.activeNewTabPage.mount(container);
+
+    this.activeNewTabPage.on('navigate', (event) => {
+      if (event.url) this.navigate(event.url);
+    });
+
+    this.activeNewTabPage.on('tileAction', async (event) => {
+      if (event.action === 'openInNewTab' && event.url) {
+        this.createTab(event.url);
+      } else if (event.action === 'remove' && event.url && this.bookmarkService) {
+        const bm = await this.bookmarkService.getBookmarkByUrl(event.url);
+        if (bm) await this.bookmarkService.removeBookmark(bm.id);
+      }
+    });
+
+    this.activeNewTabPage.on('searchEngineChanged', (event) => {
+      if (event.engine) {
+        this.settingsService?.setValue('defaultSearchEngine', event.engine);
+      }
+    });
+
+    this.loadNewTabData();
+  }
+
+  private async loadNewTabData(): Promise<void> {
+    if (!this.activeNewTabPage?.isMounted) return;
+    try {
+      const bookmarks = await this.bookmarkService?.getChildren() ?? [];
+      this.activeNewTabPage.setBookmarks(bookmarks.filter(b => !b.folder && b.url));
+      const frequent = await this.historyService?.getFrecents(8) ?? [];
+      this.activeNewTabPage.setHistoryEntries(frequent);
+    } catch {
+      // Silently ignore — data sections will simply be empty
     }
   }
 
@@ -1451,9 +1506,17 @@ class BrowserWindowPage implements IBrowserWindowPage {
     }
   }
 
+  private cleanupNewTabPage(): void {
+    if (this.activeNewTabPage) {
+      this.activeNewTabPage.dispose();
+      this.activeNewTabPage = null;
+    }
+  }
+
   private cleanupContentPanel(): void {
     this.cleanupSettingsPage();
     this.cleanupDownloadsPage();
+    this.cleanupNewTabPage();
     if (this.activeContentPanel) {
       this.activeContentPanel.remove();
       this.activeContentPanel = null;

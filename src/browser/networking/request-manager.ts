@@ -52,7 +52,7 @@
  */
 
 import type { AppConfig }                from '../../app/app-shell';
-import type { IPageLoader, PageLoadResult } from '../engine/browser-engine';
+import type { IPageLoader, PageLoadResult } from '../engine/engine-types';
 import { BLOCKED_PROTOCOLS }             from '../navigation/url-parser';
 import {
   GatewayProtocolManager,

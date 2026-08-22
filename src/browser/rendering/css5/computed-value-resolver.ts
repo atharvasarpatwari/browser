@@ -539,7 +539,7 @@ export function resolveVarReferences(
 
   // Find matching closing paren
   let depth = 0;
-  let start = idx + 4; // after "var("
+  const start = idx + 4; // after "var("
   let end = -1;
   for (let i = start; i < value.length; i++) {
     if (value[i] === '(') depth++;

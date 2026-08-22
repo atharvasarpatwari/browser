@@ -1,5 +1,5 @@
 import type { CompositingLayer } from './compositing-layer';
-import { type DOMMatrix4x4, identity4x4, translate3D, multiply4x4 } from './transform-parser';
+import { type DOMMatrix4x4, identity4x4, translate3D, multiply4x4 } from '../transform-parser';
 
 export interface ScrollableContainer {
   readonly id: string;

@@ -1,8 +1,8 @@
 ﻿import { describe, it, expect } from 'vitest';
-import { CompositingLayer } from '../../src/browser/rendering/compositing/compositing-layer';
-import { TileGrid } from '../../src/browser/rendering/compositing/tile-grid';
-import type { DomElement } from '../../src/browser/rendering/dom-tree';
-import type { StackingContext } from '../../src/browser/rendering/formatting/stacking';
+import { CompositingLayer } from '@/browser/rendering/compositing/compositing-layer';
+import { TileGrid } from '@/browser/rendering/compositing/tile-grid';
+import type { DomElement } from '@/browser/rendering/dom-tree';
+import type { StackingContext } from '@/browser/rendering/formatting/stacking';
 
 function makeElement(
   id: string,

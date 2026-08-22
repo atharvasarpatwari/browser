@@ -2,16 +2,16 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   parseTransform, identity4x4, multiply4x4, applyTransform,
   lerpNumber, lerpColor, lerpMatrices, decomposeMatrix, isIdentity4x4,
-} from '../../src/browser/rendering/compositing/transform-parser';
+} from '@/browser/rendering/transform-parser';
 import {
   ScrollCompositor, createScrollableContainer, scrollTo, scrollBy,
   clampScroll, getScrollTransform, isScrollable, getMaxScrollX, getMaxScrollY,
-} from '../../src/browser/rendering/compositing/scroll-compositor';
+} from '@/browser/rendering/compositing/scroll-compositor';
 import {
   KeyframeEffect, AnimationTimeline, Animation, createAnimation,
-} from '../../src/browser/rendering/compositing/animation-engine';
-import { CompositorThread, FrameStatus } from '../../src/browser/rendering/compositing/compositor-thread';
-import { LayerCompositor } from '../../src/browser/rendering/compositing/layer-compositor';
+} from '@/browser/rendering/compositing/animation-engine';
+import { CompositorThread, FrameStatus } from '@/browser/rendering/compositing/compositor-thread';
+import { LayerCompositor } from '@/browser/rendering/compositing/layer-compositor';
 
 describe('TransformParser', () => {
   it('returns null for none', () => {

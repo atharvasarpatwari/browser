@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ChildProcessTransport } from '../../src/common/ipc/child-process-transport';
+import { ChildProcessTransport } from '@/common/ipc/child-process-transport';
 
 describe('ChildProcessTransport', () => {
   let transport: ChildProcessTransport;

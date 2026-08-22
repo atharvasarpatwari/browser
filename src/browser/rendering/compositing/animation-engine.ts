@@ -1,5 +1,5 @@
 import { AnimationFrameService } from '../../media/request-animation-frame';
-import { type DOMMatrix4x4, identity4x4, parseTransform, lerpNumber, lerpColor, lerpMatrices } from './transform-parser';
+import { type DOMMatrix4x4, identity4x4, parseTransform, lerpNumber, lerpColor, lerpMatrices } from '../transform-parser';
 
 export interface Keyframe {
   offset: number;
@@ -182,7 +182,7 @@ export class KeyframeEffect {
       return this.sampleKeyframe(1);
     }
 
-    let iterationIndex = Math.floor(effectiveTime / iterationDuration);
+    const iterationIndex = Math.floor(effectiveTime / iterationDuration);
     let iterationProgress = (effectiveTime % iterationDuration) / iterationDuration;
 
     if (this.direction === 'reverse' || this.direction === 'alternate-reverse') {

@@ -10,7 +10,7 @@ import type { PaintCommand } from '../paint-engine';
 import type { StackingContext } from '../formatting/stacking';
 import { DamageTracker } from '../damage-tracker';
 import { TileGrid, TILE_SIZE, type ViewportRect } from './tile-grid';
-import { parseTransform, type DOMMatrix4x4, identity4x4 } from './transform-parser';
+import { parseTransform, type DOMMatrix4x4, identity4x4 } from '../transform-parser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES

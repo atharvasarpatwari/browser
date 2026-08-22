@@ -948,12 +948,12 @@ describe('8 · lifecycle-manager.ts', () => {
     const hooks: string[] = [];
     lm.addObserver({
       name: 'obs',
-      onBeforeStart: async () => hooks.push('bs'),
-      onAfterStart:  async () => hooks.push('as'),
-      onBeforeStop:  async () => hooks.push('bp'),
-      onAfterStop:   async () => hooks.push('ap'),
-      onSuspend:     async () => hooks.push('sus'),
-      onResume:      async () => hooks.push('res'),
+      onBeforeStart: async () => { hooks.push('bs'); },
+      onAfterStart:  async () => { hooks.push('as'); },
+      onBeforeStop:  async () => { hooks.push('bp'); },
+      onAfterStop:   async () => { hooks.push('ap'); },
+      onSuspend:     async () => { hooks.push('sus'); },
+      onResume:      async () => { hooks.push('res'); },
     });
     await lm.start(); await flush();
     await lm.suspend();

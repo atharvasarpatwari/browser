@@ -1,5 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
-import { generateSecureId } from '../bookmarks/bookmark-validator';
+import { generateSecureId } from '../../common/crypto-utils';
 
 interface BookmarkEntry {
   readonly id: string;
@@ -50,7 +50,7 @@ class InMemoryBookmarkStore implements IBookmarkStore {
     iconUrl?: string;
   }): Promise<BookmarkEntry> {
     const now = Date.now();
-    const id = generateSecureId();
+    const id = generateSecureId('bm');
     const parentId = options.parentId ?? null;
 
     const entry: BookmarkEntry = {
@@ -79,7 +79,7 @@ class InMemoryBookmarkStore implements IBookmarkStore {
 
   async createFolder(title: string, parentId?: string | null): Promise<BookmarkEntry> {
     const now = Date.now();
-    const id = generateSecureId();
+    const id = generateSecureId('bm');
     const pId = parentId ?? null;
 
     const folder: BookmarkEntry = {

@@ -2,7 +2,7 @@ import type { DomDocument, DomElement, DomNode, DomTextNode, IDomTree } from '..
 import { Animation, AnimationTimeline, KeyframeEffect, createAnimation, type Keyframe, type KeyframeEffectOptions } from '../rendering/compositing/animation-engine';
 import type { CssAnimationAnimator } from '../rendering/css-animations';
 import {
-  type JSValue, type JSObject, type JSFunction,
+  type JSValue, type JSObject, type JSFunction, type JSObjectWithMeta,
   createObject, createArray, createNativeFunction,
   toNumber, toString, toBoolean,
   Environment,
@@ -21,6 +21,31 @@ import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../
 // DomDocument/DomElement are data types; mutation methods live on IDomTree.
 // We pass IDomTree into the bindings so all DOM operations go through it.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Internal event extension properties monkey-patched onto JSObject event instances. */
+interface DomEventFlags {
+  __stopPropagation: boolean;
+  __stopImmediate: boolean;
+  __defaultPrevented: boolean;
+}
+
+function isClosure(v: JSValue): v is JSFunction {
+  return typeof v === 'object' && v !== null && 'type' in v && (v as JSFunction).type === 'closure';
+}
+
+/** Typed access to event extension flags on a JSObject. */
+function eventFlags(evt: JSObject): DomEventFlags {
+  const e = evt as JSObject & DomEventFlags;
+  return e;
+}
+
+/** Internal canvas extension properties stored on JSObject wrappers. */
+interface CanvasExtensions {
+  __canvasElement?: HTMLCanvasElement;
+  __wrappedCtx?: JSObject;
+  __canvasEl?: HTMLCanvasElement;
+  __raw?: unknown;
+}
 
 // ── Shared event infrastructure ─────────────────────────────────────────────
 
@@ -54,7 +79,7 @@ function invokeDomListeners(
   let stopped = false;
   for (const entry of entries) {
     if (entry.type !== eventType || entry.capture !== isCapture) continue;
-    if ((event as any).__stopImmediate) break;
+    if (eventFlags(event).__stopImmediate) break;
     try {
       const wrapper = entry.thisArg && typeof entry.thisArg === 'object' && '__domNode' in entry.thisArg
         ? entry.thisArg
@@ -62,7 +87,7 @@ function invokeDomListeners(
       callJSFunction(entry.fn, wrapper ?? null, [event]);
     } catch { /* swallow handler errors */ }
     if (entry.once) entry.__marked = true;
-    if ((event as any).__stopPropagation) { stopped = true; break; }
+    if (eventFlags(event).__stopPropagation) { stopped = true; break; }
   }
   return stopped;
 }
@@ -238,9 +263,9 @@ export function createDocumentBinding(
       const eventType = toString(evt.properties.get('type')?.value ?? '');
       if (!eventType) return true;
 
-      (evt as any).__stopPropagation = false;
-      (evt as any).__stopImmediate = false;
-      (evt as any).__defaultPrevented = false;
+      eventFlags(evt).__stopPropagation = false;
+      eventFlags(evt).__stopImmediate = false;
+      eventFlags(evt).__defaultPrevented = false;
 
       const ancestors: DomNode[] = [];
       let cur: DomNode | null = doc.bodyElement;
@@ -259,11 +284,11 @@ export function createDocumentBinding(
         const wrapped = wrapElement(ancestor as DomElement, domTree);
         evt.properties.set('currentTarget', { value: wrapped, writable: true, enumerable: true, configurable: false });
         if (invokeDomListeners(ancestor, eventType, evt, true)) break;
-        if ((evt as any).__stopPropagation) break;
+        if (eventFlags(evt).__stopPropagation) break;
       }
 
       // Target phase (document itself)
-      if (!(evt as any).__stopPropagation) {
+      if (!eventFlags(evt).__stopPropagation) {
         evt.properties.set('eventPhase', { value: 2, writable: true, enumerable: true, configurable: false });
         evt.properties.set('currentTarget', { value: wrappedDoc, writable: true, enumerable: true, configurable: false });
         invokeDomListeners(doc, eventType, evt, false);
@@ -275,7 +300,7 @@ export function createDocumentBinding(
       cleanupDomOnceListeners(doc);
       for (const ancestor of ancestors) cleanupDomOnceListeners(ancestor);
 
-      return !(evt as any).__defaultPrevented;
+      return !eventFlags(evt).__defaultPrevented;
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -316,7 +341,7 @@ function parseKeyframesArg(kfArg: JSValue): Keyframe[] {
     const len = !Array.isArray(obj) ? Number(obj.properties.get('length')?.value ?? 0) : obj.length;
     const result: Keyframe[] = [];
     for (let i = 0; i < len; i++) {
-      const item = Array.isArray(obj) ? (obj as any)[i] : obj.properties.get(String(i))?.value;
+      const item = Array.isArray(obj) ? (obj as unknown[])[i] : obj.properties.get(String(i))?.value;
       if (!item || typeof item !== 'object') continue;
       const itemObj = item as JSObject;
       const props: Record<string, string> = {};
@@ -339,7 +364,7 @@ function parseKeyframesArg(kfArg: JSValue): Keyframe[] {
   const result: Keyframe[] = [];
   const allProps = new Set<string>();
   const propValues = new Map<string, JSValue[]>();
-  let offsets: number[] = [];
+  const offsets: number[] = [];
   for (const [k, desc] of obj.properties) {
     if (k === 'offset') {
       const arr = desc.value;
@@ -399,8 +424,8 @@ function parseAnimationOptions(optionsArg: JSValue): KeyframeEffectOptions {
     endDelay: Number(readProp('endDelay', 0)),
     iterations: Number(readProp('iterations', 1)),
     iterationStart: Number(readProp('iterationStart', 0)),
-    direction: readProp('direction', 'normal') as any,
-    fill: readProp('fill', 'none') as any,
+    direction: readProp('direction', 'normal') as 'normal' | 'reverse' | 'alternate' | 'alternate-reverse',
+    fill: readProp('fill', 'none') as 'none' | 'forwards' | 'backwards' | 'both',
     easing: readProp('easing', 'linear') as string,
   };
 }
@@ -472,8 +497,8 @@ export function wrapAnimation(anim: Animation): JSObject {
   const prevOnFinish = anim.onFinish;
   anim.onFinish = (evt) => {
     const cb = obj.properties.get('onfinish')?.value;
-    if (typeof cb === 'object' && cb !== null && (cb as any).type === 'closure') {
-      callJSFunction(cb as JSFunction, obj, []);
+    if (isClosure(cb)) {
+      callJSFunction(cb, obj, []);
     }
     if (prevOnFinish) prevOnFinish(evt);
     syncProps();
@@ -481,8 +506,8 @@ export function wrapAnimation(anim: Animation): JSObject {
 
   anim.onCancel = (evt) => {
     const cb = obj.properties.get('oncancel')?.value;
-    if (typeof cb === 'object' && cb !== null && (cb as any).type === 'closure') {
-      callJSFunction(cb as JSFunction, obj, []);
+    if (isClosure(cb)) {
+      callJSFunction(cb, obj, []);
     }
     syncProps();
   };
@@ -493,8 +518,8 @@ export function wrapAnimation(anim: Animation): JSObject {
       : event.type === 'animationiteration' ? 'onanimationiteration'
       : 'onanimationend';
     const cb = obj.properties.get(propKey)?.value;
-    if (typeof cb === 'object' && cb !== null && (cb as any).type === 'closure') {
-      callJSFunction(cb as JSFunction, obj, []);
+    if (isClosure(cb)) {
+      callJSFunction(cb, obj, []);
     }
   });
 
@@ -527,7 +552,7 @@ export function wrapAnimation(anim: Animation): JSObject {
     writable: true, enumerable: true, configurable: true,
   });
 
-  (obj as any).__animation = anim;
+  (obj as JSObjectWithMeta).__animation = anim;
   return obj;
 }
 
@@ -748,10 +773,10 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       const capture = typeof opts === 'boolean' ? opts
         : (opts && typeof opts === 'object' && 'value' in opts) ? false
         : (opts && typeof opts === 'object' && typeof opts === 'object')
-          ? toBoolean((opts as any).properties?.get('capture')?.value ?? false)
+          ? toBoolean((opts as JSObject).properties?.get('capture')?.value ?? false)
           : false;
       const once = (opts && typeof opts === 'object' && typeof opts === 'object' && 'properties' in opts)
-        ? toBoolean((opts as any).properties?.get('once')?.value ?? false)
+        ? toBoolean((opts as JSObject).properties?.get('once')?.value ?? false)
         : false;
       const entries = getDomListeners(el);
       const dup = entries.find(e => e.type === type && e.fn === fn && e.capture === capture);
@@ -785,9 +810,9 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       if (!eventType) return true;
 
       // Initialize propagation state
-      (evt as any).__stopPropagation = false;
-      (evt as any).__stopImmediate = false;
-      (evt as any).__defaultPrevented = false;
+      eventFlags(evt).__stopPropagation = false;
+      eventFlags(evt).__stopImmediate = false;
+      eventFlags(evt).__defaultPrevented = false;
 
       // Build ancestor chain (elements only, no text or document nodes)
       // When composed=false, stop at shadow root boundaries.
@@ -801,10 +826,10 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
         }
         // Shadow root boundary: a fragment node with a host (e.g. shadow root).
         // When composed=false, stop here; when composed=true, jump to host.
-        const isShadowBoundary = cur.nodeType !== 'element' && 'host' in cur && (cur as any).host;
+        const isShadowBoundary = cur.nodeType !== 'element' && 'host' in cur && (cur as unknown as { host: DomNode }).host;
         if (isShadowBoundary) {
           if (!composed) break;
-          const host = (cur as any).host as DomNode;
+          const host = (cur as unknown as { host: DomNode }).host as DomNode;
           if (host && host.nodeType === 'element') ancestors.push(host);
           cur = host?.parent ?? null;
         } else {
@@ -825,27 +850,27 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
         const wrapped = wrapElement(ancestor as DomElement, domTree);
         evt.properties.set('currentTarget', { value: wrapped, writable: true, enumerable: true, configurable: false });
         if (invokeDomListeners(ancestor, eventType, evt, true)) break;
-        if ((evt as any).__stopPropagation) break;
+        if (eventFlags(evt).__stopPropagation) break;
       }
 
       // ── TARGET PHASE ──
-      if (!(evt as any).__stopPropagation) {
+      if (!eventFlags(evt).__stopPropagation) {
         evt.properties.set('eventPhase', { value: 2, writable: true, enumerable: true, configurable: false });
         evt.properties.set('currentTarget', { value: wrappedTarget, writable: true, enumerable: true, configurable: false });
         invokeDomListeners(el, eventType, evt, false);
-        if (!(evt as any).__stopPropagation) {
+        if (!eventFlags(evt).__stopPropagation) {
           invokeDomListeners(el, eventType, evt, true);
         }
       }
 
       // ── BUBBLE PHASE: parent-of-target → root ──
-      if (bubbles && !(evt as any).__stopPropagation) {
+      if (bubbles && !eventFlags(evt).__stopPropagation) {
         evt.properties.set('eventPhase', { value: 3, writable: true, enumerable: true, configurable: false });
         for (const ancestor of ancestors) {
           const wrapped = wrapElement(ancestor as DomElement, domTree);
           evt.properties.set('currentTarget', { value: wrapped, writable: true, enumerable: true, configurable: false });
           if (invokeDomListeners(ancestor, eventType, evt, false)) break;
-          if ((evt as any).__stopPropagation) break;
+          if (eventFlags(evt).__stopPropagation) break;
         }
       }
 
@@ -855,7 +880,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       cleanupDomOnceListeners(el);
       for (const ancestor of ancestors) cleanupDomOnceListeners(ancestor);
 
-      return !(evt as any).__defaultPrevented;
+      return !eventFlags(evt).__defaultPrevented;
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -951,12 +976,12 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
   if (tagName === 'canvas') {
     // Lazily create / retrieve the TS-side HTMLCanvasElement
     const getCanvas = (): HTMLCanvasElement => {
-      let hc = (el as any).__canvasElement as HTMLCanvasElement | undefined;
+      let hc = (el as unknown as CanvasExtensions).__canvasElement as HTMLCanvasElement | undefined;
       if (!hc) {
         const w = parseInt(el.attributes.get('width') ?? '300', 10) || 300;
         const h = parseInt(el.attributes.get('height') ?? '150', 10) || 150;
         hc = new HTMLCanvasElement(w, h);
-        (el as any).__canvasElement = hc;
+        (el as unknown as CanvasExtensions).__canvasElement = hc;
       }
       return hc;
     };
@@ -970,12 +995,12 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
           const ctx = hc.getContext('2d');
           if (!ctx) return null;
           // Cache the wrapped context on the canvas element's wrapper
-          let wrapped = (obj as any).__wrappedCtx as JSObject | undefined;
+          let wrapped = (obj as unknown as CanvasExtensions).__wrappedCtx as JSObject | undefined;
           if (!wrapped) {
             wrapped = wrapCanvasContext(ctx);
-            (obj as any).__wrappedCtx = wrapped;
+            (obj as unknown as CanvasExtensions).__wrappedCtx = wrapped;
             // Store reference back to canvas for 'canvas' property
-            (wrapped as any).__canvasEl = hc;
+            (wrapped as unknown as CanvasExtensions).__canvasEl = hc;
           }
           return wrapped;
         }
@@ -992,7 +1017,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
         const v = toNumber(args[0]);
         getCanvas().width = v;
         attrs.set('width', String(v));
-        (obj as any).__wrappedCtx = undefined;
+        (obj as unknown as CanvasExtensions).__wrappedCtx = undefined;
       }),
     });
 
@@ -1004,7 +1029,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
         const v = toNumber(args[0]);
         getCanvas().height = v;
         attrs.set('height', String(v));
-        (obj as any).__wrappedCtx = undefined;
+        (obj as unknown as CanvasExtensions).__wrappedCtx = undefined;
       }),
     });
 
@@ -1024,7 +1049,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
         const quality = args[2] !== undefined ? toNumber(args[2]) : undefined;
         getCanvas().toBlob((blob) => {
           // Blob is passed as-is (will be wrapped by JS engine if needed)
-          if (callback) callJSFunction(callback, null, [blob as any]);
+          if (callback) callJSFunction(callback, null, [blob as unknown as JSValue]);
         }, type, quality);
       }),
       writable: true, enumerable: true, configurable: true,
@@ -1131,7 +1156,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
 
 /** Unwrap a JSObject to get the raw data behind it (e.g., ImageData, CanvasGradient, Path2D). */
 function unwrapRaw(v: JSValue): any {
-  if (v && typeof v === 'object' && '__raw' in (v as any)) return (v as any).__raw;
+  if (v && typeof v === 'object' && '__raw' in (v as unknown as CanvasExtensions)) return (v as unknown as CanvasExtensions).__raw;
   return v;
 }
 
@@ -1140,13 +1165,13 @@ function unwrapImageSource(v: JSValue): any {
   if (v && typeof v === 'object') {
     const obj = v as JSObject;
     // If it's a canvas element wrapper, get the HTMLCanvasElement
-    if ('__canvasEl' in (obj as any)) return (obj as any).__canvasEl;
+    if ('__canvasEl' in (obj as unknown as CanvasExtensions)) return (obj as unknown as CanvasExtensions).__canvasEl;
     // If it's an ImageData-like raw object
-    if ('__raw' in (obj as any)) return (obj as any).__raw;
+    if ('__raw' in (obj as unknown as CanvasExtensions)) return (obj as unknown as CanvasExtensions).__raw;
     // If it looks like { data, width, height } pass through
     if (obj.properties.has('data') && obj.properties.has('width') && obj.properties.has('height')) {
       return {
-        data: (obj.properties.get('data')?.value as any)?._data ?? obj.properties.get('data')?.value,
+        data: (obj.properties.get('data')?.value as unknown as { _data?: unknown })?._data ?? obj.properties.get('data')?.value,
         width: toNumber(obj.properties.get('width')?.value),
         height: toNumber(obj.properties.get('height')?.value),
       };
@@ -1158,7 +1183,7 @@ function unwrapImageSource(v: JSValue): any {
 /** Wrap a canvas gradient as a JSObject. */
 function wrapGradient(g: CanvasGradient): JSObject {
   const obj = createObject(null);
-  (obj as any).__raw = g;
+  (obj as unknown as CanvasExtensions).__raw = g;
   obj.properties.set('addColorStop', {
     value: createNativeFunction('addColorStop', (_this, args) => {
       g.addColorStop(toNumber(args[0]), toString(args[1]));
@@ -1171,15 +1196,15 @@ function wrapGradient(g: CanvasGradient): JSObject {
 /** Wrap a canvas pattern as a JSObject. */
 function wrapPattern(p: any): JSObject {
   const obj = createObject(null);
-  (obj as any).__raw = p;
+  (obj as unknown as CanvasExtensions).__raw = p;
   return obj;
 }
 
 /** Wrap an ImageData as a JSObject. */
 function wrapImageData(d: { data: Uint8ClampedArray; width: number; height: number }): JSObject {
   const obj = createObject(null);
-  (obj as any).__raw = d;
-  obj.properties.set('data', { value: d.data as any, writable: false, enumerable: true, configurable: false });
+  (obj as unknown as CanvasExtensions).__raw = d;
+  obj.properties.set('data', { value: d.data as unknown as JSValue, writable: false, enumerable: true, configurable: false });
   obj.properties.set('width', { value: d.width, writable: false, enumerable: true, configurable: false });
   obj.properties.set('height', { value: d.height, writable: false, enumerable: true, configurable: false });
   return obj;
@@ -1188,7 +1213,7 @@ function wrapImageData(d: { data: Uint8ClampedArray; width: number; height: numb
 /** Wrap a Path2D as a JSObject. */
 function wrapPath2D(p: Path2D): JSObject {
   const obj = createObject(null);
-  (obj as any).__raw = p;
+  (obj as unknown as CanvasExtensions).__raw = p;
   obj.properties.set('addPath', {
     value: createNativeFunction('addPath', (_this, args) => {
       const other = unwrapRaw(args[0]);
@@ -1224,7 +1249,7 @@ function wrapPath2D(p: Path2D): JSObject {
 /** Wrap a TextMetrics as a JSObject. */
 function wrapTextMetrics(m: any): JSObject {
   const obj = createObject(null);
-  (obj as any).__raw = m;
+  (obj as unknown as CanvasExtensions).__raw = m;
   const fields = [
     'width', 'actualBoundingBoxAscent', 'actualBoundingBoxDescent',
     'actualBoundingBoxLeft', 'actualBoundingBoxRight',
@@ -1240,7 +1265,7 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
   const obj = createObject(null);
 
   // Store raw context for internal access
-  (obj as any).__raw = ctx;
+  (obj as unknown as CanvasExtensions).__raw = ctx;
 
   // ── State ──
   obj.properties.set('save', {
@@ -1350,7 +1375,7 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
   });
   obj.properties.set('clip', {
     value: createNativeFunction('clip', (_t, a) => {
-      ctx.clip(a[0] !== undefined ? toString(a[0]) as any : undefined);
+      ctx.clip(a[0] !== undefined ? toString(a[0]) as 'nonzero' | 'evenodd' : undefined);
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -1376,7 +1401,7 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
   });
   obj.properties.set('fill', {
     value: createNativeFunction('fill', (_t, a) => {
-      ctx.fill(a[0] !== undefined ? toString(a[0]) as any : undefined);
+      ctx.fill(a[0] !== undefined ? toString(a[0]) as 'nonzero' | 'evenodd' : undefined);
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -1461,7 +1486,7 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
       const img = unwrapImageSource(a[0]);
       if (!img) return null;
       const rep = a[1] !== undefined ? toString(a[1]) : 'repeat';
-      const p = ctx.createPattern(img, rep as any);
+      const p = ctx.createPattern(img, rep as 'repeat' | 'repeat-x' | 'repeat-y' | 'no-repeat');
       return p ? wrapPattern(p) : null;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -1488,7 +1513,7 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
     value: createNativeFunction('toBlob', (_t, a) => {
       const callback = a[0] as JSFunction;
       ctx.toBlob((blob) => {
-        if (callback) callJSFunction(callback, null, [blob as any]);
+        if (callback) callJSFunction(callback, null, [blob as unknown as JSValue]);
       }, a[1] !== undefined ? toString(a[1]) : undefined, a[2] !== undefined ? toNumber(a[2]) : undefined);
     }),
     writable: true, enumerable: true, configurable: true,
@@ -1499,7 +1524,7 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
     value: undefined, // set by wrapElement when creating the context
     writable: false, enumerable: true, configurable: false,
     getter: createNativeFunction('get canvas', () => {
-      const hc = (obj as any).__canvasEl;
+      const hc = (obj as unknown as CanvasExtensions).__canvasEl;
       if (!hc) return null;
       // Return a minimal object with width/height
       const canvasRef = createObject(null);
@@ -1514,21 +1539,21 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
     ['fillStyle', () => ctx.fillStyle, (v) => { ctx.fillStyle = unwrapRaw(v); }],
     ['strokeStyle', () => ctx.strokeStyle, (v) => { ctx.strokeStyle = unwrapRaw(v); }],
     ['lineWidth', () => ctx.lineWidth, (v) => { ctx.lineWidth = toNumber(v); }],
-    ['lineCap', () => ctx.lineCap, (v) => { ctx.lineCap = toString(v) as any; }],
-    ['lineJoin', () => ctx.lineJoin, (v) => { ctx.lineJoin = toString(v) as any; }],
+    ['lineCap', () => ctx.lineCap, (v) => { ctx.lineCap = toString(v) as CanvasLineCap; }],
+    ['lineJoin', () => ctx.lineJoin, (v) => { ctx.lineJoin = toString(v) as CanvasLineJoin; }],
     ['miterLimit', () => ctx.miterLimit, (v) => { ctx.miterLimit = toNumber(v); }],
     ['globalAlpha', () => ctx.globalAlpha, (v) => { ctx.globalAlpha = toNumber(v); }],
     ['globalCompositeOperation', () => ctx.globalCompositeOperation, (v) => { ctx.globalCompositeOperation = toString(v); }],
     ['font', () => ctx.font, (v) => { ctx.font = toString(v); }],
-    ['textAlign', () => ctx.textAlign, (v) => { ctx.textAlign = toString(v) as any; }],
-    ['textBaseline', () => ctx.textBaseline, (v) => { ctx.textBaseline = toString(v) as any; }],
-    ['direction', () => ctx.direction, (v) => { ctx.direction = toString(v) as any; }],
+    ['textAlign', () => ctx.textAlign, (v) => { ctx.textAlign = toString(v) as CanvasTextAlign; }],
+    ['textBaseline', () => ctx.textBaseline, (v) => { ctx.textBaseline = toString(v) as CanvasTextBaseline; }],
+    ['direction', () => ctx.direction, (v) => { ctx.direction = toString(v) as CanvasDirection; }],
     ['shadowBlur', () => ctx.shadowBlur, (v) => { ctx.shadowBlur = toNumber(v); }],
     ['shadowColor', () => ctx.shadowColor, (v) => { ctx.shadowColor = toString(v); }],
     ['shadowOffsetX', () => ctx.shadowOffsetX, (v) => { ctx.shadowOffsetX = toNumber(v); }],
     ['shadowOffsetY', () => ctx.shadowOffsetY, (v) => { ctx.shadowOffsetY = toNumber(v); }],
     ['imageSmoothingEnabled', () => ctx.imageSmoothingEnabled, (v) => { ctx.imageSmoothingEnabled = toBoolean(v); }],
-    ['imageSmoothingQuality', () => ctx.imageSmoothingQuality, (v) => { ctx.imageSmoothingQuality = toString(v) as any; }],
+    ['imageSmoothingQuality', () => ctx.imageSmoothingQuality, (v) => { ctx.imageSmoothingQuality = toString(v) as ImageSmoothingQuality; }],
     ['lineDashOffset', () => ctx.lineDashOffset, (v) => { ctx.lineDashOffset = toNumber(v); }],
   ];
 
@@ -1652,7 +1677,7 @@ export function createEventObject(type: string, target: JSValue, options?: { bub
   evt.properties.set('defaultPrevented', { value: false, writable: true, enumerable: true, configurable: false });
   evt.properties.set('preventDefault', {
     value: createNativeFunction('preventDefault', (_this, _args) => {
-      (evt as any).__defaultPrevented = true;
+      eventFlags(evt).__defaultPrevented = true;
       evt.properties.set('defaultPrevented', { value: true, writable: true, enumerable: true, configurable: false });
       return undefined;
     }),
@@ -1660,15 +1685,15 @@ export function createEventObject(type: string, target: JSValue, options?: { bub
   });
   evt.properties.set('stopPropagation', {
     value: createNativeFunction('stopPropagation', (_this, _args) => {
-      (evt as any).__stopPropagation = true;
+      eventFlags(evt).__stopPropagation = true;
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
   });
   evt.properties.set('stopImmediatePropagation', {
     value: createNativeFunction('stopImmediatePropagation', (_this, _args) => {
-      (evt as any).__stopPropagation = true;
-      (evt as any).__stopImmediate = true;
+      eventFlags(evt).__stopPropagation = true;
+      eventFlags(evt).__stopImmediate = true;
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,

@@ -13,7 +13,7 @@ import type { IHistoryStore, HistoryEntry, HistoryQuery, HistoryQueryResult } fr
 import type { ITokenStore, TokenEntry, TokenStoreConfig } from '../auth/token-store';
 import type { AuthProtocol } from '../auth/auth-provider';
 import { encryptData, decryptData } from '../auth/token-store';
-import { generateSecureId } from '../bookmarks/bookmark-validator';
+import { generateSecureId } from '../../common/crypto-utils';
 import type { IPasswordStore, PasswordEntry, PasswordEntryData } from './password-store';
 import { InMemoryPasswordStore } from './password-store';
 
@@ -268,7 +268,7 @@ class PersistentBookmarkStore implements IBookmarkStore {
     iconUrl?: string;
   }): Promise<BookmarkEntry> {
     const now = Date.now();
-    const id = generateSecureId();
+    const id = generateSecureId('bm');
     const parentId = options.parentId ?? null;
 
     const entry: BookmarkEntry = {
@@ -298,7 +298,7 @@ class PersistentBookmarkStore implements IBookmarkStore {
 
   async createFolder(title: string, parentId?: string | null): Promise<BookmarkEntry> {
     const now = Date.now();
-    const id = generateSecureId();
+    const id = generateSecureId('bm');
     const pId = parentId ?? null;
 
     const folder: BookmarkEntry = {

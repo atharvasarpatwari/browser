@@ -41,7 +41,7 @@ type SVGEventHandler = (event: SVGEvent) => void;
 function createSVGElement(kind: SVGElementKind, attrs: Record<string, string> = {}): SVGElement {
   const children: SVGElement[] = [];
   const attributes = new Map(Object.entries(attrs));
-  let parent: SVGElement | null = null;
+  const parent: SVGElement | null = null;
 
   const self: SVGElement = {
     kind,

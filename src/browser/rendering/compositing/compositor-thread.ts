@@ -3,7 +3,7 @@ import { LayerTree } from './layer-tree';
 import type { CompositingLayer } from './compositing-layer';
 import { ScrollCompositor, type ScrollableContainer } from './scroll-compositor';
 import { AnimationTimeline, Animation, type KeyframeEffect, type Keyframe } from './animation-engine';
-import { type DOMMatrix4x4, identity4x4, multiply4x4, parseTransform } from './transform-parser';
+import { type DOMMatrix4x4, identity4x4, multiply4x4, parseTransform } from '../transform-parser';
 
 export interface CompositorFrameSnapshot {
   readonly layerTree: LayerTree;

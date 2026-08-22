@@ -147,7 +147,7 @@ export class StartupPages implements IStartupPages {
 
   getStartupPages(): StartupPage[] {
     if (this.config.action === 'new-tab') {
-      return [{ id: 'new-tab', url: 'about:blank', title: 'New Tab', pinned: false, position: 0 }];
+      return [{ id: 'new-tab', url: 'about:newtab', title: 'New Tab', pinned: false, position: 0 }];
     }
     if (this.config.action === 'last-session' || this.config.action === 'continue-where-left') {
       // In production, this would load from session store

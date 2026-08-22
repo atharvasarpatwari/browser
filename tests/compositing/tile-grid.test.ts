@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TileGrid, TILE_SIZE } from '../../src/browser/rendering/compositing/tile-grid';
+import { TileGrid, TILE_SIZE } from '@/browser/rendering/compositing/tile-grid';
 
 describe('TileGrid', () => {
   describe('construction', () => {

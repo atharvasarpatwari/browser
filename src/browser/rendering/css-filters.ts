@@ -20,7 +20,7 @@ export function parseFilter(value: string): FilterList {
   const remaining = value.trim();
   const funcRegex = /(\w[\w-]*)\s*\(/g;
   let match: RegExpExecArray | null;
-  let lastIdx = 0;
+  const lastIdx = 0;
 
   while ((match = funcRegex.exec(remaining)) !== null) {
     const funcName = match[1].toLowerCase();

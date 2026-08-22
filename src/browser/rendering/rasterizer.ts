@@ -937,7 +937,7 @@ function applyTextShadowToPixels(
   const charW = FONT_W * scale;
   const baseY = Math.round(y - fsize * 0.8);
   const c = parseColor(color);
-  let startX = x;
+  const startX = x;
   for (let i = 0; i < text.length; i++) {
     const bitmap = getCharBitmap(text.charCodeAt(i));
     if (bitmap) {

@@ -375,7 +375,7 @@ describe('StartupPages', () => {
   it('getStartupPages returns new-tab for new-tab action', () => {
     const pages = sp.getStartupPages();
     expect(pages).toHaveLength(1);
-    expect(pages[0].url).toBe('about:blank');
+    expect(pages[0].url).toBe('about:newtab');
   });
   it('getStartupPages returns pages for specific-pages', () => {
     sp.setAction('specific-pages');

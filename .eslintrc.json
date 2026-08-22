@@ -21,7 +21,9 @@
     "no-console": "off",
     "prefer-const": "error",
     "no-var": "error",
-    "eqeqeq": ["error", "always"]
+    "eqeqeq": ["error", "always"],
+    "no-empty": ["warn", { "allowEmptyCatch": true }],
+    "no-case-declarations": "off"
   },
   "ignorePatterns": ["dist", "coverage", "node_modules"],
   "overrides": [

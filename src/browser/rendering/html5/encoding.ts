@@ -295,7 +295,7 @@ export function prescanMetaCharset(data: Uint8Array): string | null {
 
     // Scan attributes within this <meta ... > tag
     i = afterMeta;
-    let foundCharset = false;
+    const foundCharset = false;
     let foundHttpEquiv = false;
 
     // Advance to end of tag

@@ -157,7 +157,7 @@ class BytecodeService implements IBytecodeService {
     let instructionCount = 0;
 
     for (let i = 0; i < lines.length; i++) {
-      let line = lines[i]!.trim();
+      const line = lines[i]!.trim();
       if (!line || line.startsWith('//')) continue;
       if (line.startsWith('function ') || line.startsWith('function* ') || line.startsWith('async function ')) {
         const name = line.match(/function[*\s]*(\w+)/)?.[1] ?? '<anonymous>';

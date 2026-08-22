@@ -6,9 +6,59 @@
 import {
   createObject, createNativeFunction, createArray,
   toNumber, toBoolean, toString, getType, callJSFunction,
+  isJSObjectWithMeta,
 } from './values';
-import type { JSValue, JSObject, JSFunction } from './values';
+import type { JSValue, JSObject, JSFunction, JSObjectWithMeta } from './values';
 import { JSError } from './values';
+
+// Typed DataView accessor helpers — replace dynamic (view as any)[method]() casts
+type DataViewGetMethod = 'getInt8' | 'getUint8' | 'getInt16' | 'getUint16' | 'getInt32' | 'getUint32' | 'getFloat32' | 'getFloat64' | 'getBigInt64' | 'getBigUint64';
+type DataViewSetMethod = 'setInt8' | 'setUint8' | 'setInt16' | 'setUint16' | 'setInt32' | 'setUint32' | 'setFloat32' | 'setFloat64' | 'setBigInt64' | 'setBigUint64';
+
+function callDataViewGet(view: DataView, method: DataViewGetMethod, offset: number, littleEndian: boolean): number | bigint {
+  switch (method) {
+    case 'getInt8': return view.getInt8(offset);
+    case 'getUint8': return view.getUint8(offset);
+    case 'getInt16': return view.getInt16(offset, littleEndian);
+    case 'getUint16': return view.getUint16(offset, littleEndian);
+    case 'getInt32': return view.getInt32(offset, littleEndian);
+    case 'getUint32': return view.getUint32(offset, littleEndian);
+    case 'getFloat32': return view.getFloat32(offset, littleEndian);
+    case 'getFloat64': return view.getFloat64(offset, littleEndian);
+    case 'getBigInt64': return view.getBigInt64(offset, littleEndian);
+    case 'getBigUint64': return view.getBigUint64(offset, littleEndian);
+  }
+}
+
+function callDataViewSet(view: DataView, method: DataViewSetMethod, offset: number, value: number | bigint, littleEndian: boolean): void {
+  switch (method) {
+    case 'setInt8': view.setInt8(offset, Number(value)); break;
+    case 'setUint8': view.setUint8(offset, Number(value)); break;
+    case 'setInt16': view.setInt16(offset, Number(value), littleEndian); break;
+    case 'setUint16': view.setUint16(offset, Number(value), littleEndian); break;
+    case 'setInt32': view.setInt32(offset, Number(value), littleEndian); break;
+    case 'setUint32': view.setUint32(offset, Number(value), littleEndian); break;
+    case 'setFloat32': view.setFloat32(offset, Number(value), littleEndian); break;
+    case 'setFloat64': view.setFloat64(offset, Number(value), littleEndian); break;
+    case 'setBigInt64': view.setBigInt64(offset, BigInt(value as bigint | number), littleEndian); break;
+    case 'setBigUint64': view.setBigUint64(offset, BigInt(value as bigint | number), littleEndian); break;
+  }
+}
+
+// Typed native view accessors — replace dynamic (view as any)[i] casts
+interface TypedArrayLike {
+  length: number;
+  byteLength: number;
+  [index: number]: number | bigint;
+}
+
+function readTypedElement(view: TypedArrayLike, index: number): number | bigint {
+  return view[index];
+}
+
+function writeTypedElement(view: TypedArrayLike, index: number, value: number | bigint): void {
+  (view as unknown as (number | bigint)[])[index] = value;
+}
 
 function toInteger(val: JSValue): number {
   const n = toNumber(val);
@@ -96,28 +146,28 @@ const TYPED_ARRAY_META: Record<TypedArrayName, TypedArrayMeta> = {
     BYTES_PER_ELEMENT: 8,
     TypedArrayName: 'BigInt64Array',
     get: (buf, off, le) => new DataView(buf).getBigInt64(off, le),
-    set: (buf, off, v, le) => new DataView(buf).setBigInt64(off, BigInt(v as any), le),
+    set: (buf, off, v, le) => new DataView(buf).setBigInt64(off, BigInt(v as bigint | number), le),
   },
   BigUint64Array: {
     BYTES_PER_ELEMENT: 8,
     TypedArrayName: 'BigUint64Array',
     get: (buf, off, le) => new DataView(buf).getBigUint64(off, le),
-    set: (buf, off, v, le) => new DataView(buf).setBigUint64(off, BigInt(v as any), le),
+    set: (buf, off, v, le) => new DataView(buf).setBigUint64(off, BigInt(v as bigint | number), le),
   },
 };
 
 // ── ArrayBuffer ──────────────────────────────────────────────────────────────
 
 function wrapArrayBuffer(native: ArrayBuffer): JSObject {
-  const ab = createObject(arrayBufferProto);
-  (ab as any).__type_override = 'arraybuffer';
-  (ab as any).__nativeBuffer = native;
+  const ab = createObject(arrayBufferProto) as JSObjectWithMeta;
+  ab.__type_override = 'arraybuffer';
+  ab.__nativeBuffer = native;
   return ab;
 }
 
 function getArrayBuffer(obj: JSValue, method: string): ArrayBuffer {
   if (typeof obj !== 'object' || obj === null) throw new JSError('TypeError: Cannot call ' + method + ' on non-object');
-  const native = (obj as any).__nativeBuffer as ArrayBuffer | undefined;
+  const native = (obj as JSObjectWithMeta).__nativeBuffer as ArrayBuffer | undefined;
   if (!native) throw new JSError('TypeError: ' + method + ' called on non-ArrayBuffer object');
   return native;
 }
@@ -179,8 +229,9 @@ function createArrayBufferCtorObj(arrayBufferProtoRef: JSObject): JSObject {
       const val = args[0];
       if (typeof val !== 'object' || val === null) return false;
       const obj = val as JSObject;
-      if ((obj as any).__type_override === 'dataview') return true;
-      if ((obj as any).__type_override && TYPED_ARRAY_NAMES.includes((obj as any).__type_override)) return true;
+      const meta = obj as JSObjectWithMeta;
+      if (meta.__type_override === 'dataview') return true;
+      if (meta.__type_override && (TYPED_ARRAY_NAMES as readonly string[]).includes(meta.__type_override)) return true;
       return false;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -191,26 +242,27 @@ function createArrayBufferCtorObj(arrayBufferProtoRef: JSObject): JSObject {
 // ── DataView ─────────────────────────────────────────────────────────────────
 
 function wrapDataView(buf: ArrayBuffer, offset: number, byteLength: number): JSObject {
-  const dv = createObject(dataViewProto);
-  (dv as any).__type_override = 'dataview';
-  (dv as any).__nativeBuffer = buf;
-  (dv as any).__dvOffset = offset;
-  (dv as any).__dvByteLength = byteLength;
+  const dv = createObject(dataViewProto) as JSObjectWithMeta;
+  dv.__type_override = 'dataview';
+  dv.__nativeBuffer = buf;
+  dv.__dvOffset = offset;
+  dv.__dvByteLength = byteLength;
   return dv;
 }
 
 function getDVView(obj: JSValue): { view: DataView; littleEndian: boolean } {
   if (typeof obj !== 'object' || obj === null) throw new JSError('TypeError: Cannot call DataView method on non-object');
-  const buf = (obj as any).__nativeBuffer as ArrayBuffer;
-  const offset = (obj as any).__dvOffset as number;
-  const byteLength = (obj as any).__dvByteLength as number;
+  const meta = obj as JSObjectWithMeta;
+  const buf = meta.__nativeBuffer as ArrayBuffer;
+  const offset = meta.__dvOffset ?? 0;
+  const byteLength = meta.__dvByteLength ?? 0;
   if (!buf) throw new JSError('TypeError: DataView called on non-DataView object');
   return { view: new DataView(buf, offset, byteLength), littleEndian: false };
 }
 
 function dvGetter(
   methodName: string,
-  getMethod: 'getInt8' | 'getUint8' | 'getInt16' | 'getUint16' | 'getInt32' | 'getUint32' | 'getFloat32' | 'getFloat64' | 'getBigInt64' | 'getBigUint64',
+  getMethod: DataViewGetMethod,
   bytesPerElement: number,
 ) {
   return createNativeFunction(methodName, (_this, args) => {
@@ -220,13 +272,13 @@ function dvGetter(
     if (offset < 0 || offset + bytesPerElement > view.byteLength) {
       throw new JSError('RangeError: Offset is outside the bounds of the DataView');
     }
-    return (view as any)[getMethod](offset, littleEndian);
+    return callDataViewGet(view, getMethod, offset, littleEndian);
   });
 }
 
 function dvSetter(
   methodName: string,
-  setMethod: 'setInt8' | 'setUint8' | 'setInt16' | 'setUint16' | 'setInt32' | 'setUint32' | 'setFloat32' | 'setFloat64' | 'setBigInt64' | 'setBigUint64',
+  setMethod: DataViewSetMethod,
   bytesPerElement: number,
 ) {
   return createNativeFunction(methodName, (_this, args) => {
@@ -238,9 +290,9 @@ function dvSetter(
       throw new JSError('RangeError: Offset is outside the bounds of the DataView');
     }
     if (setMethod === 'setBigInt64' || setMethod === 'setBigUint64') {
-      (view as any)[setMethod](offset, BigInt(value as any), littleEndian);
+      callDataViewSet(view, setMethod, offset, BigInt(value as bigint | number), littleEndian);
     } else {
-      (view as any)[setMethod](offset, Number(value), littleEndian);
+      callDataViewSet(view, setMethod, offset, Number(value), littleEndian);
     }
     return undefined;
   });
@@ -249,20 +301,21 @@ function dvSetter(
 const dataViewProto = createObject(null);
 dataViewProto.properties.set('buffer', {
   value: undefined, getter: createNativeFunction('buffer', (_this, _args) => {
-    const buf = (_this as any).__nativeBuffer as ArrayBuffer;
+    const meta = _this as JSObjectWithMeta;
+    const buf = meta.__nativeBuffer;
     return buf ? wrapArrayBuffer(buf) : undefined;
   }),
   writable: false, enumerable: false, configurable: true,
 });
 dataViewProto.properties.set('byteOffset', {
   value: undefined, getter: createNativeFunction('byteOffset', (_this, _args) => {
-    return (_this as any).__dvOffset ?? 0;
+    return (_this as JSObjectWithMeta).__dvOffset ?? 0;
   }),
   writable: false, enumerable: false, configurable: true,
 });
 dataViewProto.properties.set('byteLength', {
   value: undefined, getter: createNativeFunction('byteLength', (_this, _args) => {
-    return (_this as any).__dvByteLength ?? 0;
+    return (_this as JSObjectWithMeta).__dvByteLength ?? 0;
   }),
   writable: false, enumerable: false, configurable: true,
 });
@@ -319,28 +372,29 @@ function createTypedArrayProto(meta: TypedArrayMeta): JSObject {
 const typedArrayBaseProto = createObject(null);
 typedArrayBaseProto.properties.set('buffer', {
   value: undefined, getter: createNativeFunction('buffer', (_this, _args) => {
-    const buf = (_this as any).__nativeBuffer as ArrayBuffer;
+    const meta = _this as JSObjectWithMeta;
+    const buf = meta.__nativeBuffer;
     return buf ? wrapArrayBuffer(buf) : undefined;
   }),
   writable: false, enumerable: false, configurable: true,
 });
 typedArrayBaseProto.properties.set('byteOffset', {
   value: undefined, getter: createNativeFunction('byteOffset', (_this, _args) => {
-    return (_this as any).__taOffset ?? 0;
+    return (_this as JSObjectWithMeta).__taOffset ?? 0;
   }),
   writable: false, enumerable: false, configurable: true,
 });
 typedArrayBaseProto.properties.set('byteLength', {
   value: undefined, getter: createNativeFunction('byteLength', (_this, _args) => {
-    const native = (_this as any).__nativeView as { byteLength: number };
-    return native?.byteLength ?? 0;
+    const view = (_this as JSObjectWithMeta).__nativeView as TypedArrayLike | undefined;
+    return view?.byteLength ?? 0;
   }),
   writable: false, enumerable: false, configurable: true,
 });
 typedArrayBaseProto.properties.set('length', {
   value: undefined, getter: createNativeFunction('length', (_this, _args) => {
-    const native = (_this as any).__nativeView as { length: number };
-    return native?.length ?? 0;
+    const view = (_this as JSObjectWithMeta).__nativeView as TypedArrayLike | undefined;
+    return view?.length ?? 0;
   }),
   writable: false, enumerable: false, configurable: true,
 });
@@ -355,7 +409,7 @@ typedArrayBaseProto.properties.set('fill', {
     const s = Math.max(0, Math.min(start, view.length));
     const e = Math.max(0, Math.min(end, view.length));
     for (let i = s; i < e; i++) {
-      view[i] = typeof value === 'bigint' ? value as any : Number(value) as any;
+      writeTypedElement(view, i, typeof value === 'bigint' ? value : Number(value));
     }
     return _this;
   }),
@@ -373,16 +427,16 @@ typedArrayBaseProto.properties.set('set', {
       throw new JSError('TypeError: TypedArray.prototype.set requires an object argument');
     }
     const src = srcObj as JSObject;
-    const srcView = (src as any).__nativeView;
+    const srcView = (src as JSObjectWithMeta).__nativeView as TypedArrayLike | undefined;
     const srcLen = srcView?.length ?? Number(src.properties.get('length')?.value ?? 0);
 
-    if (srcView && typeof srcView.set === 'function') {
-      (view as any).set(srcView, offset);
+    if (srcView && typeof (srcView as unknown as Record<string, unknown>).set === 'function') {
+      (view as unknown as TypedArrayLike & { set(src: unknown, offset?: number): void }).set(srcView, offset);
     } else {
       // Fallback: read from JSObject array-like
       for (let i = 0; i < srcLen; i++) {
-        const val = srcView ? srcView[i] : src.properties.get(String(i))?.value;
-        (view as any).set(offset + i, typeof val === 'bigint' ? val : Number(val ?? 0));
+        const val = srcView ? readTypedElement(srcView, i) : src.properties.get(String(i))?.value;
+        writeTypedElement(view, offset + i, typeof val === 'bigint' ? val : Number(val ?? 0));
       }
     }
     return undefined;
@@ -394,11 +448,11 @@ typedArrayBaseProto.properties.set('set', {
 typedArrayBaseProto.properties.set('subarray', {
   value: createNativeFunction('subarray', (_this, args) => {
     const parent = _this as JSObject;
-    const parentView = (parent as any).__nativeView as any;
-    const parentBuf = (parent as any).__nativeBuffer as ArrayBuffer;
-    const parentOffset = (parent as any).__taOffset as number;
-    const meta = (parent as any).__taMeta as TypedArrayMeta;
-    if (!parentView || !meta) throw new JSError('TypeError: subarray called on non-TypedArray');
+    const parentView = (parent as JSObjectWithMeta).__nativeView as TypedArrayLike | undefined;
+    const parentBuf = (parent as JSObjectWithMeta).__nativeBuffer;
+    const parentOffset = (parent as JSObjectWithMeta).__taOffset ?? 0;
+    const meta = (parent as JSObjectWithMeta).__taMeta as unknown as TypedArrayMeta;
+    if (!parentView || !parentBuf || !meta) throw new JSError('TypeError: subarray called on non-TypedArray');
 
     const begin = args[0] !== undefined ? toInteger(args[0]) : 0;
     const end = args[1] !== undefined ? toInteger(args[1]) : parentView.length;
@@ -415,7 +469,7 @@ typedArrayBaseProto.properties.set('subarray', {
 typedArrayBaseProto.properties.set('slice', {
   value: createNativeFunction('slice', (_this, args) => {
     const parentView = getTypedArrayNativeView(_this, 'TypedArray.prototype.slice');
-    const meta = (_this as any).__taMeta as TypedArrayMeta;
+    const meta = (_this as JSObjectWithMeta).__taMeta as unknown as TypedArrayMeta;
     const begin = args[0] !== undefined ? toInteger(args[0]) : 0;
     const end = args[1] !== undefined ? toInteger(args[1]) : parentView.length;
     const b = Math.max(0, Math.min(begin, parentView.length));
@@ -424,7 +478,7 @@ typedArrayBaseProto.properties.set('slice', {
     const newBuf = new ArrayBuffer(newLen * meta.BYTES_PER_ELEMENT);
     const newView = new (getTypedArrayConstructor(meta.TypedArrayName))(newBuf);
     for (let i = 0; i < newLen; i++) {
-      newView[i] = (parentView as any)[b + i] as any;
+      writeTypedElement(newView, i, readTypedElement(parentView, b + i));
     }
     return wrapTypedArray(newBuf, 0, newLen, meta);
   }),
@@ -439,7 +493,7 @@ typedArrayBaseProto.properties.set('indexOf', {
     const fromIdx = args[1] !== undefined ? toInteger(args[1]) : 0;
     const start = Math.max(0, fromIdx < 0 ? Math.max(0, view.length + fromIdx) : fromIdx);
     for (let i = start; i < view.length; i++) {
-      if ((view as any)[i] === search) return i;
+      if (readTypedElement(view, i) === search) return i;
     }
     return -1;
   }),
@@ -452,7 +506,7 @@ typedArrayBaseProto.properties.set('includes', {
     const fromIdx = args[1] !== undefined ? toInteger(args[1]) : 0;
     const start = Math.max(0, fromIdx < 0 ? Math.max(0, view.length + fromIdx) : fromIdx);
     for (let i = start; i < view.length; i++) {
-      if ((view as any)[i] === search) return true;
+      if (readTypedElement(view, i) === search) return true;
     }
     return false;
   }),
@@ -466,7 +520,7 @@ typedArrayBaseProto.properties.set('find', {
       throw new JSError('TypeError: find requires a function argument');
     }
     for (let i = 0; i < view.length; i++) {
-      const val = (view as any)[i];
+      const val = readTypedElement(view, i);
       const result = callJSFunction(callback, _this, [val, i, _this]);
       if (result === true || (typeof result === 'number' && result !== 0)) return val;
     }
@@ -482,7 +536,7 @@ typedArrayBaseProto.properties.set('findIndex', {
       throw new JSError('TypeError: findIndex requires a function argument');
     }
     for (let i = 0; i < view.length; i++) {
-      const val = (view as any)[i];
+      const val = readTypedElement(view, i);
       const result = callJSFunction(callback, _this, [val, i, _this]);
       if (result === true || (typeof result === 'number' && result !== 0)) return i;
     }
@@ -500,7 +554,7 @@ typedArrayBaseProto.properties.set('sort', {
 
     // Collect elements
     const arr: (number | bigint)[] = [];
-    for (let i = 0; i < len; i++) arr.push((view as any)[i]);
+    for (let i = 0; i < len; i++) arr.push(readTypedElement(view, i));
 
     // Sort
     arr.sort((a, b) => {
@@ -513,7 +567,7 @@ typedArrayBaseProto.properties.set('sort', {
 
     // Write back
     for (let i = 0; i < len; i++) {
-      (view as any)[i] = arr[i] as any;
+      writeTypedElement(view, i, arr[i]);
     }
     return _this;
   }),
@@ -526,9 +580,9 @@ typedArrayBaseProto.properties.set('reverse', {
     const view = getTypedArrayNativeView(_this, 'TypedArray.prototype.reverse');
     const len = view.length;
     for (let i = 0; i < Math.floor(len / 2); i++) {
-      const tmp = (view as any)[i];
-      (view as any)[i] = (view as any)[len - 1 - i];
-      (view as any)[len - 1 - i] = tmp;
+      const tmp = readTypedElement(view, i);
+      writeTypedElement(view, i, readTypedElement(view, len - 1 - i));
+      writeTypedElement(view, len - 1 - i, tmp);
     }
     return _this;
   }),
@@ -548,7 +602,7 @@ typedArrayBaseProto.properties.set('copyWithin', {
     const e = Math.max(s, Math.min(end, len));
     const count = e - s;
     for (let i = 0; i < count; i++) {
-      (view as any)[t + i] = (view as any)[s + i];
+      writeTypedElement(view, t + i, readTypedElement(view, s + i));
     }
     return _this;
   }),
@@ -562,7 +616,7 @@ typedArrayBaseProto.properties.set('join', {
     const sep = args[0] !== undefined ? toString(args[0]) : ',';
     const parts: string[] = [];
     for (let i = 0; i < view.length; i++) {
-      parts.push(String((view as any)[i]));
+      parts.push(String(readTypedElement(view, i)));
     }
     return parts.join(sep);
   }),
@@ -578,7 +632,7 @@ typedArrayBaseProto.properties.set('forEach', {
       throw new JSError('TypeError: forEach requires a function argument');
     }
     for (let i = 0; i < view.length; i++) {
-      callJSFunction(callback, _this, [(view as any)[i], i, _this]);
+      callJSFunction(callback, _this, [readTypedElement(view, i), i, _this]);
     }
     return undefined;
   }),
@@ -587,7 +641,7 @@ typedArrayBaseProto.properties.set('forEach', {
 typedArrayBaseProto.properties.set('map', {
   value: createNativeFunction('map', (_this, args) => {
     const view = getTypedArrayNativeView(_this, 'TypedArray.prototype.map');
-    const meta = (_this as any).__taMeta as TypedArrayMeta;
+    const meta = (_this as JSObjectWithMeta).__taMeta as unknown as TypedArrayMeta;
     const callback = args[0] as JSFunction;
     if (!callback || typeof callback !== 'object' || !('closure' in callback)) {
       throw new JSError('TypeError: map requires a function argument');
@@ -595,8 +649,8 @@ typedArrayBaseProto.properties.set('map', {
     const newBuf = new ArrayBuffer(view.length * meta.BYTES_PER_ELEMENT);
     const newView = new (getTypedArrayConstructor(meta.TypedArrayName))(newBuf);
     for (let i = 0; i < view.length; i++) {
-      const result = callJSFunction(callback, _this, [(view as any)[i], i, _this]);
-      newView[i] = typeof result === 'bigint' ? result as any : Number(result) as any;
+      const result = callJSFunction(callback, _this, [readTypedElement(view, i), i, _this]);
+      newView[i] = typeof result === 'bigint' ? result : Number(result);
     }
     return wrapTypedArray(newBuf, 0, view.length, meta);
   }),
@@ -605,21 +659,21 @@ typedArrayBaseProto.properties.set('map', {
 typedArrayBaseProto.properties.set('filter', {
   value: createNativeFunction('filter', (_this, args) => {
     const view = getTypedArrayNativeView(_this, 'TypedArray.prototype.filter');
-    const meta = (_this as any).__taMeta as TypedArrayMeta;
+    const meta = (_this as JSObjectWithMeta).__taMeta as unknown as TypedArrayMeta;
     const callback = args[0] as JSFunction;
     if (!callback || typeof callback !== 'object' || !('closure' in callback)) {
       throw new JSError('TypeError: filter requires a function argument');
     }
     const result: (number | bigint)[] = [];
     for (let i = 0; i < view.length; i++) {
-      const val = (view as any)[i];
+      const val = readTypedElement(view, i);
       if (callJSFunction(callback, _this, [val, i, _this])) {
         result.push(val);
       }
     }
     const newBuf = new ArrayBuffer(result.length * meta.BYTES_PER_ELEMENT);
     const newView = new (getTypedArrayConstructor(meta.TypedArrayName))(newBuf);
-    for (let i = 0; i < result.length; i++) newView[i] = result[i] as any;
+    for (let i = 0; i < result.length; i++) newView[i] = result[i];
     return wrapTypedArray(newBuf, 0, result.length, meta);
   }),
   writable: true, enumerable: true, configurable: true,
@@ -636,10 +690,10 @@ typedArrayBaseProto.properties.set('reduce', {
     if (args.length < 2 && view.length === 0) {
       throw new JSError('TypeError: Reduce of empty array with no initial value');
     }
-    if (args.length < 2) acc = (view as any)[0];
+    if (args.length < 2) acc = readTypedElement(view, 0);
     if (args.length < 2) startIndex = 1;
     for (let i = startIndex; i < view.length; i++) {
-      acc = callJSFunction(callback, _this, [acc, (view as any)[i], i, _this]);
+      acc = callJSFunction(callback, _this, [acc, readTypedElement(view, i), i, _this]);
     }
     return acc;
   }),
@@ -653,7 +707,7 @@ typedArrayBaseProto.properties.set('some', {
       throw new JSError('TypeError: some requires a function argument');
     }
     for (let i = 0; i < view.length; i++) {
-      if (callJSFunction(callback, _this, [(view as any)[i], i, _this])) return true;
+      if (callJSFunction(callback, _this, [readTypedElement(view, i), i, _this])) return true;
     }
     return false;
   }),
@@ -667,7 +721,7 @@ typedArrayBaseProto.properties.set('every', {
       throw new JSError('TypeError: every requires a function argument');
     }
     for (let i = 0; i < view.length; i++) {
-      if (!callJSFunction(callback, _this, [(view as any)[i], i, _this])) return false;
+      if (!callJSFunction(callback, _this, [readTypedElement(view, i), i, _this])) return false;
     }
     return true;
   }),
@@ -681,7 +735,7 @@ typedArrayBaseProto.properties.set('at', {
     const idx = toInteger(args[0]);
     const actual = idx < 0 ? view.length + idx : idx;
     if (actual < 0 || actual >= view.length) return undefined;
-    return (view as any)[actual];
+    return readTypedElement(view, actual);
   }),
   writable: true, enumerable: true, configurable: true,
 });
@@ -691,30 +745,38 @@ typedArrayBaseProto.properties.set('toString', {
   value: createNativeFunction('toString', (_this, _args) => {
     const view = getTypedArrayNativeView(_this, 'TypedArray.prototype.toString');
     const parts: string[] = [];
-    for (let i = 0; i < view.length; i++) parts.push(String((view as any)[i]));
+    for (let i = 0; i < view.length; i++) parts.push(String(readTypedElement(view, i)));
     return parts.join(',');
   }),
   writable: true, enumerable: true, configurable: true,
 });
 
-function getTypedArrayNativeView(obj: JSValue, method: string): any {
+function getTypedArrayNativeView(obj: JSValue, method: string): TypedArrayLike {
   if (typeof obj !== 'object' || obj === null) throw new JSError('TypeError: Cannot call ' + method + ' on non-object');
-  const view = (obj as any).__nativeView;
+  const view = (obj as JSObjectWithMeta).__nativeView;
   if (!view) throw new JSError('TypeError: ' + method + ' called on non-TypedArray');
-  return view;
+  return view as TypedArrayLike;
 }
 
-function getTypedArrayConstructor(name: string): any {
-  return (globalThis as any)[name] ?? (() => { throw new Error('No native ' + name); })();
+type NativeTypedArrayCtor = new (
+  buffer: ArrayBuffer,
+  byteOffset?: number,
+  length?: number,
+) => TypedArrayLike;
+
+function getTypedArrayConstructor(name: string): NativeTypedArrayCtor {
+  const ctor = (globalThis as unknown as Record<string, NativeTypedArrayCtor | undefined>)[name];
+  if (!ctor) throw new Error('No native ' + name);
+  return ctor;
 }
 
 function wrapTypedArray(buf: ArrayBuffer, offset: number, length: number, meta: TypedArrayMeta): JSObject {
-  const ta = createObject(typedArrayProtos[meta.TypedArrayName]);
-  (ta as any).__type_override = meta.TypedArrayName;
-  (ta as any).__nativeBuffer = buf;
-  (ta as any).__nativeView = new (getTypedArrayConstructor(meta.TypedArrayName))(buf, offset, length);
-  (ta as any).__taOffset = offset;
-  (ta as any).__taMeta = meta;
+  const ta = createObject(typedArrayProtos[meta.TypedArrayName]) as JSObjectWithMeta;
+  ta.__type_override = meta.TypedArrayName;
+  ta.__nativeBuffer = buf;
+  ta.__nativeView = new (getTypedArrayConstructor(meta.TypedArrayName))(buf, offset, length);
+  ta.__taOffset = offset;
+  ta.__taMeta = meta as unknown as NonNullable<JSObjectWithMeta['__taMeta']>;
   return ta;
 }
 
@@ -738,44 +800,44 @@ function createTypedArrayConstructor(name: string, meta: TypedArrayMeta): JSObje
     const firstArg = args[0];
 
     // TypedArray(typedArray) — copy constructor
-    if (typeof firstArg === 'object' && firstArg !== null && (firstArg as any).__nativeView) {
-      const srcView = (firstArg as any).__nativeView;
+    if (typeof firstArg === 'object' && firstArg !== null && (firstArg as JSObjectWithMeta).__nativeView) {
+      const srcView = (firstArg as JSObjectWithMeta).__nativeView as TypedArrayLike;
       const srcLen = srcView.length;
       const newBuf = new ArrayBuffer(srcLen * meta.BYTES_PER_ELEMENT);
       const newView = new Ctor(newBuf);
-      for (let i = 0; i < srcLen; i++) newView[i] = srcView[i] as any;
+      for (let i = 0; i < srcLen; i++) newView[i] = srcView[i];
       return wrapTypedArray(newBuf, 0, srcLen, meta);
     }
 
     // TypedArray(arrayLike) — from array-like
-    if (typeof firstArg === 'object' && firstArg !== null && (firstArg as any).type === 'array') {
+    if (typeof firstArg === 'object' && firstArg !== null && (firstArg as JSObject).type === 'array') {
       const arr = firstArg as JSObject;
       const len = Number(arr.properties.get('length')?.value ?? 0);
       const newBuf = new ArrayBuffer(len * meta.BYTES_PER_ELEMENT);
       const newView = new Ctor(newBuf);
       for (let i = 0; i < len; i++) {
         const val = arr.properties.get(String(i))?.value;
-        newView[i] = typeof val === 'bigint' ? val as any : Number(val ?? 0) as any;
+        newView[i] = typeof val === 'bigint' ? val : Number(val ?? 0);
       }
       return wrapTypedArray(newBuf, 0, len, meta);
     }
 
     // TypedArray(objectLike with .length)
-    if (typeof firstArg === 'object' && firstArg !== null && (firstArg as any).properties?.has('length')) {
+    if (typeof firstArg === 'object' && firstArg !== null && (firstArg as JSObject).properties?.has('length')) {
       const obj = firstArg as JSObject;
       const len = Number(obj.properties.get('length')?.value ?? 0);
       const newBuf = new ArrayBuffer(len * meta.BYTES_PER_ELEMENT);
       const newView = new Ctor(newBuf);
       for (let i = 0; i < len; i++) {
         const val = obj.properties.get(String(i))?.value;
-        newView[i] = typeof val === 'bigint' ? val as any : Number(val ?? 0) as any;
+        newView[i] = typeof val === 'bigint' ? val : Number(val ?? 0);
       }
       return wrapTypedArray(newBuf, 0, len, meta);
     }
 
     // TypedArray(buffer, byteOffset?, length?)
-    if (typeof firstArg === 'object' && firstArg !== null && (firstArg as any).__nativeBuffer) {
-      const buf = (firstArg as any).__nativeBuffer as ArrayBuffer;
+    if (typeof firstArg === 'object' && firstArg !== null && (firstArg as JSObjectWithMeta).__nativeBuffer) {
+      const buf = (firstArg as JSObjectWithMeta).__nativeBuffer as ArrayBuffer;
       const byteOffset = args[1] !== undefined ? toInteger(args[1]) : 0;
       const lengthArg = args[2];
       const remainingBytes = buf.byteLength - byteOffset;
@@ -815,17 +877,17 @@ function createTypedArrayConstructor(name: string, meta: TypedArrayMeta): JSObje
       const mapFn = args[1] as JSFunction | undefined;
       const Ctor = getTypedArrayConstructor(name);
 
-      if (typeof src === 'object' && src !== null && (src as any).__nativeView) {
+      if (typeof src === 'object' && src !== null && (src as JSObjectWithMeta).__nativeView) {
         // Copy from typed array
-        const srcView = (src as any).__nativeView;
+        const srcView = (src as JSObjectWithMeta).__nativeView as TypedArrayLike;
         const newBuf = new ArrayBuffer(srcView.length * meta.BYTES_PER_ELEMENT);
         const newView = new Ctor(newBuf);
         for (let i = 0; i < srcView.length; i++) {
           if (mapFn && typeof mapFn === 'object' && 'closure' in mapFn) {
             const result = callJSFunction(mapFn, undefined, [srcView[i], i]);
-            newView[i] = typeof result === 'bigint' ? result as any : Number(result) as any;
+            newView[i] = typeof result === 'bigint' ? result : Number(result);
           } else {
-            newView[i] = srcView[i] as any;
+            newView[i] = srcView[i];
           }
         }
         return wrapTypedArray(newBuf, 0, srcView.length, meta);
@@ -833,7 +895,7 @@ function createTypedArrayConstructor(name: string, meta: TypedArrayMeta): JSObje
 
       // From iterable/array-like
       const items: (number | bigint)[] = [];
-      if (typeof src === 'object' && src !== null && (src as any).properties?.has(Symbol.iterator as any)) {
+      if (typeof src === 'object' && src !== null && (src as JSObject).properties?.has(Symbol.iterator as unknown as string)) {
         // Use Symbol.iterator if available — fallback to iterating indexed properties
       }
       if (typeof src === 'object' && src !== null) {
@@ -852,9 +914,9 @@ function createTypedArrayConstructor(name: string, meta: TypedArrayMeta): JSObje
       for (let i = 0; i < items.length; i++) {
         if (mapFn && typeof mapFn === 'object' && 'closure' in mapFn) {
           const result = callJSFunction(mapFn, undefined, [items[i], i]);
-          newView[i] = typeof result === 'bigint' ? result as any : Number(result) as any;
+          newView[i] = typeof result === 'bigint' ? result : Number(result);
         } else {
-          newView[i] = items[i] as any;
+          newView[i] = items[i];
         }
       }
       return wrapTypedArray(newBuf, 0, items.length, meta);
@@ -867,7 +929,8 @@ function createTypedArrayConstructor(name: string, meta: TypedArrayMeta): JSObje
       const newBuf = new ArrayBuffer(args.length * meta.BYTES_PER_ELEMENT);
       const newView = new Ctor(newBuf);
       for (let i = 0; i < args.length; i++) {
-        newView[i] = typeof args[i] === 'bigint' ? args[i] as any : Number(args[i] ?? 0) as any;
+        const v = args[i];
+        newView[i] = typeof v === 'bigint' ? v : Number(v ?? 0);
       }
       return wrapTypedArray(newBuf, 0, args.length, meta);
     }),
@@ -884,9 +947,9 @@ function createAtomicsObject(): JSObject {
 
   function getAtomicsView(obj: JSValue): { view: Int32Array; offset: number } {
     if (typeof obj !== 'object' || obj === null) throw new JSError('TypeError: Atomics method called on non-object');
-    const view = (obj as any).__nativeView;
+    const view = (obj as JSObjectWithMeta).__nativeView;
     if (!view) throw new JSError('TypeError: Atomics method called on non-TypedArray');
-    return { view: view as Int32Array, offset: (obj as any).__taOffset ?? 0 };
+    return { view: view as Int32Array, offset: (obj as JSObjectWithMeta).__taOffset ?? 0 };
   }
 
   atomics.properties.set('add', {
@@ -1009,9 +1072,9 @@ function createWeakRefConstructor(): JSFunction {
     if (typeof target !== 'object' || target === null) {
       throw new JSError('TypeError: WeakRef constructor argument must be an object');
     }
-    const ref = createObject(weakRefProto);
-    (ref as any).__type_override = 'weakref';
-    (ref as any).__weakTarget = target;
+    const ref = createObject(weakRefProto) as JSObjectWithMeta;
+    ref.__type_override = 'weakref';
+    ref.__weakTarget = target;
     return ref;
   });
 }
@@ -1019,7 +1082,7 @@ function createWeakRefConstructor(): JSFunction {
 const weakRefProto = createObject(null);
 weakRefProto.properties.set('deref', {
   value: createNativeFunction('deref', (_this, _args) => {
-    return (_this as any).__weakTarget ?? undefined;
+    return (_this as JSObjectWithMeta).__weakTarget as JSValue | undefined;
   }),
   writable: true, enumerable: true, configurable: true,
 });
@@ -1036,13 +1099,13 @@ function createWeakRefCtorObj(): JSObject {
 function createFinalizationRegistryConstructor(): JSFunction {
   return createNativeFunction('FinalizationRegistry', (_this, args) => {
     const cleanupCallback = args[0];
-    if (!cleanupCallback || typeof cleanupCallback !== 'object' || !('closure' in (cleanupCallback as any))) {
+    if (!cleanupCallback || typeof cleanupCallback !== 'object' || !('closure' in cleanupCallback)) {
       throw new JSError('TypeError: FinalizationRegistry requires a cleanup callback function');
     }
-    const registry = createObject(finalizationRegistryProto);
-    (registry as any).__type_override = 'finalizationregistry';
-    (registry as any).__frCallback = cleanupCallback;
-    (registry as any).__frRegistry = new WeakMap<object, unknown>();
+    const registry = createObject(finalizationRegistryProto) as JSObjectWithMeta;
+    registry.__type_override = 'finalizationregistry';
+    registry.__frCallback = cleanupCallback;
+    registry.__frRegistry = new WeakMap<object, unknown>();
     return registry;
   });
 }
@@ -1054,9 +1117,9 @@ finalizationRegistryProto.properties.set('register', {
     if (typeof target !== 'object' || target === null) {
       throw new JSError('TypeError: FinalizationRegistry.register target must be an object');
     }
-    const registry = (_this as any).__frRegistry as WeakMap<object, unknown>;
+    const registry = (_this as JSObjectWithMeta).__frRegistry as WeakMap<object, unknown>;
     const heldValue = args.length >= 2 ? args[1] : undefined;
-    registry.set(target as any, heldValue);
+    registry.set(target, heldValue);
     return undefined;
   }),
   writable: true, enumerable: true, configurable: true,
@@ -1065,8 +1128,8 @@ finalizationRegistryProto.properties.set('unregister', {
   value: createNativeFunction('unregister', (_this, args) => {
     const target = args[0];
     if (typeof target !== 'object' || target === null) return false;
-    const registry = (_this as any).__frRegistry as WeakMap<object, unknown>;
-    return registry.delete(target as any);
+    const registry = (_this as JSObjectWithMeta).__frRegistry as WeakMap<object, unknown>;
+    return registry.delete(target);
   }),
   writable: true, enumerable: true, configurable: true,
 });

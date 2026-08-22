@@ -10,8 +10,8 @@ import {
   GPU_BUFFER_ALIGNMENT,
   GPU_WORKGROUP_SIZE,
   GPU_MAX_BUFFER_SIZE,
-} from '../../../src/browser/rendering/gpu';
-import { PaintEngine } from '../../../src/browser/rendering/paint-engine';
+} from '@/browser/rendering/gpu';
+import { PaintEngine } from '@/browser/rendering/paint-engine';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MOCKS

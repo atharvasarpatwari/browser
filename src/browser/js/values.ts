@@ -27,6 +27,83 @@ export interface JSObject {
   thisValue?: JSObject;
 }
 
+/**
+ * Extended JSObject with internal metadata properties used by the engine.
+ * These `__`-prefixed fields are set on JSObject instances to track
+ * native backing data, type overrides, and API-specific state.
+ */
+export interface JSObjectWithMeta extends JSObject {
+  /** Override the typeof result for this object */
+  __type_override?: string;
+  /** Backing native ArrayBuffer for typed arrays and DataView */
+  __nativeBuffer?: ArrayBuffer;
+  /** Native typed array view (Int32Array, Float64Array, etc.) */
+  __nativeView?: unknown;
+  /** Byte offset within the parent buffer for typed array slices */
+  __taOffset?: number;
+  /** TypedArray metadata (constructor name, element size, etc.) */
+  __taMeta?: { TypedArrayName: string; [key: string]: unknown };
+  /** DataView byte offset */
+  __dvOffset?: number;
+  /** DataView byte length */
+  __dvByteLength?: number;
+  /** Symbol description for symbol-valued objects */
+  symbolDescription?: string;
+  /** WeakRef target */
+  __weakTarget?: unknown;
+  /** FinalizationRegistry callback */
+  __frCallback?: unknown;
+  /** FinalizationRegistry internal WeakMap */
+  __frRegistry?: WeakMap<object, unknown>;
+  /** BroadcastChannel name */
+  __channelName?: string;
+  /** Event listeners array (for BroadcastChannel, MessagePort, etc.) */
+  __listeners?: Array<{ type: string; fn: JSFunction }>;
+  /** Whether the channel/port is closed */
+  __closed?: boolean;
+  /** ReadableStream chunks queue */
+  __chunks?: unknown[];
+  /** ReadableStream underlying source */
+  __underlyingSource?: unknown;
+  /** MessagePort started flag */
+  __started?: boolean;
+  /** MessagePort remote end flag */
+  /** The remote port (for MessagePort pairs) */
+  __remote?: JSObject;
+  /** Signal listeners for AbortSignal */
+  __signalListeners?: Set<(ev: unknown) => void>;
+  /** Associated animation object */
+  __animation?: unknown;
+  /** Range internal state */
+  __rangeState?: { startContainer: JSObject; startOffset: number; endContainer: JSObject; endOffset: number };
+  /** Synced properties function for Range methods */
+  __syncProps?: () => void;
+  /** Native Date object for Date wrappers */
+  nativeDate?: Date;
+  /** Native RegExp object for RegExp wrappers */
+  nativeRegExp?: RegExp;
+  /** Symbol numeric ID */
+  symbolId?: number;
+  /** Map internal object-key store */
+  __mapObj?: Map<JSObject, JSValue>;
+  /** Map internal primitive-key store */
+  __mapPrim?: Map<string, JSValue>;
+  /** Set internal object store */
+  __setObj?: Set<JSObject>;
+  /** Set internal primitive store */
+  __setPrim?: Set<string>;
+  /** Prototype object for Object.create */
+  __proto_obj?: JSObject;
+  /** WeakMap internal entries store */
+  __weakMapEntries?: Map<JSObject, JSValue>;
+  /** WeakSet internal entries store */
+  __weakSetEntries?: Set<JSObject>;
+}
+
+export function isJSObjectWithMeta(obj: unknown): obj is JSObjectWithMeta {
+  return typeof obj === 'object' && obj !== null && 'type' in obj && 'properties' in obj;
+}
+
 export interface PropertyDescriptor {
   value: JSValue;
   writable: boolean;
@@ -249,15 +326,15 @@ export function toString(val: JSValue): string {
   if (typeof val === 'string') return val;
   if (typeof val === 'bigint') return val.toString() + 'n';
   if (typeof val === 'object' && val !== null) {
-    const obj = val as JSObject;
-    if ((obj as any).__type_override === 'symbol') {
-      const desc = (obj as any).symbolDescription ?? '';
+    const obj = val as JSObjectWithMeta;
+    if (obj.__type_override === 'symbol') {
+      const desc = obj.symbolDescription ?? '';
       return `Symbol(${desc})`;
     }
     if (obj.type === 'array') {
       return getArrayElements(obj).map(e => toString(e)).join(',');
     }
-    const override = (obj as any).__type_override;
+    const override = obj.__type_override;
     if (override === 'arraybuffer') return '[object ArrayBuffer]';
     if (override === 'dataview') return '[object DataView]';
     if (override === 'sharedarraybuffer') return '[object SharedArrayBuffer]';
@@ -276,8 +353,8 @@ export function getType(val: JSValue): string {
   if (val === undefined || val === null) return typeof val;
   if (typeof val === 'object' && val !== null) {
     if ('type' in val) {
-      const obj = val as JSObject;
-      if ((obj as any).__type_override === 'symbol') return 'symbol';
+      const obj = val as JSObjectWithMeta;
+      if (obj.__type_override === 'symbol') return 'symbol';
       if (obj.type === 'array') return 'object';
       if (obj.type === 'function') return 'function';
       if (obj.type === 'class') return 'function';

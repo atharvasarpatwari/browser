@@ -41,7 +41,24 @@ import {
   toString, toNumber, toBoolean,
   callJSFunction,
 } from './values';
-import type { JSValue, JSObject, JSFunction } from './values';
+import type { JSValue, JSObject, JSFunction, JSObjectWithMeta } from './values';
+import {
+  createWebAssemblyObject, createWebAssemblyModuleStatic,
+  createWebAssemblyInstanceConstructor, createWebAssemblyMemoryConstructor,
+  createWebAssemblyTableConstructor, createWebAssemblyGlobalConstructor,
+  createWebAssemblyTagConstructor, createWebAssemblyExceptionConstructor,
+} from './web-apis-wasm';
+import { createGPUObject } from './web-apis-gpu';
+import { createXRSystemObject } from './web-apis-xr';
+
+export {
+  createWebAssemblyObject, createWebAssemblyModuleStatic,
+  createWebAssemblyInstanceConstructor, createWebAssemblyMemoryConstructor,
+  createWebAssemblyTableConstructor, createWebAssemblyGlobalConstructor,
+  createWebAssemblyTagConstructor, createWebAssemblyExceptionConstructor,
+} from './web-apis-wasm';
+export { createGPUObject } from './web-apis-gpu';
+export { createXRSystemObject } from './web-apis-xr';
 
 // Node-only crypto helpers with a browser (Web Crypto) fallback so this module
 // can load under Vite without triggering the node:crypto externalization error.
@@ -82,6 +99,13 @@ function getRandomUUID(): string {
 /** WeakMap keyed by native event target objects → listeners array */
 const listenerMap = new WeakMap<JSObject, Array<{ type: string; fn: JSFunction; options: any }>>();
 
+/** Interface for native JS TypedArrays from the host */
+interface NativeTypedArrayLike {
+  length: number;
+  BYTES_PER_ELEMENT: number;
+  [index: number]: number;
+}
+
 function getListeners(target: JSObject) {
   let list = listenerMap.get(target);
   if (!list) { list = []; listenerMap.set(target, list); }
@@ -103,7 +127,7 @@ export function createCryptoObject() {
         throw new TypeError('Argument must be a TypedArray');
       }
       // Handle native TypedArrays (real JS TypedArrays passed from host)
-      const nativeTA = typedArray as any;
+      const nativeTA = typedArray as unknown as NativeTypedArrayLike;
       if (typeof nativeTA.length === 'number' && typeof nativeTA.BYTES_PER_ELEMENT === 'number') {
         const len = nativeTA.length;
         const bytes = getRandomBytes(len);
@@ -147,7 +171,7 @@ export function createCryptoObject() {
         rejectObj.properties.set('then', {
           value: createNativeFunction('then', (_t, a) => {
             const onRejected = a[1];
-            if (typeof onRejected === 'object' && onRejected !== null && (onRejected as any).type === 'closure') {
+            if (typeof onRejected === 'object' && onRejected !== null && (onRejected as JSFunction).type === 'closure') {
               callJSFunction(onRejected as JSFunction, undefined, [
                 createNativeFunction('error', () => undefined),
               ]);
@@ -177,10 +201,10 @@ export function createBroadcastChannelConstructor() {
   return createNativeFunction('BroadcastChannel', (_this, args) => {
     const name = toString(args[0] ?? '');
     const channelObj = createObject(null);
-    (channelObj as any).__type_override = 'broadcastchannel';
-    (channelObj as any).__channelName = name;
-    (channelObj as any).__listeners = [] as Array<{ type: string; fn: JSFunction }>;
-    (channelObj as any).__closed = false;
+    (channelObj as JSObjectWithMeta).__type_override = 'broadcastchannel';
+    (channelObj as JSObjectWithMeta).__channelName = name;
+    (channelObj as JSObjectWithMeta).__listeners = [] as Array<{ type: string; fn: JSFunction }>;
+    (channelObj as JSObjectWithMeta).__closed = false;
 
     channelObj.properties.set('name', { value: name, writable: false, enumerable: true, configurable: false });
     channelObj.properties.set('onmessage', { value: undefined, writable: true, enumerable: true, configurable: true });
@@ -194,7 +218,7 @@ export function createBroadcastChannelConstructor() {
     // postMessage — posts to all other channels with same name
     channelObj.properties.set('postMessage', {
       value: createNativeFunction('postMessage', (_t, a) => {
-        if ((channelObj as any).__closed) return undefined;
+        if ((channelObj as JSObjectWithMeta).__closed) return undefined;
         const msg = a[0];
         const targetSet = broadcastChannels.get(name);
         if (!targetSet) return undefined;
@@ -203,7 +227,7 @@ export function createBroadcastChannelConstructor() {
         for (const ch of targetSet) {
           if (ch === channelObj) continue;
           const onmsg = ch.properties.get('onmessage')?.value;
-          if (typeof onmsg === 'object' && onmsg !== null && (onmsg as any).type === 'closure') {
+          if (typeof onmsg === 'object' && onmsg !== null && (onmsg as JSFunction).type === 'closure') {
             const evObj = createObject(null);
             evObj.properties.set('data', { value: cloned, writable: false, enumerable: true, configurable: false });
             evObj.properties.set('origin', { value: '', writable: false, enumerable: true, configurable: false });
@@ -219,7 +243,7 @@ export function createBroadcastChannelConstructor() {
     // close — removes from shared set
     channelObj.properties.set('close', {
       value: createNativeFunction('close', () => {
-        (channelObj as any).__closed = true;
+        (channelObj as JSObjectWithMeta).__closed = true;
         const targetSet = broadcastChannels.get(name);
         if (targetSet) targetSet.delete(channelObj);
         return undefined;
@@ -232,7 +256,7 @@ export function createBroadcastChannelConstructor() {
       value: createNativeFunction('addEventListener', (_t, a) => {
         const type = toString(a[0]);
         const fn = a[1] as JSFunction;
-        (channelObj as any).__listeners.push({ type, fn });
+        ((channelObj as JSObjectWithMeta).__listeners ??= []).push({ type, fn });
         return undefined;
       }),
       writable: true, enumerable: true, configurable: true,
@@ -241,8 +265,8 @@ export function createBroadcastChannelConstructor() {
       value: createNativeFunction('removeEventListener', (_t, a) => {
         const type = toString(a[0]);
         const fn = a[1];
-        const list = (channelObj as any).__listeners;
-        (channelObj as any).__listeners = list.filter((l: any) => !(l.type === type && l.fn === fn));
+        const list = (channelObj as JSObjectWithMeta).__listeners ?? [];
+        (channelObj as JSObjectWithMeta).__listeners = list.filter((l) => !(l.type === type && l.fn === fn));
         return undefined;
       }),
       writable: true, enumerable: true, configurable: true,
@@ -251,7 +275,7 @@ export function createBroadcastChannelConstructor() {
       value: createNativeFunction('dispatchEvent', (_t, a) => {
         const ev = a[0] as JSObject;
         const type = toString(ev.properties.get('type')?.value ?? '');
-        const list = (channelObj as any).__listeners;
+        const list = (channelObj as JSObjectWithMeta).__listeners ?? [];
         for (const l of list) {
           if (l.type === type) callJSFunction(l.fn, channelObj, [ev]);
         }
@@ -275,7 +299,7 @@ export function createCustomElementsObject() {
     value: createNativeFunction('define', (_this, args) => {
       const name = toString(args[0]);
       const ctor = args[1];
-      if (typeof ctor !== 'object' || ctor === null || (ctor as any).type !== 'function') {
+      if (typeof ctor !== 'object' || ctor === null || (ctor as JSObject).type !== 'function') {
         throw new TypeError('Custom element constructor must be a function');
       }
       registry.set(name, ctor as JSFunction);
@@ -314,7 +338,7 @@ export function createCustomElementsObject() {
       p.callable = true;
       p.nativeFn = (_t: unknown, a: unknown[]) => {
         const onFulfilled = a[0];
-        if (typeof onFulfilled === 'object' && onFulfilled !== null && (onFulfilled as any).type === 'closure') {
+        if (typeof onFulfilled === 'object' && onFulfilled !== null && (onFulfilled as JSFunction).type === 'closure') {
           callJSFunction(onFulfilled as JSFunction, undefined, [undefined]);
         }
         return p;
@@ -363,10 +387,10 @@ export function createReadableStreamConstructor() {
   return createNativeFunction('ReadableStream', (_this, args) => {
     const underlyingSource = args[0] as JSObject | undefined;
     const streamObj = createObject(null);
-    (streamObj as any).__type_override = 'readablestream';
-    (streamObj as any).__chunks = [] as JSValue[];
-    (streamObj as any).__closed = false;
-    (streamObj as any).__underlyingSource = underlyingSource;
+    (streamObj as JSObjectWithMeta).__type_override = 'readablestream';
+    (streamObj as JSObjectWithMeta).__chunks = [] as JSValue[];
+    (streamObj as JSObjectWithMeta).__closed = false;
+    (streamObj as JSObjectWithMeta).__underlyingSource = underlyingSource;
 
     streamObj.properties.set('locked', { value: false, writable: false, enumerable: true, configurable: false });
 
@@ -374,12 +398,12 @@ export function createReadableStreamConstructor() {
     streamObj.properties.set('getReader', {
       value: createNativeFunction('getReader', () => {
         const readerObj = createObject(null);
-        (readerObj as any).__type_override = 'readablereader';
+        (readerObj as JSObjectWithMeta).__type_override = 'readablereader';
         readerObj.properties.set('read', {
           value: createNativeFunction('read', () => {
-            const chunks = (streamObj as any).__chunks;
+            const chunks = (streamObj as JSObjectWithMeta).__chunks ?? [];
             if (chunks.length > 0) {
-              const value = chunks.shift();
+              const value = chunks.shift() as JSValue;
               const result = createObject(null);
               result.properties.set('value', { value, writable: true, enumerable: true, configurable: true });
               result.properties.set('done', { value: false, writable: true, enumerable: true, configurable: true });
@@ -393,7 +417,7 @@ export function createReadableStreamConstructor() {
           writable: true, enumerable: true, configurable: true,
         });
         readerObj.properties.set('cancel', {
-          value: createNativeFunction('cancel', () => { (streamObj as any).__closed = true; return undefined; }),
+          value: createNativeFunction('cancel', () => { (streamObj as JSObjectWithMeta).__closed = true; return undefined; }),
           writable: true, enumerable: true, configurable: true,
         });
         readerObj.properties.set('releaseLock', {
@@ -415,7 +439,7 @@ export function createReadableStreamConstructor() {
       writable: true, enumerable: true, configurable: true,
     });
     streamObj.properties.set('cancel', {
-      value: createNativeFunction('cancel', () => { (streamObj as any).__closed = true; return createPromiseLike(undefined); }),
+      value: createNativeFunction('cancel', () => { (streamObj as JSObjectWithMeta).__closed = true; return createPromiseLike(undefined); }),
       writable: true, enumerable: true, configurable: true,
     });
     streamObj.properties.set('tee', {
@@ -426,14 +450,14 @@ export function createReadableStreamConstructor() {
     // Enqueue chunks from underlyingSource.start
     if (underlyingSource && typeof underlyingSource === 'object') {
       const start = underlyingSource.properties.get('start');
-      if (start && typeof start.value === 'object' && (start.value as any).type === 'closure') {
+      if (start && typeof start.value === 'object' && (start.value as JSFunction).type === 'closure') {
         const controllerObj = createObject(null);
         controllerObj.properties.set('enqueue', {
-          value: createNativeFunction('enqueue', (_t, a) => { (streamObj as any).__chunks.push(a[0]); return undefined; }),
+          value: createNativeFunction('enqueue', (_t, a) => { ((streamObj as JSObjectWithMeta).__chunks ??= []).push(a[0]); return undefined; }),
           writable: true, enumerable: true, configurable: true,
         });
         controllerObj.properties.set('close', {
-          value: createNativeFunction('close', () => { (streamObj as any).__closed = true; return undefined; }),
+          value: createNativeFunction('close', () => { (streamObj as JSObjectWithMeta).__closed = true; return undefined; }),
           writable: true, enumerable: true, configurable: true,
         });
         controllerObj.properties.set('error', {
@@ -451,7 +475,7 @@ export function createReadableStreamConstructor() {
 export function createWritableStreamConstructor() {
   return createNativeFunction('WritableStream', (_this, args) => {
     const streamObj = createObject(null);
-    (streamObj as any).__type_override = 'writablestream';
+    (streamObj as JSObjectWithMeta).__type_override = 'writablestream';
     streamObj.properties.set('locked', { value: false, writable: false, enumerable: true, configurable: false });
     streamObj.properties.set('abort', {
       value: createNativeFunction('abort', () => createPromiseLike(undefined)),
@@ -491,7 +515,7 @@ export function createWritableStreamConstructor() {
 export function createTransformStreamConstructor() {
   return createNativeFunction('TransformStream', (_this, args) => {
     const streamObj = createObject(null);
-    (streamObj as any).__type_override = 'transformstream';
+    (streamObj as JSObjectWithMeta).__type_override = 'transformstream';
     streamObj.properties.set('readable', { value: createObject(null), writable: true, enumerable: true, configurable: true });
     streamObj.properties.set('writable', { value: createObject(null), writable: true, enumerable: true, configurable: true });
     return streamObj;
@@ -813,29 +837,27 @@ function domGetChildAt(node: JSObject, index: number): JSValue {
 
 function domRemoveChild(parent: JSObject, child: JSObject): void {
   const rm = parent.properties.get('removeChild')?.value;
-  if (rm && typeof rm === 'object' && (rm as any).nativeFn) {
-    (rm as any).nativeFn(parent, [child]);
-  }
+  const fn = rm && typeof rm === 'object' ? (rm as JSFunction).nativeFn : undefined;
+  if (fn) fn(parent, [child]);
 }
 
 function domInsertBefore(parent: JSObject, newChild: JSObject, refChild: JSObject | null): void {
   const ins = parent.properties.get('insertBefore')?.value;
-  if (ins && typeof ins === 'object' && (ins as any).nativeFn) {
-    (ins as any).nativeFn(parent, [newChild, refChild]);
-  }
+  const fn = ins && typeof ins === 'object' ? (ins as JSFunction).nativeFn : undefined;
+  if (fn) fn(parent, [newChild, refChild]);
 }
 
 function domAppendChild(parent: JSObject, child: JSObject): void {
   const app = parent.properties.get('appendChild')?.value;
-  if (app && typeof app === 'object' && (app as any).nativeFn) {
-    (app as any).nativeFn(parent, [child]);
-  }
+  const fn = app && typeof app === 'object' ? (app as JSFunction).nativeFn : undefined;
+  if (fn) fn(parent, [child]);
 }
 
 function domCloneNode(node: JSObject, deep: boolean): JSObject | null {
   const cl = node.properties.get('cloneNode')?.value;
-  if (cl && typeof cl === 'object' && (cl as any).nativeFn) {
-    const result = (cl as any).nativeFn(node, [deep]);
+  const fn = cl && typeof cl === 'object' ? (cl as JSFunction).nativeFn : undefined;
+  if (fn) {
+    const result = fn(node, [deep]);
     return (typeof result === 'object' && result !== null) ? result as JSObject : null;
   }
   return null;
@@ -851,7 +873,7 @@ function domCreateElement(tagName: string): JSObject | null {
 
 export function createSelectionObject() {
   const selObj = createObject(null);
-  (selObj as any).__type_override = 'selection';
+  (selObj as JSObjectWithMeta).__type_override = 'selection';
   const state: any = {
     anchorNode: undefined as JSValue,
     anchorOffset: 0,
@@ -890,10 +912,10 @@ export function createSelectionObject() {
       }
       const range = createRangeObject();
       if (state.anchorNode) {
-        const setStart = range.properties.get('setStart')!.value as any;
-        const setEnd = range.properties.get('setEnd')!.value as any;
-        setStart.nativeFn(range, [state.anchorNode, state.anchorOffset]);
-        setEnd.nativeFn(range, [state.focusNode, state.focusOffset]);
+        const setStart = range.properties.get('setStart')!.value as JSFunction;
+        const setEnd = range.properties.get('setEnd')!.value as JSFunction;
+        setStart.nativeFn?.(range, [state.anchorNode, state.anchorOffset]);
+        setEnd.nativeFn?.(range, [state.focusNode, state.focusOffset]);
       }
       return range;
     }),
@@ -1008,13 +1030,13 @@ export function createSelectionObject() {
     value: createNativeFunction('deleteFromDocument', () => {
       if (!state.anchorNode || typeof state.anchorNode !== 'object') return undefined;
       const range = createRangeObject();
-      const setStart = range.properties.get('setStart')!.value as any;
-      const setEnd = range.properties.get('setEnd')!.value as any;
-      setStart.nativeFn(range, [state.anchorNode, state.anchorOffset]);
-      setEnd.nativeFn(range, [state.focusNode, state.focusOffset]);
-      const del = range.properties.get('deleteContents')!.value as any;
-      if (del && typeof del === 'object' && (del as any).nativeFn) {
-        (del as any).nativeFn(range, []);
+      const setStart = range.properties.get('setStart')!.value as JSFunction;
+      const setEnd = range.properties.get('setEnd')!.value as JSFunction;
+      if (setStart.nativeFn) setStart.nativeFn(range, [state.anchorNode, state.anchorOffset]);
+      if (setEnd.nativeFn) setEnd.nativeFn(range, [state.focusNode, state.focusOffset]);
+      const del = range.properties.get('deleteContents')!.value as JSFunction | undefined;
+      if (del && typeof del === 'object' && del.nativeFn) {
+        del.nativeFn(range, []);
       }
       state.anchorNode = undefined;
       state.anchorOffset = 0;
@@ -1084,7 +1106,7 @@ export function createSelectionObject() {
 
 export function createRangeObject() {
   const rangeObj = createObject(null);
-  (rangeObj as any).__type_override = 'range';
+  (rangeObj as JSObjectWithMeta).__type_override = 'range';
   const state: any = {
     startContainer: undefined as JSValue,
     startOffset: 0,
@@ -1112,7 +1134,7 @@ export function createRangeObject() {
     rangeObj.properties.set('collapsed', { value: collapsed, writable: false, enumerable: true, configurable: true });
     rangeObj.properties.set('commonAncestorContainer', { value: common, writable: false, enumerable: true, configurable: true });
   };
-  (rangeObj as any).__syncProps = syncProps;
+  (rangeObj as JSObjectWithMeta).__syncProps = syncProps;
   syncProps();
 
   function afterMutate(): void { syncProps(); }
@@ -1228,7 +1250,7 @@ export function createRangeObject() {
   rangeObj.properties.set('cloneContents', {
     value: createNativeFunction('cloneContents', () => {
       const docFrag = createObject(null);
-      (docFrag as any).__type_override = 'documentfragment';
+      (docFrag as JSObjectWithMeta).__type_override = 'documentfragment';
       const appendChild = docFrag.properties.get('appendChild')?.value;
       if (state.startContainer === state.endContainer && state.startOffset === state.endOffset) {
         return docFrag;
@@ -1242,8 +1264,9 @@ export function createRangeObject() {
           const cloned = domCloneNode(sc, false);
           if (cloned) {
             domSetTextContent(cloned, text.slice(state.startOffset, state.endOffset));
-            if (appendChild && typeof appendChild === 'object' && (appendChild as any).nativeFn) {
-              (appendChild as any).nativeFn(docFrag, [cloned]);
+            const fn = appendChild && typeof appendChild === 'object' ? (appendChild as JSFunction).nativeFn : undefined;
+            if (fn) {
+              fn(docFrag, [cloned]);
             }
           }
           return docFrag;
@@ -1255,8 +1278,9 @@ export function createRangeObject() {
           const child = children.properties.get(String(i))?.value;
           if (typeof child === 'object' && child !== null) {
             const cl = domCloneNode(child as JSObject, true);
-            if (cl && appendChild && typeof appendChild === 'object' && (appendChild as any).nativeFn) {
-              (appendChild as any).nativeFn(docFrag, [cl]);
+            if (cl) {
+              const fn = appendChild && typeof appendChild === 'object' ? (appendChild as JSFunction).nativeFn : undefined;
+              if (fn) fn(docFrag, [cl]);
             }
           }
         }
@@ -1303,7 +1327,7 @@ export function createRangeObject() {
   rangeObj.properties.set('extractContents', {
     value: createNativeFunction('extractContents', () => {
       const docFrag = createObject(null);
-      (docFrag as any).__type_override = 'documentfragment';
+      (docFrag as JSObjectWithMeta).__type_override = 'documentfragment';
       const appendChild = docFrag.properties.get('appendChild')?.value;
       if (state.startContainer === state.endContainer && state.startOffset === state.endOffset) { afterMutate(); return docFrag; }
       if (state.startContainer === state.endContainer) {
@@ -1317,8 +1341,9 @@ export function createRangeObject() {
           const cloned = domCloneNode(sc, false);
           if (cloned) {
             domSetTextContent(cloned, extracted);
-            if (appendChild && typeof appendChild === 'object' && (appendChild as any).nativeFn) {
-              (appendChild as any).nativeFn(docFrag, [cloned]);
+            const fn = appendChild && typeof appendChild === 'object' ? (appendChild as JSFunction).nativeFn : undefined;
+            if (fn) {
+              fn(docFrag, [cloned]);
             }
           }
           domSetTextContent(sc, newText);
@@ -1338,8 +1363,9 @@ export function createRangeObject() {
         }
         for (const c of toRemove) {
           const cl = domCloneNode(c, true);
-          if (cl && appendChild && typeof appendChild === 'object' && (appendChild as any).nativeFn) {
-            (appendChild as any).nativeFn(docFrag, [cl]);
+          if (cl) {
+            const fn = appendChild && typeof appendChild === 'object' ? (appendChild as JSFunction).nativeFn : undefined;
+            if (fn) fn(docFrag, [cl]);
           }
           domRemoveChild(sc, c);
         }
@@ -1355,14 +1381,14 @@ export function createRangeObject() {
   rangeObj.properties.set('cloneRange', {
     value: createNativeFunction('cloneRange', () => {
       const clone = createRangeObject();
-      const cloneState = (clone as any).__rangeState;
+      const cloneState = (clone as JSObjectWithMeta).__rangeState;
       if (cloneState) {
         cloneState.startContainer = state.startContainer;
         cloneState.startOffset = state.startOffset;
         cloneState.endContainer = state.endContainer;
         cloneState.endOffset = state.endOffset;
       }
-      if ((clone as any).__syncProps) { (clone as any).__syncProps(); }
+      (clone as JSObjectWithMeta).__syncProps?.();
       return clone;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -1508,7 +1534,7 @@ export function createRangeObject() {
   rangeObj.properties.set('createContextualFragment', {
     value: createNativeFunction('createContextualFragment', () => {
       const frag = createObject(null);
-      (frag as any).__type_override = 'documentfragment';
+      (frag as JSObjectWithMeta).__type_override = 'documentfragment';
       return frag;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -1528,7 +1554,7 @@ export function createRangeObject() {
     writable: true, enumerable: true, configurable: true,
   });
 
-  (rangeObj as any).__rangeState = state;
+  (rangeObj as JSObjectWithMeta).__rangeState = state;
   return rangeObj;
 }
 
@@ -1550,17 +1576,15 @@ export function createTreeWalkerObject() {
 
     walkerObj.properties.set('firstChild', {
       value: createNativeFunction('firstChild', (_this) => {
-        const current = (walkerObj as any).properties.get('currentNode')?.value as JSObject | undefined;
+        const current = (walkerObj as JSObject).properties.get('currentNode')?.value as JSObject | undefined;
         if (!current) return null;
         const childrenDesc = current.properties.get('childNodes');
         const children = childrenDesc?.value;
-        if (children && typeof children === 'object' && (children as any).type === 'array') {
-          const len = Number((children as any).properties.get('length')?.value ?? 0);
-          if (len > 0) {
-            const first = (children as any).properties.get('0')?.value;
-            walkerObj.properties.set('currentNode', { value: first, writable: true, enumerable: true, configurable: true });
-            return first;
-          }
+        if (children && typeof children === 'object' && (children as JSObject).type === 'array') {
+          const len = Number((children as JSObject).properties.get('length')?.value ?? 0);
+          const first = (children as JSObject).properties.get('0')?.value;
+          walkerObj.properties.set('currentNode', { value: first, writable: true, enumerable: true, configurable: true });
+          return first;
         }
         return null;
       }),
@@ -1606,8 +1630,8 @@ export function createMessageChannelConstructor() {
   return createNativeFunction('MessageChannel', () => {
     const port1 = createMessagePortObject();
     const port2 = createMessagePortObject();
-    (port1 as any).__remote = port2;
-    (port2 as any).__remote = port1;
+    (port1 as JSObjectWithMeta).__remote = port2;
+    (port2 as JSObjectWithMeta).__remote = port1;
 
     const channelObj = createObject(null);
     channelObj.properties.set('port1', { value: port1, writable: false, enumerable: true, configurable: false });
@@ -1618,19 +1642,19 @@ export function createMessageChannelConstructor() {
 
 function createMessagePortObject() {
   const portObj = createObject(null);
-  (portObj as any).__type_override = 'messageport';
-  (portObj as any).__listeners = [] as Array<{ type: string; fn: JSFunction }>;
-  (portObj as any).__started = false;
+  (portObj as JSObjectWithMeta).__type_override = 'messageport';
+  (portObj as JSObjectWithMeta).__listeners = [] as Array<{ type: string; fn: JSFunction }>;
+  (portObj as JSObjectWithMeta).__started = false;
   portObj.properties.set('onmessage', { value: undefined, writable: true, enumerable: true, configurable: true });
   portObj.properties.set('onmessageerror', { value: undefined, writable: true, enumerable: true, configurable: true });
 
   portObj.properties.set('postMessage', {
     value: createNativeFunction('postMessage', (_t, a) => {
-      const remote = (portObj as any).__remote;
+      const remote = (portObj as JSObjectWithMeta).__remote;
       if (!remote) return undefined;
       const msg = deepCloneJS(a[0]);
       const onmsg = remote.properties.get('onmessage')?.value;
-      if (typeof onmsg === 'object' && onmsg !== null && (onmsg as any).type === 'closure') {
+      if (typeof onmsg === 'object' && onmsg !== null && (onmsg as JSFunction).type === 'closure') {
         const evObj = createObject(null);
         evObj.properties.set('data', { value: msg, writable: false, enumerable: true, configurable: false });
         evObj.properties.set('origin', { value: '', writable: false, enumerable: true, configurable: false });
@@ -1644,18 +1668,18 @@ function createMessagePortObject() {
   });
 
   portObj.properties.set('start', {
-    value: createNativeFunction('start', () => { (portObj as any).__started = true; return undefined; }),
+    value: createNativeFunction('start', () => { (portObj as JSObjectWithMeta).__started = true; return undefined; }),
     writable: true, enumerable: true, configurable: true,
   });
   portObj.properties.set('close', {
-    value: createNativeFunction('close', () => { (portObj as any).__remote = undefined; return undefined; }),
+    value: createNativeFunction('close', () => { (portObj as JSObjectWithMeta).__remote = undefined; return undefined; }),
     writable: true, enumerable: true, configurable: true,
   });
   portObj.properties.set('addEventListener', {
     value: createNativeFunction('addEventListener', (_t, a) => {
       const type = toString(a[0]);
       const fn = a[1] as JSFunction;
-      (portObj as any).__listeners.push({ type, fn });
+      ((portObj as JSObjectWithMeta).__listeners ??= []).push({ type, fn });
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -1664,8 +1688,8 @@ function createMessagePortObject() {
     value: createNativeFunction('removeEventListener', (_t, a) => {
       const type = toString(a[0]);
       const fn = a[1];
-      const list = (portObj as any).__listeners;
-      (portObj as any).__listeners = list.filter((l: any) => !(l.type === type && l.fn === fn));
+      const list = (portObj as JSObjectWithMeta).__listeners ?? [];
+      (portObj as JSObjectWithMeta).__listeners = list.filter((l) => !(l.type === type && l.fn === fn));
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -1674,7 +1698,7 @@ function createMessagePortObject() {
     value: createNativeFunction('dispatchEvent', (_t, a) => {
       const ev = a[0] as JSObject;
       const type = toString(ev.properties.get('type')?.value ?? '');
-      const list = (portObj as any).__listeners;
+      const list = (portObj as JSObjectWithMeta).__listeners ?? [];
       for (const l of list) {
         if (l.type === type) callJSFunction(l.fn, portObj, [ev]);
       }
@@ -1693,13 +1717,13 @@ function createMessagePortObject() {
 export function createTouchObject() {
   return createNativeFunction('Touch', (_this, args) => {
     const touchObj = createObject(null);
-    const opts = args[0] as any;
+    const opts = args[0] as JSObject | undefined;
     const props = ['identifier', 'target', 'clientX', 'clientY', 'pageX', 'pageY', 'screenX', 'screenY', 'radiusX', 'radiusY', 'rotationAngle', 'force'];
     // Handle both plain JS objects and JSObjects
     const getProp = (name: string) => {
       if (opts && typeof opts === 'object') {
         // Plain JS object
-        if (name in opts) return opts[name];
+        if (name in opts) return (opts as unknown as Record<string, JSValue>)[name];
         // JSObject
         if (opts.properties && typeof opts.properties.get === 'function') {
           const desc = opts.properties.get(name);
@@ -1741,9 +1765,9 @@ export function createTouchEventConstructor() {
     // Helper to get property from either plain object or JSObject
     const getInitProp = (name: string): any => {
       if (rawInit && typeof rawInit === 'object') {
-        if (name in rawInit) return (rawInit as any)[name];
-        if ((rawInit as any).properties && typeof (rawInit as any).properties.get === 'function') {
-          const desc = (rawInit as any).properties.get(name);
+if (name in rawInit) return (rawInit as unknown as Record<string, JSValue>)[name];
+    if ((rawInit as JSObject).properties && typeof (rawInit as JSObject).properties.get === 'function') {
+      const desc = (rawInit as JSObject).properties.get(name);
           if (desc) return desc.value;
         }
       }
@@ -1781,9 +1805,9 @@ export function createDragEventConstructor() {
     const rawInit = args[1];
     const getInitProp = (name: string, defaultVal: any = undefined): any => {
       if (rawInit && typeof rawInit === 'object') {
-        if (name in rawInit) return (rawInit as any)[name];
-        if ((rawInit as any).properties && typeof (rawInit as any).properties.get === 'function') {
-          const desc = (rawInit as any).properties.get(name);
+if (name in rawInit) return (rawInit as unknown as Record<string, JSValue>)[name];
+    if ((rawInit as JSObject).properties && typeof (rawInit as JSObject).properties.get === 'function') {
+      const desc = (rawInit as JSObject).properties.get(name);
           if (desc) return desc.value;
         }
       }
@@ -1961,758 +1985,6 @@ function deepCloneJS(val: JSValue): JSValue {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WEBASSEMBLY (WASM) API
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function createWebAssemblyObject() {
-  const wasmObj = createObject(null);
-
-  // WebAssembly.validate(bufferSource) → boolean
-  wasmObj.properties.set('validate', {
-    value: createNativeFunction('validate', (_this, args) => {
-      const buffer = args[0];
-      if (!buffer || typeof buffer !== 'object') return false;
-      try {
-        let bytes: Uint8Array;
-        if (buffer instanceof ArrayBuffer || (buffer as any).buffer instanceof ArrayBuffer) {
-          bytes = new Uint8Array(buffer instanceof ArrayBuffer ? buffer : (buffer as any).buffer);
-        } else {
-          return false;
-        }
-        // Magic number check: first 4 bytes must be 0x00 0x61 0x73 0x6D (\0asm)
-        if (bytes.length < 4) return false;
-        return bytes[0] === 0x00 && bytes[1] === 0x61 && bytes[2] === 0x73 && bytes[3] === 0x6D;
-      } catch {
-        return false;
-      }
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-
-  // WebAssembly.compile(bufferSource) → Promise<Module>
-  wasmObj.properties.set('compile', {
-    value: createNativeFunction('compile', (_this, args) => {
-      const buffer = args[0];
-      if (!buffer) {
-        return createPromiseLike({ error: new Error('Expected bufferSource') });
-      }
-      const modObj = createObject(null);
-      modObj.properties.set('__type', { value: 'Module', writable: false, enumerable: false, configurable: false });
-      modObj.properties.set('__bytes', {
-        value: buffer,
-        writable: false, enumerable: false, configurable: false,
-      });
-      // Module.prototype.imports()
-      modObj.properties.set('imports', {
-        value: createNativeFunction('imports', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-      // Module.prototype.exports()
-      modObj.properties.set('exports', {
-        value: createNativeFunction('exports', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-      // Module.prototype.customSections(name)
-      modObj.properties.set('customSections', {
-        value: createNativeFunction('customSections', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-      return createPromiseLike(modObj);
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-
-  // WebAssembly.instantiate(bufferSource, importObject?) → Promise<{module, instance}>
-  // WebAssembly.instantiate(module, importObject?) → Promise<Instance>
-  wasmObj.properties.set('instantiate', {
-    value: createNativeFunction('instantiate', (_this, args) => {
-      const bufferOrModule = args[0];
-      const imports = args[1];
-      if (!bufferOrModule) {
-        return createPromiseLike({ error: new Error('Expected bufferSource or Module') });
-      }
-
-      // If it's already a Module object
-      if (typeof bufferOrModule === 'object' && (bufferOrModule as any).properties?.get('__type')?.value === 'Module') {
-        const instObj = createObject(null);
-        instObj.properties.set('exports', { value: createObject(null), writable: true, enumerable: true, configurable: true });
-        instObj.properties.set('imports', { value: imports ?? createObject(null), writable: true, enumerable: true, configurable: true });
-        return createPromiseLike(instObj);
-      }
-
-      // Compile then instantiate
-      const modObj = createObject(null);
-      modObj.properties.set('__type', { value: 'Module', writable: false, enumerable: false, configurable: false });
-      modObj.properties.set('__bytes', { value: bufferOrModule, writable: false, enumerable: false, configurable: false });
-      modObj.properties.set('imports', {
-        value: createNativeFunction('imports', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-      modObj.properties.set('exports', {
-        value: createNativeFunction('exports', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-      modObj.properties.set('customSections', {
-        value: createNativeFunction('customSections', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-
-      const instObj = createObject(null);
-      instObj.properties.set('exports', { value: createObject(null), writable: true, enumerable: true, configurable: true });
-      instObj.properties.set('imports', { value: imports ?? createObject(null), writable: true, enumerable: true, configurable: true });
-
-      const resultObj = createObject(null);
-      resultObj.properties.set('module', { value: modObj, writable: true, enumerable: true, configurable: true });
-      resultObj.properties.set('instance', { value: instObj, writable: true, enumerable: true, configurable: true });
-      return createPromiseLike(resultObj);
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-
-  // WebAssembly.compileStreaming(source, imports?) → Promise<Module>
-  wasmObj.properties.set('compileStreaming', {
-    value: createNativeFunction('compileStreaming', (_this, args) => {
-      const modObj = createObject(null);
-      modObj.properties.set('__type', { value: 'Module', writable: false, enumerable: false, configurable: false });
-      modObj.properties.set('imports', {
-        value: createNativeFunction('imports', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-      modObj.properties.set('exports', {
-        value: createNativeFunction('exports', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-      modObj.properties.set('customSections', {
-        value: createNativeFunction('customSections', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-      return createPromiseLike(modObj);
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-
-  // WebAssembly.instantiateStreaming(source, imports?) → Promise<{module, instance}>
-  wasmObj.properties.set('instantiateStreaming', {
-    value: createNativeFunction('instantiateStreaming', (_this, args) => {
-      const imports = args[1];
-      const modObj = createObject(null);
-      modObj.properties.set('__type', { value: 'Module', writable: false, enumerable: false, configurable: false });
-      modObj.properties.set('imports', {
-        value: createNativeFunction('imports', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-      modObj.properties.set('exports', {
-        value: createNativeFunction('exports', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-      modObj.properties.set('customSections', {
-        value: createNativeFunction('customSections', () => createArray([])),
-        writable: true, enumerable: true, configurable: true,
-      });
-
-      const instObj = createObject(null);
-      instObj.properties.set('exports', { value: createObject(null), writable: true, enumerable: true, configurable: true });
-      instObj.properties.set('imports', { value: imports ?? createObject(null), writable: true, enumerable: true, configurable: true });
-
-      return createPromiseLike({ module: modObj, instance: instObj });
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-
-  return wasmObj;
-}
-
-// WebAssembly.Module constructor
-export function createWebAssemblyModuleConstructor() {
-  return createNativeFunction('Module', (_this, args) => {
-    const buffer = args[0];
-    const modObj = createObject(null);
-    modObj.properties.set('__type', { value: 'Module', writable: false, enumerable: false, configurable: false });
-    modObj.properties.set('__bytes', { value: buffer, writable: false, enumerable: false, configurable: false });
-    modObj.properties.set('imports', {
-      value: createNativeFunction('imports', () => createArray([])),
-      writable: true, enumerable: true, configurable: true,
-    });
-    modObj.properties.set('exports', {
-      value: createNativeFunction('exports', () => createArray([])),
-      writable: true, enumerable: true, configurable: true,
-    });
-    modObj.properties.set('customSections', {
-      value: createNativeFunction('customSections', () => createArray([])),
-      writable: true, enumerable: true, configurable: true,
-    });
-    return modObj;
-  });
-}
-
-// WebAssembly.Module.customSections (static)
-export function createWebAssemblyModuleStatic() {
-  const modFn = createWebAssemblyModuleConstructor();
-  const wrapper = createObject(null);
-  wrapper.type = 'function';
-  wrapper.callable = true;
-  wrapper.nativeFn = modFn.nativeFn;
-  wrapper.properties.set('customSections', {
-    value: createNativeFunction('customSections', () => createArray([])),
-    writable: true, enumerable: true, configurable: true,
-  });
-  wrapper.properties.set('imports', {
-    value: createNativeFunction('imports', () => createArray([])),
-    writable: true, enumerable: true, configurable: true,
-  });
-  wrapper.properties.set('exports', {
-    value: createNativeFunction('exports', () => createArray([])),
-    writable: true, enumerable: true, configurable: true,
-  });
-  return wrapper;
-}
-
-// WebAssembly.Instance constructor
-export function createWebAssemblyInstanceConstructor() {
-  return createNativeFunction('Instance', (_this, args) => {
-    const module = args[0];
-    const imports = args[1];
-    const instObj = createObject(null);
-    instObj.properties.set('exports', { value: createObject(null), writable: true, enumerable: true, configurable: true });
-    instObj.properties.set('imports', { value: imports ?? createObject(null), writable: true, enumerable: true, configurable: true });
-    instObj.properties.set('module', { value: module, writable: false, enumerable: true, configurable: false });
-    return instObj;
-  });
-}
-
-// WebAssembly.Memory constructor
-export function createWebAssemblyMemoryConstructor() {
-  return createNativeFunction('Memory', (_this, args) => {
-    const opts = args[0];
-    const memoryObj = createObject(null);
-    const getProp = (name: string, def: any) => {
-      if (opts && typeof opts === 'object') {
-        if (name in opts) return (opts as any)[name];
-        if ((opts as any).properties && typeof (opts as any).properties.get === 'function') {
-          const desc = (opts as any).properties.get(name);
-          if (desc) return desc.value;
-        }
-      }
-      return def;
-    };
-    const initial = getProp('initial', 1) as number;
-    const maximum = getProp('maximum', undefined) as number | undefined;
-    const buffer = new ArrayBuffer(initial * 65536);
-
-    memoryObj.properties.set('buffer', { value: toJSValueShallow({ buffer }), writable: true, enumerable: true, configurable: true });
-    memoryObj.properties.set('grow', {
-      value: createNativeFunction('grow', (_t, a) => {
-        const delta = toNumber(a[0]);
-        const prev = memoryObj.properties.get('grow') ? initial : 0;
-        return delta;
-      }),
-      writable: true, enumerable: true, configurable: true,
-    });
-    memoryObj.properties.set('max', { value: maximum, writable: false, enumerable: true, configurable: false });
-    memoryObj.properties.set('__type', { value: 'Memory', writable: false, enumerable: false, configurable: false });
-    return memoryObj;
-  });
-}
-
-// WebAssembly.Table constructor
-export function createWebAssemblyTableConstructor() {
-  return createNativeFunction('Table', (_this, args) => {
-    const tableObj = createObject(null);
-    const getProp = (name: string, def: any) => {
-      const opts = args[0];
-      if (opts && typeof opts === 'object') {
-        if (name in opts) return (opts as any)[name];
-        if ((opts as any).properties && typeof (opts as any).properties.get === 'function') {
-          const desc = (opts as any).properties.get(name);
-          if (desc) return desc.value;
-        }
-      }
-      return def;
-    };
-    const initial = getProp('initial', 0) as number;
-    tableObj.properties.set('length', { value: initial, writable: true, enumerable: true, configurable: true });
-    tableObj.properties.set('grow', {
-      value: createNativeFunction('grow', (_t, a) => toNumber(a[0])),
-      writable: true, enumerable: true, configurable: true,
-    });
-    tableObj.properties.set('get', {
-      value: createNativeFunction('get', () => null),
-      writable: true, enumerable: true, configurable: true,
-    });
-    tableObj.properties.set('set', {
-      value: createNativeFunction('set', () => undefined),
-      writable: true, enumerable: true, configurable: true,
-    });
-    tableObj.properties.set('max', {
-      value: getProp('maximum', undefined),
-      writable: false, enumerable: true, configurable: false,
-    });
-    tableObj.properties.set('__type', { value: 'Table', writable: false, enumerable: false, configurable: false });
-    return tableObj;
-  });
-}
-
-// WebAssembly.Global constructor
-export function createWebAssemblyGlobalConstructor() {
-  return createNativeFunction('Global', (_this, args) => {
-    const globalObj = createObject(null);
-    const getProp = (name: string, def: any) => {
-      const opts = args[0];
-      if (opts && typeof opts === 'object') {
-        if (name in opts) return (opts as any)[name];
-        if ((opts as any).properties && typeof (opts as any).properties.get === 'function') {
-          const desc = (opts as any).properties.get(name);
-          if (desc) return desc.value;
-        }
-      }
-      return def;
-    };
-    const valueType = getProp('value', 'i32') as string;
-    const initialValue = getProp('value', 0);
-
-    globalObj.properties.set('value', {
-      value: initialValue,
-      writable: true, enumerable: true, configurable: true,
-    });
-    globalObj.properties.set('valueOf', {
-      value: createNativeFunction('valueOf', () => globalObj.properties.get('value')?.value),
-      writable: true, enumerable: true, configurable: true,
-    });
-    globalObj.properties.set('toValue', {
-      value: createNativeFunction('toValue', () => globalObj.properties.get('value')?.value),
-      writable: true, enumerable: true, configurable: true,
-    });
-    globalObj.properties.set('__type', { value: 'Global', writable: false, enumerable: false, configurable: false });
-    globalObj.properties.set('__valueType', { value: valueType, writable: false, enumerable: false, configurable: false });
-    return globalObj;
-  });
-}
-
-// WebAssembly.Tag constructor (exception handling)
-export function createWebAssemblyTagConstructor() {
-  return createNativeFunction('Tag', (_this, args) => {
-    const tagObj = createObject(null);
-    tagObj.properties.set('__type', { value: 'Tag', writable: false, enumerable: false, configurable: false });
-    tagObj.properties.set('type', {
-      value: createNativeFunction('type', () => args[0] ?? createObject(null)),
-      writable: true, enumerable: true, configurable: true,
-    });
-    return tagObj;
-  });
-}
-
-// WebAssembly.Exception constructor
-export function createWebAssemblyExceptionConstructor() {
-  return createNativeFunction('Exception', (_this, args) => {
-    const excObj = createObject(null);
-    excObj.properties.set('__type', { value: 'Exception', writable: false, enumerable: false, configurable: false });
-    excObj.properties.set('getArg', {
-      value: createNativeFunction('getArg', (_t, a) => {
-        const tag = a[0];
-        const index = toNumber(a[1]);
-        return null;
-      }),
-      writable: true, enumerable: true, configurable: true,
-    });
-    excObj.properties.set('is', {
-      value: createNativeFunction('is', (_t, a) => false),
-      writable: true, enumerable: true, configurable: true,
-    });
-    return excObj;
-  });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// WEBGPU API
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function createGPUObject() {
-  const gpuObj = createObject(null);
-
-  // GPU.requestAdapter() → Promise<GPUAdapter | null>
-  gpuObj.properties.set('requestAdapter', {
-    value: createNativeFunction('requestAdapter', (_this, args) => {
-      const adapterObj = createObject(null);
-      adapterObj.properties.set('requestDevice', {
-        value: createNativeFunction('requestDevice', (_this, args) => {
-          const deviceObj = createObject(null);
-          deviceObj.properties.set('label', { value: 'default-device', writable: true, enumerable: true, configurable: true });
-          deviceObj.properties.set('lost', {
-            value: createPromiseLike({ reason: 'destroyed', message: 'none' }),
-            writable: false, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('destroy', {
-            value: createNativeFunction('destroy', () => undefined),
-            writable: true, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('createBuffer', {
-            value: createNativeFunction('createBuffer', (_t, a) => {
-              const bufObj = createObject(null);
-              bufObj.properties.set('size', { value: (a[0] as any)?.properties?.get('size')?.value ?? 0, writable: true, enumerable: true, configurable: true });
-              bufObj.properties.set('usage', { value: (a[0] as any)?.properties?.get('usage')?.value ?? 0, writable: true, enumerable: true, configurable: true });
-              bufObj.properties.set('destroy', {
-                value: createNativeFunction('destroy', () => undefined),
-                writable: true, enumerable: true, configurable: true,
-              });
-              bufObj.properties.set('label', { value: (a[0] as any)?.properties?.get('label')?.value ?? '', writable: true, enumerable: true, configurable: true });
-              return bufObj;
-            }),
-            writable: true, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('createTexture', {
-            value: createNativeFunction('createTexture', (_t, a) => {
-              const texObj = createObject(null);
-              texObj.properties.set('label', { value: (a[0] as any)?.properties?.get('label')?.value ?? '', writable: true, enumerable: true, configurable: true });
-              texObj.properties.set('width', { value: (a[0] as any)?.properties?.get('width')?.value ?? 0, writable: true, enumerable: true, configurable: true });
-              texObj.properties.set('height', { value: (a[0] as any)?.properties?.get('height')?.value ?? 0, writable: true, enumerable: true, configurable: true });
-              texObj.properties.set('destroy', {
-                value: createNativeFunction('destroy', () => undefined),
-                writable: true, enumerable: true, configurable: true,
-              });
-              texObj.properties.set('createView', {
-                value: createNativeFunction('createView', () => {
-                  const viewObj = createObject(null);
-                  viewObj.properties.set('label', { value: '', writable: true, enumerable: true, configurable: true });
-                  return viewObj;
-                }),
-                writable: true, enumerable: true, configurable: true,
-              });
-              texObj.properties.set('usage', { value: (a[0] as any)?.properties?.get('usage')?.value ?? 0, writable: true, enumerable: true, configurable: true });
-              texObj.properties.set('format', { value: (a[0] as any)?.properties?.get('format')?.value ?? 'bgra8unorm', writable: true, enumerable: true, configurable: true });
-              return texObj;
-            }),
-            writable: true, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('createBindGroupLayout', {
-            value: createNativeFunction('createBindGroupLayout', (_t, a) => {
-              const layoutObj = createObject(null);
-              layoutObj.properties.set('label', { value: (a[0] as any)?.properties?.get('label')?.value ?? '', writable: true, enumerable: true, configurable: true });
-              return layoutObj;
-            }),
-            writable: true, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('createBindGroup', {
-            value: createNativeFunction('createBindGroup', (_t, a) => {
-              const bgObj = createObject(null);
-              bgObj.properties.set('label', { value: (a[0] as any)?.properties?.get('label')?.value ?? '', writable: true, enumerable: true, configurable: true });
-              return bgObj;
-            }),
-            writable: true, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('createRenderPipelineLayout', {
-            value: createNativeFunction('createRenderPipelineLayout', (_t, a) => {
-              const plObj = createObject(null);
-              plObj.properties.set('label', { value: (a[0] as any)?.properties?.get('label')?.value ?? '', writable: true, enumerable: true, configurable: true });
-              return plObj;
-            }),
-            writable: true, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('createRenderPipeline', {
-            value: createNativeFunction('createRenderPipeline', (_t, a) => {
-              const pipeObj = createObject(null);
-              pipeObj.properties.set('label', { value: (a[0] as any)?.properties?.get('label')?.value ?? '', writable: true, enumerable: true, configurable: true });
-              pipeObj.properties.set('getBindGroupLayout', {
-                value: createNativeFunction('getBindGroupLayout', () => {
-                  const layoutObj = createObject(null);
-                  return layoutObj;
-                }),
-                writable: true, enumerable: true, configurable: true,
-              });
-              return pipeObj;
-            }),
-            writable: true, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('createComputePipeline', {
-            value: createNativeFunction('createComputePipeline', (_t, a) => {
-              const pipeObj = createObject(null);
-              pipeObj.properties.set('label', { value: (a[0] as any)?.properties?.get('label')?.value ?? '', writable: true, enumerable: true, configurable: true });
-              pipeObj.properties.set('getBindGroupLayout', {
-                value: createNativeFunction('getBindGroupLayout', () => createObject(null)),
-                writable: true, enumerable: true, configurable: true,
-              });
-              return pipeObj;
-            }),
-            writable: true, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('createCommandEncoder', {
-            value: createNativeFunction('createCommandEncoder', () => {
-              const encObj = createObject(null);
-              encObj.properties.set('beginRenderPass', {
-                value: createNativeFunction('beginRenderPass', () => {
-                  const passObj = createObject(null);
-                  passObj.properties.set('setPipeline', { value: createNativeFunction('setPipeline', () => undefined), writable: true, enumerable: true, configurable: true });
-                  passObj.properties.set('setBindGroup', { value: createNativeFunction('setBindGroup', () => undefined), writable: true, enumerable: true, configurable: true });
-                  passObj.properties.set('draw', { value: createNativeFunction('draw', () => undefined), writable: true, enumerable: true, configurable: true });
-                  passObj.properties.set('end', { value: createNativeFunction('end', () => undefined), writable: true, enumerable: true, configurable: true });
-                  return passObj;
-                }),
-                writable: true, enumerable: true, configurable: true,
-              });
-              encObj.properties.set('beginComputePass', {
-                value: createNativeFunction('beginComputePass', () => {
-                  const passObj = createObject(null);
-                  passObj.properties.set('setPipeline', { value: createNativeFunction('setPipeline', () => undefined), writable: true, enumerable: true, configurable: true });
-                  passObj.properties.set('setBindGroup', { value: createNativeFunction('setBindGroup', () => undefined), writable: true, enumerable: true, configurable: true });
-                  passObj.properties.set('dispatchWorkgroups', { value: createNativeFunction('dispatchWorkgroups', () => undefined), writable: true, enumerable: true, configurable: true });
-                  passObj.properties.set('end', { value: createNativeFunction('end', () => undefined), writable: true, enumerable: true, configurable: true });
-                  return passObj;
-                }),
-                writable: true, enumerable: true, configurable: true,
-              });
-              encObj.properties.set('finish', {
-                value: createNativeFunction('finish', () => {
-                  const cmdObj = createObject(null);
-                  cmdObj.properties.set('label', { value: '', writable: true, enumerable: true, configurable: true });
-                  return cmdObj;
-                }),
-                writable: true, enumerable: true, configurable: true,
-              });
-              return encObj;
-            }),
-            writable: true, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('createQueue', {
-            value: createNativeFunction('createQueue', () => {
-              const queueObj = createObject(null);
-              queueObj.properties.set('label', { value: '', writable: true, enumerable: true, configurable: true });
-              queueObj.properties.set('submit', { value: createNativeFunction('submit', () => undefined), writable: true, enumerable: true, configurable: true });
-              queueObj.properties.set('writeBuffer', { value: createNativeFunction('writeBuffer', () => undefined), writable: true, enumerable: true, configurable: true });
-              queueObj.properties.set('writeTexture', { value: createNativeFunction('writeTexture', () => undefined), writable: true, enumerable: true, configurable: true });
-              queueObj.properties.set('onSubmittedWorkDone', { value: createNativeFunction('onSubmittedWorkDone', () => createPromiseLike(undefined)), writable: true, enumerable: true, configurable: true });
-              return queueObj;
-            }),
-            writable: true, enumerable: true, configurable: true,
-          });
-          deviceObj.properties.set('createShaderModule', {
-            value: createNativeFunction('createShaderModule', (_t, a) => {
-              const shaderObj = createObject(null);
-              const shaderOpts = a[0] as any;
-              const shaderLabel = shaderOpts?.properties?.get('label')?.value ?? shaderOpts?.label ?? '';
-              shaderObj.properties.set('label', { value: shaderLabel, writable: true, enumerable: true, configurable: true });
-              shaderObj.properties.set('getCompilationInfo', {
-                value: createNativeFunction('getCompilationInfo', () => createPromiseLike({ messages: [] })),
-                writable: true, enumerable: true, configurable: true,
-              });
-              return shaderObj;
-            }),
-            writable: true, enumerable: true, configurable: true,
-          });
-          return createPromiseLike(deviceObj);
-        }),
-        writable: true, enumerable: true, configurable: true,
-      });
-      adapterObj.properties.set('features', { value: createArray([]), writable: false, enumerable: true, configurable: true });
-      adapterObj.properties.set('limits', {
-        value: (() => {
-          const limObj = createObject(null);
-          limObj.properties.set('maxTextureDimension1D', { value: 8192, writable: false, enumerable: true, configurable: false });
-          limObj.properties.set('maxTextureDimension2D', { value: 8192, writable: false, enumerable: true, configurable: false });
-          limObj.properties.set('maxTextureDimension3D', { value: 2048, writable: false, enumerable: true, configurable: false });
-          limObj.properties.set('maxBufferSize', { value: 134217728, writable: false, enumerable: true, configurable: false });
-          return limObj;
-        })(),
-        writable: false, enumerable: true, configurable: true,
-      });
-      adapterObj.properties.set('info', {
-        value: (() => {
-          const infoObj = createObject(null);
-          infoObj.properties.set('vendor', { value: 'nova', writable: false, enumerable: true, configurable: false });
-          infoObj.properties.set('device', { value: 'nova-gpu', writable: false, enumerable: true, configurable: false });
-          infoObj.properties.set('description', { value: 'Nova WebGPU Adapter', writable: false, enumerable: true, configurable: false });
-          return infoObj;
-        })(),
-        writable: false, enumerable: true, configurable: true,
-      });
-      return createPromiseLike(adapterObj);
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-
-  // GPU.getPreferredCanvasFormat()
-  gpuObj.properties.set('getPreferredCanvasFormat', {
-    value: createNativeFunction('getPreferredCanvasFormat', () => 'bgra8unorm'),
-    writable: true, enumerable: true, configurable: true,
-  });
-
-  // GPU.wgslShaderDefines
-  gpuObj.properties.set('wgslShaderDefines', {
-    value: createObject(null),
-    writable: false, enumerable: true, configurable: false,
-  });
-
-  gpuObj.properties.set('__type', { value: 'GPU', writable: false, enumerable: false, configurable: false });
-  return gpuObj;
-}
-
-// GPUBuffer constants
-export function createGPUConstants() {
-  const constants = createObject(null);
-  const consts: Record<string, number> = {
-    MAP_READ: 0x0001, MAP_WRITE: 0x0002, COPY_SRC: 0x0004, COPY_DST: 0x0008,
-    INDEX: 0x0010, VERTEX: 0x0020, UNIFORM: 0x0040, STORAGE: 0x0080,
-    INDIRECT: 0x0100, QUERY_RESOLVE: 0x0200, STORAGE_READ_ONLY: 0x8000,
-  };
-  for (const [k, v] of Object.entries(consts)) {
-    constants.properties.set(k, { value: v, writable: false, enumerable: true, configurable: false });
-  }
-  return constants;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// WEBXR API
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function createXRSystemObject() {
-  const xrObj = createObject(null);
-
-  // navigator.xr.isSessionSupported(mode) → Promise<boolean>
-  xrObj.properties.set('isSessionSupported', {
-    value: createNativeFunction('isSessionSupported', (_this, args) => {
-      return createPromiseLike(false);
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-
-  // navigator.xr.requestSession(mode, options?) → Promise<XRSession>
-  xrObj.properties.set('requestSession', {
-    value: createNativeFunction('requestSession', (_this, args) => {
-      const sessionObj = createXRSessionObject();
-      return createPromiseLike(sessionObj);
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-
-  xrObj.properties.set('__type', { value: 'XRSystem', writable: false, enumerable: false, configurable: false });
-  return xrObj;
-}
-
-function createXRSessionObject() {
-  const sessionObj = createObject(null);
-  sessionObj.properties.set('mode', { value: 'immersive-vr', writable: false, enumerable: true, configurable: false });
-  sessionObj.properties.set('visibilityState', { value: 'visible', writable: false, enumerable: true, configurable: false });
-  sessionObj.properties.set('renderState', {
-    value: (() => {
-      const rs = createObject(null);
-      rs.properties.set('baseLayer', { value: null, writable: true, enumerable: true, configurable: true });
-      return rs;
-    })(),
-    writable: false, enumerable: true, configurable: true,
-  });
-  sessionObj.properties.set('requestReferenceSpace', {
-    value: createNativeFunction('requestReferenceSpace', (_this, args) => {
-      const refSpace = createObject(null);
-      refSpace.properties.set('getOffsetReferenceSpace', {
-        value: createNativeFunction('getOffsetReferenceSpace', () => createXRReferenceSpaceObject()),
-        writable: true, enumerable: true, configurable: true,
-      });
-      refSpace.properties.set('getViewerPose', {
-        value: createNativeFunction('getViewerPose', (_t, a) => {
-          const poseObj = createObject(null);
-          poseObj.properties.set('transform', {
-            value: (() => {
-              const t = createObject(null);
-              t.properties.set('position', { value: createXRPointObject(0, 0, 0), writable: true, enumerable: true, configurable: true });
-              t.properties.set('orientation', { value: createXRPointObject(0, 0, 0, 1), writable: true, enumerable: true, configurable: true });
-              t.properties.set('matrix', { value: createArray([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]), writable: true, enumerable: true, configurable: true });
-              return t;
-            })(),
-            writable: true, enumerable: true, configurable: true,
-          });
-          poseObj.properties.set('views', {
-            value: createArray([createXRViewObject()]),
-            writable: false, enumerable: true, configurable: true,
-          });
-          return poseObj;
-        }),
-        writable: true, enumerable: true, configurable: true,
-      });
-      return createPromiseLike(refSpace);
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  sessionObj.properties.set('requestAnimationFrame', {
-    value: createNativeFunction('requestAnimationFrame', (_this, args) => Math.floor(Math.random() * 100000)),
-    writable: true, enumerable: true, configurable: true,
-  });
-  sessionObj.properties.set('cancelAnimationFrame', {
-    value: createNativeFunction('cancelAnimationFrame', () => undefined),
-    writable: true, enumerable: true, configurable: true,
-  });
-  sessionObj.properties.set('end', {
-    value: createNativeFunction('end', () => createPromiseLike(undefined)),
-    writable: true, enumerable: true, configurable: true,
-  });
-  sessionObj.properties.set('updateRenderState', {
-    value: createNativeFunction('updateRenderState', () => undefined),
-    writable: true, enumerable: true, configurable: true,
-  });
-  sessionObj.properties.set('selectEvent', { value: createObject(null), writable: true, enumerable: true, configurable: true });
-  sessionObj.properties.set('selectendEvent', { value: createObject(null), writable: true, enumerable: true, configurable: true });
-  sessionObj.properties.set('inputsourceschangeEvent', { value: createObject(null), writable: true, enumerable: true, configurable: true });
-  sessionObj.properties.set('__type', { value: 'XRSession', writable: false, enumerable: false, configurable: false });
-  return sessionObj;
-}
-
-function createXRReferenceSpaceObject() {
-  const refObj = createObject(null);
-  refObj.properties.set('getOffsetReferenceSpace', {
-    value: createNativeFunction('getOffsetReferenceSpace', () => createXRReferenceSpaceObject()),
-    writable: true, enumerable: true, configurable: true,
-  });
-  refObj.properties.set('getViewerPose', {
-    value: createNativeFunction('getViewerPose', (_t, a) => {
-      const poseObj = createObject(null);
-      poseObj.properties.set('transform', { value: createXRPointObject(0, 0, 0), writable: true, enumerable: true, configurable: true });
-      poseObj.properties.set('views', { value: createArray([createXRViewObject()]), writable: false, enumerable: true, configurable: true });
-      return poseObj;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  refObj.properties.set('__type', { value: 'XRReferenceSpace', writable: false, enumerable: false, configurable: false });
-  return refObj;
-}
-
-function createXRViewObject() {
-  const viewObj = createObject(null);
-  viewObj.properties.set('eye', { value: 'none', writable: false, enumerable: true, configurable: false });
-  viewObj.properties.set('projectionMatrix', {
-    value: createArray([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
-    writable: true, enumerable: true, configurable: true,
-  });
-  viewObj.properties.set('transform', {
-    value: (() => {
-      const t = createObject(null);
-      t.properties.set('position', { value: createXRPointObject(0, 0, 0), writable: true, enumerable: true, configurable: true });
-      t.properties.set('orientation', { value: createXRPointObject(0, 0, 0, 1), writable: true, enumerable: true, configurable: true });
-      t.properties.set('matrix', { value: createArray([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]), writable: true, enumerable: true, configurable: true });
-      return t;
-    })(),
-    writable: true, enumerable: true, configurable: true,
-  });
-  viewObj.properties.set('requestedViewport', {
-    value: (() => {
-      const vp = createObject(null);
-      vp.properties.set('x', { value: 0, writable: true, enumerable: true, configurable: true });
-      vp.properties.set('y', { value: 0, writable: true, enumerable: true, configurable: true });
-      vp.properties.set('width', { value: 1920, writable: true, enumerable: true, configurable: true });
-      vp.properties.set('height', { value: 1080, writable: true, enumerable: true, configurable: true });
-      return vp;
-    })(),
-    writable: true, enumerable: true, configurable: true,
-  });
-  return viewObj;
-}
-
-function createXRPointObject(x: number, y: number, z: number, w?: number) {
-  const p = createObject(null);
-  p.properties.set('x', { value: x, writable: true, enumerable: true, configurable: true });
-  p.properties.set('y', { value: y, writable: true, enumerable: true, configurable: true });
-  p.properties.set('z', { value: z, writable: true, enumerable: true, configurable: true });
-  if (w !== undefined) p.properties.set('w', { value: w, writable: true, enumerable: true, configurable: true });
-  return p;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // VIEW TRANSITIONS API
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2756,7 +2028,7 @@ export function createViewTransitionsMethods(docBinding: any) {
       vtObj.properties.set('__type', { value: 'ViewTransition', writable: false, enumerable: false, configurable: false });
 
       // Execute callback synchronously if provided
-      if (callback && typeof callback === 'object' && (callback as any).type === 'closure') {
+      if (callback && typeof callback === 'object' && (callback as JSFunction).type === 'closure') {
         try { callJSFunction(callback as JSFunction, undefined, []); } catch {}
       }
 
@@ -2825,8 +2097,8 @@ export function createNavigationObject() {
       newEntry.properties.set('getState', {
         value: createNativeFunction('getState', () => {
           if (opts && typeof opts === 'object') {
-            if ('state' in opts) return (opts as any).state;
-            if ((opts as any).properties?.get('state')?.value !== undefined) return (opts as any).properties.get('state').value;
+if ('state' in opts) return (opts as Record<string, JSValue>).state;
+    if ((opts as JSObject).properties?.get('state')?.value !== undefined) return (opts as JSObject).properties.get('state')!.value;
           }
           return null;
         }),
@@ -3000,9 +2272,9 @@ export function createSchedulerObject() {
       const opts = args[1];
       const getProp = (name: string, def: any) => {
         if (opts && typeof opts === 'object') {
-          if (name in opts) return (opts as any)[name];
-          if ((opts as any).properties && typeof (opts as any).properties.get === 'function') {
-            const desc = (opts as any).properties.get(name);
+if (name in opts) return (opts as unknown as Record<string, JSValue>)[name];
+    if ((opts as JSObject).properties && typeof (opts as JSObject).properties.get === 'function') {
+      const desc = (opts as JSObject).properties.get(name);
             if (desc) return desc.value;
           }
         }
@@ -3012,7 +2284,7 @@ export function createSchedulerObject() {
       const signal = getProp('signal', undefined) as JSObject | undefined;
 
       // Execute callback immediately (simplified)
-      if (callback && typeof callback === 'object' && (callback as any).type === 'closure') {
+      if (callback && typeof callback === 'object' && (callback as JSFunction).type === 'closure') {
         try { callJSFunction(callback as JSFunction, undefined, []); } catch {}
       }
       return createPromiseLike(undefined);

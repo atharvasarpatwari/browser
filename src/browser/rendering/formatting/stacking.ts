@@ -1,6 +1,6 @@
 import type { DomElement, DomNode } from '../dom-tree';
 import { classifyDisplay } from './types';
-import { parseTransform, isPureTranslation4x4 } from '../compositing/transform-parser';
+import { parseTransform, isPureTranslation4x4 } from '../transform-parser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STACKING CONTEXT

@@ -25,7 +25,7 @@ describe('SettingsPage (unit)', () => {
 
   it('should have default values for all settings', () => {
     const page = new SettingsPage();
-    expect(page.getSetting('homePage')).toBe('about:blank');
+    expect(page.getSetting('homePage')).toBe('about:newtab');
     expect(page.getSetting('theme')).toBe('system');
     expect(page.getSetting('enableCsp')).toBe(true);
   });
@@ -53,7 +53,7 @@ describe('SettingsPage (unit)', () => {
     page.setSetting('homePage', 'https://example.com');
     page.resetToDefaults();
     expect(page.getSetting('theme')).toBe('system');
-    expect(page.getSetting('homePage')).toBe('about:blank');
+    expect(page.getSetting('homePage')).toBe('about:newtab');
   });
 
   it('getActiveSection should return the current section id', () => {

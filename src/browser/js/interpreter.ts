@@ -585,8 +585,6 @@ export class Interpreter {
         const caseVal = this.evalExpr(c.test, env);
         if (disc === caseVal || (typeof disc === 'number' && typeof caseVal === 'number' && Object.is(disc, caseVal))) {
           matched = true;
-        } else if (disc === caseVal) {
-          matched = true;
         }
       }
       if (matched || !c.test) {

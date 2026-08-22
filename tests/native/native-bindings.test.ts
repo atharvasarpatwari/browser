@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { isNativeAvailable, resolveDns } from '../../src/native/index';
-import { NovaDnsResolver } from '../../src/native/dns-resolver';
-import { NovaHttpClient } from '../../src/native/http-client';
-import type { DnsResult, HttpResponse } from '../../src/native/types';
+import { isNativeAvailable, resolveDns } from '@/native/index';
+import { NovaDnsResolver } from '@/native/dns-resolver';
+import { NovaHttpClient } from '@/native/http-client';
+import type { DnsResult, HttpResponse } from '@/native/types';
 
 describe('Native module loader', () => {
   it('should export isNativeAvailable', () => {

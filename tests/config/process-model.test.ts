@@ -5,8 +5,8 @@ import {
   PER_DOMAIN_PROCESS_MODEL,
   validateProcessModelConfig,
   getProcessModelFromEnvironment,
-} from '../../src/app/config/process-model';
-import type { ProcessModelConfig } from '../../src/app/config/process-model';
+} from '@/app/config/process-model';
+import type { ProcessModelConfig } from '@/app/config/process-model';
 
 describe('ProcessModelConfig', () => {
   describe('DEFAULT_PROCESS_MODEL', () => {

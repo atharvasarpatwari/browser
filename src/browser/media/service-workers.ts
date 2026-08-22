@@ -41,7 +41,7 @@ interface SWEvent {
 type SWEventKind = 'register' | 'update' | 'unregister' | 'controllerchange' | 'error' | 'statechange' | 'message';
 type SWEventHandler = (event: SWEvent) => void;
 
-let _swId = 1;
+const _swId = 1;
 
 class ServiceWorkerContainer implements IServiceWorkerContainer {
   private _registrations: ServiceWorkerRegistration[] = [];

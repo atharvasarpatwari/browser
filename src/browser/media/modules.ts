@@ -269,7 +269,7 @@ class ModuleService implements IModuleService {
       else if (mod.status === 'error') errored++;
       else pending++;
       totalDeps += mod.dependencies.size;
-      let depth = mod.evaluationOrder ?? 0;
+      const depth = mod.evaluationOrder ?? 0;
       if (depth > maxDepth) maxDepth = depth;
     }
     return {
