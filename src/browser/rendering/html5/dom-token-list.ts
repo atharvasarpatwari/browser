@@ -61,7 +61,7 @@ export class DOMTokenList {
   // ── Method binding ──────────────────────────────────────────────────────
 
   private _bindMethods(): void {
-    const self = this;
+    const self = this; // eslint-disable-line @typescript-eslint/no-this-alias
 
     this.obj.properties.set('add', {
       value: createNativeFunction('add', (_this, args) => {
@@ -167,7 +167,7 @@ export class DOMTokenList {
   // ── Getters / setters / numeric indexing ────────────────────────────────
 
   private _bindGettersSetters(): void {
-    const self = this;
+    const self = this; // eslint-disable-line @typescript-eslint/no-this-alias
 
     // value getter/setter
     this.obj.properties.set('value', {

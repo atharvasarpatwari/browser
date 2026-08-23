@@ -6,8 +6,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
-import { randomUUID } from 'crypto';
-import { createHash } from 'crypto';
+import { randomUUID, hashSync } from '../security/crypto-utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -76,11 +75,11 @@ export type SyncEventHandler = (event: SyncEvent) => void;
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function deriveEncryptionKey(passphrase: string): string {
-  return createHash('sha256').update(passphrase).digest('hex');
+  return hashSync('sha256', passphrase);
 }
 
 export function computeChecksum(data: unknown): string {
-  return createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 16);
+  return hashSync('sha256', JSON.stringify(data)).slice(0, 16);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

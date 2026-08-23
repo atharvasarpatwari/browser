@@ -401,8 +401,7 @@ class CrashReporter implements ICrashReporter {
       const fs = require('node:fs') as typeof import('node:fs');
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const path = require('node:path') as typeof import('node:path');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { randomUUID } = require('node:crypto') as typeof import('node:crypto');
+      const { randomUUID } = require('../security/crypto-utils') as typeof import('../security/crypto-utils');
 
       const dir = this.enhancedConfig.minidumpDir;
       if (!fs.existsSync(dir)) {

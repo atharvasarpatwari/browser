@@ -620,6 +620,7 @@ function inBodyEndTag(ctx: TreeBuilderContext, token: Token): void {
       return;
     }
 
+    /* eslint-disable no-duplicate-case -- 'br' appears in both start-tag and end-tag switches (different functions) */
     case 'area': case 'base': case 'basefont': case 'bgsound':
     case 'br': case 'embed': case 'hr': case 'img': case 'input':
     case 'keygen': case 'link': case 'meta': case 'param':
@@ -627,6 +628,7 @@ function inBodyEndTag(ctx: TreeBuilderContext, token: Token): void {
       ctx.parseError(token);
       return;
     }
+    /* eslint-enable no-duplicate-case */
 
     case 'select': case 'option': case 'optgroup': {
       if (ctx.isInScope(tag)) {

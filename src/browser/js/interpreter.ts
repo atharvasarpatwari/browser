@@ -786,8 +786,8 @@ export class Interpreter {
       case '>': return (left as unknown as number) > (right as unknown as number);
       case '<=': return (left as unknown as number) <= (right as unknown as number);
       case '>=': return (left as unknown as number) >= (right as unknown as number);
-      case '==': return left == right as unknown as boolean;
-      case '!=': return left != right as unknown as boolean;
+      case '==': return left == right as unknown as boolean; // eslint-disable-line eqeqeq -- JS loose-equality semantics
+      case '!=': return left != right as unknown as boolean; // eslint-disable-line eqeqeq -- JS loose-equality semantics
       case '===': return left === right;
       case '!==': return left !== right;
       case '&': return toNumber(left) & toNumber(right);
@@ -1702,7 +1702,7 @@ export class Interpreter {
     }));
 
     // eval()
-    const self = this;
+    const self = this; // eslint-disable-line @typescript-eslint/no-this-alias
     env.setLocal('eval', createNativeFunction('eval', (_this, args) => {
       const code = toString(args[0]);
 

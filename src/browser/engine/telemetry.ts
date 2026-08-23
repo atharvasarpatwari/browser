@@ -6,7 +6,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
-import { randomUUID } from 'crypto';
+import { randomUUID, hashSync } from '../security/crypto-utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -93,7 +93,7 @@ export type TelemetryEventHandler = (event: TelemetryEvent) => void;
 // ─────────────────────────────────────────────────────────────────────────────
 
 function anonymizeId(raw: string): string {
-  const hash = require('crypto').createHash('sha256').update(raw).digest('hex');
+  const hash = hashSync('sha256', raw);
   return hash.slice(0, 16);
 }
 

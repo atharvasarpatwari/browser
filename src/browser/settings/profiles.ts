@@ -6,7 +6,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
-import { randomUUID } from 'crypto';
+import { randomUUID } from '../security/crypto-utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES

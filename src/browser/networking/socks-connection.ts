@@ -383,7 +383,7 @@ export async function connectThroughSocks(
 
   return new Promise<Socket>((resolve, reject) => {
     let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined; // eslint-disable-line prefer-const
 
     const finish = (fn: () => void) => {
       if (settled) return;

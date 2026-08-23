@@ -63,7 +63,7 @@ class ServiceWorkerContainer implements IServiceWorkerContainer {
     const existing = this._registrations.find(r => r.scope === scope);
     if (existing) return existing;
 
-    const self = this;
+    const self = this; // eslint-disable-line @typescript-eslint/no-this-alias
 
     const sw: ServiceWorker = {
       scriptURL,

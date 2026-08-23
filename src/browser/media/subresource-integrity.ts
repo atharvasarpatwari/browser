@@ -305,8 +305,8 @@ function wordsToBytes(words: bigint[], wordBytes: number): Uint8Array {
 
 function shaDigest(algorithm: IntegrityAlgorithm, content: Uint8Array): Uint8Array {
   try {
-    const nodeCrypto = require('node:crypto') as typeof import('node:crypto');
-    return new Uint8Array(nodeCrypto.createHash(algorithm).update(content).digest());
+    const { hashRaw } = require('../security/crypto-utils') as typeof import('../security/crypto-utils');
+    return hashRaw(algorithm, content);
   } catch {
     const digest = algorithm === 'sha256' ? sha256Core(content) : sha512Core(content);
     if (algorithm === 'sha384') {

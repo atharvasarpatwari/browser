@@ -200,7 +200,7 @@ class PreloadBridge {
    * Create the `window.__nova` bridge object.
    */
   createBridgeObject(): Record<string, unknown> {
-    const self = this;
+    const self = this; // eslint-disable-line @typescript-eslint/no-this-alias
     const bridge: Record<string, unknown> = {};
 
     // DOM bridge

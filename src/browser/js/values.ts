@@ -182,7 +182,7 @@ export class Environment {
   declare(name: string, value: JSValue, kind: 'var' | 'let' | 'const' = 'var'): void {
     if (kind === 'var') {
       // var declarations hoist to the nearest function scope
-      let scope: Environment | null = this;
+      let scope: Environment | null = this; // eslint-disable-line @typescript-eslint/no-this-alias
       while (scope && !scope.isFunctionScope()) {
         scope = scope.parent;
       }
@@ -288,7 +288,7 @@ export class Environment {
 
 export function toBoolean(val: JSValue): boolean {
   if (val === undefined || val === null) return false;
-  if (val === false || val === 0 || val === -0) return false;
+  if (val === false || val === 0 || val === -0) return false; // eslint-disable-line no-compare-neg-zero -- JS engine semantics
   if (typeof val === 'number' && isNaN(val)) return false;
   if (val === true || val === '') return val === true;
   if (typeof val === 'bigint') return val !== 0n;

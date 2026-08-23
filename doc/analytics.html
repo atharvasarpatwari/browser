@@ -416,10 +416,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   </div>
   <h1 class="sr-only">Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num">191</span> Documents</span>
-    <span><span class="num">25</span> Days</span>
+    <span><span class="num">201</span> Documents</span>
+    <span><span class="num">28</span> Days</span>
     <span><span class="num">8,947</span> Total Suite Tests</span>
-    <span>Generated <span class="num">2026-08-19</span></span>
+    <span>Generated <span class="num">2026-08-21</span></span>
   </p>
 </header>
 
@@ -449,10 +449,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <div class="kpi-row" id="kpis">
-  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">191</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">201</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
   <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,022</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
-  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">374</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
-  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,051</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">399</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,113</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
   <div class="kpi amber glass"><span class="icon">📐</span><div class="value" id="kpiCompliance">~72%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
 </div>
 
@@ -995,7 +995,16 @@ const DOCS=[
 {file:"2026-08-15-mobile-phase2-session-d.md",date:"2026-08-15",title:"Mobile Phase 2 — Session D (Error Page, History Delete, Copy/Share URL)",category:"UI",tests:5,status:"Completed",rootCauses:0,filesModified:7,filesCreated:2},
 {file:"2026-08-19-animation-track-b-complete.md",date:"2026-08-19",title:"Animation Track B — Complete (Transform, Color, CSS Transitions, Events, Lifecycle)",category:"Rendering",tests:27,status:"Completed",rootCauses:5,filesModified:12,filesCreated:4},
 {file:"2026-08-19-comprehensive-test-suite-fixes.md",date:"2026-08-19",title:"Comprehensive Test Suite — API Mismatch Fixes (173 Tests, 7 Root Causes)",category:"Architecture",tests:173,status:"Completed",rootCauses:7,filesModified:1,filesCreated:1},
-{file:"2026-08-19-new-tab-page.md",date:"2026-08-19",title:"Custom New-Tab Page (Branded Search + Quick Links)",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:7,filesCreated:1}
+{file:"2026-08-19-new-tab-page.md",date:"2026-08-19",title:"Custom New-Tab Page (Branded Search + Quick Links)",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:7,filesCreated:1},
+{file:"2026-08-20-tier1-quick-wins.md",date:"2026-08-20",title:"Tier 1 Quick Wins — Type Errors, Path Alias, CI Lint",category:"Architecture",tests:0,status:"Completed",rootCauses:4,filesModified:16,filesCreated:0},
+{file:"2026-08-20-tier2-code-quality.md",date:"2026-08-20",title:"Tier 2 Code Quality — Dead Code, Module Split, Type Safety",category:"Architecture",tests:0,status:"Completed",rootCauses:3,filesModified:3,filesCreated:4},
+{file:"2026-08-20-tier3-testing-ci.md",date:"2026-08-20",title:"Tier 3 Testing & CI — Multi-Platform CI, Build Verification",category:"Architecture",tests:0,status:"Completed",rootCauses:3,filesModified:2,filesCreated:0},
+{file:"2026-08-20-tier4-build-security.md",date:"2026-08-20",title:"Tier 4 — Electron Security Hardening + Cross-Platform Builds",category:"Security",tests:0,status:"Completed",rootCauses:5,filesModified:2,filesCreated:1},
+{file:"2026-08-20-tier5-architecture-circular-deps.md",date:"2026-08-20",title:"Tier 5 — Architecture: Circular Dependency Breakdown",category:"Architecture",tests:0,status:"Completed",rootCauses:3,filesModified:12,filesCreated:3},
+{file:"2026-08-20-tier6-lint-bugfixes-types.md",date:"2026-08-20",title:"Tier 6 — Lint Cleanup, Bug Fixes, and Type Safety",category:"Architecture",tests:0,status:"Completed",rootCauses:4,filesModified:5,filesCreated:0},
+{file:"2026-08-21-css-theme-integration.md",date:"2026-08-21",title:"CSS Theme Integration — Dark-Glass Minimalism",category:"CSS",tests:0,status:"Completed",rootCauses:0,filesModified:2,filesCreated:0},
+{file:"2026-08-21-typed-arrays-as-any-cleanup.md",date:"2026-08-21",title:"typed-arrays.ts — Remove All as any Casts",category:"JavaScript",tests:0,status:"Completed",rootCauses:3,filesModified:1,filesCreated:1},
+{file:"2026-08-21-web-apis-as-any-cleanup.md",date:"2026-08-21",title:"web-apis.ts as any Cleanup + Type Interface Hardening",category:"JavaScript",tests:0,status:"Completed",rootCauses:0,filesModified:2,filesCreated:0}
 ];
 
 const CAT_COLORS={CSS:'#60a5fa',HTML5:'#f472b6',JavaScript:'#fbbf24',Layout:'#34d399',Rendering:'#a855f7',Security:'#f87171','IPC/Networking':'#00f0ff',UI:'#f472b6',Architecture:'#94a3b8',Plan:'#fbbf24'};

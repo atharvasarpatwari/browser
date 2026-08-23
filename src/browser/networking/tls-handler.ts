@@ -622,11 +622,11 @@ class TlsHandler implements ITlsHandler {
     return hostname === pattern;
   }
 
-  /** SHA-256 hex fingerprint using real node:crypto. */
+  /** SHA-256 hex fingerprint using real crypto. */
   private static sha256Hex(input: string): string {
     try {
-      const { createHash } = require('node:crypto') as typeof import('node:crypto');
-      return createHash('sha256').update(input, 'utf-8').digest('hex');
+      const { hashSync } = require('../security/crypto-utils') as typeof import('../security/crypto-utils');
+      return hashSync('sha256', input);
     } catch {
       // Fallback for environments without node:crypto (tests, browser)
       let hash = 0;

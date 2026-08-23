@@ -1117,7 +1117,7 @@ export function createHostImports(env: HostEnv): WebAssembly.Imports {
       host_eq: (_argc: number, a: bigint, b: bigint): bigint => {
         const ja = env.toJSValue(a);
         const jb = env.toJSValue(b);
-        return (ja == jb) ? TAG_TRUE : TAG_FALSE;
+        return (ja == jb) ? TAG_TRUE : TAG_FALSE; // eslint-disable-line eqeqeq -- JS semantics
       },
       host_seq: (_argc: number, a: bigint, b: bigint): bigint => {
         return (env.toJSValue(a) === env.toJSValue(b)) ? TAG_TRUE : TAG_FALSE;

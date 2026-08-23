@@ -7,7 +7,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
-import { createHash } from 'crypto';
+import { hashSync } from '../security/crypto-utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -129,7 +129,7 @@ export function isUpdateAvailable(current: string, latest: string): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function verifyChecksum(data: Buffer, expectedSha256: string): boolean {
-  const hash = createHash('sha256').update(data).digest('hex');
+  const hash = hashSync('sha256', data);
   return hash === expectedSha256;
 }
 

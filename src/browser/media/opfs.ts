@@ -91,7 +91,7 @@ class OPFSWritableStreamImpl implements OPFSWritableStream {
 
 class OPFSFileHandleImpl implements OPFSFileHandle {
   readonly name: string;
-  readonly kind: 'file' = 'file';
+  readonly kind = 'file' as const;
   private _data: Uint8Array;
 
   constructor(name: string, data?: Uint8Array) {
@@ -120,7 +120,7 @@ class OPFSFileHandleImpl implements OPFSFileHandle {
 
 class OPFSDirectoryHandleImpl implements OPFSDirectoryHandle {
   readonly name: string;
-  readonly kind: 'directory' = 'directory';
+  readonly kind = 'directory' as const;
   private _entries = new Map<string, OPFSFileHandle | OPFSDirectoryHandle>();
 
   constructor(name: string) {

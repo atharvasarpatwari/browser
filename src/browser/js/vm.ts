@@ -307,14 +307,14 @@ export class BytecodeVM {
           const right = this.stack[this.sp - 1]!;
           const left = this.stack[this.sp - 2]!;
           this.sp--;
-          this.stack[this.sp - 1] = left == right;
+          this.stack[this.sp - 1] = left == right; // eslint-disable-line eqeqeq -- JS loose-equality
           break;
         }
         case OP.NEQ: {
           const right = this.stack[this.sp - 1]!;
           const left = this.stack[this.sp - 2]!;
           this.sp--;
-          this.stack[this.sp - 1] = left != right;
+          this.stack[this.sp - 1] = left != right; // eslint-disable-line eqeqeq -- JS loose-equality
           break;
         }
         case OP.SEQ: {

@@ -43,9 +43,9 @@ function buildDoc(html: string): { doc: ReturnType<DomTree['buildFromHtml']>; tr
 
 /** Drive the timeline deterministically to a known elapsed time. */
 function advance(timeline: AnimationTimeline, elapsedMs: number): void {
-  const t0 = performance.now();
-  (timeline as unknown as { _startTime: number | null })._startTime = t0;
-  timeline.tick(t0 + elapsedMs);
+  (timeline as unknown as { _startTime: number | null })._startTime = 0;
+  timeline.tick(elapsedMs);
+  (timeline as unknown as { _startTime: number | null })._startTime = performance.now() - elapsedMs;
 }
 
 /** Pin tracked animations to a 0 start offset so ticks are exact. */

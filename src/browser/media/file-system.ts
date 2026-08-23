@@ -66,7 +66,7 @@ interface FileSystemEvent {
 
 class InMemoryFileHandle implements FileHandle {
   readonly name: string;
-  readonly kind: 'file' = 'file';
+  readonly kind = 'file' as const;
   private _content: Uint8Array;
 
   constructor(name: string, content?: Uint8Array) {
@@ -79,7 +79,7 @@ class InMemoryFileHandle implements FileHandle {
   }
 
   async createWritable(_options?: FileWritableOptions): Promise<WritableStream> {
-    const self = this;
+    const self = this as InMemoryFileHandle; // eslint-disable-line @typescript-eslint/no-this-alias
     return new WritableStream({
       write(chunk) {
         const buffer = typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk);
@@ -95,7 +95,7 @@ class InMemoryFileHandle implements FileHandle {
 
 class InMemoryDirectoryHandle implements DirectoryHandle {
   readonly name: string;
-  readonly kind: 'directory' = 'directory';
+  readonly kind = 'directory' as const;
   private _entries = new Map<string, FileHandle | DirectoryHandle>();
 
   constructor(name: string) {

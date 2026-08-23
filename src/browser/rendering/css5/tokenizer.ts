@@ -7,7 +7,7 @@
  *   - Identifiers, strings, numbers, dimensions, percentages
  *   - Hash tokens (ID selectors, color literals)
  *   - Function tokens (rgb(), var(), calc(), etc.)
- *   - Comments (/* ... *​/)
+ *   - Comments (slash-star ... star-slash)
  *   - At-keywords (@media, @import, etc.)
  *   - URL tokens (url(...))
  *   - Escaped characters

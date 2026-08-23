@@ -112,7 +112,7 @@ export class Messaging {
     const callbacks: Array<(msg: unknown) => void> = [];
     const disconnectCallbacks: Array<() => void> = [];
     let disconnected = false;
-    const self = this;
+    const self = this; // eslint-disable-line @typescript-eslint/no-this-alias
 
     const port: Port = {
       name: portName,
