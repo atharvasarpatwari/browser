@@ -1,6 +1,17 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
+// Release signing is optional and file-based: copy android/keystore.properties.example
+// to android/keystore.properties (gitignored — never commit it) and fill in real values.
+// See doc/android-release-signing.md. Without that file, release builds stay unsigned,
+// same as before this was added.
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+def hasReleaseSigning = keystorePropertiesFile.exists()
+def keystoreProperties = new Properties()
+if (hasReleaseSigning) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace "com.nova.browser"
     compileSdk 34
@@ -13,10 +24,24 @@ android {
         versionName "1.0"
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile rootProject.file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 

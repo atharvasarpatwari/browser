@@ -16,6 +16,8 @@
     "test:electron": "npm run build:web && playwright test --config=playwright-electron.config.cjs",
     "pack:win": "vite build && electron-builder --win --dir",
     "build:win": "vite build && electron-builder --win",
+    "build:mac": "vite build && electron-builder --mac",
+    "build:linux": "vite build && electron-builder --linux",
     "android": "cd android && gradlew.bat installDebug",
     "android:assemble": "cd android && gradlew.bat assembleDebug",
     "android:install": "cd android && gradlew.bat installDebug",
@@ -54,6 +56,7 @@
     "@capacitor/cli": "^7.6.8",
     "@capacitor/core": "^8.4.2",
     "@stacksjs/ts-webp": "^0.1.2",
+    "electron-updater": "^6.3.9",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0",
     "webgpu": "^0.4.0"

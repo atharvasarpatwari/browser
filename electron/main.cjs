@@ -23,6 +23,23 @@ function writeHealthLog(entry) {
   }
 }
 
+// ── Process-level resilience ────────────────────────────────────────────────
+// Renderer crashes were already handled (render-process-gone / unresponsive
+// below), but nothing caught a main-process-level exception — an uncaught
+// throw or rejection here would take the whole app down silently. Log and
+// keep running, matching the renderer side's "recover, don't die" approach.
+
+process.on('uncaughtException', (err) => {
+  console.error('[Nova] Uncaught exception in main process:', err)
+  writeHealthLog(`MAIN_UNCAUGHT_EXCEPTION error=${err && err.message ? err.message : String(err)}`)
+})
+
+process.on('unhandledRejection', (reason) => {
+  const message = reason && reason.message ? reason.message : String(reason)
+  console.error('[Nova] Unhandled rejection in main process:', reason)
+  writeHealthLog(`MAIN_UNHANDLED_REJECTION reason=${message}`)
+})
+
 function resolveIcon() {
   const candidates = [
     path.join(__dirname, '..', 'build', 'icon.png'),
@@ -142,8 +159,9 @@ function createWindow() {
       // sandbox) and fetches arbitrary URLs itself, so we relax the host
       // webview. Harden via main-process net routing in a later release.
       webSecurity: false,
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.cjs'),
       spellcheck: false,
       // The renderer resolves its persistent web-storage directory from argv
       // (see main.ts), avoiding main-only `app` APIs inside the renderer.
@@ -294,6 +312,40 @@ function stopWatchdog() {
   }
 }
 
+// ── Auto-update ──────────────────────────────────────────────────────────
+// Guarded: electron-updater is a new dependency (see package.json) that may
+// not be installed yet in every checkout, and update checks only make sense
+// for a packaged build pointed at a real GitHub release, never in dev. Never
+// let this block app startup — log and move on if anything here fails.
+
+function setupAutoUpdater() {
+  if (!app.isPackaged || DEV_SERVER_URL) {
+    writeHealthLog('AUTO_UPDATE_SKIPPED reason=dev-or-unpackaged')
+    return
+  }
+
+  let autoUpdater
+  try {
+    ;({ autoUpdater } = require('electron-updater'))
+  } catch (err) {
+    writeHealthLog(`AUTO_UPDATE_UNAVAILABLE error=${err && err.message ? err.message : String(err)}`)
+    return
+  }
+
+  autoUpdater.logger = null
+  autoUpdater.autoDownload = false
+
+  autoUpdater.on('checking-for-update', () => writeHealthLog('AUTO_UPDATE_CHECKING'))
+  autoUpdater.on('update-available', (info) => writeHealthLog(`AUTO_UPDATE_AVAILABLE version=${info.version}`))
+  autoUpdater.on('update-not-available', () => writeHealthLog('AUTO_UPDATE_UP_TO_DATE'))
+  autoUpdater.on('error', (err) => writeHealthLog(`AUTO_UPDATE_ERROR error=${err && err.message ? err.message : String(err)}`))
+  autoUpdater.on('update-downloaded', (info) => writeHealthLog(`AUTO_UPDATE_DOWNLOADED version=${info.version}`))
+
+  autoUpdater.checkForUpdates().catch((err) => {
+    writeHealthLog(`AUTO_UPDATE_CHECK_FAILED error=${err && err.message ? err.message : String(err)}`)
+  })
+}
+
 function installApplicationMenu() {
   const isMac = process.platform === 'darwin'
   const template = [
@@ -314,6 +366,7 @@ app.whenReady().then(() => {
   mainWindow = createWindow()
   writeHealthLog('APP_READY')
   startWatchdog()
+  setupAutoUpdater()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

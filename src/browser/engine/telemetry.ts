@@ -98,10 +98,13 @@ function anonymizeId(raw: string): string {
 }
 
 function generateMachineId(): string {
+  const platform = typeof process !== 'undefined' ? process.platform : 'browser';
+  const arch = typeof process !== 'undefined' ? process.arch : 'unknown';
+  const pid = typeof process !== 'undefined' ? process.pid : 0;
   const parts = [
-    process.platform,
-    process.arch,
-    String(process.pid),
+    platform,
+    arch,
+    String(pid),
     String(Date.now()),
   ];
   return parts.join('-');

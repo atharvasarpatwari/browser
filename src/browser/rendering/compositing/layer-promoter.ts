@@ -17,6 +17,7 @@ import type { ViewportRect } from './tile-grid';
 export interface PromotionHint {
   readonly willChange: string | null;
   readonly hasTransform: boolean;
+  readonly hasAnimatedTransform: boolean;
   readonly hasOpacityLessThan1: boolean;
   readonly hasFilter: boolean;
   readonly hasIsolation: boolean;
@@ -62,7 +63,11 @@ export class LayerPromoter {
     const style = el.computedStyle ?? new Map();
 
     const willChange = style.get('will-change') ?? null;
-    const hasTransform = !!(style.get('transform') && style.get('transform') !== 'none');
+    // Animated pure-translation overlay (set by the stacking builder from the
+    // transform resolver) counts as an active transform for promotion.
+    const hasAnimatedTransform = !!(ctx.translate && (ctx.translate.x !== 0 || ctx.translate.y !== 0));
+    const hasTransform = hasAnimatedTransform ||
+      !!(style.get('transform') && style.get('transform') !== 'none');
     const hasOpacityLessThan1 = ctx.isGrouped;
     const hasFilter = !!(style.get('filter') && style.get('filter') !== 'none');
     const hasIsolation = style.get('isolation') === 'isolate';
@@ -91,6 +96,9 @@ export class LayerPromoter {
     if (hasWillChangeHint) {
       shouldPromote = true;
       reason = `will-change: ${willChange}`;
+    } else if (hasAnimatedTransform) {
+      shouldPromote = true;
+      reason = 'animated transform';
     } else if (hasTransform) {
       shouldPromote = true;
       reason = 'transform';
@@ -111,6 +119,7 @@ export class LayerPromoter {
     return {
       willChange,
       hasTransform,
+      hasAnimatedTransform,
       hasOpacityLessThan1,
       hasFilter,
       hasIsolation,

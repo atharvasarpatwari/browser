@@ -1,6 +1,10 @@
 appId: com.nova.browser
 productName: Nova Browser
 copyright: "© 2026 Nova Browser"
+publish:
+  provider: github
+  owner: atharvasarpatwari
+  repo: browser
 directories:
   output: release
   buildResources: build

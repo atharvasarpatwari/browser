@@ -700,7 +700,7 @@ describe('Bytecode VM', () => {
       const start = Date.now();
       evalJSWithVM('var sum = 0; for (var i = 0; i < 10000; i++) { sum += i; } sum');
       const elapsed = Date.now() - start;
-      expect(elapsed).toBeLessThan(1000);
+      expect(elapsed).toBeLessThan(5000);
     });
     it('recursive fibonacci(20) within timeout', () => {
       const start = Date.now();

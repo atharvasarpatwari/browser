@@ -20,6 +20,7 @@ import { parseBorders, parseBorderRadius, renderBorderSide } from './borders-enh
 import { parseBoxShadow, parseTextShadow } from './shadows';
 import { parseFilter } from './css-filters';
 import { parseClipPath, parseMask } from './clip-mask';
+import { parseTransform, isPureTranslation4x4 } from './transform-parser';
 import type { BlendMode } from './blend-modes';
 
 type PaintCommandType =
@@ -47,6 +48,7 @@ interface PaintLayer {
   readonly opacity: number;
   readonly commands: readonly PaintCommand[];
   readonly bounds: LayoutBox | null;
+  readonly translate: { x: number; y: number } | null;
 }
 
 type PaintEventType = 'layerPainted' | 'frameComposited' | 'viewportChanged';
@@ -231,6 +233,7 @@ class PaintEngine implements IPaintEngine {
         { type: 'fillRect', params: [0, 0, this.config.width, this.config.height] },
       ],
       bounds: null,
+      translate: null,
     });
 
     const allElements: DomElement[] = [];
@@ -280,12 +283,21 @@ class PaintEngine implements IPaintEngine {
       const sortedLayers = [...this.layers].sort((a, b) => a.zIndex - b.zIndex);
       for (const layer of sortedLayers) {
         if (layer.opacity <= 0) continue;
-        if (layer.opacity < 1) {
+
+        const hasTranslate = layer.translate && (layer.translate.x !== 0 || layer.translate.y !== 0);
+        const needsSave = layer.opacity < 1 || hasTranslate;
+
+        if (needsSave) {
           allCommands.push({ type: 'save', params: [] });
+        }
+        if (layer.opacity < 1) {
           allCommands.push({ type: 'setGlobalAlpha', params: [layer.opacity] });
         }
+        if (hasTranslate) {
+          allCommands.push({ type: 'translate', params: [layer.translate!.x, layer.translate!.y] });
+        }
         allCommands.push(...layer.commands);
-        if (layer.opacity < 1) {
+        if (needsSave) {
           allCommands.push({ type: 'restore', params: [] });
         }
       }
@@ -689,12 +701,24 @@ class PaintEngine implements IPaintEngine {
     const commands = this.getElementPaintCommands(node);
 
     const animatedOpacity = this._opacityResolver?.(node);
+
+    // Get animated transform for this element
+    let translate: { x: number; y: number } | null = null;
+    const animatedTransform = this._transformResolver?.(node);
+    if (animatedTransform && animatedTransform !== 'none') {
+      const parsed = parseTransform(animatedTransform);
+      if (parsed && isPureTranslation4x4(parsed.matrix)) {
+        translate = { x: parsed.matrix.m41, y: parsed.matrix.m42 };
+      }
+    }
+
     const layer: PaintLayer = {
       id: nextLayerId(),
       zIndex: layerZIndex,
       opacity: (animatedOpacity ?? parseFloat(style.get('opacity') ?? '1')) || 1,
       commands,
       bounds: (node as { layoutBox: LayoutBox | null }).layoutBox ?? null,
+      translate,
     };
 
     this.layers.push(layer);

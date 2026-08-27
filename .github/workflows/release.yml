@@ -1,4 +1,4 @@
-name: Release Windows Installer
+name: Release Installers
 
 on:
   push:
@@ -11,8 +11,21 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
-    name: Build and publish installer
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: build:win
+            artifact: win
+          - os: macos-latest
+            script: build:mac
+            artifact: mac
+          - os: ubuntu-latest
+            script: build:linux
+            artifact: linux
+    runs-on: ${{ matrix.os }}
+    name: Build and publish installer (${{ matrix.os }})
 
     steps:
       - uses: actions/checkout@v4
@@ -26,13 +39,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Windows installer
-        run: npm run build:win
+      - name: Build installer (${{ matrix.os }})
+        run: npm run ${{ matrix.script }}
         env:
           ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
-      - name: Verify installer artifact
-        run: Get-ChildItem -Path release -Filter "*.exe" | Select-Object Name, Length
+      - name: Verify installer artifacts
+        shell: pwsh
+        run: Get-ChildItem -Path release -Recurse | Select-Object Name, Length
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -42,4 +57,8 @@ jobs:
           files: |
             release/*.exe
             release/*.blockmap
-            release/latest.yml
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.yml

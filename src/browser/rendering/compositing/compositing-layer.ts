@@ -10,7 +10,7 @@ import type { PaintCommand } from '../paint-engine';
 import type { StackingContext } from '../formatting/stacking';
 import { DamageTracker } from '../damage-tracker';
 import { TileGrid, TILE_SIZE, type ViewportRect } from './tile-grid';
-import { parseTransform, type DOMMatrix4x4, identity4x4 } from '../transform-parser';
+import { parseTransform, translate3D, type DOMMatrix4x4 } from '../transform-parser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -91,10 +91,17 @@ export class CompositingLayer {
     this.groupOpacity = stackingContext.groupOpacity;
 
     const style = sourceElement.computedStyle ?? new Map();
-    const transformStr = style.get('transform') ?? 'none';
-    this.hasTransform = !!(transformStr && transformStr !== 'none');
-    const parsed = parseTransform(transformStr);
-    this.transformMatrix = parsed ? parsed.matrix : null;
+    // Animated transform overlay takes precedence: when the stacking builder
+    // resolved an animated pure translation, it replaces the static matrix.
+    const animTranslate = stackingContext.translate;
+    if (animTranslate) {
+      this.transformMatrix = translate3D(animTranslate.x, animTranslate.y, 0);
+    } else {
+      const transformStr = style.get('transform') ?? 'none';
+      const parsed = parseTransform(transformStr);
+      this.transformMatrix = parsed ? parsed.matrix : null;
+    }
+    this.hasTransform = !!this.transformMatrix;
     this.hasFilter = !!(style.get('filter') && style.get('filter') !== 'none');
 
     this.config = { ...DEFAULT_LAYER_CONFIG, ...config };

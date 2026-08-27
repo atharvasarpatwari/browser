@@ -275,7 +275,7 @@ function createScrubbedEnvironment(
 ): ScrubbedEnvironment {
   const scrubbed: ScrubbedEnvironment = {};
 
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(typeof process !== 'undefined' ? process.env : {})) {
     if (value === undefined) continue;
     if (ENV_BLACKLIST.includes(key)) continue;
     // Remove any env var that looks like a secret

@@ -228,10 +228,11 @@ export class AutoUpdater implements IAutoUpdater {
   }
 
   private detectPlatform(): string {
-    const os = process.platform;
-    const arch = process.arch;
+    const os = typeof process !== 'undefined' ? process.platform : 'browser';
+    const arch = typeof process !== 'undefined' ? process.arch : 'unknown';
     if (os === 'win32') return `win-${arch}`;
     if (os === 'darwin') return `darwin-${arch}`;
+    if (os === 'browser') return `browser-${arch}`;
     return `linux-${arch}`;
   }
 

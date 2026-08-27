@@ -43,9 +43,10 @@ captures/
 .idea/modules.xml
 .idea/navEditor.xml
 
-# Keystore files
-#*.jks
-#*.keystore
+# Keystore files — never commit real signing material
+*.jks
+*.keystore
+keystore.properties
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild

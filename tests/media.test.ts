@@ -291,7 +291,7 @@ describe('MediaSource', () => {
 });
 
 describe('SourceBuffer', () => {
-  it('appends data and updates buffered ranges', (done: () => void) => {
+  it('appends data and updates buffered ranges', () => new Promise<void>((resolve) => {
     const buf = new SourceBufferImpl('video/mp4');
     expect(buf.updating).toBe(false);
     buf.appendBuffer(new Uint8Array([0, 1, 2, 3]));
@@ -299,21 +299,21 @@ describe('SourceBuffer', () => {
     setTimeout(() => {
       expect(buf.updating).toBe(false);
       expect(buf.buffered.length).toBeGreaterThan(0);
-      done();
+      resolve();
     }, 100);
-  });
+  }));
 
-  it('remove filters buffered ranges', (done: () => void) => {
+  it('remove filters buffered ranges', () => new Promise<void>((resolve) => {
     const buf = new SourceBufferImpl('video/mp4');
     buf.appendBuffer(new Uint8Array(1024));
     setTimeout(() => {
       buf.remove(0, 0.5);
       setTimeout(() => {
         expect(buf.updating).toBe(false);
-        done();
+        resolve();
       }, 100);
     }, 100);
-  });
+  }));
 
   it('abort stops updating', () => {
     const buf = new SourceBufferImpl('video/mp4');
@@ -684,7 +684,7 @@ describe('VideoDecoder', () => {
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }));
   });
 
-  it('decode emits output', (done: () => void) => {
+  it('decode emits output', () => new Promise<void>((resolve) => {
     const handler = vi.fn();
     decoder.onEvent(handler);
     decoder.configure({ codec: 'vp8' });
@@ -692,9 +692,9 @@ describe('VideoDecoder', () => {
     decoder.decode(chunk);
     setTimeout(() => {
       expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'output' }));
-      done();
+      resolve();
     }, 150);
-  });
+  }));
 
   it('reset returns to unconfigured', () => {
     decoder.configure({ codec: 'vp8' });
@@ -724,7 +724,7 @@ describe('AudioDecoder', () => {
     expect(decoder.state).toBe('configured');
   });
 
-  it('decode emits output', (done: () => void) => {
+  it('decode emits output', () => new Promise<void>((resolve) => {
     const handler = vi.fn();
     decoder.onEvent(handler);
     decoder.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 });
@@ -732,9 +732,9 @@ describe('AudioDecoder', () => {
     decoder.decode(chunk);
     setTimeout(() => {
       expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'output' }));
-      done();
+      resolve();
     }, 150);
-  });
+  }));
 
   it('dispose cleans up', () => {
     decoder.dispose();
@@ -754,16 +754,16 @@ describe('VideoEncoder', () => {
     expect(encoder.state).toBe('configured');
   });
 
-  it('encode emits output', (done: () => void) => {
+  it('encode emits output', () => new Promise<void>((resolve) => {
     const handler = vi.fn();
     encoder.onEvent(handler);
     encoder.configure({ codec: 'vp8', width: 640, height: 480, bitrate: 1000000 });
     encoder.encode({ timestamp: 0, duration: 33, codedWidth: 640, codedHeight: 480, displayWidth: 640, displayHeight: 480, format: 'NV12', copyTo: async () => [], close: () => {} });
     setTimeout(() => {
       expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'output' }));
-      done();
+      resolve();
     }, 150);
-  });
+  }));
 
   it('flush resolves', async () => {
     await expect(encoder.flush()).resolves.toBeUndefined();
