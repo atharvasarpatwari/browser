@@ -18,6 +18,7 @@ import {
 } from './fetch-api';
 import { createXMLHttpRequestClass } from './xhr';
 import { createWebSocketClass } from './websocket-api';
+import { createRTCPeerConnectionClass, createRTCSessionDescriptionClass, createRTCIceCandidateClass } from './rtc-api';
 import { createWorkerConstructor } from './worker';
 import { createTypedArrayConstructors } from './typed-arrays';
 import { bindStorageAPIs } from './web-storage-bindings';
@@ -49,6 +50,7 @@ export { GarbageCollector, getGC, setGC } from './gc';
 export { Heap, getHeap, setHeap } from './heap';
 export { RootScanner, WeakRefStore } from './roots';
 export { createWebSocketClass, setPlatformWebSocketFactory } from './websocket-api';
+export { createRTCPeerConnectionClass, createRTCSessionDescriptionClass, createRTCIceCandidateClass } from './rtc-api';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC API
@@ -1797,6 +1799,12 @@ export function createGlobalEnv(
 
   // WebSocket
   env.setLocal('WebSocket', createWebSocketClass(eventLoop, resourceEnforcer, pageOrigin));
+
+  // WebRTC (Phase 1 — real ICE/STUN + a Nova-specific reliable data channel;
+  // NOT interoperable with real browsers yet, see doc/webrtc-implementation-plan.md)
+  env.setLocal('RTCPeerConnection', createRTCPeerConnectionClass(eventLoop));
+  env.setLocal('RTCSessionDescription', createRTCSessionDescriptionClass());
+  env.setLocal('RTCIceCandidate', createRTCIceCandidateClass());
 
   // Worker constructor
   env.setLocal('Worker', createWorkerConstructor(

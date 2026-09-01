@@ -1,41 +1,60 @@
 # Nova Browser — TODO
 
-Last updated: 2026-08-27
+Last updated: 2026-08-28
 
 ## Priority: High
 
-### 1. Triage recurring "pre-existing" test failures
+### 1. Android app — built, installed, and running for the first time (2026-08-28)
+- Source-level audit (`2026-08-27-android-app-source-audit.md`) found the Kotlin/Compose shell itself complete and consistent, and the bridge-contract audit found `window.novaNative`/`window.NovaStateBridge` fully consistent on both sides — no contract bugs.
+- A source-level engine-bundle sync (`2026-08-28-android-engine-bundle-sync.md`) was done by hand (file-bridge only, no shell) to un-stale the bundled JS, then **superseded the same day by a real build**: `2026-08-28-android-build-install.md` — `npm run build:android` ran end-to-end (web build → asset sync → `gradlew.bat assembleDebug` → `adb install`), producing a 21.4 MB APK installed and running on device `KNEUZTEE6TIBAIIV`. All the cleanup items previously tracked here are now done (see that doc's "Cleanup Completed" table) — the `com/` mirror, the empty `New folder`, orphaned stale-hashed assets, and the Capacitor/Cordova leftovers (`capacitor.settings.gradle`, `capacitor-cordova-android-plugins/`, the old `assets/public/`) were all removed via `git rm`.
+- [ ] Manual on-device feature pass: tabs, bookmarks/history, downloads (pause/resume/cancel/share), long-press context menu, file upload, camera/mic permission prompts, incognito, theme in light/dark system settings — no automated on-device test harness exists yet.
+- [ ] Many accumulated working-tree changes (from the earlier file-bridge-only sessions plus this build) remain **uncommitted** — run `git status` and commit them, including the newly built asset files and the cleanup deletions.
+
+### 2. Windows desktop app — blank-window bug root-caused and fixed, not yet re-verified
+- Launching the installed app showed a window with a working title bar/menu but a completely blank content area — no error dialog (DevTools are blocked in production builds, so nothing was visible from inside the app). Diagnosed via `nova-health.log`: the log had no new entries from the blank-window launch even though Chromium's own profile files had updated, meaning the renderer never reached `APP_READY` despite the main process clearly running (menu rendered).
+- Root cause: the 2026-08-23 contextIsolation migration (`nodeIntegration: false, contextIsolation: true` + a preload bridge) broke Nova's networking layer, which uses the bare Node `Buffer` global throughout — Electron's `contextBridge` can't hand the renderer a functional `Buffer` (instance methods don't survive it), so the renderer crashed with "Buffer is not defined" before mounting any UI. See `2026-08-28-windows-app-health-and-buffer-fix.md` for the full root-cause and the trade-off of the fix (reverting to `nodeIntegration: true, contextIsolation: false` re-widens renderer privilege — acceptable for now only because navigation to untrusted origins is already blocked at the `will-navigate` layer, but not the long-term-correct posture).
+- `electron/main.cjs` fixed and `dist/` rebuilt. **Not yet re-verified** — needs `npm run electron:start` (fastest check, no reinstall needed) or a fresh `npm run build:win` + clean install-and-launch pass.
+- [ ] Verify the fix actually resolves the blank window.
+- [ ] Rebuild and reinstall the real NSIS installer once verified.
+- [ ] Decide the long-term fix (Buffer-safe networking layer, or a contextBridge byte-array API) instead of leaving `nodeIntegration: true` permanently.
+- [ ] `electron/preload.cjs` is now unreferenced — decide whether to delete it or keep it for a future contextIsolation-safe rewrite.
+
+### 3. Triage recurring "pre-existing" test failures
 - Multiple session logs (e.g. `2026-08-06-security-protocol-modules.md`) note "only pre-existing networking/DNS failures remain" without ever naming or fixing the specific tests.
 - [ ] Run `npm test`, capture the exact failing test names, and either fix them or document explicitly why they're accepted long-term.
-- [ ] See `doc/known-test-failures.md` (added 2026-08-27) — currently a tracking template only; needs a live `npm test` run to fill in, which this session couldn't do (file-bridge access only, no shell).
+- [ ] See `doc/known-test-failures.md` (added 2026-08-27) — still a tracking template; the full suite has since been confirmed green as a whole (`npx vitest run` → 208 files / 9105 tests, `2026-08-27-webrtc-phase1-verification.md`), which is good evidence the "pre-existing" failures aren't currently active — but the template still needs a session to actually fill in the table (or note there's nothing left to log) rather than assume from a passing run.
 
-### 2. Re-verify fidelity audit periodically
+### 4. Re-verify fidelity audit periodically
 - The original run only captured `layout` and rendered near-blank; this was root-caused and fixed 2026-08-12 (`2026-08-12-animation-fidelity-flip.md` — a paint-caching bug). All 12 fixtures now render cleanly (`fidelity-report/report.md`, `frameDeltaClusters=1`, e2e 3/3).
 - [ ] Re-run `tests/e2e/fidelity-audit.spec.ts` after any future rendering-pipeline change (the 9-session pipeline rewrite finished 2026-08-27) to confirm this still holds — it's the kind of regression that fails silently otherwise.
 
 ## Priority: Medium
 
-### 3. Native Rust Wiring (Phase 3, parallel track)
+### 5. Native Rust Wiring (Phase 3, parallel track)
 - `nova-net` (DNS/TLS/HTTP) + `nova-bindings` (napi-rs) build locally; cross-platform CI matrix mostly commented out in `native-build.yml`.
 - [ ] Wire native DNS/TLS/HTTP into the JS `RawSocketHttpClient` layer with a JS fallback — or explicitly document this path as experimental/optional and keep the TS networking stack primary. Leaving it half-wired is worse than either committed state.
 - [ ] Activate the commented win/arm64 build jobs in `native-build.yml`.
 
-### 4. Multi-Process / crash isolation (Phase 2, parked)
+### 6. Multi-Process / crash isolation (Phase 2, parked)
 - Activate the `child_process.fork()` transport in `ProcessManager`; per-tab/domain process models; OS-level crash isolation.
 - [ ] See `doc/crash-isolation-scoping.md` (added 2026-08-27) for a minimal-first scoping pass — the underlying process-model design (`process-model-design-report.md`, 2026-07-21) and a "Crash recovery / isolation" module already exist; this may be closer to *activating* dormant infrastructure than building new isolation from scratch. Confirm that before scoping a bigger effort.
 
 ## Priority: Low
 
-### 5. Product Shipping (Phase 4)
-- [x] Auto-update wiring — `electron-updater` added as a dependency, a guarded `setupAutoUpdater()` added to `electron/main.cjs` (skips cleanly in dev / unpackaged builds, never blocks startup), `publish` block added to `electron-builder.yml` pointing at the existing GitHub Releases flow. **Untested** — needs a real tagged release to confirm the update check actually finds and offers it.
-- [x] Multi-platform release CI — `release.yml` previously built Windows only; extended 2026-08-27 to a Windows/macOS/Linux matrix (`build:mac` / `build:linux` scripts added to `package.json`), with `CSC_IDENTITY_AUTO_DISCOVERY: false` so the unsigned mac build doesn't fail looking for a local identity. **Untested** — needs an actual tag push to confirm all three legs succeed; the resulting installers will be unsigned (see `INSTALL.md`).
+### 7. Product Shipping (Phase 4)
+- [x] Auto-update wiring — `electron-updater` added as a dependency, a guarded `setupAutoUpdater()` added to `electron/main.cjs` (skips cleanly in dev / unpackaged builds, never blocks startup), `publish` block added to `electron-builder.yml` pointing at the existing GitHub Releases flow. **Still untested against a real update** — needs an actual tagged release to confirm the update check finds and offers it.
+- [x] Multi-platform release CI — `release.yml` extended to a Windows/macOS/Linux matrix and **applied** 2026-08-27 (`2026-08-27-roadmap-groundwork-placement.md`; the workflow-file write-protection that blocked this earlier was worked around outside the file-bridge). Windows leg confirmed by a real local `npm run build:win` (below). **macOS/Linux legs still untested** — they need a real tag push (`git tag v0.0.0-test && git push --tags` is the safe check) since those hosts aren't available locally.
+- [x] **Windows desktop build verified end-to-end** (`2026-08-27-windows-desktop-build-run.md`) — `npm run build:win` → real NSIS installer (`Nova Browser Setup 1.0.0.exe`, 93 MB), silent-installed, launched, confirmed the window mounts and the health-log watchdog recovers from a forced kill. Found and fixed a real bug in the process: the packaged app's health log was silently failing to write (`__dirname` resolves inside the read-only `app.asar`) — now resolves into `app.getPath('userData')`. Installer is still **unsigned** (SmartScreen warning on a fresh machine — expected, see `INSTALL.md`). **2026-08-28 update: a separate regression (contextIsolation/Buffer) made the installed app show a blank window — see item 2 above under Priority: High.** Fixed but not yet re-verified with a fresh install.
 - [x] Android release-signing scaffolding — `signingConfigs` added to `android/app/build.gradle`, reading from a gitignored `android/keystore.properties` (template: `android/keystore.properties.example`); falls back to the previous unsigned behavior when that file is absent. See `doc/android-release-signing.md`. **No real keystore has been generated or verified yet** — and Play Store distribution needs Play App Signing enrollment beyond this repo.
 - [ ] DevTools protocol exposure (remote debugging) — still open.
 - [ ] WASM build fallback (`native:build:wasm`) — still open.
 - [ ] Code-signing certificates (Windows EV cert, Apple Developer ID) — still open; without them, every install today triggers an OS "unknown publisher" warning. Worth doing before pointing anyone besides yourself at the installers.
+- [ ] Dev machine runs node v20.19.1; the repo's `engines` field expects >=22 — `npm install` succeeds with `EBADENGINE` warnings only (non-fatal so far), but worth aligning before it silently becomes fatal on a future dependency bump.
 
-### 6. Modern Web Platform (Phase 5)
-- Service Workers/PWA, WebRTC, WASM execution, CSS containment/subgrid/scroll-snap, JIT tiering. Still fully open — none of these have a design doc yet. Large scope individually; tackle one at a time with a dedicated design doc (see `jit-compilation-plan.md` / `fetch-api-xhr-plan.md` for the format that's worked well here before) rather than starting to code blind.
+### 8. Modern Web Platform (Phase 5)
+- Service Workers/PWA, WASM execution, CSS containment/subgrid/scroll-snap, JIT tiering — still fully open, no design docs yet. Tackle one at a time with a dedicated design doc (see `jit-compilation-plan.md` / `fetch-api-xhr-plan.md` for the format that's worked well here before) rather than starting to code blind.
+- [x] **WebRTC — Phase 1, verified 2026-08-27**: real ICE/STUN candidate gathering + connectivity checks over real UDP, `RTCPeerConnection` wired into the JS VM for the first time (previously only a simulated, unwired stand-in existed at `src/browser/media/webrtc.ts`), plus a working — but Nova-specific, not yet browser-interoperable — `RTCDataChannel`. See `doc/webrtc-implementation-plan.md` for Phases 2–4 (real DTLS+SCTP for actual interop, TURN/trickle-ICE, audio/video). **Run and fixed** (`2026-08-27-webrtc-phase1-verification.md`): a typecheck error, a test-assertion bug, and a real event-ordering bug where the receiving peer's data channel never fired `open` — all fixed. `tsc` clean, targeted 23/23, full suite 9105/9105.
+- [ ] `src/browser/media/webrtc.ts` (the old simulated class) is now dead weight — grep for importers before deleting it, see the design doc's "Open question" section.
 
 ## Done (reference)
 

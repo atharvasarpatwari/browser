@@ -819,6 +819,7 @@ class ApplicationBootstrap {
       scriptEnforcer: cspEnforcement.scriptEnforcer,
       resourceEnforcer: cspEnforcement.resourceEnforcer,
       securityLayer,
+      onFrameRendered: () => engine.notifyPageRepainted(),
     });
     engine.setPageRenderer(pageRenderer);
 

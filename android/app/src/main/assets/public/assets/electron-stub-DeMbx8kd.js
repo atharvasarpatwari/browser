@@ -1,1 +1,0 @@
-var e={openExternal:async e=>{typeof window<`u`&&window.open(e,`_blank`)}},t={shell:e};export{t as default,e as shell};

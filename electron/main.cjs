@@ -8,8 +8,23 @@ const fs = require('fs')
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 const APP_TITLE = 'Nova Browser'
 
-const HEALTH_LOG_PATH = path.join(__dirname, '..', 'nova-health.log')
 const HEALTH_LOG_ENABLED = process.env.NOVA_HEALTH_LOG !== '0'
+
+// Health log target. In dev/unpacked the write next to main.cjs (project root)
+// is fine, but when packaged __dirname points inside the read-only app.asar,
+// so resolve to a writable per-user location instead. app.getPath('userData')
+// is only valid after app is ready, hence the lazy getter.
+function healthLogPath() {
+  if (app.isPackaged) {
+    try {
+      return path.join(app.getPath('userData'), 'nova-health.log')
+    } catch {
+      // userData unavailable (very early) — fall back to a relative path
+      return path.join(__dirname, '..', 'nova-health.log')
+    }
+  }
+  return path.join(__dirname, '..', 'nova-health.log')
+}
 
 // ── Health log helpers ──────────────────────────────────────────────────────
 
@@ -17,7 +32,7 @@ function writeHealthLog(entry) {
   if (!HEALTH_LOG_ENABLED) return
   const line = `[${new Date().toISOString()}] ${entry}\n`
   try {
-    fs.appendFileSync(HEALTH_LOG_PATH, line)
+    fs.appendFileSync(healthLogPath(), line)
   } catch {
     /* log file unavailable — keep running */
   }
@@ -158,10 +173,20 @@ function createWindow() {
       // MVP: the Nova engine implements its own security layer (SOP, CSP,
       // sandbox) and fetches arbitrary URLs itself, so we relax the host
       // webview. Harden via main-process net routing in a later release.
+      //
+      // nodeIntegration: true + contextIsolation: false is required because
+      // the engine's networking stack uses the bare Node `Buffer` global
+      // (Buffer.alloc/writeUInt32BE/subarray, etc.) throughout. Electron's
+      // contextBridge cannot hand a functional Buffer to the page (instance
+      // methods don't survive the bridge — verified empirically), so the
+      // 08-23 contextIsolation migration left the renderer crashing at boot
+      // with "Buffer is not defined" before mounting any UI. See
+      // 2026-08-28-windows-app-health-and-buffer-fix.md — this restores the
+      // config the codebase was designed for (tier4/build-security decision),
+      // while the CSP / navigation / permission protections below remain.
       webSecurity: false,
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: path.join(__dirname, 'preload.cjs'),
+      nodeIntegration: true,
+      contextIsolation: false,
       spellcheck: false,
       // The renderer resolves its persistent web-storage directory from argv
       // (see main.ts), avoiding main-only `app` APIs inside the renderer.
