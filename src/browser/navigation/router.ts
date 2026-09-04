@@ -503,6 +503,7 @@ class Router implements IRouter {
       ['nova://history',    'history',    'History'],
       ['nova://bookmarks',  'bookmarks',  'Bookmarks'],
       ['nova://extensions', 'extensions', 'Extensions'],
+      ['nova://research',   'research',   'AI Research'],
     ];
 
     for (const [pattern, pageId, title] of internalPages) {

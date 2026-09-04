@@ -78,6 +78,15 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
     ],
   },
   {
+    id: 'ai-research', title: 'AI Research', icon: '🔬',
+    settings: [
+      { key: 'researchEnabled', label: 'Enable AI Research', description: 'Show research panel in browser', type: 'boolean', defaultValue: true },
+      { key: 'anthropicApiKey', label: 'Anthropic API Key', description: 'API key for Claude web search', type: 'text', defaultValue: '' },
+      { key: 'researchMaxSearches', label: 'Max searches per query', description: 'Maximum web searches per research session', type: 'range', defaultValue: 10, min: 1, max: 30, step: 1 },
+      { key: 'researchModel', label: 'Model', description: 'Claude model for research', type: 'select', defaultValue: 'claude-sonnet-4-5-20250929', options: [{ label: 'Sonnet 4.5', value: 'claude-sonnet-4-5-20250929' }, { label: 'Opus 4', value: 'claude-opus-4-20250514' }] },
+    ],
+  },
+  {
     id: 'shortcuts', title: 'Shortcuts', icon: '⌨',
     settings: [
       { key: 'enableKeyboardShortcuts', label: 'Enable keyboard shortcuts', description: 'Use keyboard shortcuts for navigation', type: 'boolean', defaultValue: true },

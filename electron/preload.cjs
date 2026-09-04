@@ -1,6 +1,20 @@
 /**
  * @file electron/preload.cjs
  *
+ * *** NOT CURRENTLY USED — dead code, kept only as reference. ***
+ * `electron/main.cjs` no longer passes a `preload:` path (see the 2026-08-23
+ * contextIsolation migration / 2026-08-28 revert:
+ * doc/2026-08-28-windows-app-health-and-buffer-fix.md), and nothing else in
+ * the repo references this file (checked electron-builder.yml too).
+ *
+ * It also would NOT actually fix the problem it was written for: `buffer.*`
+ * below returns real Buffer instances across contextBridge, whose instance
+ * methods do not survive structured cloning — the exact "Buffer is not
+ * defined"-adjacent failure mode that broke the renderer in the first place.
+ * A real contextIsolation-safe networking layer needs a different shape (see
+ * doc/buffer-safe-networking-plan.md). Delete this file or replace it
+ * wholesale when that work happens — don't extend it as-is.
+ *
  * Electron preload script — runs in an isolated context with full Node.js
  * access and bridges critical APIs to the renderer via contextBridge.
  *

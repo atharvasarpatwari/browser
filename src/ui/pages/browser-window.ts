@@ -49,9 +49,12 @@ import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
 import { SettingsPage } from './settings-page';
 import { DownloadsPage } from './downloads-page';
 import { NewTabPage } from './new-tab-page';
+import { ResearchPage } from './research-page';
 import type { ISettingsPage } from './settings-page';
+import type { IResearchPage } from './research-page';
 import type { ISettingsService } from '../../browser/storage/settings-service';
 import type { IBrowserName } from '../../browser/config/browser-name';
+import type { IResearchService } from '../../browser/research/research-types';
 
 interface BrowserWindowPageConfig {
   readonly containerId: string;
@@ -141,6 +144,7 @@ interface IBrowserWindowPage extends IDisposable {
   setTrackerBlocker(blocker: ITrackerBlocker): void;
   setAdBlocker(blocker: IAdBlocker): void;
   setBrowserName(name: IBrowserName): void;
+  setResearchService(service: IResearchService): void;
 
   // ── External chrome bridge (native shells driving this page's tabs/nav) ────
   /** Push-based state: fires on every syncAll() (tab created/removed/activated, url changed, etc). */
@@ -200,6 +204,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private activeSettingsPage: ISettingsPage | null = null;
   private activeDownloadsPage: DownloadsPage | null = null;
   private activeNewTabPage: NewTabPage | null = null;
+  private activeResearchPage: IResearchPage | null = null;
   private activeContentPanel: HTMLElement | null = null;
   private settingsService: ISettingsService | null = null;
   private navigationBridge: INavigationBridge | null = null;
@@ -267,6 +272,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private browserName: IBrowserName | null = null;
   private diTrackerBlocker: ITrackerBlocker | null = null;
   private diAdBlocker: IAdBlocker | null = null;
+  private researchService: IResearchService | null = null;
   private downloadsEventHandler: ((event: { kind: string }) => void) | null = null;
   private historyEventHandler: ((event: { kind: string }) => void) | null = null;
   private bookmarkEventHandler: ((event: { kind: string }) => void) | null = null;
@@ -636,6 +642,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.renderDownloadsPanel();
         break;
 
+      case 'nova://research':
+        this.renderResearchPanel();
+        break;
+
       case 'nova://history':
         this.renderHistoryPanel();
         break;
@@ -756,6 +766,34 @@ class BrowserWindowPage implements IBrowserWindowPage {
         case 'openFile': break;
         case 'showInFolder': break;
       }
+    });
+  }
+
+  private renderResearchPanel(): void {
+    if (!this.contentArea) return;
+    this.cleanupContentPanel();
+    const container = document.createElement('div');
+    container.style.cssText = 'width:100%;height:100%;';
+    this.contentArea.appendChild(container);
+    this.activeContentPanel = container;
+    this.activeResearchPage = new ResearchPage();
+    if (this.researchService) {
+      this.activeResearchPage.setResearchService(this.researchService);
+    }
+    if (this.settingsService) {
+      const maxSearches = this.settingsService.getNumber('researchMaxSearches', 10);
+      const model = this.settingsService.getString('researchModel', undefined);
+      const options: { maxSearches?: number; model?: string } = {};
+      if (maxSearches !== 10) options.maxSearches = maxSearches;
+      if (model) options.model = model;
+      if (Object.keys(options).length > 0) {
+        this.activeResearchPage.setResearchOptions(options);
+      }
+    }
+    this.activeResearchPage.mount(container);
+
+    this.activeResearchPage.on('externalNavigation', (event) => {
+      if (event.url) this.navigate(event.url);
     });
   }
 
@@ -1483,6 +1521,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     document.title = name.name;
   }
 
+  setResearchService(service: IResearchService): void {
+    this.researchService = service;
+  }
+
   private cleanupSettingsPage(): void {
     if (this.activeSettingsPage) {
       this.activeSettingsPage.dispose();
@@ -1513,10 +1555,18 @@ class BrowserWindowPage implements IBrowserWindowPage {
     }
   }
 
+  private cleanupResearchPage(): void {
+    if (this.activeResearchPage) {
+      this.activeResearchPage.dispose();
+      this.activeResearchPage = null;
+    }
+  }
+
   private cleanupContentPanel(): void {
     this.cleanupSettingsPage();
     this.cleanupDownloadsPage();
     this.cleanupNewTabPage();
+    this.cleanupResearchPage();
     if (this.activeContentPanel) {
       this.activeContentPanel.remove();
       this.activeContentPanel = null;

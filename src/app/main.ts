@@ -117,6 +117,10 @@ import type { ISettingsStore } from '../browser/storage/settings-store';
 import { SettingsService } from '../browser/storage/settings-service';
 import type { ISettingsService } from '../browser/storage/settings-service';
 import { BrowserName } from '../browser/config/browser-name';
+
+// AI Research
+import { ResearchService } from '../browser/research/research-service';
+import type { IResearchService } from '../browser/research/research-types';
 import type { IBrowserName } from '../browser/config/browser-name';
 
 // Platform
@@ -205,6 +209,8 @@ const Tokens = Object.freeze({
   SettingsService: Symbol('SettingsService'),
   // Browser identity
   BrowserName: Symbol('BrowserName'),
+  // AI Research
+  ResearchService: Symbol('ResearchService'),
 } as const);
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -522,6 +528,23 @@ class ApplicationBootstrap {
     c.register<IBrowserName>(
       Tokens.BrowserName,
       () => new BrowserName(),
+      ServiceLifetime.Singleton,
+    );
+
+    // 9c. AI Research service
+    c.register<IResearchService>(
+      Tokens.ResearchService,
+      (ctx) => new ResearchService({
+        apiKeyProvider: () => {
+          const envKey = typeof process !== 'undefined'
+            ? (process.env as Record<string, string | undefined>).ANTHROPIC_API_KEY
+            : undefined;
+          if (envKey) return envKey;
+          const svc = ctx.resolve<ISettingsService>(Tokens.SettingsService);
+          const stored = svc.getString('anthropicApiKey', '');
+          return stored || null;
+        },
+      }),
       ServiceLifetime.Singleton,
     );
 
@@ -845,6 +868,10 @@ class ApplicationBootstrap {
     // Wire SettingsService → BrowserWindowPage so nova://settings gets persistence
     const settingsService = this.container.resolve<ISettingsService>(Tokens.SettingsService);
     page.setSettingsService(settingsService);
+
+    // Wire ResearchService → BrowserWindowPage so nova://research works
+    const researchService = this.container.resolve<IResearchService>(Tokens.ResearchService);
+    page.setResearchService(researchService);
 
     // Initialize BrowserName from settings
     const browserName = this.container.resolve<IBrowserName>(Tokens.BrowserName);
