@@ -3,8 +3,8 @@
 **Status:** Populated 2026-09-03 from a real, full `npm test` run (`vitest run`, 208 test
 files / 9108 tests, from `E:\nova_1`, duration 168.72s). This replaces the earlier
 template-only version of this file (added 2026-08-27 by a session with file-bridge access
-only, no shell). `npm run typecheck` has **not** been run yet — that section is still a
-template.
+only, no shell). The TypeScript section below was filled in 2026-09-04 (buffer-safe
+networking session baseline) — see **TypeScript errors**.
 
 ---
 
@@ -52,6 +52,9 @@ traces from happy-dom test-teardown) — none of that noise corresponded to an a
 
 ## TypeScript errors
 
+Filled 2026-09-04 from `npm run typecheck` (`tsc --noEmit`) at `E:\nova_1` prior to the
+buffer-safe networking implementation. Result: **0 errors** (clean exit, no diagnostics).
+
 | File | Error | Notes |
 |------|-------|-------|
-| _(run `npm run typecheck` and fill in)_ | | |
+| — | — | `tsc --noEmit` completed with 0 errors and no output. Baseline for the buffer-safe networking phasing (2026-09-04). |
