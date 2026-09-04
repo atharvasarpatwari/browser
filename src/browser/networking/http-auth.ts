@@ -1,4 +1,6 @@
 import type { IDisposable } from '../../app/dependency-container';
+import { loadNodeBuiltin } from './node-builtins';
+import { encodeUtf8, encodeUtf16Le, bytesToBase64, concatBytes, hexFromBytes, hexToBytes, writeAscii } from './byte-codecs';
 
 enum AuthScheme {
   Basic    = 'Basic',
@@ -29,6 +31,10 @@ interface IHttpAuthenticator extends IDisposable {
 
 class HttpAuthenticator implements IHttpAuthenticator {
   private nonceCounters = new Map<string, number>();
+
+  private crypto(): typeof import('node:crypto') | null {
+    return loadNodeBuiltin<typeof import('node:crypto')>('node:crypto');
+  }
 
   canHandle(challenge: string): boolean {
     const s = this.peekScheme(challenge);
@@ -100,7 +106,7 @@ class HttpAuthenticator implements IHttpAuthenticator {
   }
 
   private generateBasic(credentials: AuthCredentials): string {
-    const encoded = Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64');
+    const encoded = bytesToBase64(encodeUtf8(`${credentials.username}:${credentials.password}`));
     return `Basic ${encoded}`;
   }
 
@@ -170,12 +176,13 @@ class HttpAuthenticator implements IHttpAuthenticator {
   private lastNtlmType1 = '';
 
   private buildNtlmType1(): string {
-    const msg = Buffer.alloc(16);
-    msg.write('NTLMSSP', 0, 'ascii');
+    const msg = new Uint8Array(16);
+    const view = new DataView(msg.buffer);
+    writeAscii(msg, 'NTLMSSP', 0);
     msg[7] = 0;
-    msg.writeUInt32LE(1, 8);
-    msg.writeUInt32LE(0x8202, 12);
-    return msg.toString('base64');
+    view.setUint32(8, 1, true);
+    view.setUint32(12, 0x8202, true);
+    return bytesToBase64(msg);
   }
 
   private buildNtlmType3(credentials: AuthCredentials): string {
@@ -184,78 +191,85 @@ class HttpAuthenticator implements IHttpAuthenticator {
     const password = credentials.password;
     const hostname = 'NOVA';
 
-    const usBytes = Buffer.from(username, 'utf-16le');
-    const domBytes = Buffer.from(domain, 'utf-16le');
-    const hostBytes = Buffer.from(hostname, 'utf-16le');
+    const usBytes = encodeUtf16Le(username);
+    const domBytes = encodeUtf16Le(domain);
+    const hostBytes = encodeUtf16Le(hostname);
     const lmHash = this.ntlmHash(password);
     const ntHash = this.ntlmv2Hash(password, username, domain);
-    const lmResp = Buffer.alloc(24);
-    lmHash.copy(lmResp, 0, 0, Math.min(lmHash.length, 24));
+    const lmResp = new Uint8Array(24);
+    lmResp.set(lmHash.subarray(0, Math.min(lmHash.length, 24)));
     const ntResp = ntHash;
 
-    const payloadOffset = 64 + 24 + 24 + usBytes.length + domBytes.length + hostBytes.length;
-    const msg = Buffer.alloc(payloadOffset);
+    const payloadOffset = 64 + 24 + ntResp.length + domBytes.length + usBytes.length + hostBytes.length;
+    const msg = new Uint8Array(payloadOffset);
+    const view = new DataView(msg.buffer);
 
     let offset = 0;
-    msg.write('NTLMSSP', offset, 'ascii');
+    writeAscii(msg, 'NTLMSSP', offset);
     msg[offset + 7] = 0;
-    msg.writeUInt32LE(3, offset + 8);
+    view.setUint32(offset + 8, 3, true);
     offset += 12;
 
-    const addField = (buf: Buffer, maxLen: number, pos: number) => {
-      const len = Math.min(buf.length, maxLen);
-      const dataStart = payloadOffset - (usBytes.length + domBytes.length + hostBytes.length) + pos;
-      msg.writeUInt16LE(len, offset); offset += 2;
-      msg.writeUInt16LE(len, offset); offset += 2;
-      msg.writeUInt32LE(dataStart, offset); offset += 4;
-      return dataStart;
+    // Security-buffer offsets point into the payload area that follows the
+    // 64-byte message header. Regions are contiguous and fully within bounds.
+    const lmDataStart = 64;
+    const ntDataStart = lmDataStart + 24;
+    const domDataStart = ntDataStart + ntResp.length;
+    const usDataStart = domDataStart + domBytes.length;
+    const hostDataStart = usDataStart + usBytes.length;
+
+    const addField = (len: number, dataStart: number) => {
+      view.setUint16(offset, len, true); offset += 2;
+      view.setUint16(offset, len, true); offset += 2;
+      view.setUint32(offset, dataStart, true); offset += 4;
     };
 
-    const lmStart = addField(lmResp, 24, 0);
-    const ntStart = addField(ntResp, ntResp.length, 24);
-    const domStart = addField(domBytes, domBytes.length, 24 + ntResp.length);
-    const usStart = addField(usBytes, usBytes.length, 24 + ntResp.length + domBytes.length);
-    const hostStart = addField(hostBytes, hostBytes.length, 24 + ntResp.length + domBytes.length + usBytes.length);
-    const sessionStart = addField(Buffer.alloc(0), 0, 24 + ntResp.length + domBytes.length + usBytes.length + hostBytes.length);
+    addField(Math.min(lmResp.length, 24), lmDataStart);
+    addField(ntResp.length, ntDataStart);
+    addField(domBytes.length, domDataStart);
+    addField(usBytes.length, usDataStart);
+    addField(hostBytes.length, hostDataStart);
+    addField(0, payloadOffset);
     offset = payloadOffset;
 
-    if (lmStart) lmResp.copy(msg, lmStart);
-    if (ntStart) ntResp.copy(msg, ntStart);
-    if (domStart) domBytes.copy(msg, domStart);
-    if (usStart) usBytes.copy(msg, usStart);
-    if (hostStart) hostBytes.copy(msg, hostStart);
+    msg.set(lmResp.subarray(0, Math.min(lmResp.length, 24)), lmDataStart);
+    msg.set(ntResp, ntDataStart);
+    msg.set(domBytes, domDataStart);
+    msg.set(usBytes, usDataStart);
+    msg.set(hostBytes, hostDataStart);
 
-    return msg.toString('base64');
+    return bytesToBase64(msg);
   }
 
-  private ntlmHash(password: string): Buffer {
+  private ntlmHash(password: string): Uint8Array {
     try {
-      const crypto = require('crypto');
-      const buf = Buffer.from(password, 'utf-16le');
-      return crypto.createHash('md4').update(buf).digest();
+      const crypto = this.crypto();
+      if (!crypto) throw new Error('crypto unavailable');
+      return crypto.createHash('md4').update(encodeUtf16Le(password)).digest();
     } catch {
       return this.md4Fallback(password);
     }
   }
 
-  private ntlmv2Hash(password: string, username: string, domain: string): Buffer {
+  private ntlmv2Hash(password: string, username: string, domain: string): Uint8Array {
     try {
-      const crypto = require('crypto');
+      const crypto = this.crypto();
+      if (!crypto) throw new Error('crypto unavailable');
       const hash = this.ntlmHash(password);
       const hmac = crypto.createHmac('md5', hash);
-      const data = Buffer.from(username.toUpperCase() + domain, 'utf-16le');
-      return hmac.update(data).digest();
+      return hmac.update(encodeUtf16Le(username.toUpperCase() + domain)).digest();
     } catch {
       const hash = this.ntlmHash(password);
       const inner = this.md5(`-----BEGIN NTLM-----${username.toUpperCase()}${domain}-----END NTLM-----`);
-      const outerData = Buffer.concat([hash, Buffer.from(inner, 'hex')]);
-      const crypto = require('crypto');
+      const outerData = concatBytes([hash, hexToBytes(inner)]);
+      const crypto = this.crypto();
+      if (!crypto) throw new AuthError('crypto unavailable for NTLM fallback hash');
       return crypto.createHash('md5').update(outerData).digest();
     }
   }
 
-  private md4Fallback(password: string): Buffer {
-    const buf = Buffer.from(password, 'utf-16le');
+  private md4Fallback(password: string): Uint8Array {
+    const buf = encodeUtf16Le(password);
     const data = Array.from(buf);
     const len = data.length;
     const bitLen = len * 8;
@@ -295,8 +309,12 @@ class HttpAuthenticator implements IHttpAuthenticator {
     }
 
     const result = new Uint32Array([a, b, c, d]);
-    const bufOut = Buffer.alloc(16);
-    for (let i = 0; i < 4; i++) bufOut.writeUInt32LE(result[i]!, i * 4);
+    const bufOut = new Uint8Array(16);
+    const view = new DataView(bufOut.buffer);
+    view.setUint32(0, result[0]!, true);
+    view.setUint32(4, result[1]!, true);
+    view.setUint32(8, result[2]!, true);
+    view.setUint32(12, result[3]!, true);
     return bufOut;
   }
 
@@ -327,13 +345,22 @@ class HttpAuthenticator implements IHttpAuthenticator {
   }
 
   private generateCnonce(): string {
-    const crypto = require('crypto');
-    return crypto.randomBytes(8).toString('hex');
+    const crypto = this.crypto();
+    return crypto ? hexFromBytes(new Uint8Array(crypto.randomBytes(8))) : this.randomHexFallback(8);
   }
 
   private md5(data: string): string {
-    const crypto = require('crypto');
+    const crypto = this.crypto();
+    if (!crypto) throw new AuthError('crypto unavailable for digest computation');
     return crypto.createHash('md5').update(data).digest('hex');
+  }
+
+  private randomHexFallback(numBytes: number): string {
+    let out = '';
+    for (let i = 0; i < numBytes; i++) {
+      out += Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
+    }
+    return out;
   }
 
   dispose(): void {

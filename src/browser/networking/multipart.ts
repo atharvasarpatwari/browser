@@ -1,4 +1,6 @@
 import type { IDisposable } from '../../app/dependency-container';
+import { loadNodeBuiltin } from './node-builtins';
+import { concatBytes, decodeUtf8, encodeUtf8, hexFromBytes, indexOfBytes } from './byte-codecs';
 
 interface MultipartField {
   readonly name: string;
@@ -10,18 +12,18 @@ interface MultipartFile {
   readonly name: string;
   readonly filename: string;
   readonly contentType: string;
-  readonly data: Buffer | string;
+  readonly data: Uint8Array | string;
 }
 
 interface MultipartBody {
   readonly contentType: string;
-  readonly body: Buffer;
+  readonly body: Uint8Array;
   readonly boundary: string;
 }
 
 interface IMultipartBuilder extends IDisposable {
   build(fields?: readonly MultipartField[], files?: readonly MultipartFile[]): MultipartBody;
-  parse(contentType: string, body: Buffer): Promise<{ fields: MultipartField[]; files: MultipartFile[] }>;
+  parse(contentType: string, body: Uint8Array): Promise<{ fields: MultipartField[]; files: MultipartFile[] }>;
 }
 
 class MultipartBuilder implements IMultipartBuilder {
@@ -29,7 +31,7 @@ class MultipartBuilder implements IMultipartBuilder {
 
   build(fields?: readonly MultipartField[], files?: readonly MultipartFile[]): MultipartBody {
     const boundary = this.generateBoundary();
-    const parts: Buffer[] = [];
+    const parts: Uint8Array[] = [];
 
     if (fields) {
       for (const field of fields) {
@@ -43,16 +45,16 @@ class MultipartBuilder implements IMultipartBuilder {
       }
     }
 
-    parts.push(Buffer.from(`--${boundary}--\r\n`));
+    parts.push(encodeUtf8(`--${boundary}--\r\n`));
 
     return {
       contentType: `multipart/form-data; boundary=${boundary}`,
-      body: Buffer.concat(parts),
+      body: concatBytes(parts),
       boundary,
     };
   }
 
-  async parse(contentType: string, body: Buffer): Promise<{ fields: MultipartField[]; files: MultipartFile[] }> {
+  async parse(contentType: string, body: Uint8Array): Promise<{ fields: MultipartField[]; files: MultipartFile[] }> {
     const boundary = this.extractBoundary(contentType);
     if (!boundary) {
       throw new MultipartError('No boundary found in Content-Type');
@@ -76,7 +78,7 @@ class MultipartBuilder implements IMultipartBuilder {
         } else {
           fields.push({
             name: parsed.name,
-            value: parsed.data.toString('utf-8'),
+            value: decodeUtf8(parsed.data),
             contentType: parsed.contentType,
           });
         }
@@ -88,12 +90,20 @@ class MultipartBuilder implements IMultipartBuilder {
 
   private generateBoundary(): string {
     this.boundaryCounter++;
-    const crypto = require('crypto');
-    const rand = crypto.randomBytes(16).toString('hex');
+    const crypto = loadNodeBuiltin<typeof import('node:crypto')>('node:crypto');
+    const rand = crypto ? hexFromBytes(new Uint8Array(crypto.randomBytes(16))) : this.randomHexFallback(16);
     return `----NovaFormBoundary${rand}${this.boundaryCounter}`;
   }
 
-  private encodeField(field: MultipartField, boundary: string): Buffer {
+  private randomHexFallback(numBytes: number): string {
+    let out = '';
+    for (let i = 0; i < numBytes; i++) {
+      out += Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
+    }
+    return out;
+  }
+
+  private encodeField(field: MultipartField, boundary: string): Uint8Array {
     const lines: string[] = [
       `--${boundary}`,
       `Content-Disposition: form-data; name="${field.name}"`,
@@ -104,10 +114,10 @@ class MultipartBuilder implements IMultipartBuilder {
     lines.push('');
     lines.push(field.value);
     lines.push('');
-    return Buffer.from(lines.join('\r\n'));
+    return encodeUtf8(lines.join('\r\n'));
   }
 
-  private encodeFile(file: MultipartFile, boundary: string): Buffer {
+  private encodeFile(file: MultipartFile, boundary: string): Uint8Array {
     const headerLines: string[] = [
       `--${boundary}`,
       `Content-Disposition: form-data; name="${file.name}"; filename="${file.filename}"`,
@@ -115,10 +125,9 @@ class MultipartBuilder implements IMultipartBuilder {
       '',
       '',
     ];
-    const header = Buffer.from(headerLines.join('\r\n'));
-    const data = typeof file.data === 'string' ? Buffer.from(file.data, 'utf-8') : file.data;
-    const trailer = Buffer.from('\r\n');
-    return Buffer.concat([header, data, trailer]);
+    const header = encodeUtf8(headerLines.join('\r\n'));
+    const data = typeof file.data === 'string' ? encodeUtf8(file.data) : file.data;
+    return concatBytes([header, data, encodeUtf8('\r\n')]);
   }
 
   private extractBoundary(contentType: string): string | null {
@@ -126,38 +135,42 @@ class MultipartBuilder implements IMultipartBuilder {
     return match ? match[1]!.replace(/^"|"$/g, '') : null;
   }
 
-  private splitByBoundary(body: Buffer, boundary: string): Buffer[] {
-    const bodyStr = body.toString('binary');
-    const delim = `--${boundary}`;
-    const parts: Buffer[] = [];
+  private splitByBoundary(body: Uint8Array, boundary: string): Uint8Array[] {
+    const delim = encodeUtf8(`--${boundary}`);
+    const parts: Uint8Array[] = [];
 
-    const segments = bodyStr.split(delim);
+    let pos = 0;
+    while (pos < body.length) {
+      const delimStart = indexOfBytes(body, delim, pos);
+      if (delimStart === -1) break;
 
-    for (let i = 1; i < segments.length - 1; i++) {
-      const seg = segments[i]!;
+      const segmentStart = delimStart + delim.length;
+      const nextDelim = indexOfBytes(body, delim, segmentStart);
+      if (nextDelim === -1) break;
 
-      if (seg.startsWith('--')) break;
+      // Closing boundary ("--boundary--") terminates the body.
+      if (body[segmentStart] === 0x2d && body[segmentStart + 1] === 0x2d) break;
 
-      let start = 0;
-      if (seg.charCodeAt(0) === 0x0D && seg.charCodeAt(1) === 0x0A) start = 2;
+      let seg = body.subarray(segmentStart, nextDelim);
+      if (seg.length >= 2 && seg[0] === 0x0d && seg[1] === 0x0a) seg = seg.subarray(2);
+      if (seg.length >= 2 && seg[seg.length - 2] === 0x0d && seg[seg.length - 1] === 0x0a) seg = seg.subarray(0, seg.length - 2);
 
-      let end = seg.length;
-      if (end >= 2 && seg.charCodeAt(end - 2) === 0x0D && seg.charCodeAt(end - 1) === 0x0A) end -= 2;
-
-      if (end > start) {
-        parts.push(Buffer.from(seg.slice(start, end), 'binary'));
+      if (seg.length > 0) {
+        parts.push(seg);
       }
+      pos = nextDelim;
     }
 
     return parts;
   }
 
-  private parsePart(part: Buffer): { name: string; filename?: string; contentType?: string; data: Buffer } | null {
-    const headerEndIdx = part.indexOf('\r\n\r\n');
+  private parsePart(part: Uint8Array): { name: string; filename?: string; contentType?: string; data: Uint8Array } | null {
+    const crlfCrlf = new Uint8Array([0x0d, 0x0a, 0x0d, 0x0a]);
+    const headerEndIdx = indexOfBytes(part, crlfCrlf);
     if (headerEndIdx === -1) return null;
 
-    const headerSection = part.slice(0, headerEndIdx).toString('utf-8');
-    const data = part.slice(headerEndIdx + 4);
+    const headerSection = decodeUtf8(part.subarray(0, headerEndIdx));
+    const data = part.subarray(headerEndIdx + 4);
 
     const nameMatch = /Content-Disposition:[^;]*;\s*name="([^"]*)"/i.exec(headerSection);
     if (!nameMatch) return null;

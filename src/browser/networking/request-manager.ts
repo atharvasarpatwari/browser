@@ -62,6 +62,7 @@ import {
 import { ContentDecoder, ACCEPT_ENCODING } from './content-encoding';
 import { HttpAuthenticator, AuthScheme }    from './http-auth';
 import { RawSocketHttpClient }              from './raw-socket-http-client';
+import { decodeLatin1, decodeUtf8 }         from './byte-codecs';
 import type { ITlsHandler }                 from './tls-handler';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -195,9 +196,9 @@ class FetchHttpClient implements IHttpClient {
     const contentEncoding = headers.get('content-encoding');
     if (contentEncoding && contentEncoding.trim().toLowerCase() !== 'identity') {
       try {
-        const sourceData = bodyBinary ? Buffer.from(bodyBinary) : Buffer.from(body, 'utf-8');
-        const decoded = await this.contentDecoder.decodeFromString(contentEncoding, sourceData.toString('utf-8'));
-        const decodedStr = decoded.toString('utf-8');
+        const sourceData = bodyBinary ?? new TextEncoder().encode(body);
+        const decoded = await this.contentDecoder.decodeFromString(contentEncoding, decodeLatin1(sourceData));
+        const decodedStr = decodeUtf8(decoded);
         if (isBinary) {
           body = '';
           bodyBinary = new Uint8Array(decoded);

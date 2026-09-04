@@ -1,5 +1,6 @@
 import type { IDisposable } from '../../app/dependency-container';
 import { loadNodeBuiltin } from './node-builtins';
+import { decodeUtf8, encodeLatin1 } from './byte-codecs';
 
 enum ContentCoding {
   Gzip    = 'gzip',
@@ -9,8 +10,8 @@ enum ContentCoding {
 }
 
 interface IContentDecoder extends IDisposable {
-  decode(encoding: ContentCoding, data: Buffer): Promise<Buffer>;
-  decodeFromString(encoding: string, data: string): Promise<Buffer>;
+  decode(encoding: ContentCoding, data: Uint8Array): Promise<Uint8Array>;
+  decodeFromString(encoding: string, data: string): Promise<Uint8Array>;
   isSupported(encoding: ContentCoding): boolean;
 }
 
@@ -18,16 +19,18 @@ class ContentDecoder implements IContentDecoder {
   private brotliAvailable = false;
 
   constructor() {
-    try {
-      require('node:zlib');
-      try { require('node:zlib').brotliDecompressSync(Buffer.alloc(0)); this.brotliAvailable = true; }
-      catch { this.brotliAvailable = false; }
-    } catch {
-      this.brotliAvailable = false;
+    const zlib = loadNodeBuiltin<typeof import('node:zlib')>('node:zlib');
+    if (zlib) {
+      try {
+        zlib.brotliDecompressSync(new Uint8Array(0));
+        this.brotliAvailable = true;
+      } catch {
+        this.brotliAvailable = false;
+      }
     }
   }
 
-  async decode(encoding: ContentCoding, data: Buffer): Promise<Buffer> {
+  async decode(encoding: ContentCoding, data: Uint8Array): Promise<Uint8Array> {
     if (encoding === ContentCoding.Identity || !data.length) return data;
 
     const zlib = loadNodeBuiltin<typeof import('node:zlib')>('node:zlib');
@@ -37,22 +40,22 @@ class ContentDecoder implements IContentDecoder {
 
     switch (encoding) {
       case ContentCoding.Gzip:
-        return new Promise<Buffer>((resolve, reject) => {
+        return new Promise<Uint8Array>((resolve, reject) => {
           zlib.gunzip(data, (err, result) => {
             if (err) reject(new ContentEncodingError(`gzip decompression failed: ${err.message}`));
-            else resolve(result);
+            else resolve(toBytes(result));
           });
         });
 
       case ContentCoding.Deflate:
-        return new Promise<Buffer>((resolve, reject) => {
+        return new Promise<Uint8Array>((resolve, reject) => {
           zlib.inflate(data, (err, result) => {
             if (err) {
               zlib.inflateRaw(data, (err2, result2) => {
                 if (err2) reject(new ContentEncodingError(`deflate decompression failed: ${err.message}, raw: ${err2.message}`));
-                else resolve(result2);
+                else resolve(toBytes(result2));
               });
-            } else resolve(result);
+            } else resolve(toBytes(result));
           });
         });
 
@@ -60,10 +63,10 @@ class ContentDecoder implements IContentDecoder {
         if (!this.brotliAvailable) {
           throw new ContentEncodingError('brotli decompression is not available in this runtime');
         }
-        return new Promise<Buffer>((resolve, reject) => {
+        return new Promise<Uint8Array>((resolve, reject) => {
           zlib.brotliDecompress(data, (err, result) => {
             if (err) reject(new ContentEncodingError(`brotli decompression failed: ${err.message}`));
-            else resolve(result);
+            else resolve(toBytes(result));
           });
         });
 
@@ -72,9 +75,9 @@ class ContentDecoder implements IContentDecoder {
     }
   }
 
-  async decodeFromString(encoding: string, data: string): Promise<Buffer> {
+  async decodeFromString(encoding: string, data: string): Promise<Uint8Array> {
     const coding = this.parseEncoding(encoding);
-    return this.decode(coding, Buffer.from(data, 'latin1'));
+    return this.decode(coding, encodeLatin1(data));
   }
 
   isSupported(encoding: ContentCoding): boolean {
@@ -102,10 +105,10 @@ class ContentDecoder implements IContentDecoder {
       return { body, bodyBinary };
     }
 
-    const sourceData = bodyBinary ? Buffer.from(bodyBinary) : Buffer.from(body, 'latin1');
+    const sourceData = bodyBinary ?? encodeLatin1(body);
     const coding = this.parseEncoding(contentEncoding);
     const decoded = await this.decode(coding, sourceData);
-    const decodedStr = decoded.toString('utf-8');
+    const decodedStr = decodeUtf8(decoded);
 
     const contentType = headers.get('content-type') ?? '';
     const isBinary = contentType.startsWith('image/')
@@ -131,6 +134,11 @@ class ContentEncodingError extends Error {
 }
 
 const ACCEPT_ENCODING = 'gzip, deflate, br';
+
+/** Normalize a zlib/Buffer result to a plain copy the bridge can carry. */
+function toBytes(value: Uint8Array): Uint8Array {
+  return new Uint8Array(value);
+}
 
 export {
   ContentDecoder,

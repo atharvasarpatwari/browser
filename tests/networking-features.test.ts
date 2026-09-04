@@ -19,27 +19,27 @@ describe('ContentDecoder', () => {
     const original = 'Hello Nova Browser! This is gzip compressed.';
     const compressed = zlib.gzipSync(Buffer.from(original));
     const decoded = await decoder.decode(ContentCoding.Gzip, compressed);
-    expect(decoded.toString('utf-8')).toBe(original);
+    expect(Buffer.from(decoded).toString('utf-8')).toBe(original);
   });
 
   it('should decompress deflate data', async () => {
     const original = 'Deflate compression test payload';
     const compressed = zlib.deflateSync(Buffer.from(original));
     const decoded = await decoder.decode(ContentCoding.Deflate, compressed);
-    expect(decoded.toString('utf-8')).toBe(original);
+    expect(Buffer.from(decoded).toString('utf-8')).toBe(original);
   });
 
   it('should decompress deflate raw data', async () => {
     const original = 'Raw deflate test';
     const compressed = zlib.deflateRawSync(Buffer.from(original));
     const decoded = await decoder.decode(ContentCoding.Deflate, compressed);
-    expect(decoded.toString('utf-8')).toBe(original);
+    expect(Buffer.from(decoded).toString('utf-8')).toBe(original);
   });
 
   it('should return identity data unchanged', async () => {
     const data = Buffer.from('plain text data');
     const decoded = await decoder.decode(ContentCoding.Identity, data);
-    expect(decoded.toString('utf-8')).toBe('plain text data');
+    expect(Buffer.from(decoded).toString('utf-8')).toBe('plain text data');
   });
 
   it('should decompress gzipped response via decompressResponse', async () => {
@@ -79,7 +79,7 @@ describe('ContentDecoder', () => {
     const compressed = zlib.gzipSync(Buffer.from(original));
     const binaryStr = compressed.toString('binary');
     const decoded = await decoder.decodeFromString('gzip', binaryStr);
-    expect(decoded.toString('utf-8')).toBe(original);
+    expect(Buffer.from(decoded).toString('utf-8')).toBe(original);
   });
 
   it('should reject unsupported encoding with error', async () => {
@@ -244,7 +244,7 @@ describe('MultipartBuilder', () => {
     expect(result.contentType).toContain('boundary=');
     expect(result.body.length).toBeGreaterThan(0);
 
-    const bodyStr = result.body.toString('utf-8');
+    const bodyStr = Buffer.from(result.body).toString('utf-8');
     expect(bodyStr).toContain('name="username"');
     expect(bodyStr).toContain('john');
     expect(bodyStr).toContain('name="role"');
@@ -262,7 +262,7 @@ describe('MultipartBuilder', () => {
       },
     ]);
 
-    const bodyStr = result.body.toString('utf-8');
+    const bodyStr = Buffer.from(result.body).toString('utf-8');
     expect(bodyStr).toContain('name="file"');
     expect(bodyStr).toContain('filename="test.txt"');
     expect(bodyStr).toContain('Content-Type: text/plain');
@@ -275,7 +275,7 @@ describe('MultipartBuilder', () => {
       [{ name: 'avatar', filename: 'photo.png', contentType: 'image/png', data: Buffer.from([0x89, 0x50, 0x4E, 0x47]) }],
     );
 
-    const bodyStr = result.body.toString('utf-8');
+    const bodyStr = Buffer.from(result.body).toString('utf-8');
     expect(bodyStr).toContain('name="description"');
     expect(bodyStr).toContain('name="avatar"');
     expect(bodyStr).toContain('filename="photo.png"');
@@ -301,7 +301,7 @@ describe('MultipartBuilder', () => {
     expect(parsed.files[0]!.name).toBe('doc');
     expect(parsed.files[0]!.filename).toBe('notes.txt');
     expect(parsed.files[0]!.contentType).toBe('text/plain');
-    expect(parsed.files[0]!.data.toString()).toBe('hello');
+    expect(Buffer.from(parsed.files[0]!.data).toString()).toBe('hello');
   });
 });
 

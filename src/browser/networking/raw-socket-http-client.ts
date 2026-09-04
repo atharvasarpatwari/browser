@@ -27,6 +27,7 @@ import type { ContentCoding } from './content-encoding';
 import { connectThroughSocks, parseSocksProxyUrl } from './socks-connection';
 import { connectThroughHttpProxy, parseHttpProxyUrl } from './http-proxy-connect';
 import { loadNodeBuiltin } from './node-builtins';
+import { decodeUtf8 } from './byte-codecs';
 
 export class RawSocketError extends Error {
   constructor(message: string) {
@@ -351,20 +352,20 @@ class RawSocketHttpClient implements IHttpClient {
         if (isBinary) {
           bodyBinary = new Uint8Array(decoded);
         } else {
-          body = decoded.toString('utf-8');
+          body = decodeUtf8(decoded);
         }
       } catch {
         if (isBinary) {
           bodyBinary = new Uint8Array(bodyRaw);
         } else {
-          body = bodyRaw.toString('utf-8');
+          body = decodeUtf8(bodyRaw);
         }
       }
     } else {
       if (isBinary) {
         bodyBinary = new Uint8Array(bodyRaw);
       } else {
-        body = bodyRaw.toString('utf-8');
+        body = decodeUtf8(bodyRaw);
       }
     }
 
