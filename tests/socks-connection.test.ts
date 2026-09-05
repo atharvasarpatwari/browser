@@ -1,5 +1,4 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import type { Socket } from 'node:net';
 import {
   SocksError,
   connectThroughSocks,
@@ -7,6 +6,8 @@ import {
   type SocksProxyInfo,
 } from '../src/browser/networking/socks-connection';
 import { startMockSocksServer, type MockSocksServer } from './helpers/socks-test-server';
+import type { ISocketHandle } from '../src/browser/networking/socket-handle';
+import { concatBytes, decodeUtf8, encodeUtf8 } from '../src/browser/networking/byte-codecs';
 
 const servers: MockSocksServer[] = [];
 
@@ -20,11 +21,36 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.close()));
 });
 
-function echoOnce(socket: Socket, payload: string): Promise<string> {
+function echoOnce(handle: ISocketHandle, payload: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    socket.on('data', (chunk: Buffer) => resolve(chunk.toString('utf-8')));
-    socket.on('error', reject);
-    socket.write(Buffer.from(payload, 'utf-8'));
+    const target = encodeUtf8(payload).byteLength;
+    let received = new Uint8Array(0);
+    let done = false;
+    const unsubData = handle.onEvent('data', (chunk) => {
+      if (!(chunk instanceof Uint8Array) || done) return;
+      received = concatBytes([received, chunk]);
+      if (received.length >= target) {
+        done = true;
+        unsubData();
+        unsubError();
+        resolve(decodeUtf8(received.subarray(0, target)));
+      }
+    });
+    const unsubError = handle.onEvent('error', (err) => {
+      if (done) return;
+      done = true;
+      unsubData();
+      unsubError();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    });
+    void handle.write(encodeUtf8(payload))
+      .catch((err) => {
+        if (done) return;
+        done = true;
+        unsubData();
+        unsubError();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      });
   });
 }
 
@@ -71,15 +97,15 @@ describe('parseSocksProxyUrl', () => {
 describe('connectThroughSocks — SOCKS5', () => {
   it('establishes a no-auth tunnel and forwards traffic', async () => {
     const mock = await startSocks({ protocol: 'socks5' });
-    const socket = await connectThroughSocks({
+    const handle: ISocketHandle = await connectThroughSocks({
       proxy: { protocol: 'socks5', hostname: '127.0.0.1', port: mock.port },
       targetHost: 'example.com',
       targetPort: 443,
       timeoutMs: 2000,
     });
 
-    expect(await echoOnce(socket, 'PING')).toBe('PING');
-    socket.destroy();
+    expect(await echoOnce(handle, 'PING')).toBe('PING');
+    await handle.destroy();
 
     const connect = mock.events.find((e) => e.type === 'connect');
     expect(connect).toMatchObject({ type: 'connect', atyp: 0x03, targetHost: 'example.com', targetPort: 443 });
@@ -87,13 +113,13 @@ describe('connectThroughSocks — SOCKS5', () => {
 
   it('sends an IPv4 address type for IPv4 literals', async () => {
     const mock = await startSocks({ protocol: 'socks5' });
-    const socket = await connectThroughSocks({
+    const handle: ISocketHandle = await connectThroughSocks({
       proxy: { protocol: 'socks5', hostname: '127.0.0.1', port: mock.port },
       targetHost: '127.0.0.1',
       targetPort: 80,
       timeoutMs: 2000,
     });
-    socket.destroy();
+    await handle.destroy();
 
     expect(mock.events.find((e) => e.type === 'connect')).toMatchObject({
       atyp: 0x01,
@@ -104,7 +130,7 @@ describe('connectThroughSocks — SOCKS5', () => {
 
   it('authenticates with username/password (RFC 1929)', async () => {
     const mock = await startSocks({ protocol: 'socks5', methods: [0x02] });
-    const socket = await connectThroughSocks({
+    const handle: ISocketHandle = await connectThroughSocks({
       proxy: {
         protocol: 'socks5', hostname: '127.0.0.1', port: mock.port,
         username: 'alice', password: 's3cret',
@@ -113,7 +139,7 @@ describe('connectThroughSocks — SOCKS5', () => {
       targetPort: 443,
       timeoutMs: 2000,
     });
-    socket.destroy();
+    await handle.destroy();
 
     const auth = mock.events.find((e) => e.type === 'auth');
     expect(auth).toMatchObject({ type: 'auth', uname: 'alice', pass: 's3cret' });
@@ -179,15 +205,15 @@ describe('connectThroughSocks — SOCKS5', () => {
 describe('connectThroughSocks — SOCKS4 / SOCKS4a', () => {
   it('sends an IPv4 connect request and tunnels', async () => {
     const mock = await startSocks({ protocol: 'socks4' });
-    const socket = await connectThroughSocks({
+    const handle: ISocketHandle = await connectThroughSocks({
       proxy: { protocol: 'socks4', hostname: '127.0.0.1', port: mock.port },
       targetHost: '127.0.0.1',
       targetPort: 8080,
       timeoutMs: 2000,
     });
 
-    expect(await echoOnce(socket, 'PONG')).toBe('PONG');
-    socket.destroy();
+    expect(await echoOnce(handle, 'PONG')).toBe('PONG');
+    await handle.destroy();
 
     expect(mock.events.find((e) => e.type === 'connect')).toMatchObject({
       ip: [127, 0, 0, 1],
@@ -197,13 +223,13 @@ describe('connectThroughSocks — SOCKS4 / SOCKS4a', () => {
 
   it('sends a SOCKS4a request for domain targets', async () => {
     const mock = await startSocks({ protocol: 'socks4' });
-    const socket = await connectThroughSocks({
+    const handle: ISocketHandle = await connectThroughSocks({
       proxy: { protocol: 'socks4a', hostname: '127.0.0.1', port: mock.port },
       targetHost: 'example.com',
       targetPort: 443,
       timeoutMs: 2000,
     });
-    socket.destroy();
+    await handle.destroy();
 
     expect(mock.events.find((e) => e.type === 'connect')).toMatchObject({
       ip: [0, 0, 0, 1],

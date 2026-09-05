@@ -99,7 +99,7 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /** Concatenate byte arrays into one flat `Uint8Array`. */
-export function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
+export function concatBytes(parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
   let total = 0;
   for (const part of parts) total += part.length;
   const out = new Uint8Array(total);

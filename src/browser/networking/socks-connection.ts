@@ -4,25 +4,26 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY
  * ─────────────────────────────────────────────────────────────────────────────
- * A pure-TS SOCKS client over Node.js `net` sockets. Supports:
+ * A pure-TS SOCKS client over {@link ISocketHandle}s (sockets owned by the
+ * main process). Supports:
  *   • SOCKS4  (IPv4 targets)
  *   • SOCKS4a (domain targets, resolved by the proxy)
  *   • SOCKS5  (IPv4 / IPv6 / domain targets, RFC 1928)
  *     - no-authentication and username/password auth (RFC 1929)
  *
- * The client performs the SOCKS handshake and returns a socket that is
+ * The client performs the SOCKS handshake and returns a handle that is
  * already tunnelled to the target host. Plain HTTP requests are then written
- * to that socket directly; HTTPS requests wrap it with `tls.connect()`.
+ * to it directly; HTTPS requests upgrade it with TLS.
  *
  * Domain names are ALWAYS handed to the proxy (SOCKS4a / SOCKS5 ATYP=0x03)
  * so DNS resolution happens on the proxy side — the reason SOCKS exists.
- *
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import type { Socket } from 'node:net';
+import { concatBytes, encodeUtf8 } from './byte-codecs';
 import { SocketReader } from './socket-reader';
-import { loadNodeBuiltin } from './node-builtins';
+import { getSocketProxy } from './socket-proxy';
+import type { ISocketHandle } from './socket-handle';
 
 // ── SOCKS5 constants (RFC 1928) ──────────────────────────────────────────────
 const SOCKS5_VERSION       = 0x05;
@@ -172,16 +173,16 @@ function ipv6Bytes(host: string): number[] | null {
 }
 
 /** Encode a target host for a SOCKS5 CONNECT request. */
-function encodeSocks5Address(host: string): { addrBuf: Buffer; atyp: number } {
+function encodeSocks5Address(host: string): { addrBuf: Uint8Array; atyp: number } {
   const v4 = ipv4Bytes(host);
-  if (v4) return { addrBuf: Buffer.from(v4), atyp: SOCKS5_ATYP_IPV4 };
+  if (v4) return { addrBuf: Uint8Array.from(v4), atyp: SOCKS5_ATYP_IPV4 };
 
   const v6 = ipv6Bytes(host);
-  if (v6) return { addrBuf: Buffer.from(v6), atyp: SOCKS5_ATYP_IPV6 };
+  if (v6) return { addrBuf: Uint8Array.from(v6), atyp: SOCKS5_ATYP_IPV6 };
 
-  const hostBytes = Buffer.from(host, 'utf-8');
+  const hostBytes = encodeUtf8(host);
   return {
-    addrBuf: Buffer.concat([Buffer.from([hostBytes.length]), hostBytes]),
+    addrBuf: concatBytes([Uint8Array.of(hostBytes.length), hostBytes]),
     atyp: SOCKS5_ATYP_DOMAIN,
   };
 }
@@ -206,12 +207,12 @@ function socks5RepText(rep: number): string {
 
 /** SOCKS5: greeting → optional auth → CONNECT (RFC 1928 + RFC 1929). */
 async function performSocks5Handshake(
-  socket: Socket,
+  handle: ISocketHandle,
   proxy: SocksProxyInfo,
   targetHost: string,
   targetPort: number,
 ): Promise<void> {
-  const reader = new SocketReader(socket, (cause) =>
+  const reader = new SocketReader(handle, (cause) =>
     new SocksError(
       `SOCKS proxy closed the connection during the handshake${cause ? `: ${cause.message}` : ''}`,
       'CONN_CLOSED',
@@ -219,17 +220,17 @@ async function performSocks5Handshake(
   const hasCreds = proxy.username !== undefined;
   const methods = hasCreds ? [SOCKS5_NO_AUTH, SOCKS5_USER_PASS] : [SOCKS5_NO_AUTH];
 
-  socket.write(Buffer.from([SOCKS5_VERSION, methods.length, ...methods]));
+  await handle.write(Uint8Array.from([SOCKS5_VERSION, methods.length, ...methods]));
 
   const methodReply = await reader.read(2);
   if (methodReply[0] !== SOCKS5_VERSION) {
     throw new SocksError(
-      `Invalid SOCKS5 greeting reply version 0x${methodReply[0].toString(16)}`,
+      `Invalid SOCKS5 greeting reply version 0x${methodReply[0]!.toString(16)}`,
       'BAD_VERSION',
     );
   }
 
-  const method = methodReply[1];
+  const method = methodReply[1]!;
   if (method === 0xff) {
     throw new SocksError('SOCKS5 proxy rejected all offered authentication methods', 'METHOD_REJECTED');
   }
@@ -237,12 +238,12 @@ async function performSocks5Handshake(
     if (proxy.username === undefined) {
       throw new SocksError('SOCKS5 proxy requires username/password but none were provided', 'AUTH_REQUIRED');
     }
-    const uname = Buffer.from(proxy.username, 'utf-8');
-    const passwd = Buffer.from(proxy.password ?? '', 'utf-8');
-    socket.write(Buffer.concat([
-      Buffer.from([SOCKS5_AUTH_VERSION, uname.length]),
+    const uname = encodeUtf8(proxy.username);
+    const passwd = encodeUtf8(proxy.password ?? '');
+    await handle.write(concatBytes([
+      Uint8Array.of(SOCKS5_AUTH_VERSION, uname.length),
       uname,
-      Buffer.from([passwd.length]),
+      Uint8Array.of(passwd.length),
       passwd,
     ]));
 
@@ -258,31 +259,31 @@ async function performSocks5Handshake(
   }
 
   const { addrBuf, atyp } = encodeSocks5Address(targetHost);
-  socket.write(Buffer.concat([
-    Buffer.from([SOCKS5_VERSION, SOCKS5_CMD_CONNECT, 0x00, atyp]),
+  await handle.write(concatBytes([
+    Uint8Array.from([SOCKS5_VERSION, SOCKS5_CMD_CONNECT, 0x00, atyp]),
     addrBuf,
-    Buffer.from([(targetPort >> 8) & 0xff, targetPort & 0xff]),
+    Uint8Array.from([(targetPort >> 8) & 0xff, targetPort & 0xff]),
   ]));
 
   const header = await reader.read(4);
   if (header[0] !== SOCKS5_VERSION) {
     throw new SocksError(
-      `Invalid SOCKS5 CONNECT reply version 0x${header[0].toString(16)}`,
+      `Invalid SOCKS5 CONNECT reply version 0x${header[0]!.toString(16)}`,
       'BAD_VERSION',
     );
   }
   if (header[1] !== SOCKS5_REP_SUCCESS) {
-    throw new SocksError(`SOCKS5 connect failed: ${socks5RepText(header[1])}`, 'CONNECT_FAILED');
+    throw new SocksError(`SOCKS5 connect failed: ${socks5RepText(header[1]!)}`, 'CONNECT_FAILED');
   }
 
   // Consume the reply's bound address + port so the tunneled stream is clean.
-  const replyAtyp = header[3];
+  const replyAtyp = header[3]!;
   let restLen: number;
   if (replyAtyp === SOCKS5_ATYP_IPV4) restLen = 4;
   else if (replyAtyp === SOCKS5_ATYP_IPV6) restLen = 16;
   else if (replyAtyp === SOCKS5_ATYP_DOMAIN) {
     const lenByte = await reader.read(1);
-    restLen = lenByte[0];
+    restLen = lenByte[0]!;
   } else {
     throw new SocksError(
       `SOCKS5 proxy returned unsupported address type 0x${replyAtyp.toString(16)}`,
@@ -292,60 +293,60 @@ async function performSocks5Handshake(
   await reader.read(restLen + 2);
 
   const leftover = reader.detach();
-  if (leftover.length > 0) socket.emit('data', leftover);
+  if (leftover.length > 0) handle.enqueueIncoming(leftover);
 }
 
 /** SOCKS4 / SOCKS4a: CONNECT (domain targets use the SOCKS4a extension). */
 async function performSocks4Handshake(
-  socket: Socket,
+  handle: ISocketHandle,
   proxy: SocksProxyInfo,
   targetHost: string,
   targetPort: number,
 ): Promise<void> {
-  const reader = new SocketReader(socket, (cause) =>
+  const reader = new SocketReader(handle, (cause) =>
     new SocksError(
       `SOCKS proxy closed the connection during the handshake${cause ? `: ${cause.message}` : ''}`,
       'CONN_CLOSED',
     ));
-  const userid = Buffer.from(proxy.username ?? '', 'utf-8');
-  const portBuf = Buffer.from([(targetPort >> 8) & 0xff, targetPort & 0xff]);
+  const userid = encodeUtf8(proxy.username ?? '');
+  const portBuf = Uint8Array.from([(targetPort >> 8) & 0xff, targetPort & 0xff]);
   const ipv4 = ipv4Bytes(targetHost);
 
-  let request: Buffer;
+  let request: Uint8Array;
   if (ipv4) {
-    request = Buffer.concat([
-      Buffer.from([SOCKS4_VERSION, SOCKS4_CMD_CONNECT]),
+    request = concatBytes([
+      Uint8Array.of(SOCKS4_VERSION, SOCKS4_CMD_CONNECT),
       portBuf,
-      Buffer.from(ipv4),
+      Uint8Array.from(ipv4),
       userid,
-      Buffer.from([0x00]),
+      Uint8Array.of(0x00),
     ]);
   } else {
     // SOCKS4a: proxy resolves the domain. Signal with IP 0.0.0.1 and append
     // the hostname after the user id terminator.
-    const hostBuf = Buffer.from(targetHost, 'utf-8');
-    request = Buffer.concat([
-      Buffer.from([SOCKS4_VERSION, SOCKS4_CMD_CONNECT]),
+    const hostBuf = encodeUtf8(targetHost);
+    request = concatBytes([
+      Uint8Array.of(SOCKS4_VERSION, SOCKS4_CMD_CONNECT),
       portBuf,
-      Buffer.from([0x00, 0x00, 0x00, 0x01]),
+      Uint8Array.of(0x00, 0x00, 0x00, 0x01),
       userid,
-      Buffer.from([0x00]),
+      Uint8Array.of(0x00),
       hostBuf,
-      Buffer.from([0x00]),
+      Uint8Array.of(0x00),
     ]);
   }
 
-  socket.write(request);
+  await handle.write(request);
 
   const reply = await reader.read(8);
   if (reply[0] !== 0x00) {
     throw new SocksError(
-      `Invalid SOCKS4 reply version byte 0x${reply[0].toString(16)}`,
+      `Invalid SOCKS4 reply version byte 0x${reply[0]!.toString(16)}`,
       'BAD_VERSION',
     );
   }
 
-  const cd = reply[1];
+  const cd = reply[1]!;
   if (cd !== SOCKS4_REPLY_GRANTED) {
     const text = cd === SOCKS4_REPLY_REJECTED
       ? 'request rejected or failed'
@@ -358,7 +359,88 @@ async function performSocks4Handshake(
   }
 
   const leftover = reader.detach();
-  if (leftover.length > 0) socket.emit('data', leftover);
+  if (leftover.length > 0) handle.enqueueIncoming(leftover);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONNECTION PHASE
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Resolve once the proxy connection is usable; reject on connection errors. */
+function waitForSocksConnection(handle: ISocketHandle): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const unsubs: Array<() => void> = [];
+    const done = (fn: () => void) => {
+      for (const unsub of unsubs.splice(0)) unsub();
+      fn();
+    };
+    unsubs.push(handle.onEvent('connect', () => done(() => resolve())));
+    unsubs.push(handle.onEvent('error', (payload) => {
+      const message = payload instanceof Error ? payload.message : String(payload ?? 'unknown error');
+      done(() => reject(new SocksError(`SOCKS proxy connection failed: ${message}`, 'CONNECT_ERROR')));
+    }));
+    unsubs.push(handle.onEvent('end', () => {
+      done(() => reject(new SocksError('SOCKS proxy closed the connection during connect', 'CONN_CLOSED')));
+    }));
+    unsubs.push(handle.onEvent('close', () => {
+      done(() => reject(new SocksError('SOCKS proxy closed the connection during connect', 'CONN_CLOSED')));
+    }));
+  });
+}
+
+/** Wait for the SOCKS phase to settle within timeoutMs, honoring `signal`. */
+async function waitForSocksTunnel(
+  handle: ISocketHandle,
+  proxy: SocksProxyInfo,
+  targetHost: string,
+  targetPort: number,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new SocksError(
+        `SOCKS handshake with ${proxy.hostname}:${proxy.port} timed out after ${timeoutMs}ms`,
+        'TIMEOUT',
+      ));
+    }, timeoutMs);
+
+    const onAbort = () => {
+      cleanup();
+      reject(new SocksError('SOCKS connection was aborted', 'ABORTED'));
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        cleanup();
+        reject(new SocksError('SOCKS connection was aborted', 'ABORTED'));
+        return;
+      }
+      signal.addEventListener('abort', onAbort);
+    }
+
+    (async () => {
+      await waitForSocksConnection(handle);
+      await (proxy.protocol === 'socks5'
+        ? performSocks5Handshake(handle, proxy, targetHost, targetPort)
+        : performSocks4Handshake(handle, proxy, targetHost, targetPort));
+    })().then(
+      () => {
+        cleanup();
+        resolve();
+      },
+      (err: unknown) => {
+        cleanup();
+        reject(err instanceof Error ? err : new SocksError(String(err), 'HANDSHAKE'));
+      },
+    );
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -367,78 +449,25 @@ async function performSocks4Handshake(
 
 /**
  * Open a connection to a SOCKS proxy and negotiate a tunnel to the target.
- * Resolves with the already-connected, tunneled socket.
+ * Resolves with the already-tunneled socket handle (owned by the main
+ * process). On failure the underlying socket is destroyed.
  */
 export async function connectThroughSocks(
   options: ConnectThroughSocksOptions,
-): Promise<Socket> {
-  const net = loadNodeBuiltin<typeof import('node:net')>('node:net');
-  if (!net) {
-    throw new SocksError('Node net builtin is unavailable in this runtime', 'NO_NODE');
-  }
+): Promise<ISocketHandle> {
   const { proxy, targetHost, targetPort } = options;
   const timeoutMs = options.timeoutMs ?? 30_000;
 
-  const socket = net.connect({ host: proxy.hostname, port: proxy.port });
-
-  return new Promise<Socket>((resolve, reject) => {
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined; // eslint-disable-line prefer-const
-
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      if (timer !== undefined) clearTimeout(timer);
-      if (options.signal) options.signal.removeEventListener('abort', onAbort);
-      socket.removeListener('error', onSocketError);
-      fn();
-    };
-
-    const fail = (err: Error) => {
-      finish(() => {
-        socket.destroy();
-        reject(err);
-      });
-    };
-
-    const onAbort = () => {
-      fail(new SocksError('SOCKS connection was aborted', 'ABORTED'));
-    };
-
-    const onSocketError = (err: Error) => {
-      fail(new SocksError(`SOCKS proxy connection failed: ${err.message}`, 'CONNECT_ERROR'));
-    };
-
-    timer = setTimeout(() => {
-      fail(new SocksError(
-        `SOCKS handshake with ${proxy.hostname}:${proxy.port} timed out after ${timeoutMs}ms`,
-        'TIMEOUT',
-      ));
-    }, timeoutMs);
-
-    socket.on('error', onSocketError);
-
-    if (options.signal) {
-      if (options.signal.aborted) {
-        onAbort();
-        return;
-      }
-      options.signal.addEventListener('abort', onAbort);
-    }
-
-    socket.on('connect', () => {
-      const handshake = proxy.protocol === 'socks5'
-        ? performSocks5Handshake(socket, proxy, targetHost, targetPort)
-        : performSocks4Handshake(socket, proxy, targetHost, targetPort);
-
-      handshake
-        .then(() => finish(() => resolve(socket)))
-        .catch((err) => {
-          finish(() => {
-            socket.destroy();
-            reject(err instanceof Error ? err : new SocksError(String(err), 'HANDSHAKE'));
-          });
-        });
-    });
+  const handle = await getSocketProxy().openTcp({
+    host: proxy.hostname,
+    port: proxy.port,
   });
+
+  try {
+    await waitForSocksTunnel(handle, proxy, targetHost, targetPort, timeoutMs, options.signal);
+    return handle;
+  } catch (err) {
+    void handle.destroy().catch(() => undefined);
+    throw err;
+  }
 }

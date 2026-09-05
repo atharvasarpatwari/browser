@@ -4,13 +4,15 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * RESPONSIBILITY
  * ─────────────────────────────────────────────────────────────────────────────
- * An IHttpClient implementation that uses raw TCP/TLS sockets via Node.js
- * `net` and `tls` modules. This bypasses `globalThis.fetch()` entirely,
- * giving the browser engine full control over the network stack.
+ * An IHttpClient implementation that uses raw TCP/TLS sockets via the socket
+ * proxy (sockets owned by the main process, driven through the proxy wire).
+ * This bypasses `globalThis.fetch()` entirely, giving the browser engine full
+ * control over the network stack.
  *
  * Features:
- *   • Real TCP connection via `net.connect()`
- *   • Real TLS upgrade via `tls.connect()` with system trust store
+ *   • Real TCP connection via `socketProxy.openTcp()`
+ *   • Real TLS upgrade via `handle.upgradeTls()`/`getPeerCertificate()`
+ *     with the system trust store
  *   • HTTP/1.1 request/response framing over raw sockets
  *   • Chunked transfer encoding decode
  *   • Content-Length based body reading
@@ -21,13 +23,14 @@
 
 import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from './request-manager';
 import type { ITlsHandler } from './tls-handler';
-import { CertVerificationStatus, TlsCertificateError } from './tls-handler';
+import { TlsCertificateError } from './tls-handler';
 import { ContentDecoder } from './content-encoding';
 import type { ContentCoding } from './content-encoding';
 import { connectThroughSocks, parseSocksProxyUrl } from './socks-connection';
 import { connectThroughHttpProxy, parseHttpProxyUrl } from './http-proxy-connect';
-import { loadNodeBuiltin } from './node-builtins';
-import { decodeUtf8 } from './byte-codecs';
+import { getSocketProxy } from './socket-proxy';
+import { onceSocketEvent, type ISocketHandle } from './socket-handle';
+import { concatBytes, decodeUtf8, encodeUtf8, indexOfBytes } from './byte-codecs';
 
 export class RawSocketError extends Error {
   constructor(message: string) {
@@ -54,15 +57,17 @@ export class RawSocketTimeoutError extends RawSocketError {
 // CHUNKED TRANSFER DECODER
 // ─────────────────────────────────────────────────────────────────────────────
 
-function decodeChunkedBody(raw: Buffer): Buffer {
-  const result: Buffer[] = [];
+const CRLF = encodeUtf8('\r\n');
+
+function decodeChunkedBody(raw: Uint8Array): Uint8Array {
+  const result: Uint8Array[] = [];
   let pos = 0;
 
   while (pos < raw.length) {
-    const sizeLineEnd = raw.indexOf('\r\n', pos);
+    const sizeLineEnd = indexOfBytes(raw, CRLF, pos);
     if (sizeLineEnd === -1) break;
 
-    const sizeStr = raw.subarray(pos, sizeLineEnd).toString('utf-8').trim();
+    const sizeStr = decodeUtf8(raw.subarray(pos, sizeLineEnd)).trim();
     const chunkSize = parseInt(sizeStr, 16);
 
     if (isNaN(chunkSize) || chunkSize < 0) break;
@@ -72,20 +77,37 @@ function decodeChunkedBody(raw: Buffer): Buffer {
     const dataEnd = dataStart + chunkSize;
 
     if (dataEnd > raw.length) {
-      result.push(Buffer.from(raw.subarray(dataStart)));
+      result.push(raw.subarray(dataStart));
       break;
     }
 
-    result.push(Buffer.from(raw.subarray(dataStart, dataEnd)));
+    result.push(raw.subarray(dataStart, dataEnd));
     pos = dataEnd + 2;
   }
 
-  return Buffer.concat(result);
+  return concatBytes(result);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RAW SOCKET HTTP CLIENT
 // ─────────────────────────────────────────────────────────────────────────────
+
+interface OpenRawSocketOptions {
+  readonly hostname: string;
+  readonly port: number;
+  readonly useTls: boolean;
+  readonly timeoutMs: number;
+  readonly signal: AbortSignal;
+}
+
+interface WriteRequestOptions {
+  readonly handle: ISocketHandle;
+  readonly hostname: string;
+  readonly port: number;
+  readonly useTls: boolean;
+  readonly tunneled: boolean;
+  readonly requestBytes: Uint8Array;
+}
 
 class RawSocketHttpClient implements IHttpClient {
   private readonly defaultTimeoutMs: number;
@@ -147,167 +169,171 @@ class RawSocketHttpClient implements IHttpClient {
     }
 
     headerLines.push('', '');
-    const rawRequest = headerLines.join('\r\n');
-    const requestBytes = Buffer.from(rawRequest, 'utf-8');
-
-    // Load Node.js builtins lazily (require works in the Electron renderer;
-    // dynamic import() is rewritten to a shim by the Vite build).
-    const net = loadNodeBuiltin<typeof import('node:net')>('node:net');
-    const tls = loadNodeBuiltin<typeof import('node:tls')>('node:tls');
-    if (!net || !tls) {
-      throw new RawSocketError('Node net/tls builtins are unavailable in this runtime');
-    }
+    const requestBytes = encodeUtf8(headerLines.join('\r\n'));
 
     return new Promise<HttpResponseSpec>((resolve, reject) => {
       let settled = false;
-      let socket: any = null;
-      const chunks: Buffer[] = [];
+      let handle: ISocketHandle | null = null;
+      const chunks: Uint8Array[] = [];
+      let unsubData: (() => void) | null = null;
+      let unsubEnd: (() => void) | null = null;
 
       const finish = (fn: () => void) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         signal.removeEventListener('abort', onAbort);
+        unsubData?.();
+        unsubEnd?.();
         fn();
       };
 
       const timer = setTimeout(() => {
         finish(() => {
-          socket?.destroy();
+          if (handle) void handle.destroy();
           reject(new RawSocketTimeoutError(hostname, port, timeoutMs));
         });
       }, timeoutMs);
 
       const onAbort = () => {
         finish(() => {
-          socket?.destroy();
+          if (handle) void handle.destroy();
           reject(new DOMException('The operation was aborted.', 'AbortError'));
         });
       };
       signal.addEventListener('abort', onAbort);
 
-      const onSocketError = (err: Error) => {
-        finish(() => reject(new RawSocketConnectionError(hostname, port, err)));
+      const onSocketFailure = (err: unknown) => {
+        finish(() => {
+          if (handle) void handle.destroy();
+          reject(err instanceof Error
+            ? new RawSocketConnectionError(hostname, port, err)
+            : new RawSocketConnectionError(hostname, port));
+        });
       };
 
       const run = async () => {
-        let rawSocket: any;
-        try {
-          if (this.socksProxy) {
-            const proxyInfo = parseSocksProxyUrl(this.socksProxy);
-            if (!proxyInfo) {
-              throw new RawSocketError(`Invalid SOCKS proxy URL: ${this.socksProxy}`);
-            }
-            rawSocket = await connectThroughSocks({
-              proxy: proxyInfo,
-              targetHost: hostname,
-              targetPort: port,
-              timeoutMs,
-              signal,
-            });
-          } else if (this.httpProxy) {
-            const proxyInfo = parseHttpProxyUrl(this.httpProxy);
-            if (!proxyInfo) {
-              throw new RawSocketError(`Invalid HTTP proxy URL: ${this.httpProxy}`);
-            }
-            rawSocket = await connectThroughHttpProxy({
-              proxy: proxyInfo,
-              targetHost: hostname,
-              targetPort: port,
-              timeoutMs,
-              signal,
-            });
-          } else if (useTls) {
-            // Use rejectUnauthorized: false so we can inspect the peer cert before deciding.
-            rawSocket = tls.connect({ host: hostname, port, servername: hostname, rejectUnauthorized: false });
-          } else {
-            rawSocket = net.connect({ host: hostname, port });
-          }
-        } catch (err) {
-          finish(() => {
-            rawSocket?.destroy();
-            reject(err instanceof Error ? err : new RawSocketConnectionError(hostname, port));
-          });
-          return;
-        }
-
-        if ((this.socksProxy !== undefined || this.httpProxy !== undefined) && useTls) {
-          // Wrap the tunneled socket with TLS; SNI still carries the real host.
-          rawSocket = tls.connect({ socket: rawSocket, servername: hostname, rejectUnauthorized: false });
-        }
-        socket = rawSocket;
-
-        socket.on('error', onSocketError);
-        socket.on('data', (chunk: Buffer) => {
-          chunks.push(chunk);
+        const tunneled = this.socksProxy !== undefined || this.httpProxy !== undefined;
+        handle = await this.openRawSocket({ hostname, port, useTls, timeoutMs, signal });
+        unsubData = handle.onEvent('data', (chunk) => {
+          if (chunk instanceof Uint8Array) chunks.push(chunk);
         });
-        socket.on('end', () => {
+        unsubEnd = handle.onEvent('end', () => {
           finish(async () => {
             try {
-              const rawResponse = Buffer.concat(chunks);
+              const rawResponse = concatBytes(chunks);
               const result = await this.parseHttpResponse(rawResponse, request.url);
+              if (handle) void handle.destroy();
               resolve(result);
             } catch (err) {
               reject(err instanceof Error ? err : new RawSocketError(String(err)));
             }
           });
         });
+        handle.onEvent('error', onSocketFailure);
+        handle.onEvent('close', onSocketFailure);
 
-        if (useTls) {
-          // Wait for the TLS handshake to complete, then validate the certificate.
-          socket.on('secureConnect', () => {
-            const peerCert = socket.getPeerCertificate(true);
-            if (!peerCert || !peerCert.subject) {
-              socket.destroy();
-              finish(() => reject(new RawSocketConnectionError(hostname, port,
-                new Error('Server did not present a certificate'))));
-              return;
-            }
-
-            // Validate certificate if tlsHandler is available.
-            if (this.tlsHandler) {
-              this.tlsHandler.negotiate(hostname, port).then(result => {
-                if (!result.verified) {
-                  socket.destroy();
-                  const detail = `Certificate verification failed: ${result.verificationStatus}`;
-                  finish(() => reject(new TlsCertificateError(hostname, result.verificationStatus, detail)));
-                  return;
-                }
-                // Certificate valid — send the HTTP request.
-                socket.write(requestBytes);
-              }).catch(err => {
-                socket.destroy();
-                finish(() => reject(err instanceof Error ? err : new RawSocketConnectionError(hostname, port, err)));
-              });
-            } else {
-              // No tlsHandler — trust the connection (legacy behavior).
-              socket.write(requestBytes);
-            }
-          });
-        } else if (this.socksProxy !== undefined || this.httpProxy !== undefined) {
-          // The tunnel is already established — write immediately.
-          socket.write(requestBytes);
-        } else {
-          // Plain TCP — send immediately on connect.
-          socket.on('connect', () => {
-            socket.write(requestBytes);
-          });
-        }
+        await this.writeRequest({
+          handle,
+          hostname,
+          port,
+          useTls,
+          tunneled,
+          requestBytes,
+        });
       };
 
-      run();
+      run().catch((err) => {
+        finish(() => {
+          if (handle) void handle.destroy();
+          reject(err instanceof Error ? err : new RawSocketConnectionError(hostname, port));
+        });
+      });
     });
   }
 
-  private async parseHttpResponse(raw: Buffer, requestUrl: string): Promise<HttpResponseSpec> {
-    const separator = Buffer.from('\r\n\r\n');
-    const headerEndIdx = raw.indexOf(separator);
+  /** Open a socket through the proxy (direct, HTTP CONNECT, or SOCKS). */
+  private async openRawSocket(options: OpenRawSocketOptions): Promise<ISocketHandle> {
+    const { hostname, port, useTls, timeoutMs, signal } = options;
+    if (this.socksProxy) {
+      const proxyInfo = parseSocksProxyUrl(this.socksProxy);
+      if (!proxyInfo) {
+        throw new RawSocketError(`Invalid SOCKS proxy URL: ${this.socksProxy}`);
+      }
+      return connectThroughSocks({
+        proxy: proxyInfo,
+        targetHost: hostname,
+        targetPort: port,
+        timeoutMs,
+        signal,
+      });
+    }
+    if (this.httpProxy) {
+      const proxyInfo = parseHttpProxyUrl(this.httpProxy);
+      if (!proxyInfo) {
+        throw new RawSocketError(`Invalid HTTP proxy URL: ${this.httpProxy}`);
+      }
+      return connectThroughHttpProxy({
+        proxy: proxyInfo,
+        targetHost: hostname,
+        targetPort: port,
+        timeoutMs,
+        signal,
+      });
+    }
+    return getSocketProxy().openTcp({ host: hostname, port, tls: useTls });
+  }
+
+  /**
+   * Drive the write phase: wait for the TLS extra-gate where needed, validate
+   * the peer certificate, and write the request once the stream is usable.
+   */
+  private async writeRequest(options: WriteRequestOptions): Promise<void> {
+    const { handle, hostname, port, useTls, tunneled, requestBytes } = options;
+
+    if (!useTls) {
+      if (!tunneled) {
+        // A tunneled handle is already connected after its handshake.
+        await onceSocketEvent(handle, 'connect');
+      }
+      await handle.write(requestBytes);
+      return;
+    }
+
+    if (tunneled) {
+      await handle.upgradeTls(hostname);
+    }
+    await onceSocketEvent(handle, 'secureConnect');
+
+    const peerCert = await handle.getPeerCertificate();
+    if (!peerCert || !(peerCert as { subject?: unknown }).subject) {
+      void handle.destroy();
+      throw new RawSocketConnectionError(hostname, port,
+        new Error('Server did not present a certificate'));
+    }
+
+    // Validate certificate if tlsHandler is available.
+    if (this.tlsHandler) {
+      const result = await this.tlsHandler.negotiate(hostname, port);
+      if (!result.verified) {
+        void handle.destroy();
+        const detail = `Certificate verification failed: ${result.verificationStatus}`;
+        throw new TlsCertificateError(hostname, result.verificationStatus, detail);
+      }
+    }
+
+    await handle.write(requestBytes);
+  }
+
+  private async parseHttpResponse(raw: Uint8Array, requestUrl: string): Promise<HttpResponseSpec> {
+    const separator = encodeUtf8('\r\n\r\n');
+    const headerEndIdx = indexOfBytes(raw, separator);
     if (headerEndIdx === -1) {
       throw new RawSocketError('Invalid HTTP response: no header/body separator found');
     }
 
-    const headerSection = raw.subarray(0, headerEndIdx).toString('utf-8');
-    let bodyRaw: Buffer = Buffer.from(raw.subarray(headerEndIdx + 4));
+    const headerSection = decodeUtf8(raw.subarray(0, headerEndIdx));
+    let bodyRaw: Uint8Array = raw.subarray(headerEndIdx + 4);
 
     const headerLines = headerSection.split('\r\n');
 
@@ -350,20 +376,20 @@ class RawSocketHttpClient implements IHttpClient {
       try {
         const decoded = await this.contentDecoder.decode(contentEncoding as ContentCoding, bodyRaw);
         if (isBinary) {
-          bodyBinary = new Uint8Array(decoded);
+          bodyBinary = decoded;
         } else {
           body = decodeUtf8(decoded);
         }
       } catch {
         if (isBinary) {
-          bodyBinary = new Uint8Array(bodyRaw);
+          bodyBinary = bodyRaw;
         } else {
           body = decodeUtf8(bodyRaw);
         }
       }
     } else {
       if (isBinary) {
-        bodyBinary = new Uint8Array(bodyRaw);
+        bodyBinary = bodyRaw;
       } else {
         body = decodeUtf8(bodyRaw);
       }

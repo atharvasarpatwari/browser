@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as http from 'node:http';
 import * as https from 'node:https';
-import type { Socket } from 'node:net';
 import { RawSocketHttpClient, RawSocketError } from '../src/browser/networking/raw-socket-http-client';
 import { ProxyAwareHttpClient, createProxyConfigFromEnv } from '../src/browser/networking/request-manager';
 import {
   connectThroughHttpProxy,
   parseHttpProxyUrl,
 } from '../src/browser/networking/http-proxy-connect';
+import type { ISocketHandle } from '../src/browser/networking/socket-handle';
 import { CertVerificationStatus, CipherSuite, TlsVersion, type ITlsHandler } from '../src/browser/networking/tls-handler';
 import { startMockHttpProxy, type MockHttpProxyServer } from './helpers/http-proxy-test-server';
 import { createSelfSignedCert } from './helpers/self-signed-cert';
@@ -137,13 +137,13 @@ describe('connectThroughHttpProxy', () => {
   it('negotiates a CONNECT tunnel and reports the target to the proxy', async () => {
     const mock = await startProxy({ relay: true });
     const info = parseHttpProxyUrl(`http://127.0.0.1:${mock.port}`)!;
-    const socket: Socket = await connectThroughHttpProxy({
+    const handle: ISocketHandle = await connectThroughHttpProxy({
       proxy: info,
       targetHost: '127.0.0.1',
       targetPort: httpPortOf(httpBaseUrl),
       timeoutMs: 3000,
     });
-    socket.destroy();
+    await handle.destroy();
 
     expect(mock.events).toHaveLength(1);
     expect(mock.events[0]).toMatchObject({
@@ -157,13 +157,13 @@ describe('connectThroughHttpProxy', () => {
   it('sends Proxy-Authorization when the proxy URL has credentials', async () => {
     const mock = await startProxy();
     const info = parseHttpProxyUrl(`http://user:pass@127.0.0.1:${mock.port}`)!;
-    const socket: Socket = await connectThroughHttpProxy({
+    const handle: ISocketHandle = await connectThroughHttpProxy({
       proxy: info,
       targetHost: '127.0.0.1',
       targetPort: 80,
       timeoutMs: 3000,
     });
-    socket.destroy();
+    await handle.destroy();
 
     expect(mock.events[0]!.raw).toContain(
       `Proxy-Authorization: Basic ${Buffer.from('user:pass').toString('base64')}`,
