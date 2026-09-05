@@ -30,6 +30,7 @@ import { connectThroughSocks, parseSocksProxyUrl } from './socks-connection';
 import { connectThroughHttpProxy, parseHttpProxyUrl } from './http-proxy-connect';
 import { getSocketProxy } from './socket-proxy';
 import { onceSocketEvent, type ISocketHandle } from './socket-handle';
+import { loadNodeBuiltin } from './node-builtins';
 import { concatBytes, decodeUtf8, encodeUtf8, indexOfBytes } from './byte-codecs';
 
 export class RawSocketError extends Error {
@@ -127,10 +128,11 @@ class RawSocketHttpClient implements IHttpClient {
     // Load system trust store once.
     const cas = new Set<string>();
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { rootCertificates } = require('node:tls') as typeof import('node:tls');
-      for (const pem of rootCertificates) {
-        cas.add(pem.trim());
+      const tlsBuiltin = loadNodeBuiltin<typeof import('node:tls')>('node:tls');
+      if (tlsBuiltin?.rootCertificates) {
+        for (const pem of tlsBuiltin.rootCertificates) {
+          cas.add(pem.trim());
+        }
       }
     } catch { /* empty */ }
     this.trustedCAs = cas;

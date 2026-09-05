@@ -81,7 +81,12 @@ export class SocketOwner {
       throw new Error('socket-owner: node:tls is unavailable in this runtime');
     }
     const socket = msg.tls
-      ? tls!.connect({ host: msg.host, port: msg.port, servername: msg.host, rejectUnauthorized: false })
+      ? tls!.connect({
+          host: msg.host,
+          port: msg.port,
+          servername: ipOrUndefined(msg.host),
+          rejectUnauthorized: false,
+        })
       : net.connect({ host: msg.host, port: msg.port });
     this.sockets.set(msg.socketId, { socket });
     this.wire(msg.socketId, socket);
@@ -151,27 +156,17 @@ export class SocketOwner {
     return { ok: true };
   }
 
-  private getPeerCertificate(msg: SocketMessage): { certificate: unknown } {
+  private getPeerCertificate(msg: SocketMessage): { certificate: CertificateWire | null } {
     const entry = this.require(msg);
     const peerCert = (entry.socket as import('node:tls').TLSSocket).getPeerCertificate;
-    const raw = typeof peerCert === 'function' ? peerCert.call(entry.socket, true) : null;
+    if (typeof peerCert !== 'function') return { certificate: null };
+    const raw = peerCert.call(entry.socket, true) as PeerCertificateLike | null;
     if (!raw) {
       return { certificate: null };
     }
-    // Trim to primitive fields: getPeerCertificate(true) includes an
-    // `issuerCertificate` that is self-referencing for self-signed/root
-    // certificates, which the IPC serializer cannot encode. The renderer only
-    // needs the identity fields to decide whether a cert was presented.
-    return {
-      certificate: {
-        subject: raw.subject ?? undefined,
-        issuer: raw.issuer ?? undefined,
-        subjectaltname: raw.subjectaltname ?? undefined,
-        valid_from: raw.valid_from ?? undefined,
-        valid_to: raw.valid_to ?? undefined,
-        issuerCertificate: null as unknown,
-      },
-    };
+    const chain = encodeCertificateChain(raw);
+    const certificate = chain.length > 0 ? { ...chain[0], chain } : null;
+    return { certificate };
   }
 
   private upgradeTls(msg: UpgradeTlsMessage): { ok: true } {
@@ -185,11 +180,90 @@ export class SocketOwner {
     this.unwire(msg.socketId, entry.socket);
     const tlsSocket = tls.connect({
       socket: entry.socket,
-      servername: msg.servername,
+      servername: ipOrUndefined(msg.servername),
       rejectUnauthorized: false,
     });
     entry.socket = tlsSocket;
     this.wire(msg.socketId, tlsSocket);
     return { ok: true };
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CERTIFICATE WIRE ENCODING
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Minimal shape of the object returned by `tls.TLSSocket.getPeerCertificate`. */
+interface PeerCertificateLike {
+  subject?: { CN?: string; [k: string]: unknown };
+  issuer?: { CN?: string; [k: string]: unknown };
+  subjectaltname?: string;
+  valid_from?: string;
+  valid_to?: string;
+  serialNumber?: string;
+  fingerprint?: string;
+  fingerprint256?: string;
+  sigalg?: string;
+  pubkey?: { asymmetricKeyType?: string; asymmetricKeySize?: number };
+  basicConstraints?: { CA?: boolean } | null;
+  issuerCertificate?: PeerCertificateLike | null;
+}
+
+/**
+ * Wire-safe view of one certificate in a chain. `node:getPeerCertificate(true)`
+ * links `issuerCertificate` back to itself for self-signed/root certificates,
+ * which the IPC serializer cannot encode — so the chain is flattened here, on
+ * the main side, into plain primitive objects with the cycle replaced by an
+ * ordered sibling `chain` array (leaf first).
+ */
+interface CertificateWire {
+  subject?: { CN?: string; [k: string]: unknown };
+  issuer?: { CN?: string; [k: string]: unknown };
+  subjectaltname?: string;
+  valid_from?: string;
+  valid_to?: string;
+  serialNumber?: string;
+  fingerprint?: string;
+  fingerprint256?: string;
+  sigalg?: string;
+  pubkeyAlgorithm?: string;
+  keySize?: number;
+  basicConstraints?: { CA?: boolean } | null;
+  chain: CertificateWire[];
+}
+
+function encodeCertificateChain(raw: PeerCertificateLike): CertificateWire[] {
+  const wire = (cert: PeerCertificateLike): CertificateWire => ({
+    subject: cert.subject ?? undefined,
+    issuer: cert.issuer ?? undefined,
+    subjectaltname: cert.subjectaltname ?? undefined,
+    valid_from: cert.valid_from ?? undefined,
+    valid_to: cert.valid_to ?? undefined,
+    serialNumber: cert.serialNumber ?? undefined,
+    fingerprint: cert.fingerprint ?? undefined,
+    fingerprint256: cert.fingerprint256 ?? undefined,
+    sigalg: cert.sigalg ?? undefined,
+    pubkeyAlgorithm: cert.pubkey?.asymmetricKeyType ?? undefined,
+    keySize: cert.pubkey?.asymmetricKeySize ?? undefined,
+    basicConstraints: cert.basicConstraints ?? undefined,
+    chain: [],
+  });
+
+  const chain: CertificateWire[] = [];
+  const seen = new Set<PeerCertificateLike>();
+  let current: PeerCertificateLike | null = raw;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    chain.push(wire(current));
+    current = current.issuerCertificate ?? null;
+  }
+  return chain;
+}
+
+/**
+ * `tls.connect` rejects numeric IP literals as `servername` (RFC 6066 forbids
+ * IPs in SNI). Pass the host only when it looks like a DNS name.
+ */
+function ipOrUndefined(host: string): string | undefined {
+  return host.includes(':') || /^\d{1,3}(\.\d{1,3}){3}$/.test(host) ? undefined : host;
 }

@@ -31,6 +31,9 @@
 
 import type { IDisposable } from '../../app/dependency-container';
 import { loadNodeBuiltin } from './node-builtins';
+import { getSocketProxy } from './socket-proxy';
+import { onceSocketEvent } from './socket-handle';
+import type { ISocketHandle } from './socket-handle';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENUMS
@@ -137,6 +140,27 @@ interface CertificatePin {
   readonly createdAt: number;
   /** When the pin expires (0 = never). */
   readonly expiresAt: number;
+}
+
+/**
+ * Wire-safe certificate chain element as encoded by the socket owner
+ * (`getPeerCertificate`). The `chain` property carries the flattened issuer
+ * chain (leaf first); cycles (self-signed roots) are broken in the owner.
+ */
+interface DhcCertificateLike {
+  subject?: { CN?: string; [k: string]: unknown };
+  issuer?: { CN?: string; [k: string]: unknown };
+  subjectaltname?: string;
+  valid_from?: string;
+  valid_to?: string;
+  serialNumber?: string;
+  fingerprint?: string;
+  fingerprint256?: string;
+  sigalg?: string;
+  pubkeyAlgorithm?: string;
+  keySize?: number;
+  basicConstraints?: { CA?: boolean } | null;
+  chain?: DhcCertificateLike[];
 }
 
 /** TLS configuration options. */
@@ -469,83 +493,56 @@ class TlsHandler implements ITlsHandler {
   }
 
   private static async buildCertificateChainReal(hostname: string, port: number): Promise<readonly CertificateInfo[]> {
-    const tls = loadNodeBuiltin<typeof import('node:tls')>('node:tls');
-    const net = loadNodeBuiltin<typeof import('node:net')>('node:net');
-    if (!tls || !net) {
-      throw new Error(`Node net/tls builtins are unavailable in this runtime`);
-    }
+    // Every socket is owned by the main process: open a probe connection
+    // through the socket proxy, read the peer chain it observed, and tear the
+    // probe down. The renderer never opens a tls socket directly.
+    const handle: ISocketHandle = await getSocketProxy().openTcp({ host: hostname, port, tls: true });
 
-    return new Promise<readonly CertificateInfo[]>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        socket.destroy();
-        reject(new Error(`TLS handshake timed out for ${hostname}:${port}`));
-      }, 10_000);
+    try {
+      // secureConnect carries no payload — merely awaiting it guarantees the
+      // handshake completed on the owner side before we ask for the cert.
+      await onceSocketEvent(handle, 'secureConnect');
 
-      const socket = tls.connect(
-        { host: hostname, port, servername: hostname, rejectUnauthorized: false },
-        () => {
-          clearTimeout(timer);
-          const peerCert = socket.getPeerCertificate(true);
-          socket.destroy();
+      const wire = await handle.getPeerCertificate();
+      if (!wire || !((wire as { subject?: unknown }).subject)) {
+        return [];
+      }
+      // The owner flattens the issuerCertificate chain (leaf first); a
+      // self-referencing root is represented once, breaking the cycle.
+      const flat: DhcCertificateLike[] = (wire as { chain?: DhcCertificateLike[] }).chain
+        ?? [wire as DhcCertificateLike];
 
-          if (!peerCert || !peerCert.subject) {
-            resolve([]);
-            return;
+      const chain: CertificateInfo[] = [];
+      flat.forEach((cert, index) => {
+        const sanList: string[] = [];
+        if (cert.subjectaltname) {
+          for (const part of cert.subjectaltname.split(',')) {
+            const name = part.trim().replace(/^DNS:/, '');
+            if (name) sanList.push(name);
           }
-
-          const chain: CertificateInfo[] = [];
-
-          // Helper to convert Node cert to CertificateInfo
-          const toInfo = (cert: any, isCa: boolean): CertificateInfo => {
-            const sanList: string[] = [];
-            if (cert.subjectaltname) {
-              for (const part of cert.subjectaltname.split(',')) {
-                const name = part.trim().replace(/^DNS:/, '');
-                if (name) sanList.push(name);
-              }
-            }
-            return {
-              subject: cert.CN || cert.subject?.CN || hostname,
-              issuer: cert.issuer?.CN || cert.issuer || 'Unknown',
-              notBefore: cert.valid_from || '',
-              notAfter: cert.valid_to || '',
-              serialNumber: cert.serialNumber || '',
-              fingerprint: cert.fingerprint256 || cert.fingerprint || '',
-              san: sanList,
-              publicKeyAlgorithm: cert.pubkey?.asymmetricKeyType || 'RSA',
-              signatureAlgorithm: cert.sigalg || 'SHA256withRSA',
-              keySize: cert.pubkey?.asymmetricKeySize ?? 2048,
-              isCa,
-            };
-          };
-
-          // Leaf certificate
-          chain.push(toInfo(peerCert, false));
-
-          // Certificate authority chain
-          let current = peerCert;
-          while (current && current.issuerCertificate) {
-            current = current.issuerCertificate;
-            if (current && current.subject) {
-              const isCa: boolean = Boolean((current as { basicConstraints?: { CA?: boolean } }).basicConstraints?.CA)
-                            || Boolean(current.subject.CN?.includes('CA'))
-                            || Boolean(current.subject.CN?.includes('Root'));
-              chain.push(toInfo(current, isCa));
-            }
-          }
-
-          resolve(chain);
-        },
-      );
-
-      socket.on('error', (err) => {
-        clearTimeout(timer);
-        socket.destroy();
-        // If TLS connection fails entirely, return empty chain
-        // (caller will fall back to verification failure)
-        resolve([]);
+        }
+        chain.push({
+          subject: cert.subject?.CN || hostname,
+          issuer: cert.issuer?.CN || 'Unknown',
+          notBefore: cert.valid_from || '',
+          notAfter: cert.valid_to || '',
+          serialNumber: cert.serialNumber || '',
+          fingerprint: cert.fingerprint256 || cert.fingerprint || '',
+          san: sanList,
+          publicKeyAlgorithm: cert.pubkeyAlgorithm || 'RSA',
+          signatureAlgorithm: cert.sigalg || 'SHA256withRSA',
+          keySize: cert.keySize ?? 2048,
+          isCa: index > 0
+            && (Boolean(cert.basicConstraints?.CA)
+                || Boolean(cert.subject?.CN?.includes('CA'))
+                || Boolean(cert.subject?.CN?.includes('Root'))),
+        });
       });
-    });
+
+      return chain;
+    } finally {
+      void handle.destroy();
+    }
   }
 
   private static buildCertificateChain(hostname: string): readonly CertificateInfo[] {
@@ -644,9 +641,11 @@ class TlsHandler implements ITlsHandler {
   static loadRootCaStore(): Set<string> {
     const trusted = new Set<string>();
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { rootCertificates } = require('node:tls') as typeof import('node:tls');
-      for (const pem of rootCertificates) {
+      const tls = loadNodeBuiltin<typeof import('node:tls')>('node:tls');
+      if (!tls || !tls.rootCertificates) {
+        return trusted;
+      }
+      for (const pem of tls.rootCertificates) {
         trusted.add(pem.trim());
       }
     } catch {
