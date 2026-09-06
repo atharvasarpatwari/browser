@@ -204,8 +204,27 @@ across (they can't work anyway), so renderer code must go through `socketProxy` 
 | 2 | `content-encoding.ts`, `http-auth.ts`, `multipart.ts`, `request-manager.ts`, `stun-client.ts` | Buffer → Uint8Array (byte-only; no proxy needed) |
 | 3 | `socket-handle.ts` (new), `socket-proxy.ts` (new), `socket-reader.ts`, `http-proxy-connect.ts`, `raw-socket-http-client.ts` | Introduce `ISocketHandle` + TCP proxy; rework the three consumers |
 | 4 | `socks-connection.ts`, `tls-handler.ts` | Same TCP-proxy shape |
-| 5 | `dgram-handle.ts` (new), `ice-agent.ts`, `quic-transport.ts` | `IDgramHandle` UDP proxy |
-| 6 | `electron/main.cjs`, `electron/preload.cjs`, `electron/socket-owner.cjs` (new), `node-builtins.ts` | Flip `contextIsolation: true`; wire the channel + preload |
+| 5 | `dgram-handle.ts` (new), `ice-agent.ts`, `quic-transport.ts`, `stun-client.ts` | `IDgramHandle` UDP proxy — **implemented** (2026-09-05/06) |
+| 6 | `electron/main.cjs`, `electron/preload.cjs`, `electron/socket-owner.cjs` (new), `src/browser/buffer-polyfill.ts` (new), `socket-proxy.ts`, `socket-handle.ts` | Flip `contextIsolation: true`; bridge via native Electron IPC — **implemented** (2026-09-06) |
+
+### Actual Phase-6 implementation notes (deviations from the plan above)
+
+- **Native IPC, not a CJS re-implementation.** `electron/socket-owner.cjs` registers
+  `ipcMain.handle('nova:net')` (renderer RPCs via `ipcRenderer.invoke`) and pushes
+  frames with `webContents.send('nova:net', { socketId, frame })`. The renderer keeps
+  the same `SocketProxy` API; `createBridgeChannel` maps it onto `window.nova.ipc`.
+  If `window.nova.ipc` is absent the in-process owner pair (tests) is used.
+- **Preload allowlist is module-level, not shaped.** `nova.require` loads whole Node
+  builtins (`node:fs|path|crypto|zlib|dns|os|tls`); `net`/`dgram` are excluded —
+  sockets are proxy-only. `node:buffer` is also excluded: the page world gets its
+  `Buffer` from `src/browser/buffer-polyfill.ts` (installed first thing in
+  `src/app/main.ts`).
+- **No bare `process`.** The preload exposes a frozen `nova.process` snapshot with no
+  `on`/`listeners`, so `src/browser/engine/process-guard.ts` takes its
+  `window.onerror` browser branch (`typeof process === 'undefined'` holds).
+- **`socket-owner.ts` stays** as the in-process fallback used by vitest; it and
+  `socket-owner.cjs` share the identical wire protocol (kinds, frames, cert chain
+  encoding, `ipOrUndefined`).
 
 `content-encoding.ts`'s caller (`raw-socket-http-client`) moves in lockstep per the plan
 doc — its `ContentDecoder.decode()` returns `Uint8Array` and the call site drops
