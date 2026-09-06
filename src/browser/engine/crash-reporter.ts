@@ -20,6 +20,8 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
+import { loadNodeBuiltin } from '../networking/node-builtins';
+import { randomUUID } from '../security/crypto-utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -398,20 +400,18 @@ class CrashReporter implements ICrashReporter {
   writeMinidump(report: CrashReport, data: Buffer): MinidumpFile | undefined {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const path = require('node:path') as typeof import('node:path');
-      const { randomUUID } = require('../security/crypto-utils') as typeof import('../security/crypto-utils');
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      const path = loadNodeBuiltin<typeof import('node:path')>('node:path');
 
       const dir = this.enhancedConfig.minidumpDir;
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+      if (!fs!.existsSync(dir)) {
+        fs!.mkdirSync(dir, { recursive: true });
       }
 
       const id = randomUUID();
       const filename = `minidump-${report.id}-${id}.dmp`;
-      const filePath = path.join(dir, filename);
-      fs.writeFileSync(filePath, data);
+      const filePath = path!.join(dir, filename);
+      fs!.writeFileSync(filePath, data);
 
       const minidump: MinidumpFile = {
         id,
@@ -427,7 +427,7 @@ class CrashReporter implements ICrashReporter {
       if (this.minidumps.length > this.enhancedConfig.maxMinidumps) {
         const old = this.minidumps.splice(0, this.minidumps.length - this.enhancedConfig.maxMinidumps);
         for (const m of old) {
-          try { fs.unlinkSync(m.filePath); } catch {}
+          try { fs?.unlinkSync(m.filePath); } catch {}
         }
       }
 
@@ -447,9 +447,8 @@ class CrashReporter implements ICrashReporter {
     if (idx < 0) return false;
     const [removed] = this.minidumps.splice(idx, 1);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      fs.unlinkSync(removed.filePath);
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      fs!.unlinkSync(removed.filePath);
     } catch {}
     return true;
   }

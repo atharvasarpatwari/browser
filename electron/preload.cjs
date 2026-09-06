@@ -1,89 +1,92 @@
 /**
  * @file electron/preload.cjs
  *
- * *** NOT CURRENTLY USED — dead code, kept only as reference. ***
- * `electron/main.cjs` no longer passes a `preload:` path (see the 2026-08-23
- * contextIsolation migration / 2026-08-28 revert:
- * doc/2026-08-28-windows-app-health-and-buffer-fix.md), and nothing else in
- * the repo references this file (checked electron-builder.yml too).
+ * Boundary between the isolated Electron renderer and the main process
+ * (Phase 5 contextIsolation migration, see doc/socket-proxy-design.md).
  *
- * It also would NOT actually fix the problem it was written for: `buffer.*`
- * below returns real Buffer instances across contextBridge, whose instance
- * methods do not survive structured cloning — the exact "Buffer is not
- * defined"-adjacent failure mode that broke the renderer in the first place.
- * A real contextIsolation-safe networking layer needs a different shape (see
- * doc/buffer-safe-networking-plan.md). Delete this file or replace it
- * wholesale when that work happens — don't extend it as-is.
+ * Exposes three things on `window.nova`:
  *
- * Electron preload script — runs in an isolated context with full Node.js
- * access and bridges critical APIs to the renderer via contextBridge.
+ *   ipc     — the nova:net socket-proxy transport. `request` round-trips an
+ *             RPC over ipcRenderer.invoke; `on` relays webContents.push
+ *             frames ({ socketId, frame } envelopes) and returns an
+ *             unsubscribe. The renderer never touches net/tls/dgram.
+ *   require — controlled loader for the read-only Node builtins the renderer
+ *             still legitimately needs. Narrow allowlist: fs/path/crypto/
+ *             zlib/dns/os/tls. No net, no dgram — sockets are proxy-only.
+ *   process — frozen snapshot for diagnostics only. Deliberately exposes no
+ *             `on`/`listeners`, so src/browser/engine/process-guard.ts takes
+ *             its window.onerror browser branch (a bare `process` global is
+ *             never installed, so `typeof process === 'undefined'` holds).
  *
- * When contextIsolation is enabled, the renderer loses direct access to
- * require(), process, Buffer, and Node builtins. This script selectively
- * exposes them under the `window.nova` namespace.
+ * Buffer is intentionally absent: the page world gets its Buffer from
+ * src/browser/buffer-polyfill.ts instead of a bridged Node Buffer.
  */
 
-const { contextBridge } = require('electron')
+'use strict'
+
+const { contextBridge, ipcRenderer } = require('electron')
+
+const CHANNEL = 'nova:net'
 
 /* -------------------------------------------------------------------------- */
-/*  Controlled require — only loads known-safe Node builtins                   */
+/*  Controlled require — only the builtins the renderer resolves at runtime    */
 /* -------------------------------------------------------------------------- */
 
 const ALLOWED_MODULES = new Set([
   'node:fs', 'fs',
   'node:path', 'path',
-  'node:net', 'net',
-  'node:tls', 'tls',
-  'node:dns', 'dns',
-  'node:dgram', 'dgram',
-  'node:zlib', 'zlib',
   'node:crypto', 'crypto',
-  'node:buffer', 'buffer',
-  'node:stream', 'stream',
-  'node:util', 'util',
-  'node:events', 'events',
-  'node:http', 'http',
-  'node:https', 'https',
-  'node:url', 'url',
+  'node:zlib', 'zlib',
+  'node:dns', 'dns',
   'node:os', 'os',
-  'node:assert', 'assert',
+  'node:tls', 'tls',
 ])
 
 function safeRequire(name) {
   if (!ALLOWED_MODULES.has(name)) {
     throw new Error(`nova.require: module '${name}' is not allowed by the preload allowlist`)
   }
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require(name)
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Expose to renderer                                                        */
+/*  ipc — nova:net socket-proxy transport                                     */
+/* -------------------------------------------------------------------------- */
+
+const ipcBridge = Object.freeze({
+  request(payload) {
+    return ipcRenderer.invoke(CHANNEL, payload)
+  },
+  on(handler) {
+    const listener = (_event, envelope) => handler(envelope)
+    ipcRenderer.on(CHANNEL, listener)
+    return () => ipcRenderer.removeListener(CHANNEL, listener)
+  },
+})
+
+/* -------------------------------------------------------------------------- */
+/*  process — frozen diagnostics snapshot, no event-surface                   */
+/* -------------------------------------------------------------------------- */
+
+const processSnapshot = Object.freeze({
+  platform: process.platform,
+  arch: process.arch,
+  pid: process.pid,
+  version: process.version,
+  versions: Object.freeze({
+    node: process.versions.node,
+    chrome: process.versions.chrome,
+    electron: process.versions.electron,
+  }),
+  env: Object.freeze(Object.assign({}, process.env)),
+})
+
+/* -------------------------------------------------------------------------- */
+/*  Expose                                                                     */
 /* -------------------------------------------------------------------------- */
 
 contextBridge.exposeInMainWorld('nova', {
-  // Controlled module loader — mirrors the Node.js require API.
+  ipc: ipcBridge,
   require: safeRequire,
-
-  // Minimal process info — avoids leaking the full process object.
-  process: Object.freeze({
-    platform: process.platform,
-    arch: process.arch,
-    pid: process.pid,
-    version: process.version,
-    versions: Object.freeze({ node: process.versions.node, chrome: process.versions.chrome, electron: process.versions.electron }),
-    env: Object.freeze({ ...process.env }),
-    // Event listener proxy — needed by process-guard.ts
-    on: (event, handler) => process.on(event, handler),
-    listeners: (event) => process.listeners(event),
-    removeAllListeners: (event) => process.removeAllListeners(event),
-  }),
-
-  // Buffer factory — creates Buffer instances that are structured-clone-safe.
-  buffer: Object.freeze({
-    from: (data, encoding) => Buffer.from(data, encoding),
-    alloc: (size, fill) => Buffer.alloc(size, fill),
-    concat: (list, totalLength) => Buffer.concat(list, totalLength),
-    isBuffer: (obj) => Buffer.isBuffer(obj),
-  }),
+  process: processSnapshot,
 })

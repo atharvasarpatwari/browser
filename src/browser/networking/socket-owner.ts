@@ -21,18 +21,31 @@
 
 import { loadNodeBuiltin } from './node-builtins';
 import { toArrayBuffer, type SocketEventFrame, type SocketEventType } from './socket-handle';
+import type { DgramEventFrame } from './dgram-handle';
 
 /** Request payloads (renderer → owner). */
 interface OpenTcpMessage { readonly kind: 'open-tcp'; readonly socketId: string; readonly host: string; readonly port: number; readonly tls: boolean; }
 interface WriteMessage { readonly kind: 'write'; readonly socketId: string; readonly bytes: ArrayBuffer; }
 interface SocketMessage { readonly kind: 'destroy' | 'get-peer-certificate'; readonly socketId: string; }
 interface UpgradeTlsMessage { readonly kind: 'upgrade-tls'; readonly socketId: string; readonly servername: string; }
+interface OpenDgramMessage { readonly kind: 'open-dgram'; readonly socketId: string; }
+interface DgramBindMessage { readonly kind: 'dgram-bind'; readonly socketId: string; readonly port: number; }
+interface DgramAddressMessage { readonly kind: 'dgram-address'; readonly socketId: string; }
+interface DgramConnectMessage { readonly kind: 'dgram-connect'; readonly socketId: string; readonly port: number; readonly host: string; }
+interface DgramSendMessage { readonly kind: 'dgram-send'; readonly socketId: string; readonly bytes: ArrayBuffer; readonly port: number | null; readonly address: string | null; }
+interface DgramCloseMessage { readonly kind: 'dgram-close'; readonly socketId: string; }
 
 type OwnerRequest =
   | OpenTcpMessage
   | WriteMessage
   | SocketMessage
   | UpgradeTlsMessage
+  | OpenDgramMessage
+  | DgramBindMessage
+  | DgramAddressMessage
+  | DgramConnectMessage
+  | DgramSendMessage
+  | DgramCloseMessage
   | { readonly kind: string; readonly socketId?: string };
 
 /** The owner needs send + onRequest from the renderer-facing channel. */
@@ -46,11 +59,18 @@ interface OwnedSocket {
   socket: import('node:net').Socket | import('node:tls').TLSSocket;
 }
 
+interface OwnedDgram {
+  socket: import('node:dgram').Socket;
+  family: string;
+  boundAddress: { address: string; family: string; port: number } | null;
+}
+
 const WIRE_EVENTS: readonly SocketEventType[] = ['data', 'error', 'end', 'close', 'connect', 'secureConnect'];
 
 /** Terminal that owns real net/tls sockets reached through the proxy wire. */
 export class SocketOwner {
   private readonly sockets = new Map<string, OwnedSocket>();
+  private readonly dgrams = new Map<string, OwnedDgram>();
 
   constructor(private readonly channel: OwnerChannel) {
     this.channel.onRequest((payload) => this.route(payload));
@@ -67,6 +87,12 @@ export class SocketOwner {
       case 'destroy': return this.destroy(payload as SocketMessage);
       case 'get-peer-certificate': return this.getPeerCertificate(payload as SocketMessage);
       case 'upgrade-tls': return this.upgradeTls(payload as UpgradeTlsMessage);
+      case 'open-dgram': return this.openDgram(payload as OpenDgramMessage);
+      case 'dgram-bind': return this.dgramBind(payload as DgramBindMessage);
+      case 'dgram-address': return this.dgramAddress(payload as DgramAddressMessage);
+      case 'dgram-connect': return this.dgramConnect(payload as DgramConnectMessage);
+      case 'dgram-send': return this.dgramSend(payload as DgramSendMessage);
+      case 'dgram-close': return this.dgramClose(payload as DgramCloseMessage);
       default: throw new Error(`socket-owner: unknown rpc '${String(msg.kind)}'`);
     }
   }
@@ -123,7 +149,7 @@ export class SocketOwner {
   }
 
   /** Fire-and-forget event push. A released socket id drops the message. */
-  private push(socketId: string, frame: SocketEventFrame): void {
+  private push(socketId: string, frame: SocketEventFrame | DgramEventFrame): void {
     void this.channel.send(socketId, frame).catch(() => { /* released socket */ });
   }
 
@@ -186,6 +212,102 @@ export class SocketOwner {
     entry.socket = tlsSocket;
     this.wire(msg.socketId, tlsSocket);
     return { ok: true };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // DGRAM OPS
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private openDgram(msg: OpenDgramMessage): { ok: true } {
+    const dgram = loadNodeBuiltin<typeof import('node:dgram')>('node:dgram');
+    if (!dgram) {
+      throw new Error('socket-owner: node:dgram is unavailable in this runtime');
+    }
+    const socket = dgram.createSocket('udp4');
+    const entry: OwnedDgram = { socket, family: 'IPv4', boundAddress: null };
+    this.dgrams.set(msg.socketId, entry);
+    this.wireDgram(msg.socketId, entry);
+    return { ok: true };
+  }
+
+  /** Attach owner-side listeners that translate dgram events into pushes. */
+  private wireDgram(socketId: string, entry: OwnedDgram): void {
+    entry.socket.on('message', (msg: Uint8Array, rinfo: { address: string; family: string; port: number }) => {
+      this.push(socketId, { evt: 'message', bytes: toArrayBuffer(msg), rinfo });
+    });
+    entry.socket.on('error', (err: Error) => {
+      this.push(socketId, { evt: 'error', error: err });
+    });
+    entry.socket.on('close', () => {
+      this.push(socketId, { evt: 'close' });
+    });
+  }
+
+  private async dgramBind(msg: DgramBindMessage): Promise<{ ok: true; address: { address: string; family: string; port: number } }> {
+    const entry = this.requireDgram(msg);
+    if (entry.boundAddress) {
+      return { ok: true, address: entry.boundAddress };
+    }
+    const address: { address: string; family: string; port: number } = await new Promise((resolve, reject) => {
+      entry.socket.once('error', (err: Error) => reject(new Error(err.message)));
+      entry.socket.bind(msg.port, () => {
+        const addr = entry.socket.address();
+        const bound = { address: addr.address, family: addr.family, port: addr.port };
+        entry.boundAddress = bound;
+        resolve(bound);
+      });
+    });
+    return { ok: true, address };
+  }
+
+  private dgramAddress(msg: DgramAddressMessage): { address: { address: string; family: string; port: number } | null } {
+    return { address: this.requireDgram(msg).boundAddress };
+  }
+
+  private async dgramConnect(msg: DgramConnectMessage): Promise<{ ok: true }> {
+    const entry = this.requireDgram(msg);
+    await new Promise<void>((resolve, reject) => {
+      entry.socket.once('error', (err: Error) => reject(new Error(err.message)));
+      entry.socket.connect(msg.port, msg.host, () => resolve());
+    });
+    return { ok: true };
+  }
+
+  private async dgramSend(msg: DgramSendMessage): Promise<{ ok: true }> {
+    const entry = this.requireDgram(msg);
+    const bytes = Buffer.from(msg.bytes);
+    await new Promise<void>((resolve, reject) => {
+      if (msg.port !== null && msg.address !== null) {
+        entry.socket.send(bytes, msg.port, msg.address, (err?: Error | null) => {
+          if (err) reject(new Error(err.message));
+          else resolve();
+        });
+      } else {
+        entry.socket.send(bytes, (err?: Error | null) => {
+          if (err) reject(new Error(err.message));
+          else resolve();
+        });
+      }
+    });
+    return { ok: true };
+  }
+
+  private dgramClose(msg: DgramCloseMessage): { ok: true } {
+    const entry = this.dgrams.get(msg.socketId);
+    this.dgrams.delete(msg.socketId);
+    if (entry) {
+      entry.socket.removeAllListeners();
+      try { entry.socket.close(); } catch { /* already closed */ }
+    }
+    return { ok: true };
+  }
+
+  private requireDgram(msg: { socketId: string }): OwnedDgram {
+    const entry = this.dgrams.get(msg.socketId);
+    if (!entry) {
+      throw new Error(`socket-owner: unknown dgram socket '${msg.socketId}'`);
+    }
+    return entry;
   }
 }
 

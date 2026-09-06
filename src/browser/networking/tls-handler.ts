@@ -34,6 +34,7 @@ import { loadNodeBuiltin } from './node-builtins';
 import { getSocketProxy } from './socket-proxy';
 import { onceSocketEvent } from './socket-handle';
 import type { ISocketHandle } from './socket-handle';
+import { hashSync } from '../security/crypto-utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENUMS
@@ -622,7 +623,6 @@ class TlsHandler implements ITlsHandler {
   /** SHA-256 hex fingerprint using real crypto. */
   private static sha256Hex(input: string): string {
     try {
-      const { hashSync } = require('../security/crypto-utils') as typeof import('../security/crypto-utils');
       return hashSync('sha256', input);
     } catch {
       // Fallback for environments without node:crypto (tests, browser)

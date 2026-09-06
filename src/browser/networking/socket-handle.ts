@@ -128,3 +128,22 @@ export function onceSocketEvent(handle: ISocketHandle, evt: SocketEventType): Pr
 export function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return Uint8Array.from(bytes).buffer;
 }
+
+/**
+ * Normalize an error that crossed a may-not-be-Error boundary back into a real
+ * `Error`. Owner-side Errors pushed over the bridged IPC (contextIsolation)
+ * arrive as plain structured-cloned objects carrying `message`/`name`, never
+ * as `Error` instances.
+ */
+export function toError(value: unknown, fallback = 'socket error'): Error {
+  if (value instanceof Error) return value;
+  const err = new Error(
+    value !== null && typeof value === 'object' && 'message' in value && typeof (value as { message: unknown }).message === 'string'
+      ? (value as { message: string }).message
+      : fallback,
+  );
+  if (value !== null && typeof value === 'object' && 'name' in value && typeof (value as { name: unknown }).name === 'string') {
+    err.name = (value as { name: string }).name;
+  }
+  return err;
+}

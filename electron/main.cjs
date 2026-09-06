@@ -5,6 +5,13 @@ const path = require('path')
 const url = require('url')
 const fs = require('fs')
 
+const {
+  initNovaSocketOwner,
+  disposeNovaSocketOwner,
+  cleanupNovaSocketsForWebContents,
+  __novaNetProbe,
+} = require('./socket-owner.cjs')
+
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 const APP_TITLE = 'Nova Browser'
 
@@ -170,23 +177,17 @@ function createWindow() {
     icon: resolveIcon(),
     backgroundColor: '#1e1e1e',
     webPreferences: {
-      // MVP: the Nova engine implements its own security layer (SOP, CSP,
-      // sandbox) and fetches arbitrary URLs itself, so we relax the host
-      // webview. Harden via main-process net routing in a later release.
-      //
-      // nodeIntegration: true + contextIsolation: false is required because
-      // the engine's networking stack uses the bare Node `Buffer` global
-      // (Buffer.alloc/writeUInt32BE/subarray, etc.) throughout. Electron's
-      // contextBridge cannot hand a functional Buffer to the page (instance
-      // methods don't survive the bridge — verified empirically), so the
-      // 08-23 contextIsolation migration left the renderer crashing at boot
-      // with "Buffer is not defined" before mounting any UI. See
-      // 2026-08-28-windows-app-health-and-buffer-fix.md — this restores the
-      // config the codebase was designed for (tier4/build-security decision),
-      // while the CSP / navigation / permission protections below remain.
+      // contextIsolation-safe host config (Phase 5, see doc/socket-proxy-design.md).
+      // The renderer never holds a live net/tls/dgram socket: it drives the
+      // socket-owner wire through the preload bridge (window.nova.ipc) and
+      // resolveNodeBuiltins through window.nova.require (narrow allowlist —
+      // no net/dgram, proxy-only). Buffer is provided to the page world by
+      // src/browser/buffer-polyfill.ts, not nodeIntegration.
       webSecurity: false,
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+      preload: path.join(__dirname, 'preload.cjs'),
       spellcheck: false,
       // The renderer resolves its persistent web-storage directory from argv
       // (see main.ts), avoiding main-only `app` APIs inside the renderer.
@@ -253,6 +254,11 @@ function createWindow() {
     }
     mainWindow = null
     writeHealthLog('WINDOW_CLOSED')
+  })
+
+  // Any socket owned on behalf of this window dies with it.
+  win.webContents.once('destroyed', () => {
+    cleanupNovaSocketsForWebContents(win.webContents)
   })
 
   return win
@@ -388,6 +394,8 @@ app.setName(APP_TITLE)
 
 app.whenReady().then(() => {
   installApplicationMenu()
+  initNovaSocketOwner()
+  writeHealthLog(`SOCKET_OWNER_READY probe=${JSON.stringify(__novaNetProbe())}`)
   mainWindow = createWindow()
   writeHealthLog('APP_READY')
   startWatchdog()
@@ -416,5 +424,6 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   quitting = true
   stopWatchdog()
+  disposeNovaSocketOwner()
   writeHealthLog('APP_QUIT')
 })

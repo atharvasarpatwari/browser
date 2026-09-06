@@ -30,6 +30,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
+import { loadNodeBuiltin } from '../networking/node-builtins';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BACKEND INTERFACE
@@ -127,12 +128,11 @@ export class DiskIndexedDBBackend implements IIndexedDBBackend {
   loadDatabase(origin: string, name: string): SerializedDatabase | null {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const path = require('node:path') as typeof import('node:path');
-      const filePath = this.fileFor(path, origin, name);
-      if (fs.existsSync(filePath)) {
-        return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as SerializedDatabase;
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      const path = loadNodeBuiltin<typeof import('node:path')>('node:path');
+      const filePath = this.fileFor(path!, origin, name);
+      if (fs!.existsSync(filePath)) {
+        return JSON.parse(fs!.readFileSync(filePath, 'utf-8')) as SerializedDatabase;
       }
     } catch {
       // Read failure → database does not exist
@@ -143,14 +143,13 @@ export class DiskIndexedDBBackend implements IIndexedDBBackend {
   saveDatabase(origin: string, name: string, db: SerializedDatabase): void {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const path = require('node:path') as typeof import('node:path');
-      if (!fs.existsSync(this.basePath)) {
-        fs.mkdirSync(this.basePath, { recursive: true });
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      const path = loadNodeBuiltin<typeof import('node:path')>('node:path');
+      if (!fs!.existsSync(this.basePath)) {
+        fs!.mkdirSync(this.basePath, { recursive: true });
       }
-      const filePath = this.fileFor(path, origin, name);
-      fs.writeFileSync(filePath, JSON.stringify(db, null, 2), 'utf-8');
+      const filePath = this.fileFor(path!, origin, name);
+      fs!.writeFileSync(filePath, JSON.stringify(db, null, 2), 'utf-8');
     } catch {
       // Write failure → silent (data stays in-memory for this session)
     }
@@ -159,12 +158,11 @@ export class DiskIndexedDBBackend implements IIndexedDBBackend {
   deleteDatabase(origin: string, name: string): void {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const path = require('node:path') as typeof import('node:path');
-      const filePath = this.fileFor(path, origin, name);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      const path = loadNodeBuiltin<typeof import('node:path')>('node:path');
+      const filePath = this.fileFor(path!, origin, name);
+      if (fs!.existsSync(filePath)) {
+        fs!.unlinkSync(filePath);
       }
     } catch {
       // Silent
@@ -174,12 +172,11 @@ export class DiskIndexedDBBackend implements IIndexedDBBackend {
   listDatabases(origin: string): string[] {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const path = require('node:path') as typeof import('node:path');
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      const path = loadNodeBuiltin<typeof import('node:path')>('node:path');
       const prefix = `indexeddb-${this.sanitize(origin)}-`;
-      if (!fs.existsSync(this.basePath)) return [];
-      return fs
+      if (!fs!.existsSync(this.basePath)) return [];
+      return fs!
         .readdirSync(this.basePath)
         .filter((f: string) => f.startsWith(prefix) && f.endsWith('.json'))
         .map((f: string) => f.slice(prefix.length, -'.json'.length));

@@ -6,6 +6,8 @@
  * randomUUID and sync hashing without depending on `import from 'crypto'`.
  */
 
+import { loadNodeBuiltin } from '../networking/node-builtins';
+
 /* -------------------------------------------------------------------------- */
 /*  randomUUID                                                                */
 /* -------------------------------------------------------------------------- */
@@ -51,9 +53,8 @@ export function hashSync(
   data: string | Uint8Array,
   encoding: 'hex' | 'binary' = 'hex',
 ): string {
-  // Node.js path (works with nodeIntegration or in preload)
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const nodeCrypto = typeof require === 'function' ? (() => { try { return require('node:crypto') as { createHash(algo: string): { update(d: string | Uint8Array): { digest(enc?: string): string | Buffer } } }; } catch { return null; } })() : null;
+  // Node.js path (works with nodeIntegration or through the preload bridge)
+  const nodeCrypto = loadNodeBuiltin<{ createHash(algo: string): { update(d: string | Uint8Array): { digest(enc?: string): string | Buffer } } }>('node:crypto');
   if (nodeCrypto) {
     return nodeCrypto.createHash(algorithm).update(data).digest(encoding) as string;
   }
@@ -71,8 +72,7 @@ export function hashSync(
  * One-shot synchronous hash returning raw bytes (Uint8Array).
  */
 export function hashRaw(algorithm: string, data: string | Uint8Array): Uint8Array {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const nodeCrypto = typeof require === 'function' ? (() => { try { return require('node:crypto') as { createHash(algo: string): { update(d: string | Uint8Array): { digest(): Buffer } } }; } catch { return null; } })() : null;
+  const nodeCrypto = loadNodeBuiltin<{ createHash(algo: string): { update(d: string | Uint8Array): { digest(): Buffer } } }>('node:crypto');
   if (nodeCrypto) {
     return new Uint8Array(nodeCrypto.createHash(algorithm).update(data).digest());
   }

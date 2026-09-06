@@ -5,6 +5,9 @@
  * storage, and UI.  The {@link ApplicationBootstrap} class orchestrates startup
  * and exposes the rendering pipeline via {@link createPageRenderer}.
  */
+import { installBufferPolyfill } from '../browser/buffer-polyfill';
+
+installBufferPolyfill();
 import {
   DependencyContainer,
   ServiceLifetime,

@@ -20,9 +20,9 @@
 
 import { loadNodeBuiltin } from './node-builtins';
 import { stunBindingRequest, respondToBindingRequest, decodeStunMessage, StunMessageType, type StunAddress } from './stun-client';
+import { getSocketProxy } from './socket-proxy';
+import type { IDgramHandle } from './dgram-handle';
 
-type DgramModule = typeof import('node:dgram');
-type UdpSocket = ReturnType<DgramModule['createSocket']>;
 type OsModule = typeof import('node:os');
 
 export type IceCandidateType = 'host' | 'srflx';
@@ -114,7 +114,7 @@ export type IceDataHandler = (data: Buffer) => void;
  * exactly this kind of demuxing is safe).
  */
 export class IceAgent {
-  private socket: UdpSocket | null = null;
+  private socket: IDgramHandle | null = null;
   private readonly options: IceAgentOptions;
   private localCandidates: IceCandidate[] = [];
   private selectedRemote: IceCandidate | null = null;
@@ -131,15 +131,12 @@ export class IceAgent {
   }
 
   get boundPort(): number | null {
-    return this.socket ? this.socket.address().port : null;
+    return this.socket?.address()?.port ?? null;
   }
 
   /** Binds the UDP socket and gathers host + (optionally) server-reflexive candidates. Safe to call once per agent. */
   async gather(): Promise<IceCandidate[]> {
-    const dgram = loadNodeBuiltin<DgramModule>('node:dgram');
-    if (!dgram) throw new IceError('Node dgram builtin is unavailable in this runtime');
-
-    this.socket = dgram.createSocket('udp4');
+    this.socket = await getSocketProxy().openDgram();
     this.socket.on('message', (msg: Buffer, rinfo: { address: string; port: number }) => this.handleMessage(msg, rinfo));
     // Persistent error handler: without one, a dgram 'error' event on a socket
     // this agent owns would throw as an uncaught exception and crash the whole
@@ -150,14 +147,10 @@ export class IceAgent {
       /* non-fatal socket error — keep the agent running */
     });
 
-    const bindResult: Error | null = await new Promise<Error | null>((resolve) => {
-      const onBindError = (err: Error) => resolve(err);
-      this.socket!.once('error', onBindError);
-      this.socket!.bind(0, () => {
-        this.socket!.removeListener('error', onBindError);
-        resolve(null);
-      });
-    });
+    const bindResult: Error | null = await this.socket.bind(0).then(
+      () => null,
+      (err: Error) => err,
+    );
 
     if (bindResult) {
       // Leave the agent in a clean state: release the (possibly half-bound)

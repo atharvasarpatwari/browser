@@ -1,4 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
+import { loadNodeBuiltin } from '../networking/node-builtins';
 
 interface ISubresourceIntegrityService extends IDisposable {
   parseIntegrity(metadata: string): IntegrityHash[];
@@ -305,9 +306,15 @@ function wordsToBytes(words: bigint[], wordBytes: number): Uint8Array {
 
 function shaDigest(algorithm: IntegrityAlgorithm, content: Uint8Array): Uint8Array {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nodeCrypto = require('node:crypto') as typeof import('node:crypto');
-    return new Uint8Array(nodeCrypto.createHash(algorithm).update(content).digest());
+    const nodeCrypto = loadNodeBuiltin<typeof import('node:crypto')>('node:crypto');
+    if (nodeCrypto) {
+      return new Uint8Array(nodeCrypto.createHash(algorithm).update(content).digest());
+    }
+    const digest = algorithm === 'sha256' ? sha256Core(content) : sha512Core(content);
+    if (algorithm === 'sha384') {
+      return digest.slice(0, 48);
+    }
+    return digest;
   } catch {
     const digest = algorithm === 'sha256' ? sha256Core(content) : sha512Core(content);
     if (algorithm === 'sha384') {

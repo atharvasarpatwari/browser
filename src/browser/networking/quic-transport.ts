@@ -2,6 +2,7 @@ import type { IDisposable } from '../../app/dependency-container';
 import type { HttpHeaderPair } from './http-protocol';
 import { HttpProtocolVersion } from './http-protocol';
 import { loadNodeBuiltin } from './node-builtins';
+import { getSocketProxy } from './socket-proxy';
 
 enum QuicPacketType {
   Initial       = 0x00,
@@ -137,11 +138,7 @@ class QuicConnection implements IQuicConnection {
     this.srcConnectionId = this.generateConnectionId();
     this.destConnectionId = this.generateConnectionId();
 
-    const dgram = loadNodeBuiltin<typeof import('node:dgram')>('node:dgram');
-    if (!dgram) {
-      throw new QuicError('Node dgram builtin is unavailable in this runtime', 0);
-    }
-    this.socket = dgram.createSocket('udp4');
+    this.socket = await getSocketProxy().openDgram();
 
     return new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -516,8 +513,8 @@ class QuicConnection implements IQuicConnection {
   }
 
   private generateConnectionId(): Buffer {
-    const crypto = require('crypto');
-    return crypto.randomBytes(8);
+    const crypto = loadNodeBuiltin<typeof import('node:crypto')>('node:crypto');
+    return crypto?.randomBytes(8) ?? Buffer.alloc(8);
   }
 
   private startPingTimer(): void {

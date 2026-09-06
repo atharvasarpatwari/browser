@@ -5,8 +5,9 @@
  *
  * This is the real networking primitive underneath ICE candidate gathering
  * and connectivity checks (see ice-agent.ts) — it sends a genuine STUN
- * Binding Request over a real UDP socket (via `node:dgram`, loaded the same
- * way quic-transport.ts loads it) and parses a genuine Binding Response,
+ * Binding Request over a real UDP socket (owned by the main process behind
+ * the socket-owner wire, surfaced to the renderer as an IDgramHandle) and
+ * parses a genuine Binding Response,
  * including the XOR-MAPPED-ADDRESS attribute that reveals the sender's
  * public IP:port as seen by the STUN server (or by a peer, for connectivity
  * checks — STUN binding requests are also how ICE peers confirm a candidate
@@ -198,7 +199,21 @@ export function parseMappedAddress(message: StunMessage): StunAddress | null {
 
 // ── UDP transport ─────────────────────────────────────────────────────────
 
-type UdpSocket = ReturnType<NonNullable<ReturnType<typeof loadNodeBuiltin<typeof import('node:dgram')>>>['createSocket']>;
+/**
+ * The sender/responder surface stunBindingRequest needs. Every member exists
+ * on both a renderer-side {@link IDgramHandle} (the socket-owner wire) and a
+ * real `node:dgram` socket — the latter keeps tests able to put a real socket
+ * on the other end of the loopback wire, and lets the responder role run on a
+ * real peer process.
+ */
+export interface StunSocket {
+  on(evt: 'message', handler: (msg: Buffer, rinfo: { address: string; port: number }) => void): unknown;
+  on(evt: 'error', handler: (err: Error) => void): unknown;
+  once(evt: 'error', handler: (err: Error) => void): unknown;
+  removeListener(evt: 'message', handler: (msg: Buffer, rinfo: { address: string; port: number }) => void): unknown;
+  removeListener(evt: 'error', handler: (err: Error) => void): unknown;
+  send(data: Buffer, port?: number, address?: string): unknown;
+}
 
 /**
  * Sends a Binding Request on an already-bound dgram socket and resolves with
@@ -207,7 +222,7 @@ type UdpSocket = ReturnType<NonNullable<ReturnType<typeof loadNodeBuiltin<typeof
  * UDP and a lost request/response must not hang the caller forever.
  */
 export function stunBindingRequest(
-  socket: UdpSocket,
+  socket: StunSocket,
   host: string,
   port: number,
   options: { timeoutMs?: number; retries?: number } = {},
@@ -279,7 +294,7 @@ export function stunBindingRequest(
 
 /** Responds to a STUN Binding Request received on `socket` by echoing the sender's observed address — used on the "answering" side of a peer-to-peer connectivity check, not just against public STUN servers. */
 export function respondToBindingRequest(
-  socket: UdpSocket,
+  socket: StunSocket,
   message: StunMessage,
   observedFrom: { address: string; port: number },
 ): void {

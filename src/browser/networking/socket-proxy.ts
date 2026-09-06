@@ -16,18 +16,23 @@
  * `net`/`tls` directly.
  *
  * A module-level shared instance is resolved lazily. In a bridged Electron
- * renderer it is wired to the real IPC transport (Phase 5); everywhere else it
- * falls back to an in-process owner over an in-process transport pair — the
- * exact code path tests exercise, now with a real process boundary behind it.
+ * renderer it is wired to the real IPC transport (Phase 6 — see
+ * socket-proxy-design.md's file-by-file table; this comment previously said
+ * "Phase 5", which is actually the dgram/UDP slice — corrected 2026-09-06);
+ * everywhere else it falls back to an in-process owner over an in-process
+ * transport pair — the exact code path tests exercise, now with a real
+ * process boundary behind it.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { Channel } from '../../common/ipc/channel';
 import { createInProcessPair } from '../../common/ipc/transport';
 import { SocketOwner } from './socket-owner';
+import { DgramHandle, type DgramEventFrame, type IDgramHandle } from './dgram-handle';
 import {
   SocketEventRouter,
   toArrayBuffer,
+  toError,
   type ISocketHandle,
   type SocketEventFrame,
   type SocketEventPayload,
@@ -46,6 +51,17 @@ const ONE_SHOT_EVENTS: readonly SocketEventType[] = ['error', 'end', 'close', 'c
 interface SocketChannel {
   subscribe<T>(topic: string, handler: (payload: T) => void): () => void;
   request<TPayload, TResult>(payload: TPayload, timeoutMs?: number): Promise<TResult>;
+}
+
+/**
+ * The IPC surface the preload exposes for the nova:net wire (Phase 6 — see
+ * socket-proxy-design.md's file-by-file table; not Phase 5, which is the
+ * dgram/UDP slice — corrected 2026-09-06, same mislabeling as this file's
+ * header comment and createDefaultSocketProxy's doc comment below).
+ */
+interface NovaIpcBridge {
+  request(payload: unknown): Promise<unknown>;
+  on(handler: (envelope: unknown) => void): () => void;
 }
 
 /** Socket ids only need to be stable routing keys within one proxy instance. */
@@ -126,7 +142,7 @@ class SocketHandle implements ISocketHandle {
       return;
     }
     const payload: SocketEventPayload = frame.evt === 'error'
-      ? (frame.error ?? new Error('socket error'))
+      ? toError(frame.error ?? new Error('socket error'))
       : undefined;
     if (this.router.has(frame.evt)) {
       this.router.emit(frame.evt, payload);
@@ -150,12 +166,26 @@ export interface OpenTcpOptions {
 /** Renderer-side client of the socket-owner wire. */
 export class SocketProxy {
   private readonly handles = new Map<string, SocketHandle>();
+  private readonly dgramHandles = new Map<string, DgramHandle>();
   private readonly unsubs = new Map<string, () => void>();
 
   constructor(
     private readonly channel: SocketChannel,
     private readonly createId: () => string = defaultSocketId,
   ) {}
+
+  /**
+   * Register+own the topic subscription for a socket id, replacing any prior
+   * subscription for the same id (the in-process fallback reuses ids rarely,
+   * the bridged path always creates fresh ones).
+   */
+  subscribeTopic(socketId: string, handler: (frame: unknown) => void): () => void {
+    const unsub = this.channel.subscribe(socketId, handler);
+    const prev = this.unsubs.get(socketId);
+    if (prev) prev();
+    this.unsubs.set(socketId, unsub);
+    return unsub;
+  }
 
   /**
    * Open a TCP (or TLS) connection owned by the main process. The topic
@@ -165,17 +195,38 @@ export class SocketProxy {
   async openTcp(options: OpenTcpOptions): Promise<ISocketHandle> {
     const socketId = this.createId();
     const handle = new SocketHandle(this, socketId);
-    const unsub = this.channel.subscribe(socketId, (frame: unknown) => {
+    this.subscribeTopic(socketId, (frame: unknown) => {
       if (frame && typeof frame === 'object' && 'evt' in frame) {
         handle.receive(frame as SocketEventFrame);
       }
     });
     this.handles.set(socketId, handle);
-    this.unsubs.set(socketId, unsub);
     try {
       await this.channel.request(
         { kind: 'open-tcp', socketId, host: options.host, port: options.port, tls: options.tls ?? false },
       );
+    } catch (err) {
+      this.release(socketId);
+      throw err;
+    }
+    return handle;
+  }
+
+  /**
+   * Open a UDP socket owned by the main process. The same wire pattern as
+   * openTcp: subscribe the topic first, then request the owner to create it.
+   */
+  async openDgram(): Promise<IDgramHandle> {
+    const socketId = this.createId();
+    const handle = new DgramHandle(this, socketId);
+    this.subscribeTopic(socketId, (frame: unknown) => {
+      if (frame && typeof frame === 'object' && 'evt' in frame) {
+        handle.receive(frame as DgramEventFrame);
+      }
+    });
+    this.dgramHandles.set(socketId, handle);
+    try {
+      await this.channel.request({ kind: 'open-dgram', socketId });
     } catch (err) {
       this.release(socketId);
       throw err;
@@ -196,6 +247,7 @@ export class SocketProxy {
       this.unsubs.delete(socketId);
     }
     this.handles.delete(socketId);
+    this.dgramHandles.delete(socketId);
   }
 
   /** Tear down every live handle subscription. */
@@ -237,12 +289,63 @@ export function resetSocketProxy(): void {
 }
 
 /**
- * Default wiring. In a bridged Electron renderer (Phase 5) the renderer channel
+ * Bridge channel: subscribes topics locally and dispatches owner pushes that
+ * arrive over `window.nova.ipc` (preload) as `{ socketId, frame }` envelopes.
+ * RPCs are plain `ipcRenderer.invoke('nova:net', payload)` round-trips.
+ */
+function createBridgeChannel(ipc: NovaIpcBridge): SocketChannel {
+  const topics = new Map<string, Set<(payload: unknown) => void>>();
+  ipc.on((envelope: unknown) => {
+    if (envelope === null || typeof envelope !== 'object') return;
+    const { socketId, frame } = envelope as { socketId?: unknown; frame?: unknown };
+    if (typeof socketId !== 'string') return;
+    const handlers = topics.get(socketId);
+    if (!handlers) return;
+    for (const handler of [...handlers]) {
+      try { handler(frame); } catch { /* isolated */ }
+    }
+  });
+  return {
+    subscribe<T>(topic: string, handler: (payload: T) => void): () => void {
+      let set = topics.get(topic);
+      if (!set) {
+        set = new Set<(payload: unknown) => void>();
+        topics.set(topic, set);
+      }
+      set.add(handler as (payload: unknown) => void);
+      let removed = false;
+      return () => {
+        if (removed) return;
+        removed = true;
+        set.delete(handler as (payload: unknown) => void);
+        if (set.size === 0) topics.delete(topic);
+      };
+    },
+    request<TPayload, TResult>(payload: TPayload): Promise<TResult> {
+      return Promise.resolve(ipc.request(payload) as Promise<TResult>);
+    },
+  };
+}
+
+/** True when the bridged Electron IPC transport is available in this world. */
+function getNovaIpcBridge(): NovaIpcBridge | null {
+  if (typeof globalThis === 'undefined') return null;
+  const bridge = (globalThis as { nova?: { ipc?: NovaIpcBridge } }).nova;
+  return bridge?.ipc ?? null;
+}
+
+/**
+ * Default wiring. In a bridged Electron renderer (Phase 6 — see
+ * socket-proxy-design.md's file-by-file table) the renderer channel
  * is created over the preload IPC transport; in every other runtime an
  * in-process owner over an in-process transport pair keeps the node-side
  * sockets available.
  */
 function createDefaultSocketProxy(): SocketProxy {
+  const bridge = getNovaIpcBridge();
+  if (bridge) {
+    return new SocketProxy(createBridgeChannel(bridge));
+  }
   const [ownerTransport, rendererTransport] = createInProcessPair(
     { localId: 'socket-owner', remoteId: 'socket-renderer' },
     { localId: 'socket-renderer', remoteId: 'socket-owner' },

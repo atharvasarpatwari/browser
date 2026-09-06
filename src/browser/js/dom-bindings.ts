@@ -12,7 +12,7 @@ import { HTMLCanvasElement } from '../rendering/canvas/canvas-element';
 import { CanvasRenderingContext2D } from '../rendering/canvas/canvas-context';
 import type { CanvasGradient } from '../rendering/canvas/canvas-gradient';
 import type { CanvasPattern } from '../rendering/canvas/canvas-pattern';
-import type { Path2D } from '../rendering/canvas/canvas-path';
+import { Path2D } from '../rendering/canvas/canvas-path';
 import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../security/blocked-url-schemes';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1495,8 +1495,7 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
   // ── Path2D support ──
   obj.properties.set('Path2D', {
     value: createNativeFunction('Path2D', (_t, a) => {
-      const { Path2D: P2D } = require('../rendering/canvas/canvas-path');
-      const p = a[0] !== undefined ? new P2D(unwrapRaw(a[0])) : new P2D();
+      const p = a[0] !== undefined ? new Path2D(unwrapRaw(a[0])) : new Path2D();
       return wrapPath2D(p);
     }),
     writable: true, enumerable: true, configurable: true,

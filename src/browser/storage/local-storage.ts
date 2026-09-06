@@ -24,6 +24,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
+import { loadNodeBuiltin } from '../networking/node-builtins';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERFACES
@@ -98,12 +99,11 @@ export class DiskStorageBackend implements IStorageBackend {
     const data = new Map<string, string>();
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const path = require('node:path') as typeof import('node:path');
-      const filePath = path.join(this.basePath, `localStorage-${this.sanitizeOrigin(origin)}.json`);
-      if (fs.existsSync(filePath)) {
-        const raw = fs.readFileSync(filePath, 'utf-8');
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      const path = loadNodeBuiltin<typeof import('node:path')>('node:path');
+      const filePath = path!.join(this.basePath, `localStorage-${this.sanitizeOrigin(origin)}.json`);
+      if (fs!.existsSync(filePath)) {
+        const raw = fs!.readFileSync(filePath, 'utf-8');
         const obj = JSON.parse(raw);
         for (const [k, v] of Object.entries(obj)) {
           data.set(k, String(v));
@@ -118,19 +118,18 @@ export class DiskStorageBackend implements IStorageBackend {
   save(origin: string, data: Map<string, string>): void {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const path = require('node:path') as typeof import('node:path');
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      const path = loadNodeBuiltin<typeof import('node:path')>('node:path');
       const dir = this.basePath;
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+      if (!fs!.existsSync(dir)) {
+        fs!.mkdirSync(dir, { recursive: true });
       }
-      const filePath = path.join(dir, `localStorage-${this.sanitizeOrigin(origin)}.json`);
+      const filePath = path!.join(dir, `localStorage-${this.sanitizeOrigin(origin)}.json`);
       const obj: Record<string, string> = {};
       for (const [k, v] of data) {
         obj[k] = v;
       }
-      fs.writeFileSync(filePath, JSON.stringify(obj, null, 2), 'utf-8');
+      fs!.writeFileSync(filePath, JSON.stringify(obj, null, 2), 'utf-8');
     } catch {
       // File write failure → silent (browser handles gracefully)
     }
@@ -139,12 +138,11 @@ export class DiskStorageBackend implements IStorageBackend {
   clear(origin: string): void {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const path = require('node:path') as typeof import('node:path');
-      const filePath = path.join(this.basePath, `localStorage-${this.sanitizeOrigin(origin)}.json`);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      const path = loadNodeBuiltin<typeof import('node:path')>('node:path');
+      const filePath = path!.join(this.basePath, `localStorage-${this.sanitizeOrigin(origin)}.json`);
+      if (fs!.existsSync(filePath)) {
+        fs!.unlinkSync(filePath);
       }
     } catch {
       // Silent
