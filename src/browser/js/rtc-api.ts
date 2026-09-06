@@ -148,7 +148,7 @@ class ReliableChannel {
 
   constructor(ice: IceAgent) {
     this.ice = ice;
-    this.ice.onData((msg) => this.handleIncoming(msg));
+    this.ice.onData((msg) => this.handleIncoming(Buffer.from(msg)));
   }
 
   send(payload: Buffer): Promise<void> {

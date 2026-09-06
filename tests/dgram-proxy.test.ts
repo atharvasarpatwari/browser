@@ -18,6 +18,7 @@ import { SocketOwner } from '../src/browser/networking/socket-owner';
 import { SocketProxy, setSocketProxy, resetSocketProxy } from '../src/browser/networking/socket-proxy';
 import type { IDgramHandle } from '../src/browser/networking/dgram-handle';
 import { decodeStunMessage, StunMessageType, respondToBindingRequest, stunBindingRequest } from '../src/browser/networking/stun-client';
+import { decodeUtf8 } from '../src/browser/networking/byte-codecs';
 
 let echoServer: dgram.Socket;
 let echoPort: number;
@@ -72,7 +73,7 @@ describe('DgramProxy wire', () => {
 
     const reply = new Promise<{ data: string; address: string; port: number }>((resolve) => {
       handle.on('message', (msg, rinfo) => {
-        resolve({ data: msg.toString('utf8'), address: rinfo.address, port: rinfo.port });
+        resolve({ data: decodeUtf8(msg), address: rinfo.address, port: rinfo.port });
       });
     });
 
@@ -109,7 +110,7 @@ describe('DgramProxy wire', () => {
     await handle.connect(echoPort, '127.0.0.1');
 
     const reply = new Promise<string>((resolve) => {
-      handle.on('message', (msg) => resolve(msg.toString('utf8')));
+      handle.on('message', (msg) => resolve(decodeUtf8(msg)));
     });
     await handle.send(Buffer.from('connected-send'));
     const echoed = await reply;
@@ -166,7 +167,7 @@ it('capstone: full round-trip with buffered-then-late message handler', async ()
   // ordering mirrors the real ICE flow (bind → attach STUN temp listener → send).
   await handle.bind(0);
   const got: string[] = [];
-  handle.on('message', (msg) => got.push(msg.toString('utf8')));
+  handle.on('message', (msg) => got.push(decodeUtf8(msg)));
   await handle.send(Buffer.from('a'), echoPort, '127.0.0.1');
   await handle.send(Buffer.from('b'), echoPort, '127.0.0.1');
   await new Promise((resolve) => setTimeout(resolve, 80));
