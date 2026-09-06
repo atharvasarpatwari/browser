@@ -254,3 +254,75 @@ watchdog: `APP_READY` + `ALIVE`), `npm run build:win` + installed-app launch.
   future architecture moves networking into a dedicated worker process, the `socketId` +
   topic-push protocol is transport-agnostic and should survive mostly unchanged.
 - `dgram`/QUIC fine-grained optimizations.
+
+---
+
+## Amendment (2026-09-06 review)
+
+A review this session found several places where this document's original plan and the
+shipped code had quietly diverged. Recorded here rather than silently edited into the
+sections above, so the design history stays legible.
+
+### `IDgramHandle` shipped with a different shape than specified above
+
+The "Exported contracts" section above specifies a single `onEvent(evt, handler): () =>
+void` method and `bind(port?, address?): Promise<void>` / `close(): Promise<void>`. The
+shipped `IDgramHandle` (`src/browser/networking/dgram-handle.ts`) instead exposes:
+
+- `on(evt, handler)` / `once('error', handler)` / `removeListener(evt, handler)` — three
+  separate methods (mirroring Node's real `EventEmitter`-shaped `dgram.Socket` API that
+  `ice-agent.ts`/`quic-transport.ts` were already written against), not one `onEvent`
+  returning an unsubscribe function.
+- `bind(port: number, callback?: () => void): Promise<void>` — a plain optional callback,
+  not the `address` parameter this doc specified (dgram's real `bind()` doesn't take a
+  target address; that's what the interface's separate `connect()` is for, which the
+  original spec above omitted).
+- `close(): void` — fire-and-forget, not `Promise<void>`. Matches `send()`'s own
+  fire-and-forget shape for the common case; nothing in the codebase awaits a dgram close
+  today.
+
+None of this affects the design decisions above (channel/topic-push wire model, main-side
+ownership, etc.) — it's an implementation-level interface-shape correction, not an
+architecture change.
+
+### Buffer → Uint8Array across the full dgram/UDP path (this session)
+
+The "Grounding facts" table above lists Buffer counts as of 2026-09-04 (design time):
+`ice-agent.ts` (4 + 1 dgram), `quic-transport.ts` (75), and lists `stun-client.ts` under
+the Phase 2 "byte-only, Buffer → Uint8Array" plan as though already scoped for that pass.
+In practice, as of this session's review, `stun-client.ts` still had real `Buffer` usage
+(`.readUInt16BE`, `.writeUInt32BE`, `.equals`, `Buffer.alloc`/`Buffer.from`) — the Phase 2
+conversion this doc's plan called for had not actually happened by the time of this
+review. `dgram-handle.ts`'s `receive()` also called the bare `Buffer` global directly
+(undocumented and untested until the same review), making it silently dependent on
+`installBufferPolyfill()` having run first under `contextIsolation: true`.
+
+This session converted all four remaining files — `byte-codecs.ts` (extended with
+`readUInt16BE`/`writeUInt16BE`/`readUInt32BE`/`writeUInt32BE`/`bytesEqual`),
+`stun-client.ts`, `dgram-handle.ts`, `ice-agent.ts`, and `quic-transport.ts` — from
+`Buffer` to plain `Uint8Array` plus the pure codecs in `byte-codecs.ts`, matching the
+pattern already used on the TCP/TLS side (`socket-handle.ts`). None of these five files
+touch the `Buffer` global anymore, so the entire dgram/UDP path (like the TCP/TLS path
+before it) no longer depends on `installBufferPolyfill()` at all — that polyfill now
+exists purely for the non-networking call sites `buffer-polyfill.ts`'s own header already
+documents (`pngjs`, base64 helpers, auto-updater, minidump capture).
+
+Three pre-existing protocol-level issues were found in `quic-transport.ts` during the
+byte-for-byte translation (none introduced by it). They were fixed the same day in a
+follow-up wire-correctness session (`doc/2026-09-06-quic-wire-correctness.md`): the
+`encodeVarInt` 4-byte branch's negative-int32 edge is now pinned by boundary tests in
+`tests/quic-wire.test.ts` (the pure `writeUInt32BE` path already writes correct bytes);
+`handleLongHeader`'s packet-type bit-read never matched `buildPacket`'s bit-write (every
+long-header packet decoded as type `Initial`) — both directions now route through the
+shared `quic-wire.ts` seam with type encoded/decoded in bits 4–5; and `findPayloadStart`
+expected a token-length-prefix layout the builder never emitted (no working self-to-self
+round trip) — the parser now consumes the exact layout the builder emits, and a real
+dgram echo round-trip test proves encode→decode works end to end. A fourth latent bug
+found by the seam tests: `decodeVarInt`'s 8-byte branch OR'd `data[4] << 24` without
+`>>> 0`, short-decoding 2³²-valued varints. See the changelog for full root-cause
+analysis, and `tests/quic-wire.test.ts` for the regressions pinned there.
+
+Separately (not this session's work, noted here only to avoid contradiction): the
+"Actual Phase-6 implementation notes" section above marks `stun-client.ts` as already
+converted alongside Phase 5's `IDgramHandle` UDP proxy work. That's not what this review
+found — see the "Buffer → Uint8Array" paragraph above.
