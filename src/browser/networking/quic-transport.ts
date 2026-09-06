@@ -1,17 +1,39 @@
+/**
+ * Nova's own QUIC-shaped reliable UDP transport. Consumes the pure wire seam in
+ * `quic-wire.ts` (`buildLongHeaderPacket`/`parseLongHeaderPacket`) plus the
+ * varint/packet-number codecs in `byte-codecs.ts` — those are the single source
+ * of truth for the byte layout, and `tests/quic-wire.test.ts` gates the
+ * self-to-self round trip.
+ *
+ * WIRE FORMAT (fixed 2026-09-06): the socket-proxy Phase 5 session documented
+ * three wire-format bugs — the builder emitted the packet type in bits 0–1 of
+ * the first byte while the parser read bits 4–5 (so every long-header packet
+ * decoded as "Initial"), and the payload-start parser expected a
+ * token-varint/2-byte-length/packet-number layout the builder never emitted
+ * (no working self-to-self round trip). Both directions now route through
+ * `quic-wire.ts`: type encoded in bits 4–5 (`QuicLongHeaderType`: Initial 0x00,
+ * ZeroRtt 0x10, Handshake 0x20, OneRtt 0x30), Initial keeps its historical
+ * 2-byte length field (value written, never read back), other types omit it,
+ * and the packet number is skipped by its real 1/2/4-byte width. The old
+ * `VersionNegotiation`/`Retry` packet types were never built or parsed by this
+ * class and are retired.
+ *
+ * Also fixed here (same 32-bit signedness class as the varint WRITE bug
+ * documented by that session): `decodeVarInt`'s 8-byte branch OR'd
+ * `data[4] << 24` without `>>> 0`, so varints whose low 32 bits had the high
+ * bit set decoded 2^32 short. `tests/quic-wire.test.ts` pins the regression.
+ *
+ * Plain-`Uint8Array` throughout (no Node `Buffer` global), so this file is safe
+ * under `contextIsolation: true` and has no dependency on
+ * `installBufferPolyfill()`.
+ */
 import type { IDisposable } from '../../app/dependency-container';
 import type { HttpHeaderPair } from './http-protocol';
 import { HttpProtocolVersion } from './http-protocol';
 import { loadNodeBuiltin } from './node-builtins';
 import { getSocketProxy } from './socket-proxy';
-
-enum QuicPacketType {
-  Initial       = 0x00,
-  Handshake     = 0x20,
-  ZeroRtt       = 0x10,
-  OneRtt        = 0x40,
-  Retry         = 0x30,
-  VersionNegotiation = 0x80,
-}
+import { QuicLongHeaderType, buildLongHeaderPacket, parseLongHeaderPacket } from './quic-wire';
+import { concatBytes, decodeVarInt, encodeUtf8, encodeVarInt } from './byte-codecs';
 
 enum QuicFrameType {
   Padding      = 0x00,
@@ -48,7 +70,7 @@ enum QuicConnectionState {
 interface QuicStream {
   readonly id: number;
   state: 'idle' | 'open' | 'half-closed' | 'closed';
-  buffer: Buffer[];
+  buffer: Uint8Array[];
   readonly created: number;
 }
 
@@ -75,9 +97,9 @@ interface IQuicConnection extends IDisposable {
   connect(host: string, port: number): Promise<void>;
   close(): Promise<void>;
   openStream(): Promise<QuicStream>;
-  sendStreamData(streamId: number, data: Buffer): Promise<void>;
-  readStream(streamId: number): Promise<Buffer>;
-  sendCryptoData(data: Buffer): Promise<void>;
+  sendStreamData(streamId: number, data: Uint8Array): Promise<void>;
+  readStream(streamId: number): Promise<Uint8Array>;
+  sendCryptoData(data: Uint8Array): Promise<void>;
   onStream: ((stream: QuicStream) => void) | null;
   onClose: ((error?: Error) => void) | null;
 }
@@ -111,9 +133,9 @@ class QuicConnection implements IQuicConnection {
   private nextBidiStreamId = 0;
   private nextUniStreamId = 2;
   private streams = new Map<number, QuicStream>();
-  private cryptoBuffer = Buffer.alloc(0);
-  private destConnectionId: Buffer | null = null;
-  private srcConnectionId: Buffer | null = null;
+  private cryptoBuffer = new Uint8Array(0);
+  private destConnectionId: Uint8Array | null = null;
+  private srcConnectionId: Uint8Array | null = null;
   private packetNumber = 0;
   private connectedAt = 0;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -152,7 +174,7 @@ class QuicConnection implements IQuicConnection {
         reject(new QuicError(`QUIC socket error: ${err.message}`, 0));
       });
 
-      this.socket.on('message', (msg: Buffer) => {
+      this.socket.on('message', (msg: Uint8Array) => {
         clearTimeout(timeout);
         this.handlePacket(msg);
         if (this._state === QuicConnectionState.Established && !this.connectedAt) {
@@ -192,36 +214,36 @@ class QuicConnection implements IQuicConnection {
     return stream;
   }
 
-  async sendStreamData(streamId: number, data: Buffer): Promise<void> {
+  async sendStreamData(streamId: number, data: Uint8Array): Promise<void> {
     const stream = this.streams.get(streamId);
     if (!stream || stream.state === 'closed') {
       throw new QuicStreamClosedError(streamId);
     }
 
     const frame = this.buildStreamFrame(streamId, data, false);
-    await this.sendPacket(QuicPacketType.OneRtt, frame);
+    await this.sendPacket(QuicLongHeaderType.OneRtt, frame);
   }
 
-  async readStream(streamId: number): Promise<Buffer> {
+  async readStream(streamId: number): Promise<Uint8Array> {
     const stream = this.streams.get(streamId);
     if (!stream) throw new QuicStreamClosedError(streamId);
-    if (stream.buffer.length === 0) return Buffer.alloc(0);
-    const result = Buffer.concat(stream.buffer);
+    if (stream.buffer.length === 0) return new Uint8Array(0);
+    const result = concatBytes(stream.buffer);
     stream.buffer = [];
     return result;
   }
 
-  async sendCryptoData(data: Buffer): Promise<void> {
+  async sendCryptoData(data: Uint8Array): Promise<void> {
     const frame = this.buildCryptoFrame(data);
-    await this.sendPacket(QuicPacketType.Handshake, frame);
+    await this.sendPacket(QuicLongHeaderType.Handshake, frame);
   }
 
   private async sendInitialPacket(): Promise<void> {
-    const frame = this.buildCryptoFrame(Buffer.from('QUIC initial handshake'));
-    await this.sendPacket(QuicPacketType.Initial, frame);
+    const frame = this.buildCryptoFrame(encodeUtf8('QUIC initial handshake'));
+    await this.sendPacket(QuicLongHeaderType.Initial, frame);
   }
 
-  private async sendPacket(packetType: QuicPacketType, payload: Buffer): Promise<void> {
+  private async sendPacket(packetType: QuicLongHeaderType, payload: Uint8Array): Promise<void> {
     if (!this.socket) throw new QuicError('QUIC socket not connected', 0);
 
     const packet = this.buildPacket(packetType, payload);
@@ -232,97 +254,53 @@ class QuicConnection implements IQuicConnection {
     }
   }
 
-  private buildPacket(packetType: QuicPacketType, payload: Buffer): Buffer {
+  private buildPacket(packetType: QuicLongHeaderType, payload: Uint8Array): Uint8Array {
     const pn = this.packetNumber++;
-    const pnBytes = this.encodePacketNumber(pn);
-
-    let header: Buffer;
-
-    if (packetType === QuicPacketType.VersionNegotiation) {
-      header = Buffer.concat([
-        Buffer.from([0x80 | 0x00]),
-        this.destConnectionId ?? Buffer.alloc(0),
-        this.srcConnectionId ?? Buffer.alloc(0),
-        Buffer.from([0x00, 0x00, 0x00, 0x01]),
-      ]);
-    } else if (packetType === QuicPacketType.Initial) {
-      const tokenLength = 0;
-      const tokenBytes = Buffer.alloc(0);
-      const length = 2 + 1 + this.destConnectionId!.length + this.srcConnectionId!.length + tokenLength + pnBytes.length + payload.length;
-      const lengthBytes = Buffer.alloc(2);
-      lengthBytes.writeUInt16BE(length, 0);
-
-      header = Buffer.concat([
-        Buffer.from([0xC0 | (packetType >> 4 & 0x03)]),
-        Buffer.from([this.destConnectionId!.length]),
-        this.destConnectionId!,
-        Buffer.from([this.srcConnectionId!.length]),
-        this.srcConnectionId!,
-        tokenBytes,
-        lengthBytes,
-        Buffer.from([packetType | pnBytes.length - 1]),
-        pnBytes,
-      ]);
-    } else if (packetType === QuicPacketType.Handshake || packetType === QuicPacketType.OneRtt) {
-      header = Buffer.concat([
-        Buffer.from([0xC0 | (packetType >> 4 & 0x03)]),
-        Buffer.from([this.destConnectionId!.length]),
-        this.destConnectionId!,
-        Buffer.from([this.srcConnectionId!.length]),
-        this.srcConnectionId!,
-        Buffer.from([packetType | pnBytes.length - 1]),
-        pnBytes,
-      ]);
-    } else {
-      header = Buffer.concat([
-        Buffer.from([packetType | pnBytes.length - 1]),
-        this.destConnectionId ?? Buffer.alloc(0),
-        pnBytes,
-      ]);
+    if (!this.destConnectionId || !this.srcConnectionId) {
+      throw new QuicError('QUIC connection IDs not initialized', 0);
     }
-
-    return Buffer.concat([header, payload]);
+    return buildLongHeaderPacket({
+      type: packetType,
+      destConnectionId: this.destConnectionId,
+      srcConnectionId: this.srcConnectionId,
+      packetNumber: pn,
+      payload,
+    });
   }
 
-  private buildStreamFrame(streamId: number, data: Buffer, fin: boolean): Buffer {
+  private buildStreamFrame(streamId: number, data: Uint8Array, fin: boolean): Uint8Array {
     const type = QuicFrameType.Stream | (fin ? 0x01 : 0x00) | 0x04 | 0x02;
-    const streamIdBytes = this.encodeVarInt(streamId);
-    const offsetBytes = this.encodeVarInt(0);
-    const lengthBytes = this.encodeVarInt(data.length);
 
-    return Buffer.concat([
-      Buffer.from([type]),
-      streamIdBytes,
-      offsetBytes,
-      lengthBytes,
+    return concatBytes([
+      new Uint8Array([type]),
+      encodeVarInt(streamId),
+      encodeVarInt(0),
+      encodeVarInt(data.length),
       data,
     ]);
   }
 
-  private buildCryptoFrame(data: Buffer): Buffer {
-    const offsetBytes = this.encodeVarInt(0);
-    const lengthBytes = this.encodeVarInt(data.length);
-
-    return Buffer.concat([
-      Buffer.from([QuicFrameType.Crypto]),
-      offsetBytes,
-      lengthBytes,
+  private buildCryptoFrame(data: Uint8Array): Uint8Array {
+    return concatBytes([
+      new Uint8Array([QuicFrameType.Crypto]),
+      encodeVarInt(0),
+      encodeVarInt(data.length),
       data,
     ]);
   }
 
   private async sendConnectionClose(): Promise<void> {
-    const frame = Buffer.from([
+    const frame = new Uint8Array([
       QuicFrameType.ConnectionClose,
       0x00, 0x00, 0x00, 0x00,
       0x00,
     ]);
     try {
-      await this.sendPacket(QuicPacketType.OneRtt, frame);
+      await this.sendPacket(QuicLongHeaderType.OneRtt, frame);
     } catch { }
   }
 
-  private handlePacket(data: Buffer): void {
+  private handlePacket(data: Uint8Array): void {
     if (data.length < 1) return;
     const formBit = data[0]! & 0x80;
 
@@ -333,26 +311,22 @@ class QuicConnection implements IQuicConnection {
     }
   }
 
-  private handleLongHeader(data: Buffer): void {
-    const type = data[0]! & 0x30;
-    if (type === QuicPacketType.Initial >> 4) {
+  private handleLongHeader(data: Uint8Array): void {
+    const packet = parseLongHeaderPacket(data);
+    if (!packet) return;
+    const { type, payloadStart } = packet;
+    if (type === QuicLongHeaderType.Initial) {
       this._state = QuicConnectionState.Handshaking;
-      const payloadStart = this.findPayloadStart(data);
-      if (payloadStart < data.length) {
-        this.handleFrames(data.slice(payloadStart));
-      }
-    } else if (type === QuicPacketType.Handshake >> 4 || type === QuicPacketType.OneRtt >> 4) {
+      if (payloadStart < data.length) this.handleFrames(data.slice(payloadStart));
+    } else if (type === QuicLongHeaderType.Handshake || type === QuicLongHeaderType.OneRtt) {
       if (this._state === QuicConnectionState.Handshaking) {
         this._state = QuicConnectionState.Established;
       }
-      const payloadStart = this.findPayloadStart(data);
-      if (payloadStart < data.length) {
-        this.handleFrames(data.slice(payloadStart));
-      }
+      if (payloadStart < data.length) this.handleFrames(data.slice(payloadStart));
     }
   }
 
-  private handleShortHeader(data: Buffer): void {
+  private handleShortHeader(data: Uint8Array): void {
     const connIdLen = this.destConnectionId?.length ?? 0;
     const payloadStart = 1 + connIdLen + 1;
     if (payloadStart < data.length) {
@@ -360,39 +334,7 @@ class QuicConnection implements IQuicConnection {
     }
   }
 
-  private findPayloadStart(data: Buffer): number {
-    let offset = 1;
-    const type = data[0]!;
-    const isInitial = (type & 0x30) === 0x00;
-    const isZeroRtt = (type & 0x30) === 0x10;
-    const isHandshake = (type & 0x30) === 0x20;
-    const isOneRtt = (type & 0x30) === 0x30;
-
-    if (isInitial || isZeroRtt || isHandshake) {
-      const destLen = data[offset]!; offset += 1;
-      offset += destLen;
-      const srcLen = data[offset]!; offset += 1;
-      offset += srcLen;
-      if (isInitial) {
-        const tokenLen = this.decodeVarInt(data.slice(offset)).value;
-        offset += this.decodeVarInt(data.slice(offset)).length;
-        offset += tokenLen;
-      }
-      offset += 2;
-      offset += 1;
-      offset += 1;
-    } else if (isOneRtt) {
-      offset += this.destConnectionId?.length ?? 0;
-      offset += 1;
-    } else {
-      offset += this.destConnectionId?.length ?? 0;
-      offset += 1;
-    }
-
-    return Math.min(offset, data.length);
-  }
-
-  private handleFrames(payload: Buffer): void {
+  private handleFrames(payload: Uint8Array): void {
     let offset = 0;
 
     while (offset < payload.length) {
@@ -402,26 +344,26 @@ class QuicConnection implements IQuicConnection {
       if (frameType === QuicFrameType.Padding) {
         while (offset < payload.length && payload[offset] === 0x00) offset++;
       } else if (frameType === QuicFrameType.Crypto) {
-        const { value: off, length: offLen } = this.decodeVarInt(payload.slice(offset));
+        const { value: off, length: offLen } = decodeVarInt(payload.slice(offset));
         offset += offLen;
-        const { value: len, length: lenLen } = this.decodeVarInt(payload.slice(offset));
+        const { value: len, length: lenLen } = decodeVarInt(payload.slice(offset));
         offset += lenLen;
         const cryptoData = payload.slice(offset, offset + len);
         offset += len;
-        this.cryptoBuffer = Buffer.concat([this.cryptoBuffer, cryptoData]);
+        this.cryptoBuffer = concatBytes([this.cryptoBuffer, cryptoData]);
       } else if ((frameType & 0xF8) === QuicFrameType.Stream) {
         const hasOffset = (frameType & 0x04) !== 0;
         const hasLength = (frameType & 0x02) !== 0;
         const fin = (frameType & 0x01) !== 0;
 
         let streamId: number;
-        { const r = this.decodeVarInt(payload.slice(offset)); streamId = r.value; offset += r.length; }
+        { const r = decodeVarInt(payload.slice(offset)); streamId = r.value; offset += r.length; }
 
         let streamOffset = 0;
-        if (hasOffset) { const r = this.decodeVarInt(payload.slice(offset)); streamOffset = r.value; offset += r.length; }
+        if (hasOffset) { const r = decodeVarInt(payload.slice(offset)); streamOffset = r.value; offset += r.length; }
 
         let dataLen = payload.length - offset;
-        if (hasLength) { const r = this.decodeVarInt(payload.slice(offset)); dataLen = r.value; offset += r.length; }
+        if (hasLength) { const r = decodeVarInt(payload.slice(offset)); dataLen = r.value; offset += r.length; }
 
         const data = payload.slice(offset, offset + dataLen);
         offset += dataLen;
@@ -440,7 +382,7 @@ class QuicConnection implements IQuicConnection {
         stream.buffer.push(data);
         if (fin) stream.state = 'half-closed';
       } else if (frameType === QuicFrameType.Ping) {
-        this.sendPacket(QuicPacketType.OneRtt, Buffer.from([QuicFrameType.Ping]));
+        this.sendPacket(QuicLongHeaderType.OneRtt, new Uint8Array([QuicFrameType.Ping]));
       } else if (frameType === QuicFrameType.ConnectionClose) {
         this._state = QuicConnectionState.Closed;
         if (this.onClose) this.onClose(new QuicError('Remote peer closed connection', 0));
@@ -454,73 +396,15 @@ class QuicConnection implements IQuicConnection {
     }
   }
 
-  private encodeVarInt(value: number): Buffer {
-    if (value < 64) return Buffer.from([value]);
-    if (value < 16384) {
-      const buf = Buffer.alloc(2);
-      buf.writeUInt16BE(value | 0x4000, 0);
-      return buf;
-    }
-    if (value < 1_073_741_824) {
-      const buf = Buffer.alloc(4);
-      buf.writeUInt32BE(value | 0x80000000, 0);
-      return buf;
-    }
-    const buf = Buffer.alloc(8);
-    const hi = Math.floor(value / 0x100000000);
-    const lo = value >>> 0;
-    buf.writeUInt32BE(hi, 0);
-    buf.writeUInt32BE(lo, 4);
-    buf[0] = buf[0]! | 0xC0;
-    return buf;
-  }
-
-  private decodeVarInt(data: Buffer): { value: number; length: number } {
-    if (data.length === 0) return { value: 0, length: 0 };
-    const prefix = data[0]! >> 6;
-    const mask = 0x3F;
-
-    switch (prefix) {
-      case 0: return { value: data[0]! & mask, length: 1 };
-      case 1: {
-        if (data.length < 2) return { value: 0, length: 0 };
-        return { value: ((data[0]! & mask) << 8) | data[1]!, length: 2 };
-      }
-      case 2: {
-        if (data.length < 4) return { value: 0, length: 0 };
-        return { value: ((data[0]! & mask) << 24) | (data[1]! << 16) | (data[2]! << 8) | data[3]!, length: 4 };
-      }
-      case 3: {
-        if (data.length < 8) return { value: 0, length: 0 };
-        const hi = ((data[0]! & mask) << 24) | (data[1]! << 16) | (data[2]! << 8) | data[3]!;
-        const lo = (data[4]! << 24) | (data[5]! << 16) | (data[6]! << 8) | data[7]!;
-        return { value: hi * 0x100000000 + lo, length: 8 };
-      }
-      default: return { value: 0, length: 0 };
-    }
-  }
-
-  private encodePacketNumber(pn: number): Buffer {
-    if (pn < 128) return Buffer.from([pn]);
-    if (pn < 32768) {
-      const buf = Buffer.alloc(2);
-      buf.writeUInt16BE(pn, 0);
-      return buf;
-    }
-    const buf = Buffer.alloc(4);
-    buf.writeUInt32BE(pn, 0);
-    return buf;
-  }
-
-  private generateConnectionId(): Buffer {
+  private generateConnectionId(): Uint8Array {
     const crypto = loadNodeBuiltin<typeof import('node:crypto')>('node:crypto');
-    return crypto?.randomBytes(8) ?? Buffer.alloc(8);
+    return crypto ? new Uint8Array(crypto.randomBytes(8)) : new Uint8Array(8);
   }
 
   private startPingTimer(): void {
     this.pingTimer = setInterval(() => {
       if (this._state === QuicConnectionState.Established && this.socket) {
-        this.sendPacket(QuicPacketType.OneRtt, Buffer.from([QuicFrameType.Ping]));
+        this.sendPacket(QuicLongHeaderType.OneRtt, new Uint8Array([QuicFrameType.Ping]));
       }
     }, 10_000);
   }
@@ -537,17 +421,17 @@ class QuicConnection implements IQuicConnection {
   dispose(): void {
     this.cleanup();
     this.streams.clear();
-    this.cryptoBuffer = Buffer.alloc(0);
+    this.cryptoBuffer = new Uint8Array(0);
   }
 }
 
 export {
   QuicConnection,
   QuicConnectionState,
-  QuicPacketType,
   QuicFrameType,
   QuicStreamClosedError,
   QuicError,
   DEFAULT_QUIC_CONFIG,
 };
 export type { IQuicConnection, QuicStream, QuicConnectionConfig };
+export { QuicLongHeaderType as QuicPacketType } from './quic-wire';
