@@ -52,6 +52,8 @@ traces from happy-dom test-teardown) — none of that noise corresponded to an a
 
 ## TypeScript errors
 
+**Run:** 2026-09-07, `npx tsc --noEmit` from `E:\nova_1` — **0 errors** repo-wide.
+
 | File | Error | Notes |
 |------|-------|-------|
-| _(run `npm run typecheck` and fill in)_ | | |
+| _(none)_ | — | Full `tsc --noEmit` is clean as of 2026-09-07 (verified again after deleting the obsolete `media/webrtc.ts` simulation, `chore(webrtc)` `74288db`). |

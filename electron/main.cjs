@@ -15,6 +15,17 @@ const {
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 const APP_TITLE = 'Nova Browser'
 
+// DevTools protocol exposure (TODO.md "DevTools protocol exposure" item):
+// opt-in remote debugging for the packaged/production app via Chromium's
+// --remote-debugging-port switch, reached at http://127.0.0.1:<port>/json.
+// Gated on an explicit env var so it stays OFF by default — an open CDP port
+// lets any local process inspect/control the renderer. In dev the Vite server
+// is used and openDevTools() already handles the debugging path.
+const REMOTE_DEBUG_PORT = process.env.NOVA_REMOTE_DEBUGGING_PORT
+if (REMOTE_DEBUG_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', REMOTE_DEBUG_PORT)
+}
+
 const HEALTH_LOG_ENABLED = process.env.NOVA_HEALTH_LOG !== '0'
 
 // Health log target. In dev/unpacked the write next to main.cjs (project root)
@@ -396,6 +407,7 @@ app.whenReady().then(() => {
   installApplicationMenu()
   initNovaSocketOwner()
   writeHealthLog(`SOCKET_OWNER_READY probe=${JSON.stringify(__novaNetProbe())}`)
+  if (REMOTE_DEBUG_PORT) writeHealthLog(`REMOTE_DEBUGGING_ENABLED port=${REMOTE_DEBUG_PORT}`)
   mainWindow = createWindow()
   writeHealthLog('APP_READY')
   startWatchdog()
