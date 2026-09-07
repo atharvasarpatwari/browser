@@ -17,10 +17,19 @@
  * ALLOCATE — TURN relay candidates are out of scope for this phase, see
  * doc/webrtc-implementation-plan.md).
  *
+ * BYTE REPRESENTATION (2026-09-06): this file was converted from `Buffer` to
+ * plain `Uint8Array` + the pure codecs in `byte-codecs.ts`, matching what the
+ * TCP/TLS side (`socket-handle.ts`/`socket-proxy.ts`) already did in Phase 2.
+ * It no longer touches the Node `Buffer` global at all — safe under
+ * `contextIsolation: true` with no polyfill dependency, same as the rest of
+ * the dgram/UDP path (dgram-handle.ts, ice-agent.ts, quic-transport.ts) after
+ * that same pass.
+ *
  * https://www.rfc-editor.org/rfc/rfc5389
  */
 
 import { loadNodeBuiltin } from './node-builtins';
+import { readUInt16BE, writeUInt16BE, readUInt32BE, writeUInt32BE, bytesEqual, concatBytes } from './byte-codecs';
 
 // ── STUN wire constants (RFC 5389 §6) ───────────────────────────────────────
 
@@ -43,18 +52,17 @@ const enum StunAttributeType {
 const ADDRESS_FAMILY_IPV4 = 0x01;
 const ADDRESS_FAMILY_IPV6 = 0x02;
 
-// The 96-bit STUN magic cookie, as a reusable 4-byte buffer, used to XOR
+// The 96-bit STUN magic cookie, as a reusable 4-byte array, used to XOR
 // IP addresses in XOR-MAPPED-ADDRESS (RFC 5389 §15.2).
 //
-// Lazily computed (not at module scope): Buffer may be absent at import time
-// on hosts that eagerly load this module but have no Node/Buffer global (e.g.
-// the Android WebView). It is only ever needed once a real STUN message is
-// built/parsed, i.e. in Electron/Node where Buffer exists.
-let _magicCookieBytes: Buffer | null = null;
-function magicCookieBytes(): Buffer {
+// Lazily computed (not at module scope) purely out of habit from the
+// Buffer-era version of this file — a plain Uint8Array has no such
+// availability concern, but there's no harm in keeping the laziness.
+let _magicCookieBytes: Uint8Array | null = null;
+function magicCookieBytes(): Uint8Array {
   if (!_magicCookieBytes) {
-    const b = Buffer.alloc(4);
-    b.writeUInt32BE(MAGIC_COOKIE, 0);
+    const b = new Uint8Array(4);
+    writeUInt32BE(b, MAGIC_COOKIE, 0);
     _magicCookieBytes = b;
   }
   return _magicCookieBytes;
@@ -68,8 +76,8 @@ export interface StunAddress {
 
 export interface StunMessage {
   readonly type: number;
-  readonly transactionId: Buffer;
-  readonly attributes: Map<number, Buffer>;
+  readonly transactionId: Uint8Array;
+  readonly attributes: Map<number, Uint8Array>;
 }
 
 export class StunError extends Error {
@@ -82,12 +90,12 @@ export class StunError extends Error {
 
 // ── Transaction ID ───────────────────────────────────────────────────────────
 
-function randomTransactionId(): Buffer {
+function randomTransactionId(): Uint8Array {
   const crypto = loadNodeBuiltin<typeof import('node:crypto')>('node:crypto');
-  if (crypto) return crypto.randomBytes(12);
+  if (crypto) return new Uint8Array(crypto.randomBytes(12));
   // Fallback (non-cryptographic — only used if the crypto builtin is somehow
   // unavailable, which shouldn't happen inside Electron's preload bridge).
-  const buf = Buffer.alloc(12);
+  const buf = new Uint8Array(12);
   for (let i = 0; i < 12; i++) buf[i] = Math.floor(Math.random() * 256);
   return buf;
 }
@@ -95,78 +103,78 @@ function randomTransactionId(): Buffer {
 // ── Encoding ──────────────────────────────────────────────────────────────
 
 /** Encodes a STUN Binding Request. Returns the packet and the transaction ID to match against the response. */
-export function encodeBindingRequest(transactionId: Buffer = randomTransactionId()): { packet: Buffer; transactionId: Buffer } {
+export function encodeBindingRequest(transactionId: Uint8Array = randomTransactionId()): { packet: Uint8Array; transactionId: Uint8Array } {
   if (transactionId.length !== 12) {
     throw new StunError(`STUN transaction ID must be 12 bytes, got ${transactionId.length}`);
   }
-  const header = Buffer.alloc(HEADER_LENGTH);
-  header.writeUInt16BE(StunMessageType.BindingRequest, 0);
-  header.writeUInt16BE(0, 2); // message length — no attributes in a bare binding request
-  header.writeUInt32BE(MAGIC_COOKIE, 4);
-  transactionId.copy(header, 8);
+  const header = new Uint8Array(HEADER_LENGTH);
+  writeUInt16BE(header, StunMessageType.BindingRequest, 0);
+  writeUInt16BE(header, 0, 2); // message length — no attributes in a bare binding request
+  writeUInt32BE(header, MAGIC_COOKIE, 4);
+  header.set(transactionId, 8);
   return { packet: header, transactionId };
 }
 
 /** Encodes a STUN Binding Success Response carrying an XOR-MAPPED-ADDRESS for `mappedAddress`. */
-export function encodeBindingSuccessResponse(transactionId: Buffer, mappedAddress: StunAddress): Buffer {
+export function encodeBindingSuccessResponse(transactionId: Uint8Array, mappedAddress: StunAddress): Uint8Array {
   const attr = encodeXorMappedAddress(mappedAddress, transactionId);
-  const header = Buffer.alloc(HEADER_LENGTH);
-  header.writeUInt16BE(StunMessageType.BindingSuccessResponse, 0);
-  header.writeUInt16BE(attr.length, 2);
-  header.writeUInt32BE(MAGIC_COOKIE, 4);
-  transactionId.copy(header, 8);
-  return Buffer.concat([header, attr]);
+  const header = new Uint8Array(HEADER_LENGTH);
+  writeUInt16BE(header, StunMessageType.BindingSuccessResponse, 0);
+  writeUInt16BE(header, attr.length, 2);
+  writeUInt32BE(header, MAGIC_COOKIE, 4);
+  header.set(transactionId, 8);
+  return concatBytes([header, attr]);
 }
 
-function encodeXorMappedAddress(addr: StunAddress, transactionId: Buffer): Buffer {
+function encodeXorMappedAddress(addr: StunAddress, _transactionId: Uint8Array): Uint8Array {
   if (addr.family !== 4) {
     throw new StunError('Only IPv4 XOR-MAPPED-ADDRESS encoding is implemented');
   }
-  const value = Buffer.alloc(8);
-  value.writeUInt8(0, 0);
-  value.writeUInt8(ADDRESS_FAMILY_IPV4, 1);
+  const value = new Uint8Array(8);
+  value[0] = 0;
+  value[1] = ADDRESS_FAMILY_IPV4;
   const xport = addr.port ^ (MAGIC_COOKIE >>> 16);
-  value.writeUInt16BE(xport, 2);
+  writeUInt16BE(value, xport, 2);
   const ipParts = addr.address.split('.').map(Number);
   if (ipParts.length !== 4 || ipParts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) {
     throw new StunError(`Invalid IPv4 address: ${addr.address}`);
   }
   for (let i = 0; i < 4; i++) {
-    value.writeUInt8(ipParts[i]! ^ magicCookieBytes()[i]!, 4 + i);
+    value[4 + i] = ipParts[i]! ^ magicCookieBytes()[i]!;
   }
-  const header = Buffer.alloc(4);
-  header.writeUInt16BE(StunAttributeType.XorMappedAddress, 0);
-  header.writeUInt16BE(value.length, 2);
-  return Buffer.concat([header, value]);
+  const header = new Uint8Array(4);
+  writeUInt16BE(header, StunAttributeType.XorMappedAddress, 0);
+  writeUInt16BE(header, value.length, 2);
+  return concatBytes([header, value]);
 }
 
 // ── Decoding ──────────────────────────────────────────────────────────────
 
 /** Returns null (rather than throwing) for anything that isn't a well-formed STUN message — callers use this to demux STUN packets from other traffic on a shared UDP socket. */
-export function decodeStunMessage(buf: Buffer): StunMessage | null {
+export function decodeStunMessage(buf: Uint8Array): StunMessage | null {
   if (buf.length < HEADER_LENGTH) return null;
   // Top 2 bits of a STUN message are always 0 (RFC 5389 §6) — this is the
   // primary demux signal when STUN shares a socket with other traffic.
   if ((buf[0]! & 0xc0) !== 0) return null;
 
-  const type = buf.readUInt16BE(0);
-  const length = buf.readUInt16BE(2);
-  const cookie = buf.readUInt32BE(4);
+  const type = readUInt16BE(buf, 0);
+  const length = readUInt16BE(buf, 2);
+  const cookie = readUInt32BE(buf, 4);
   if (cookie !== MAGIC_COOKIE) return null;
   if (HEADER_LENGTH + length > buf.length) return null;
 
-  const transactionId = Buffer.from(buf.subarray(8, 20));
-  const attributes = new Map<number, Buffer>();
+  const transactionId = buf.slice(8, 20);
+  const attributes = new Map<number, Uint8Array>();
 
   let offset = HEADER_LENGTH;
   const end = HEADER_LENGTH + length;
   while (offset + 4 <= end) {
-    const attrType = buf.readUInt16BE(offset);
-    const attrLength = buf.readUInt16BE(offset + 2);
+    const attrType = readUInt16BE(buf, offset);
+    const attrLength = readUInt16BE(buf, offset + 2);
     const valueStart = offset + 4;
     const valueEnd = valueStart + attrLength;
     if (valueEnd > end) break;
-    attributes.set(attrType, Buffer.from(buf.subarray(valueStart, valueEnd)));
+    attributes.set(attrType, buf.slice(valueStart, valueEnd));
     // Attributes are padded to a 4-byte boundary.
     offset = valueStart + attrLength + ((4 - (attrLength % 4)) % 4);
   }
@@ -178,19 +186,19 @@ export function decodeStunMessage(buf: Buffer): StunMessage | null {
 export function parseMappedAddress(message: StunMessage): StunAddress | null {
   const xor = message.attributes.get(StunAttributeType.XorMappedAddress);
   if (xor && xor.length >= 8) {
-    const family = xor.readUInt8(1);
+    const family = xor[1]!;
     if (family !== ADDRESS_FAMILY_IPV4) return null;
-    const port = xor.readUInt16BE(2) ^ (MAGIC_COOKIE >>> 16);
-    const octets = [0, 1, 2, 3].map((i) => xor.readUInt8(4 + i) ^ magicCookieBytes()[i]!);
+    const port = readUInt16BE(xor, 2) ^ (MAGIC_COOKIE >>> 16);
+    const octets = [0, 1, 2, 3].map((i) => xor[4 + i]! ^ magicCookieBytes()[i]!);
     return { family: 4, address: octets.join('.'), port };
   }
 
   const mapped = message.attributes.get(StunAttributeType.MappedAddress);
   if (mapped && mapped.length >= 8) {
-    const family = mapped.readUInt8(1);
+    const family = mapped[1]!;
     if (family !== ADDRESS_FAMILY_IPV4) return null;
-    const port = mapped.readUInt16BE(2);
-    const octets = [0, 1, 2, 3].map((i) => mapped.readUInt8(4 + i));
+    const port = readUInt16BE(mapped, 2);
+    const octets = [0, 1, 2, 3].map((i) => mapped[4 + i]!);
     return { family: 4, address: octets.join('.'), port };
   }
 
@@ -207,12 +215,12 @@ export function parseMappedAddress(message: StunMessage): StunAddress | null {
  * real peer process.
  */
 export interface StunSocket {
-  on(evt: 'message', handler: (msg: Buffer, rinfo: { address: string; port: number }) => void): unknown;
+  on(evt: 'message', handler: (msg: Uint8Array, rinfo: { address: string; port: number }) => void): unknown;
   on(evt: 'error', handler: (err: Error) => void): unknown;
   once(evt: 'error', handler: (err: Error) => void): unknown;
-  removeListener(evt: 'message', handler: (msg: Buffer, rinfo: { address: string; port: number }) => void): unknown;
+  removeListener(evt: 'message', handler: (msg: Uint8Array, rinfo: { address: string; port: number }) => void): unknown;
   removeListener(evt: 'error', handler: (err: Error) => void): unknown;
-  send(data: Buffer, port?: number, address?: string): unknown;
+  send(data: Uint8Array, port?: number, address?: string): unknown;
 }
 
 /**
@@ -235,11 +243,11 @@ export function stunBindingRequest(
     let settled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const onMessage = (msg: Buffer, rinfo: { address: string; port: number }) => {
+    const onMessage = (msg: Uint8Array, rinfo: { address: string; port: number }) => {
       if (settled) return;
       const parsed = decodeStunMessage(msg);
       if (!parsed) return;
-      if (!parsed.transactionId.equals(transactionId)) return; // not our transaction
+      if (!bytesEqual(parsed.transactionId, transactionId)) return; // not our transaction
       if (parsed.type !== StunMessageType.BindingSuccessResponse) {
         settle(() => reject(new StunError(`STUN request to ${host}:${port} was rejected (type=0x${parsed.type.toString(16)})`)));
         return;

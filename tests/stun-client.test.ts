@@ -11,24 +11,25 @@ import {
   StunMessageType,
   MAGIC_COOKIE,
 } from '../src/browser/networking/stun-client';
+import { readUInt16BE, readUInt32BE, writeUInt16BE, writeUInt32BE, bytesEqual } from '../src/browser/networking/byte-codecs';
 
 describe('STUN message encode/decode', () => {
   it('round-trips a Binding Request header', () => {
     const { packet, transactionId } = encodeBindingRequest();
     expect(packet.length).toBe(20);
-    expect(packet.readUInt16BE(0)).toBe(StunMessageType.BindingRequest);
-    expect(packet.readUInt32BE(4)).toBe(MAGIC_COOKIE);
+    expect(readUInt16BE(packet, 0)).toBe(StunMessageType.BindingRequest);
+    expect(readUInt32BE(packet, 4)).toBe(MAGIC_COOKIE);
 
     const decoded = decodeStunMessage(packet);
     expect(decoded).not.toBeNull();
     expect(decoded!.type).toBe(StunMessageType.BindingRequest);
-    expect(decoded!.transactionId.equals(transactionId)).toBe(true);
+    expect(bytesEqual(decoded!.transactionId, transactionId)).toBe(true);
   });
 
   it('uses a fresh random transaction ID per call', () => {
     const a = encodeBindingRequest();
     const b = encodeBindingRequest();
-    expect(a.transactionId.equals(b.transactionId)).toBe(false);
+    expect(bytesEqual(a.transactionId, b.transactionId)).toBe(false);
   });
 
   it('round-trips a Binding Success Response with XOR-MAPPED-ADDRESS', () => {
@@ -38,25 +39,25 @@ describe('STUN message encode/decode', () => {
     const decoded = decodeStunMessage(response);
     expect(decoded).not.toBeNull();
     expect(decoded!.type).toBe(StunMessageType.BindingSuccessResponse);
-    expect(decoded!.transactionId.equals(transactionId)).toBe(true);
+    expect(bytesEqual(decoded!.transactionId, transactionId)).toBe(true);
 
     const mapped = parseMappedAddress(decoded!);
     expect(mapped).toEqual({ family: 4, address: '203.0.113.42', port: 54321 });
   });
 
   it('rejects a buffer that is too short', () => {
-    expect(decodeStunMessage(Buffer.alloc(10))).toBeNull();
+    expect(decodeStunMessage(new Uint8Array(10))).toBeNull();
   });
 
   it('rejects a buffer with the wrong magic cookie', () => {
-    const bad = Buffer.alloc(20);
-    bad.writeUInt16BE(StunMessageType.BindingRequest, 0);
-    bad.writeUInt32BE(0xdeadbeef, 4);
+    const bad = new Uint8Array(20);
+    writeUInt16BE(bad, StunMessageType.BindingRequest, 0);
+    writeUInt32BE(bad, 0xdeadbeef, 4);
     expect(decodeStunMessage(bad)).toBeNull();
   });
 
   it('rejects a buffer whose top two header bits are set (RFC 5389 demux rule)', () => {
-    const notStun = Buffer.from([0xff, 0x01, 0x02, 0x03, 0, 0, 0, 0]);
+    const notStun = new Uint8Array([0xff, 0x01, 0x02, 0x03, 0, 0, 0, 0]);
     expect(decodeStunMessage(notStun)).toBeNull();
   });
 });

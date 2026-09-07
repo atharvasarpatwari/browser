@@ -103,7 +103,7 @@ export interface IceAgentOptions {
   stunServer?: { host: string; port: number };
 }
 
-export type IceDataHandler = (data: Buffer) => void;
+export type IceDataHandler = (data: Uint8Array) => void;
 
 /**
  * Owns one UDP socket for the lifetime of a peer connection's data path.
@@ -137,7 +137,7 @@ export class IceAgent {
   /** Binds the UDP socket and gathers host + (optionally) server-reflexive candidates. Safe to call once per agent. */
   async gather(): Promise<IceCandidate[]> {
     this.socket = await getSocketProxy().openDgram();
-    this.socket.on('message', (msg: Buffer, rinfo: { address: string; port: number }) => this.handleMessage(msg, rinfo));
+    this.socket.on('message', (msg: Uint8Array, rinfo: { address: string; port: number }) => this.handleMessage(msg, rinfo));
     // Persistent error handler: without one, a dgram 'error' event on a socket
     // this agent owns would throw as an uncaught exception and crash the whole
     // process. Individual failures (a send to an unreachable peer, etc.) are
@@ -252,7 +252,7 @@ export class IceAgent {
   }
 
   /** Sends raw application data to the selected pair. Throws if no pair has been selected yet. */
-  send(data: Buffer): void {
+  send(data: Uint8Array): void {
     if (!this.socket || !this.selectedRemote) {
       throw new IceError('Cannot send before a candidate pair is selected');
     }
@@ -263,7 +263,7 @@ export class IceAgent {
     return this.selectedRemote;
   }
 
-  private handleMessage(msg: Buffer, rinfo: { address: string; port: number }): void {
+  private handleMessage(msg: Uint8Array, rinfo: { address: string; port: number }): void {
     const stun = decodeStunMessage(msg);
     if (stun) {
       // Answer inbound connectivity checks from the remote peer. Responses to

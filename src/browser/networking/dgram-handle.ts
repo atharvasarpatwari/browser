@@ -78,13 +78,13 @@ export interface IDgramHandle {
    */
   send(payload: Uint8Array, port?: number, address?: string): Promise<void>;
   /** Subscribe to a dgram event. */
-  on(evt: 'message', handler: (msg: Buffer, rinfo: DgramRinfo) => void): void;
+  on(evt: 'message', handler: (msg: Uint8Array, rinfo: DgramRinfo) => void): void;
   on(evt: 'error', handler: (err: Error) => void): void;
   on(evt: 'close', handler: () => void): void;
   /** One-shot error subscription (bind-attempt pattern). */
   once(evt: 'error', handler: (err: Error) => void): void;
   /** Remove a previously-registered listener. */
-  removeListener(evt: 'message', handler: (msg: Buffer, rinfo: DgramRinfo) => void): void;
+  removeListener(evt: 'message', handler: (msg: Uint8Array, rinfo: DgramRinfo) => void): void;
   removeListener(evt: 'error', handler: (err: Error) => void): void;
   removeListener(evt: 'message' | 'error', handler: (...args: never[]) => void): void;
   /** Close the owner-side socket (fire-and-forget). */
@@ -173,7 +173,7 @@ export class DgramHandle implements IDgramHandle {
     }).then(() => undefined);
   }
 
-  on(evt: 'message', handler: (msg: Buffer, rinfo: DgramRinfo) => void): void;
+  on(evt: 'message', handler: (msg: Uint8Array, rinfo: DgramRinfo) => void): void;
   on(evt: 'error', handler: (err: Error) => void): void;
   on(evt: 'close', handler: () => void): void;
   on(evt: DgramEventType, handler: DgramHandler): void {
@@ -203,7 +203,7 @@ export class DgramHandle implements IDgramHandle {
     this.hub.add(evt, wrapped);
   }
 
-  removeListener(evt: 'message', handler: (msg: Buffer, rinfo: DgramRinfo) => void): void;
+  removeListener(evt: 'message', handler: (msg: Uint8Array, rinfo: DgramRinfo) => void): void;
   removeListener(evt: 'error', handler: (err: Error) => void): void;
   removeListener(evt: 'message' | 'error', handler: (...args: never[]) => void): void;
   removeListener(evt: 'message' | 'error', handler: (...args: never[]) => void): void {
@@ -217,26 +217,24 @@ export class DgramHandle implements IDgramHandle {
   /**
    * Dispatch a pushed frame from the owner.
    *
-   * NOTE ON `Buffer` USE (added in review, 2026-09-06): this runs
-   * renderer-side, where `contextIsolation: true` means there is no bare Node
-   * `Buffer` global — this line depends entirely on `installBufferPolyfill()`
-   * (called once, in `src/app/main.ts`) having installed a page-world shim
-   * before this ever executes. That dependency was previously undocumented
-   * and untested (`buffer-polyfill.ts`'s own docs scoped it to "non-networking
-   * sites"). It's an intentional choice, not an oversight — see the fuller
-   * explanation in `buffer-polyfill.ts`'s header and `socket-proxy-design.md`
-   * — but if this file is ever used somewhere `installBufferPolyfill()` hasn't
-   * run, this throws `ReferenceError: Buffer is not defined`, the exact
-   * failure mode the whole socket-proxy effort exists to eliminate.
-   * `tests/dgram-handle-buffer-polyfill.test.ts` verifies this line actually
-   * works with the real `Buffer` deleted and only the polyfill in its place.
+   * NOTE ON BYTE REPRESENTATION (updated 2026-09-06): this used to construct
+   * a `Buffer` here via the bare global, which depended on
+   * `installBufferPolyfill()` having run first under `contextIsolation: true`
+   * — undocumented and untested until a review that same day. Rather than
+   * just documenting that dependency, it's been removed: this now emits the
+   * plain `Uint8Array` it already has, matching `ISocketHandle`'s `data`
+   * event on the TCP/TLS side (`socket-handle.ts`). `ice-agent.ts` and
+   * `quic-transport.ts` were converted the same way, so nothing downstream of
+   * this method touches `Buffer` anymore. `tests/dgram-handle-buffer-polyfill
+   * .test.ts` now proves this works with `Buffer` entirely undefined and no
+   * polyfill installed at all — a stronger guarantee than "works with the
+   * polyfill," which is what it originally proved.
    */
   receive(frame: DgramEventFrame): void {
     if (frame.evt === 'message') {
       const bytes = new Uint8Array(frame.bytes ?? new Uint8Array(0));
-      const msg = Buffer.from(bytes);
       const rinfo: DgramRinfo = frame.rinfo ?? { address: '', family: 'IPv4', port: 0 };
-      this.hub.emit('message', msg, rinfo);
+      this.hub.emit('message', bytes, rinfo);
       return;
     }
     if (frame.evt === 'error') {

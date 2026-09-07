@@ -7,6 +7,17 @@
  */
 import { installBufferPolyfill } from '../browser/buffer-polyfill';
 
+// This call's position here is NOT what makes it safe. ES module imports are
+// hoisted: every module this file imports (below, and transitively) is fully
+// evaluated before any of THIS file's own top-level statements run, no matter
+// where in the source those statements are written — so this call actually
+// executes after all of them, not before. It's safe only because none of the
+// ~100 modules main.ts pulls in touch the bare `Buffer` global at
+// module-evaluation time (only inside function/method bodies and class-field
+// initializers, which run later, during actual bootstrap/runtime — well after
+// this line executes). If that ever stops being true for a newly-added
+// import, this needs to move into its own zero-dependency entry module
+// imported before anything else, not just get shuffled further up this file.
 installBufferPolyfill();
 import {
   DependencyContainer,

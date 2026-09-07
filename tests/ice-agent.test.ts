@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { IceAgent, formatCandidateSdp, parseCandidateSdp, type IceCandidate } from '../src/browser/networking/ice-agent';
+import { encodeUtf8, decodeUtf8 } from '../src/browser/networking/byte-codecs';
 
 describe('ICE candidate SDP formatting', () => {
   it('round-trips a host candidate line', () => {
@@ -101,10 +102,10 @@ describe('IceAgent — real loopback UDP', () => {
     }];
     await agentB.checkConnectivity(aLoopback);
 
-    const received = new Promise<Buffer>((resolve) => agentB!.onData((data) => resolve(data)));
-    agentA.send(Buffer.from('hello from A'));
+    const received = new Promise<Uint8Array>((resolve) => agentB!.onData((data) => resolve(data)));
+    agentA.send(encodeUtf8('hello from A'));
     const data = await received;
-    expect(data.toString('utf8')).toBe('hello from A');
+    expect(decodeUtf8(data)).toBe('hello from A');
   });
 
   it('throws from checkConnectivity when no candidate answers', async () => {

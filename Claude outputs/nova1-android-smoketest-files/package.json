@@ -23,7 +23,6 @@
     "android:install": "cd android && gradlew.bat installDebug",
     "android:run": "cd android && gradlew.bat installDebug",
     "android:smoke-test": "node android/scripts/device-smoke-test.mjs",
-    "android:inspect-live": "node android/scripts/inspect-live-state.mjs",
     "build:android": "npm run build:web && node android/scripts/copy-web.mjs && cd android && gradlew.bat assembleDebug",
     "build:android:full": "npm run native:build:android && npm run build:web && node android/scripts/copy-web.mjs && cd android && gradlew.bat assembleDebug",
     "watch": "tsc --watch",
