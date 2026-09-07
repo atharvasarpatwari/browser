@@ -86,9 +86,6 @@ export type { IGeolocationService, GeolocationPermission, PositionOptions, Geolo
 export { WebSocketClient } from './websocket';
 export type { IWebSocketClient, WSReadyState, WebSocketEvent, WebSocketEventKind, WebSocketEventHandler } from './websocket';
 
-export { RTCPeerConnection } from './webrtc';
-export type { IRTCPeerConnection, RTCSignalingState, RTCIceGatheringState, RTCIceConnectionState, RTCSessionDescription, RTCIceCandidate, RTCOfferOptions, RTCAnswerOptions, RTCEvent, RTCEventKind, RTCEventHandler } from './webrtc';
-
 export { BroadcastChannelService } from './broadcast-channel';
 export type { IBroadcastChannelService, BroadcastEvent, BroadcastEventKind, BroadcastEventHandler } from './broadcast-channel';
 

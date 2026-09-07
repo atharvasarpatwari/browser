@@ -10,7 +10,6 @@ import { NotificationService } from '../src/browser/media/notifications';
 import { PermissionService } from '../src/browser/media/permissions';
 import { GeolocationService } from '../src/browser/media/geolocation';
 import { WebSocketClient } from '../src/browser/media/websocket';
-import { RTCPeerConnection } from '../src/browser/media/webrtc';
 import { BroadcastChannelService } from '../src/browser/media/broadcast-channel';
 import { ServiceWorkerContainer } from '../src/browser/media/service-workers';
 import { PushManager } from '../src/browser/media/push-api';
@@ -477,83 +476,6 @@ describe('WebSocketClient', () => {
     ws.connect();
     ws.dispose();
     expect(ws.readyState).toBe('closed');
-  });
-});
-
-/* ============================================================
-   11. WebRTC
-   ============================================================ */
-describe('RTCPeerConnection', () => {
-  let pc: RTCPeerConnection;
-
-  beforeEach(() => {
-    pc = new RTCPeerConnection();
-  });
-
-  it('starts in stable state', () => {
-    expect(pc.signalingState).toBe('stable');
-    expect(pc.iceGatheringState).toBe('new');
-    expect(pc.iceConnectionState).toBe('new');
-  });
-
-  it('createOffer returns SDP offer', async () => {
-    const offer = await pc.createOffer();
-    expect(offer.type).toBe('offer');
-    expect(offer.sdp).toContain('v=0');
-  });
-
-  it('createAnswer returns SDP answer', async () => {
-    const answer = await pc.createAnswer();
-    expect(answer.type).toBe('answer');
-  });
-
-  it('setLocalDescription starts ICE', async () => {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    expect(pc.iceGatheringState).toBe('complete');
-    expect(pc.iceConnectionState).toBe('checking');
-  });
-
-  it('setRemoteDescription transitions state', async () => {
-    const offer = await pc.createOffer();
-    await pc.setRemoteDescription(offer);
-    expect(pc.signalingState).toBe('have-remote-offer');
-
-    const answer = await pc.createAnswer();
-    await pc.setRemoteDescription(answer);
-    expect(pc.signalingState).toBe('stable');
-    expect(pc.iceConnectionState).toBe('connected');
-  });
-
-  it('addIceCandidate connects', async () => {
-    await pc.addIceCandidate({ candidate: 'candidate:1 1 UDP 2122252543 192.168.1.1 54321 typ host', sdpMid: '0', sdpMLineIndex: 0 });
-    expect(pc.iceConnectionState).toBe('connected');
-  });
-
-  it('close transitions to closed', () => {
-    pc.close();
-    expect(pc.signalingState).toBe('closed');
-    expect(pc.iceConnectionState).toBe('closed');
-  });
-
-  it('emits signalingstatechange', async () => {
-    const handler = vi.fn();
-    pc.onEvent(handler);
-    await pc.createOffer();
-    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'signalingstatechange' }));
-  });
-
-  it('emits icecandidate on setLocalDescription', async () => {
-    const handler = vi.fn();
-    pc.onEvent(handler);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'icecandidate' }));
-  });
-
-  it('dispose closes connection', () => {
-    pc.dispose();
-    expect(pc.signalingState).toBe('closed');
   });
 });
 
