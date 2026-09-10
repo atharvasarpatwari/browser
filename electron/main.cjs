@@ -99,7 +99,7 @@ function installSecurityPolicies(win) {
   const CSP_DIRECTIVES = [
     "default-src 'self' https: http:",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: https: http:",
     "media-src 'self' https: http:",
     "connect-src 'self' https: http: wss: ws:",

@@ -90,7 +90,7 @@ class AddressBarView implements IAddressBarView {
 
     if (this.securityIcon) {
       this.securityIcon.textContent = state.secure ? '🔒' : '🔓';
-      this.securityIcon.className = state.secure ? 'secure' : 'insecure';
+      this.securityIcon.className = 'security-icon ' + (state.secure ? 'secure' : 'insecure');
     }
 
     this.renderSuggestions(state.suggestions);

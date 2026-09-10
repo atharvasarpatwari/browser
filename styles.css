@@ -501,64 +501,54 @@ input    { font-family:inherit; }
    09. ADDRESS BAR
    ============================================================================ */
 
-.nova-addressbar {
-  flex:1; height:34px;
+.address-bar {
+  flex:1; min-width:0; position:relative;
+}
+
+.address-bar-inner {
+  height:34px;
   display:flex; align-items:center; gap:var(--sp-3);
   padding:0 var(--sp-5);
   background:var(--bg-input);
   border:1px solid var(--bd-default);
   border-radius:var(--r-full);
-  cursor:text; position:relative;
+  cursor:text;
   transition:
     border-color var(--dur-base) var(--ease-expo),
     box-shadow var(--dur-base) var(--ease-expo),
     background var(--dur-base);
 }
-.nova-addressbar:hover { border-color:var(--bd-strong); }
-.nova-addressbar.focused {
+.address-bar-inner:hover { border-color:var(--bd-strong); }
+.address-bar-inner:focus-within {
   background:var(--ob-800); border-color:var(--accent);
   box-shadow:var(--sh-accent);
 }
 
-.nova-addressbar-search-icon {
-  flex-shrink:0; color:var(--tx-tertiary); display:flex; align-items:center;
-}
-.nova-addressbar-search-icon svg { width:14px; height:14px; }
-
-.nova-security {
+.security-icon {
   flex-shrink:0; width:16px; height:16px;
   display:flex; align-items:center; justify-content:center;
-  color:var(--tx-tertiary); cursor:pointer;
+  color:var(--tx-tertiary); cursor:pointer; font-size:13px;
 }
-.nova-security.secure  { color:var(--green-400); }
-.nova-security.warn    { color:var(--amber-400); }
-.nova-security.danger  { color:var(--red-400); }
-.nova-security svg { width:13px; height:13px; }
+.security-icon.secure   { color:var(--green-400); }
+.security-icon.insecure { color:var(--amber-400); }
 
-.nova-addressbar-input {
+.address-input {
   flex:1; background:transparent; border:none; outline:none;
   color:var(--tx-primary); font-family:var(--font-mono);
   font-size:var(--sz-sm); caret-color:var(--accent); min-width:0;
 }
-.nova-addressbar-input::placeholder { color:var(--tx-tertiary); font-family:var(--font-ui); }
+.address-input::placeholder { color:var(--tx-tertiary); font-family:var(--font-ui); }
 
 .url-origin { color:var(--tx-secondary); }
 .url-path   { color:var(--tx-primary); }
 
-.nova-addressbar-actions {
-  display:flex; align-items:center; gap:var(--sp-1); flex-shrink:0;
-}
-
-.nova-addrbar-btn {
+.refresh-button {
   width:22px; height:22px; border:none; border-radius:var(--r-full);
-  background:transparent; color:var(--tx-tertiary);
+  background:transparent; color:var(--tx-tertiary); flex-shrink:0;
   display:flex; align-items:center; justify-content:center;
   transition:background var(--dur-fast), color var(--dur-fast);
 }
-.nova-addrbar-btn:hover { background:var(--glass-300); color:var(--tx-primary); }
-.nova-addrbar-btn svg { width:13px; height:13px; }
-
-.nova-star { color:var(--tx-tertiary); }
+.refresh-button:hover { background:var(--glass-300); color:var(--tx-primary); }
 .nova-star.active { color:var(--amber-400); }
 .nova-star.active svg { fill:var(--amber-400); }
 
@@ -1403,7 +1393,7 @@ input    { font-family:inherit; }
    27. DROPDOWN / AUTOCOMPLETE
    ============================================================================ */
 
-.nova-dropdown {
+.suggestions-dropdown {
   position:absolute; top:calc(100% + 4px); left:0; right:0;
   max-height:320px; overflow-y:auto;
   padding:var(--sp-2);
@@ -1413,18 +1403,18 @@ input    { font-family:inherit; }
   box-shadow:var(--sh-lg);
   z-index:var(--z-dropdown);
 }
-.nova-dropdown-item {
+.suggestion-item {
   display:flex; align-items:center; gap:var(--sp-4);
   padding:var(--sp-3) var(--sp-5);
   border-radius:var(--r-3); font-size:var(--sz-sm);
   color:var(--tx-secondary); cursor:pointer;
   transition:background var(--dur-fast), color var(--dur-fast);
 }
-.nova-dropdown-item:hover,
-.nova-dropdown-item--selected {
+.suggestion-item:hover,
+.suggestion-item[aria-selected="true"] {
   background:var(--bg-hover); color:var(--tx-primary);
 }
-.nova-dropdown-divider {
+.suggestion-divider {
   height:1px; margin:var(--sp-2) 0; background:var(--bd-subtle);
 }
 
