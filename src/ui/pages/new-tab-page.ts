@@ -68,15 +68,6 @@ function injectStyles(): void {
       0%,100% { transform:translateY(0) scale(1); opacity:0.18; }
       50%     { transform:translateY(-18px) scale(1.1); opacity:0.32; }
     }
-    @keyframes ntpGradientShift {
-      0%   { background-position:0% 50%; }
-      50%  { background-position:100% 50%; }
-      100% { background-position:0% 50%; }
-    }
-    @keyframes ntpPulse {
-      0%,100% { opacity:0.5; }
-      50%     { opacity:1; }
-    }
     .ntp-fade { opacity:0; animation:ntpFadeInUp 0.5s ease-out forwards; }
     .ntp-fade-d1 { animation-delay:0.05s; }
     .ntp-fade-d2 { animation-delay:0.15s; }
@@ -84,27 +75,27 @@ function injectStyles(): void {
     .ntp-fade-d4 { animation-delay:0.35s; }
     .ntp-fade-d5 { animation-delay:0.45s; }
     .ntp-tile { transition:background 0.2s,transform 0.18s,border-color 0.2s,box-shadow 0.2s; }
-    .ntp-tile:hover { background:rgba(255,255,255,0.1) !important; border-color:rgba(129,140,248,0.4) !important;
-      transform:translateY(-3px) scale(1.04); box-shadow:0 6px 20px rgba(99,102,241,0.15); }
+    .ntp-tile:hover { background:var(--bg-hover,rgba(255,255,255,0.1)) !important; border-color:var(--bd-accent,rgba(6,182,212,0.4)) !important;
+      transform:translateY(-3px) scale(1.04); box-shadow:0 6px 20px var(--accent-glow,rgba(6,182,212,0.2)); }
     .ntp-tile:active { transform:scale(0.96); transition-duration:0.08s; }
     .ntp-particle { position:absolute; border-radius:50%; background:rgba(255,255,255,0.18);
       animation:ntpFloat linear infinite; pointer-events:none; }
     .ntp-engine-btn { cursor:pointer; transition:background 0.15s; }
-    .ntp-engine-btn:hover { background:rgba(255,255,255,0.12); }
+    .ntp-engine-btn:hover { background:var(--bg-hover,rgba(255,255,255,0.12)); }
     .ntp-dropdown { position:absolute; top:100%; right:0; margin-top:6px; min-width:140px;
-      background:rgba(30,30,50,0.96); border:1px solid rgba(255,255,255,0.12);
+      background:var(--bg-surface,#0f1424); border:1px solid var(--bd-default,rgba(255,255,255,0.12));
       border-radius:10px; backdrop-filter:blur(12px); z-index:50; overflow:hidden; }
-    .ntp-dropdown-item { padding:10px 14px; font-size:13px; color:#cbd5e1; cursor:pointer;
+    .ntp-dropdown-item { padding:10px 14px; font-size:13px; color:var(--tx-secondary,#cbd5e1); cursor:pointer;
       transition:background 0.12s; }
-    .ntp-dropdown-item:hover { background:rgba(255,255,255,0.08); }
-    .ntp-dropdown-item.active { color:#818cf8; font-weight:600; }
-    .ntp-ctx-menu { position:fixed; min-width:160px; background:rgba(30,30,50,0.97);
-      border:1px solid rgba(255,255,255,0.12); border-radius:10px;
+    .ntp-dropdown-item:hover { background:var(--bg-hover,rgba(255,255,255,0.08)); }
+    .ntp-dropdown-item.active { color:var(--accent-lt,#22d3ee); font-weight:600; }
+    .ntp-ctx-menu { position:fixed; min-width:160px; background:var(--bg-surface,#0f1424);
+      border:1px solid var(--bd-default,rgba(255,255,255,0.12)); border-radius:10px;
       backdrop-filter:blur(12px); z-index:100; overflow:hidden; padding:4px 0; }
-    .ntp-ctx-item { padding:9px 16px; font-size:13px; color:#cbd5e1; cursor:pointer;
+    .ntp-ctx-item { padding:9px 16px; font-size:13px; color:var(--tx-secondary,#cbd5e1); cursor:pointer;
       transition:background 0.12s; }
-    .ntp-ctx-item:hover { background:rgba(255,255,255,0.08); }
-    .ntp-ctx-item.danger { color:#f87171; }
+    .ntp-ctx-item:hover { background:var(--bg-hover,rgba(255,255,255,0.08)); }
+    .ntp-ctx-item.danger { color:var(--red-400,#f87171); }
   `;
   document.head.appendChild(style);
 }
@@ -158,10 +149,11 @@ class NewTabPage implements INewTabPage {
     this.container.className = 'new-tab-page';
     this.container.style.cssText = `
       width:100%;height:100%;overflow-y:auto;overflow-x:hidden;position:relative;
-      background:linear-gradient(135deg,#0f0c29 0%,#1a1a2e 35%,#16213e 70%,#0f0c29 100%);
-      background-size:200% 200%;
-      animation:ntpGradientShift 18s ease infinite;
-      font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      background:var(--bg-base,#060810);
+      background-image:
+        radial-gradient(80% 50% at 50% -20%,rgba(6,182,212,.12) 0%,transparent 70%),
+        radial-gradient(40% 40% at 80% 80%,rgba(168,85,247,.06) 0%,transparent 60%);
+      font-family:var(--font-ui,'DM Sans',system-ui,sans-serif);
       display:flex;flex-direction:column;align-items:center;
       padding:0;margin:0;box-sizing:border-box;
       -webkit-tap-highlight-color:transparent;
@@ -287,9 +279,10 @@ class NewTabPage implements INewTabPage {
     logo.className = 'ntp-fade ntp-fade-d1';
     logo.style.cssText = 'text-align:center;margin-bottom:28px;';
     logo.innerHTML = `
-      <div style="font-size:44px;margin-bottom:6px;filter:drop-shadow(0 0 18px rgba(129,140,248,0.35));">\u2728</div>
-      <div style="font-size:26px;font-weight:700;color:#e2e8f0;letter-spacing:-0.5px;">Nova Browser</div>
-      <div style="font-size:12px;color:#64748b;margin-top:4px;letter-spacing:0.5px;">PRIVATE \u00B7 FAST \u00B7 SECURE</div>
+      <div style="font-size:44px;margin-bottom:6px;filter:drop-shadow(0 0 18px var(--accent-glow,rgba(6,182,212,0.35)));">\u2728</div>
+      <div style="font-size:26px;font-weight:600;letter-spacing:-0.02em;font-family:var(--font-display,'Playfair Display',Georgia,serif);
+        background:linear-gradient(90deg,var(--cyan-400,#22d3ee),var(--cyan-300,#67e8f9));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;">Nova Browser</div>
+      <div style="font-size:12px;color:var(--tx-tertiary,#64748b);margin-top:4px;letter-spacing:0.5px;">PRIVATE \u00B7 FAST \u00B7 SECURE</div>
     `;
     parent.appendChild(logo);
   }
@@ -320,11 +313,11 @@ class NewTabPage implements INewTabPage {
     input.placeholder = 'Search the web or enter a URL...';
     input.style.cssText = `
       flex:1;background:none;border:none;outline:none;
-      font-size:15px;color:#e2e8f0;padding:13px 0;font-family:inherit;min-width:0;
+      font-size:15px;color:var(--tx-primary,#e2e8f0);padding:13px 0;font-family:inherit;min-width:0;
     `;
     input.addEventListener('focus', () => {
-      form.style.borderColor = 'rgba(129,140,248,0.5)';
-      form.style.boxShadow = '0 0 0 3px rgba(129,140,248,0.12),0 4px 16px rgba(0,0,0,0.2)';
+      form.style.borderColor = 'var(--accent,#06b6d4)';
+      form.style.boxShadow = '0 0 0 3px var(--accent-glow,rgba(6,182,212,0.15)),0 4px 16px rgba(0,0,0,0.2)';
     });
     input.addEventListener('blur', () => {
       form.style.borderColor = 'rgba(255,255,255,0.1)';
@@ -341,7 +334,7 @@ class NewTabPage implements INewTabPage {
     const engineBtn = document.createElement('div');
     engineBtn.className = 'ntp-engine-btn';
     engineBtn.style.cssText = `
-      font-size:12px;color:#94a3b8;padding:6px 10px;border-radius:10px;
+      font-size:12px;color:var(--tx-secondary,#94a3b8);padding:6px 10px;border-radius:10px;
       flex-shrink:0;white-space:nowrap;user-select:none;
     `;
     engineBtn.textContent = ENGINE_LABELS[this.searchEngine] ?? this.searchEngine;
@@ -406,7 +399,7 @@ class NewTabPage implements INewTabPage {
     section.style.cssText = 'width:100%;max-width:500px;margin-bottom:4px;';
 
     const label = document.createElement('div');
-    label.style.cssText = 'font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;padding-left:4px;';
+    label.style.cssText = 'font-size:11px;font-weight:600;color:var(--tx-tertiary,#475569);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;padding-left:4px;';
     label.textContent = 'Quick Links';
     section.appendChild(label);
 
@@ -437,7 +430,7 @@ class NewTabPage implements INewTabPage {
     tile.appendChild(icon);
 
     const labelEl = document.createElement('div');
-    labelEl.style.cssText = 'font-size:11px;color:#94a3b8;text-align:center;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    labelEl.style.cssText = 'font-size:11px;color:var(--tx-secondary,#94a3b8);text-align:center;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
     labelEl.textContent = link.label;
     tile.appendChild(labelEl);
 
@@ -452,7 +445,7 @@ class NewTabPage implements INewTabPage {
     if (this.historyEntries.length === 0) return;
 
     const label = document.createElement('div');
-    label.style.cssText = 'font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;padding-left:4px;';
+    label.style.cssText = 'font-size:11px;font-weight:600;color:var(--tx-tertiary,#475569);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;padding-left:4px;';
     label.textContent = 'Frequently Visited';
     this.frequentSection.appendChild(label);
 
@@ -473,7 +466,7 @@ class NewTabPage implements INewTabPage {
     if (this.bookmarks.length === 0) return;
 
     const label = document.createElement('div');
-    label.style.cssText = 'font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;padding-left:4px;';
+    label.style.cssText = 'font-size:11px;font-weight:600;color:var(--tx-tertiary,#475569);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;padding-left:4px;';
     label.textContent = 'Bookmarks';
     this.bookmarkSection.appendChild(label);
 
@@ -517,14 +510,14 @@ class NewTabPage implements INewTabPage {
     }
 
     const labelEl = document.createElement('div');
-    labelEl.style.cssText = 'font-size:11px;color:#94a3b8;text-align:center;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    labelEl.style.cssText = 'font-size:11px;color:var(--tx-secondary,#94a3b8);text-align:center;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
     labelEl.textContent = title.length > 12 ? title.slice(0, 11) + '\u2026' : title;
     tile.appendChild(labelEl);
 
     const domain = extractDomain(url);
     if (domain) {
       const domainEl = document.createElement('div');
-      domainEl.style.cssText = 'font-size:9px;color:#475569;text-align:center;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;';
+      domainEl.style.cssText = 'font-size:9px;color:var(--tx-tertiary,#475569);text-align:center;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;';
       domainEl.textContent = domain;
       tile.appendChild(domainEl);
     }
@@ -623,13 +616,13 @@ class NewTabPage implements INewTabPage {
     footer.style.cssText = 'margin-top:auto;padding-top:28px;text-align:center;';
 
     const timeEl = document.createElement('div');
-    timeEl.style.cssText = 'font-size:12px;color:#475569;';
+    timeEl.style.cssText = 'font-size:12px;color:var(--tx-tertiary,#475569);';
     this.clockEl = timeEl;
     this.updateClock(timeEl);
     footer.appendChild(timeEl);
 
     const brand = document.createElement('div');
-    brand.style.cssText = 'font-size:10px;color:#334155;margin-top:4px;';
+    brand.style.cssText = 'font-size:10px;color:var(--tx-tertiary,#334155);margin-top:4px;';
     brand.textContent = 'Nova Browser v1.0.0';
     footer.appendChild(brand);
 

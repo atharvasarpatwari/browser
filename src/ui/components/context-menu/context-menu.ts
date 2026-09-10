@@ -24,7 +24,6 @@ class ContextMenu implements IContextMenu {
     this.hide();
 
     this.menuEl = document.createElement('div');
-    this.menuEl.className = 'nova-context-menu';
     this.menuEl.style.cssText = `
       position:fixed;z-index:99999;
       background:var(--bg-elevated,#fff);
