@@ -1304,6 +1304,7 @@ class Html5Tokenizer {
     if (ch === ';') {
       this.charRefSeenSemicolon = true;
       this.flushNumericCharRef();
+      this.state = this.charRefReturnState;
     } else if (isAsciiHexDigit(ch)) {
       this.charRefCode = this.charRefCode * 16 + hexValue(ch);
     } else {
@@ -1317,6 +1318,7 @@ class Html5Tokenizer {
     if (ch === ';') {
       this.charRefSeenSemicolon = true;
       this.flushNumericCharRef();
+      this.state = this.charRefReturnState;
     } else if (isAsciiDigit(ch)) {
       this.charRefCode = this.charRefCode * 10 + (ch.charCodeAt(0) - 0x30);
     } else {
@@ -1681,12 +1683,31 @@ class Html5Tokenizer {
     return this.input[this.pos + offset] ?? '';
   }
 
+  private isInAttrCharRef(): boolean {
+    return this.state === S.CHAR_REF || this.state === S.NAMED_CHAR_REF ||
+      this.state === S.NUMERIC_CHAR_REF || this.state === S.HEX_CHAR_REF_START ||
+      this.state === S.HEX_CHAR_REF || this.state === S.DEC_CHAR_REF_START ||
+      this.state === S.DEC_CHAR_REF
+      ? this.charRefReturnState === S.ATTR_VALUE_DQ ||
+        this.charRefReturnState === S.ATTR_VALUE_SQ ||
+        this.charRefReturnState === S.ATTR_VALUE_UQ
+      : false;
+  }
+
   private appendChar(ch: string): void {
-    this.charBuf += ch;
+    if (this.isInAttrCharRef()) {
+      this.attrValue += ch;
+    } else {
+      this.charBuf += ch;
+    }
   }
 
   private appendString(s: string): void {
-    this.charBuf += s;
+    if (this.isInAttrCharRef()) {
+      this.attrValue += s;
+    } else {
+      this.charBuf += s;
+    }
   }
 
   private flushText(): void {
