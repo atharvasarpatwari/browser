@@ -1637,7 +1637,7 @@ class LayoutEngine implements ILayoutEngine {
       isAnonymous: false,
     };
 
-    ifc.addBox(inlineBox);
+    const line = ifc.addBox(inlineBox);
 
     // Register element for hit testing
     this.layoutBoxes.set(el.domId, box);
@@ -1664,6 +1664,19 @@ class LayoutEngine implements ILayoutEngine {
       // size (paint/hit-testing add it to box.y themselves), so subtract
       // childStartY back off before using it here.
       box.height = Math.max(box.height, childBottomY - childStartY);
+      // ifc.addBox() above already recorded this element's PRE-recursion
+      // height (just lineHeight, since box.height wasn't known to be
+      // taller yet) into the outer line's own height. If this element's
+      // own content just wrapped to multiple lines, box.height grew past
+      // that recorded value — push the outer line's height back up to
+      // match, or the outer formatting context finalizes at the too-short
+      // original estimate. That's not cosmetic: the *next* line (or, for
+      // a table row, the next row entirely) is positioned starting right
+      // after this line's height, so an under-reported height here made
+      // unrelated content immediately below (e.g. the next table row's
+      // subtext line) start too early and paint on top of this element's
+      // wrapped second line.
+      line.height = Math.max(line.height, box.height + box.marginTop + box.marginBottom);
     }
   }
 
