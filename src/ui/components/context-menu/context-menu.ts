@@ -25,53 +25,30 @@ class ContextMenu implements IContextMenu {
 
     this.menuEl = document.createElement('div');
     this.menuEl.className = 'nova-context-menu';
-    this.menuEl.style.cssText = `
-      position:fixed;z-index:99999;
-      background:var(--bg-elevated,#fff);
-      border:1px solid var(--border-subtle,#e0e0e0);
-      border-radius:8px;
-      box-shadow:0 4px 12px rgba(0,0,0,0.15),0 1px 4px rgba(0,0,0,0.1);
-      padding:4px 0;
-      min-width:180px;
-      font-family:system-ui,-apple-system,sans-serif;
-      font-size:13px;
-      color:var(--text-primary,#1a1a1a);
-    `;
+    this.menuEl.style.zIndex = '99999';
 
     for (const item of items) {
       if (item.separator) {
         const sep = document.createElement('div');
-        sep.style.cssText = 'height:1px;background:var(--border-subtle,#e0e0e0);margin:4px 0;';
+        sep.className = 'nova-context-menu-separator';
         this.menuEl.appendChild(sep);
         continue;
       }
 
-      const row = document.createElement('div');
-      row.style.cssText = `
-        display:flex;align-items:center;gap:8px;
-        padding:6px 12px;cursor:pointer;
-        opacity:${item.disabled ? '0.4' : '1'};
-        pointer-events:${item.disabled ? 'none' : 'auto'};
-      `;
+      const row = document.createElement('button');
+      row.className = `nova-context-menu-item${item.disabled ? ' nova-context-menu-item--disabled' : ''}`;
 
       if (item.icon) {
         const iconEl = document.createElement('span');
+        iconEl.className = 'nova-context-menu-icon';
         iconEl.textContent = item.icon;
-        iconEl.style.cssText = 'width:16px;text-align:center;font-size:14px;';
         row.appendChild(iconEl);
       }
 
       const label = document.createElement('span');
       label.textContent = item.label ?? '';
-      label.style.cssText = 'flex:1;';
       row.appendChild(label);
 
-      row.addEventListener('mouseenter', () => {
-        row.style.background = 'var(--bg-hover,rgba(0,0,0,0.06))';
-      });
-      row.addEventListener('mouseleave', () => {
-        row.style.background = '';
-      });
       row.addEventListener('click', () => {
         this.hide();
         item.action?.();
