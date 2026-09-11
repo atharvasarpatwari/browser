@@ -5,6 +5,7 @@ import { findContainingBlock as findContainingBlockForScheme, resolveOutOfFlow, 
 import { classifyDisplay, type ClassifiedChild } from './formatting/types';
 import { classifyChildren, collapseMargins, isMarginCollapseBlocked } from './formatting/block-context';
 import { InlineFormattingContext } from './formatting/inline-context';
+import { getTextMeasurer } from './formatting/text-measure';
 import { FloatContext } from './formatting/float-context';
 import {
   FlexFormattingContext,
@@ -1432,6 +1433,7 @@ class LayoutEngine implements ILayoutEngine {
     const ifc = new InlineFormattingContext(availableWidth, contentY, {
       exclusionZones,
       defaultFontSize: parentFontSize,
+      startX: contentX,
     });
 
     for (const child of parent.children) {
@@ -1553,9 +1555,31 @@ class LayoutEngine implements ILayoutEngine {
     // width/height attributes when CSS does not override them.
     const intrinsic = this.resolveIntrinsicSize(el);
 
-    const contentW = intrinsic.width != null
-      ? intrinsic.width
-      : availableWidth - marginL - marginR - padL - padR - borderL - borderR;
+    // A genuinely inline element (no explicit width, not replaced) is sized
+    // to fit its content — CSS "shrink-to-fit" — not to fill the remaining
+    // line like a block box would. Measuring the concatenated text covers
+    // the overwhelmingly common case (an inline element wrapping only text,
+    // e.g. <b>bold</b>/<a>a link</a>); an inline element containing further
+    // elements falls back to the old (wide) estimate rather than
+    // implementing a full recursive pre-measurement pass here. Getting this
+    // wrong isn't cosmetic: the outer line-fitting math in
+    // InlineFormattingContext.addBox() uses this width to decide how much
+    // room is left on the line, so a wildly-too-wide box forces every
+    // sibling that follows it onto a new line.
+    const specWidth = elStyle.get('width');
+    let contentW: number;
+    if (intrinsic.width != null) {
+      contentW = intrinsic.width;
+    } else if (specWidth && specWidth !== 'auto') {
+      contentW = resolve('width', '0');
+    } else if (el.children.every(c => c.nodeType === 'text')) {
+      const text = el.children.map(c => (c as DomNode & { text?: string }).text ?? '').join('');
+      const fontFamily = elStyle.get('font-family') ?? 'sans-serif';
+      const fontWeight = elStyle.get('font-weight');
+      contentW = getTextMeasurer().measure(text, elFontSize, fontFamily, fontWeight).width;
+    } else {
+      contentW = availableWidth - marginL - marginR - padL - padR - borderL - borderR;
+    }
 
     // Register the element with a preliminary box for hit testing
     const box: LayoutBox = {
@@ -1585,9 +1609,16 @@ class LayoutEngine implements ILayoutEngine {
       domTree.setLayoutBox(el, box);
     }
 
-    // If the inline element has children, layout them recursively
+    // If the inline element has children, layout them recursively — at this
+    // element's own position on the line (box.x, set by ifc.addBox() just
+    // above, and the line's Y — box.y itself isn't finalized until the
+    // outer ifc.finalize() runs, well after this call). Using contentX/
+    // contentY here unconditionally put every inline element's content back
+    // at the start of the whole inline formatting context, overlapping
+    // whatever plain text preceded it on the line (e.g. "<b>bold</b>" in
+    // "text <b>bold</b> more" rendered "bold" on top of "text", not after it).
     if (el.children.length > 0) {
-      const childHeight = this.layoutInlineChildren(el, contentX, contentY, contentW, elFontSize, domTree);
+      const childHeight = this.layoutInlineChildren(el, box.x + marginL + borderL + padL, ifc.getCurrentLineY(), contentW, elFontSize, domTree);
       box.height = Math.max(box.height, childHeight);
     }
   }
