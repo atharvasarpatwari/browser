@@ -15,7 +15,9 @@ import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewFeature
 import com.nova.browser.BrowserViewModel
 import com.nova.browser.NovaFetchBridge
 import com.nova.browser.NovaStateBridge
@@ -46,6 +48,17 @@ fun EngineWebView(
                 .build()
 
             WebView(context).apply {
+                // The engine paints real page content (its own canvas, real-world
+                // colors) — Android's automatic WebView dark-mode inversion must
+                // never touch it, or a light page renders as an inverted black
+                // frame (this is exactly what produced the "blank black screen"
+                // bug: an unstyled/just-booted WebView plus a system dark theme
+                // triggers algorithmic darkening on a WebView that never opted
+                // out). White here is also the correct base color for a browser
+                // engine's blank/loading state regardless of app theme, since
+                // web content assumes a white canvas unless it says otherwise.
+                setBackgroundColor(android.graphics.Color.WHITE)
+
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
@@ -58,6 +71,18 @@ fun EngineWebView(
                     javaScriptCanOpenWindowsAutomatically = true
                     setSupportMultipleWindows(true)
                     setGeolocationEnabled(true)
+
+                    // Disable both dark-mode mechanisms Android WebView has used
+                    // across API levels — force-dark (pre-13) and algorithmic
+                    // darkening (13+) — guarded so this is a no-op on WebView
+                    // builds that predate either feature rather than crashing.
+                    if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+                        WebSettingsCompat.setAlgorithmicDarkeningAllowed(this, false)
+                    }
+                    @Suppress("DEPRECATION")
+                    if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+                        WebSettingsCompat.setForceDark(this, WebSettingsCompat.FORCE_DARK_OFF)
+                    }
                 }
                 setLayerType(View.LAYER_TYPE_HARDWARE, null)
                 isVerticalScrollBarEnabled = false

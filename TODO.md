@@ -1,6 +1,8 @@
 # Nova Browser — TODO
 
-Last updated: 2026-09-06
+Last updated: 2026-09-10
+
+> **2026-09-10 reference note:** a visual mockup of the browser UI (main window + new-tab page) was built on a Claude Design canvas in Cowork session `session_01W6wSGNKHuZ7Mv7nQRXAgXK` — see `doc/2026-09-10-browser-interface-design-mockup.md` for the published link and an open question it surfaced (two parallel, unreconciled CSS/component systems in the source — `themes.ts`'s small scheme vs. the richer `.nova-*` classes actually shipped in `dist/assets/main-DR04VOts.css`). No code changed; not an action item, just a pointer for whoever next touches the UI.
 
 ## Priority: High
 

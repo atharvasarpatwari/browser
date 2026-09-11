@@ -32,6 +32,29 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     expect(() => page.getChromeState()).not.toThrow();
   });
 
+  it('hideChromeUI also hides MobileLayout\'s own chrome on a phone-width viewport (regression: this check previously existed only in the desktop branch of mount(), so on a real phone — where window.innerWidth is phone-width inside the Android WebView — it silently never ran, leaving the engine\'s own status bar/address bar/bottom nav rendered on top of the native Compose chrome)', async () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 });
+    try {
+      page = new BrowserWindowPage({ hideChromeUI: true });
+      await page.mount(container);
+      const statusBar = container.querySelector('.mobile-status-bar') as HTMLElement | null;
+      const addressBar = container.querySelector('.mobile-address-bar') as HTMLElement | null;
+      const bottomNav = container.querySelector('.bottom-nav') as HTMLElement | null;
+      // All three still exist — wiring (AddressBarView/StatusBarView) stays
+      // intact, exactly like the desktop toolbar/tabBar/bookmarkBar — they
+      // are just hidden.
+      expect(statusBar).not.toBeNull();
+      expect(statusBar!.style.display).toBe('none');
+      expect(addressBar).not.toBeNull();
+      expect(addressBar!.style.display).toBe('none');
+      expect(bottomNav).not.toBeNull();
+      expect(bottomNav!.style.display).toBe('none');
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+    }
+  });
+
   it('getChromeState() reflects the initial single tab', async () => {
     page = new BrowserWindowPage({ hideChromeUI: true });
     await page.mount(container);
@@ -54,7 +77,10 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     page = new BrowserWindowPage({ hideChromeUI: true });
     await page.mount(container);
     const state = page.getChromeState();
-    expect(state.homeUrl).toBe('about:blank');
+    // Default changed from 'about:blank' to 'about:newtab' so a first-ever
+    // launch (no homePage setting yet) shows the real New Tab Page instead
+    // of a blank page — see getHomeUrl() in browser-window.ts.
+    expect(state.homeUrl).toBe('about:newtab');
     expect(state.searchTemplate).toBe('https://www.google.com/search?q=%s');
   });
 
