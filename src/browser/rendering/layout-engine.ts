@@ -888,10 +888,10 @@ class LayoutEngine implements ILayoutEngine {
       (value: string, fallback: string) => this.resolveLength(value, fontSize, availableWidth),
     );
 
-    tblCtx.layoutCells(
+    const bottomY = tblCtx.layoutCells(
       contentX,
       contentY,
-      (cellEl: DomElement, x: number, y: number, w: number, h: number) => {
+      (cellEl: DomElement, x: number, y: number, w: number, h: number): number => {
         const cellBox: LayoutBox = {
           x, y,
           width: w, height: h,
@@ -902,11 +902,12 @@ class LayoutEngine implements ILayoutEngine {
         this.layoutBoxes.set(cellEl.domId, cellBox);
         this.elementPositions.push({ element: cellEl, box: cellBox });
         if (domTree) domTree.setLayoutBox(cellEl, cellBox);
-        this.layoutNode(cellEl, x, y, w, fontSize, domTree);
+        const endY = this.layoutNode(cellEl, x, y, w, fontSize, domTree);
+        return Math.max(h, endY - y);
       },
     );
 
-    return contentY + tblCtx.getTotalHeight();
+    return bottomY;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

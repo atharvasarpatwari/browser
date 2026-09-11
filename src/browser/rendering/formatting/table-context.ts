@@ -277,22 +277,32 @@ export class TableFormattingContext {
     }
   }
 
+  /**
+   * Lays out each cell via the `layoutCell` callback, which must return the
+   * actual outer height the cell's content used (e.g. `layoutNode`'s
+   * returned bottom-Y minus the cell's top-Y). A row's pre-computed height
+   * (from `resolve()`, which only knows a cell's CSS `height` or a 20px
+   * guess) is just a lower bound — real content like a wrapped multi-line
+   * title routinely needs more. Advancing to the next row by the guess
+   * instead of the real height is what made unrelated rows overlap.
+   */
   layoutCells(
     contentX: number,
     contentY: number,
-    layoutCell: (cell: DomElement, x: number, y: number, w: number, h: number) => void,
-  ): void {
+    layoutCell: (cell: DomElement, x: number, y: number, w: number, h: number) => number,
+  ): number {
     const spacing = this.options.borderCollapse === 'separate' ? this.options.borderSpacing : 0;
     let y = contentY;
     if (this.options.captionSide === 'top') {
       for (const cap of this.captions) {
-        layoutCell(cap, contentX, y, this.totalWidth, 20);
-        y += 20 + spacing;
+        const used = layoutCell(cap, contentX, y, this.totalWidth, 20);
+        y += Math.max(20, used) + spacing;
       }
     }
     y += spacing;
     for (const row of this.rows) {
       let xOffset = spacing;
+      let actualRowHeight = row.height;
       for (const cell of row.cells) {
         const cellX = contentX + xOffset;
         const cellY = y;
@@ -301,18 +311,22 @@ export class TableFormattingContext {
           cellW += this.columns[cell.col + s].finalWidth;
         }
         cellW += spacing * (cell.colspan - 1);
-        layoutCell(cell.element, cellX, cellY, Math.max(0, cellW), Math.max(0, cell.contentHeight));
+        const used = layoutCell(cell.element, cellX, cellY, Math.max(0, cellW), Math.max(0, cell.contentHeight));
+        actualRowHeight = Math.max(actualRowHeight, used);
         xOffset += cellW + spacing;
       }
-      y += row.height + spacing;
+      row.height = actualRowHeight;
+      y += actualRowHeight + spacing;
     }
     if (this.options.captionSide === 'bottom') {
       y += spacing;
       for (const cap of this.captions) {
-        layoutCell(cap, contentX, y, this.totalWidth, 20);
-        y += 20 + spacing;
+        const used = layoutCell(cap, contentX, y, this.totalWidth, 20);
+        y += Math.max(20, used) + spacing;
       }
     }
+    this.totalHeight = y - contentY;
+    return y;
   }
 
   getTotalWidth(): number {
