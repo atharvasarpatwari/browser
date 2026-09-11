@@ -147,7 +147,21 @@ class PageRenderer implements IPageRenderer, IDisposable {
     this.applyComputedStyles(rules); // Re-apply after script execution
 
     // 6. Run layout
-    layoutEngine.layout(doc, domTree);
+    // The canvas that ends up on screen is CSS-stretched/shrunk to fill
+    // whatever size the content area actually is, but its pixel buffer
+    // (and everything drawn into it) was sized to whatever viewport the
+    // engine was constructed with — a fixed 1920x1080 default, regardless
+    // of the real content area. Any mismatch forces the browser to rescale
+    // a sharp, non-anti-aliased bitmap font, which blends adjacent glyphs
+    // into each other and made text look like it was overlapping. Render
+    // at the content area's real size instead so no rescaling ever has to
+    // happen. window.innerHeight is the whole app window including the
+    // address bar/tab strip chrome above the content area, so it overshoots;
+    // .content-area is the actual element the canvas fills.
+    const contentAreaEl = typeof document !== 'undefined' ? document.querySelector('.content-area') : null;
+    const viewportWidth = contentAreaEl?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1920);
+    const viewportHeight = contentAreaEl?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1080);
+    layoutEngine.layout(doc, domTree, { viewportWidth, viewportHeight });
 
     // 7. Lazy load images/iframes via IntersectionObserver
     const lazyLoader = new LazyLoader();
@@ -160,9 +174,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
       this.reflowController?.requestFrame();
     });
     lazyLoader.scanForLazyElements(doc);
-    lazyLoader.setViewport(1920, 1080); // Default viewport
+    lazyLoader.setViewport(viewportWidth, viewportHeight);
 
     // 8. Paint
+    paintEngine.updateConfig({ width: viewportWidth, height: viewportHeight });
     paintEngine.paint(doc);
 
     // 9. Clear mutations recorded during the initial full style pass. They are
@@ -185,7 +200,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 11. Wire the incremental reflow/repaint controller for post-load DOM
     //     mutations (JS-triggered changes, scroll/scroll-triggered relayout).
-    this.initReflowController(doc);
+    this.initReflowController(doc, viewportWidth, viewportHeight);
   }
 
   /**
@@ -193,13 +208,13 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * After the initial full layout+paint, all subsequent DOM mutations flow
    * through this controller so only dirty subtrees are re-laid-out/repainted.
    */
-  private initReflowController(doc: DomDocument): void {
+  private initReflowController(doc: DomDocument, viewportWidth: number, viewportHeight: number): void {
     const { domTree, layoutEngine, paintEngine } = this.deps;
 
     this.reflowController?.dispose();
     const controller = new ReflowRepaintController(layoutEngine, paintEngine, domTree, {
-      viewportWidth: 1920,
-      viewportHeight: 1080,
+      viewportWidth,
+      viewportHeight,
     });
     controller.init(doc);
     // Incremental style recalc resolves _dirtyStyle nodes before layout.

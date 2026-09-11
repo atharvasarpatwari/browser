@@ -277,7 +277,11 @@ describe('PageRenderer', () => {
 
       await renderer.render(result, signal);
 
-      expect(mockDeps.layoutEngine.layout).toHaveBeenCalledWith(mockDoc, mockDeps.domTree);
+      expect(mockDeps.layoutEngine.layout).toHaveBeenCalledWith(
+        mockDoc,
+        mockDeps.domTree,
+        expect.objectContaining({ viewportWidth: expect.any(Number), viewportHeight: expect.any(Number) }),
+      );
     });
 
     it('should paint the document', async () => {

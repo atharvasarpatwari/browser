@@ -83,7 +83,15 @@ class ContentRenderer implements IContentRenderer {
       const el = document.createElement('canvas');
       el.width = imageData.width;
       el.height = imageData.height;
-      el.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#fff;display:block;';
+      // The canvas's internal pixel buffer is fixed at the engine's render
+      // viewport size, but CSS stretches/shrinks it to fill whatever size
+      // the container actually is. The browser's default bilinear scaling
+      // blends adjacent pixels when it does — fatal for this rasterizer's
+      // sharp, non-anti-aliased bitmap font glyphs, since blending two
+      // neighboring characters' edges together is exactly what makes
+      // adjacent words look like they're overlapping. Nearest-neighbor
+      // scaling keeps each glyph's edges crisp instead.
+      el.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#fff;display:block;image-rendering:pixelated;';
       this.container!.appendChild(el);
       return el;
     })();
