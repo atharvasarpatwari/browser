@@ -1787,6 +1787,11 @@ class LayoutEngine implements ILayoutEngine {
       return isFinite(n) ? (n / 100) * this.config.viewportHeight : 0;
     }
 
+    if (value.endsWith('pt')) {
+      const n = parseFloat(value);
+      return isFinite(n) ? n * 1.333 : 0;
+    }
+
     const n = parseFloat(value);
     return isFinite(n) ? n : 0;
   }
@@ -1837,6 +1842,11 @@ class LayoutEngine implements ILayoutEngine {
       return isFinite(n) ? n : parentFontSize;
     }
 
+    if (raw.endsWith('pt')) {
+      const n = parseFloat(raw);
+      return isFinite(n) ? n * 1.333 : parentFontSize;
+    }
+
     const n = parseFloat(raw);
     return isFinite(n) ? n : parentFontSize;
   }
@@ -1845,7 +1855,12 @@ class LayoutEngine implements ILayoutEngine {
     const raw = style.get('line-height');
     if (!raw || raw === 'normal' || raw === 'auto') return fontSize * 1.2;
 
-    if (!raw.endsWith('px') && !raw.endsWith('em') && !raw.endsWith('rem') && !raw.endsWith('%')) {
+    // A bare number (no unit suffix) is a multiplier of font-size, per the
+    // CSS spec's unitless line-height. Anything else — including a unit
+    // this function doesn't otherwise special-case, like "pt" — is a length
+    // and must go through resolveLength rather than being misread as a
+    // multiplier (e.g. "12pt" is ~16px, not 12x the font size).
+    if (/^\d+(\.\d+)?$/.test(raw.trim())) {
       const n = parseFloat(raw);
       return isFinite(n) ? n * fontSize : fontSize * 1.2;
     }
