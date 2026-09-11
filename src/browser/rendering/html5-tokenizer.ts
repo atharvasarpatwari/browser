@@ -1734,10 +1734,24 @@ class Html5Tokenizer {
         offset:  this.tokenStart,
       });
 
-      // Enter RAWTEXT/RCDATA/SCRIPT/PLAINTEXT if appropriate.
-      if (!this.endTagMode) {
-        this.setupRawTextMode(this.tagName);
+      const openedTagName = this.tagName;
+      const wasEndTag = this.endTagMode;
+      this.tagName = '';
+      this.attrs = new Map();
+      this.selfClosing = false;
+      this.endTagMode = false;
+      this.state = S.DATA;
+
+      // Enter RAWTEXT/RCDATA/SCRIPT/PLAINTEXT if appropriate — must run
+      // after the S.DATA reset above, since it overrides that default.
+      // (Running before, as this used to, meant the reset always clobbered
+      // it back to S.DATA, so <script>/<style> content was never actually
+      // read as raw text — any "<"/">" inside real JS or CSS, e.g. a
+      // comparison operator, got misread as a bogus tag.)
+      if (!wasEndTag) {
+        this.setupRawTextMode(openedTagName);
       }
+      return;
     }
     this.tagName = '';
     this.attrs = new Map();
