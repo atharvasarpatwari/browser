@@ -640,5 +640,28 @@ function inBodyEndTag(ctx: TreeBuilderContext, token: Token): void {
     }
   }
 
-  ctx.parseError(token);
+  // §13.2.6.7 "any other end tag" — the generic close-tag algorithm for
+  // every element name not special-cased above. Ordinary inline elements
+  // like <span>, <label>, <cite>, <abbr>, etc. all fall through to here;
+  // without this, closing ANY of them (the switch above only special-cases
+  // ~50 specific tag names) hit a bare parse-error with no pop, so the
+  // element never actually closed and everything that followed on the page
+  // nested one level deeper inside it instead of becoming its sibling.
+  for (let i = ctx.openElements.length - 1; i >= 0; i--) {
+    const node = ctx.openElements.elementAt(i);
+    if (node.tagName === tag) {
+      ctx.generateImpliedEndTags(tag);
+      if (ctx.currentNode() !== node) {
+        ctx.parseError(token);
+      }
+      while (ctx.openElements.length > i) {
+        ctx.popCurrentNode();
+      }
+      return;
+    }
+    if (SPECIAL_ELEMENTS.has(node.tagName)) {
+      ctx.parseError(token);
+      return;
+    }
+  }
 }
