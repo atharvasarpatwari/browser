@@ -79,8 +79,12 @@ describe('isSupportedImageType', () => {
     expect(isSupportedImageType('image/webp')).toBe(true);
   });
 
-  it('should not support image/gif', () => {
-    expect(isSupportedImageType('image/gif')).toBe(false);
+  it('should support image/gif', () => {
+    expect(isSupportedImageType('image/gif')).toBe(true);
+  });
+
+  it('should not support image/bmp', () => {
+    expect(isSupportedImageType('image/bmp')).toBe(false);
   });
 
   it('should not support text/html', () => {
@@ -205,6 +209,14 @@ describe('ImageDecoder', () => {
 
   describe('Error handling', () => {
     it('should return null for unsupported MIME type', async () => {
+      const buf = new Uint8Array([1, 2, 3, 4]);
+      const result = await decoder.decode(buf, 'image/bmp');
+      expect(result).toBeNull();
+    });
+
+    it('should return null for GIF data when no native canvas decoder is available', async () => {
+      // happy-dom (this test environment) has no createImageBitmap/OffscreenCanvas,
+      // matching how the decoder degrades gracefully outside a real renderer.
       const buf = new Uint8Array([1, 2, 3, 4]);
       const result = await decoder.decode(buf, 'image/gif');
       expect(result).toBeNull();

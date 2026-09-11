@@ -1,11 +1,13 @@
 /**
  * @file src/browser/image/decoder.ts
  *
- * Image decoder that converts binary image data (PNG, JPEG) into raw RGBA
- * pixel data suitable for the rasterizer's drawImage() command.
+ * Image decoder that converts binary image data (PNG, JPEG, WebP, GIF) into
+ * raw RGBA pixel data suitable for the rasterizer's drawImage() command.
  *
- * Uses the `pngjs` and `jpeg-js` libraries for format-specific decoding.
- * Unknown or unsupported MIME types produce a synthetic fallback (checkerboard).
+ * Uses the `pngjs` and `jpeg-js` libraries for format-specific decoding, plus
+ * the renderer's native createImageBitmap() for GIF (first frame only — no
+ * JS GIF decoder here). Unknown or unsupported MIME types produce a
+ * synthetic fallback (checkerboard).
  */
 
 import type { PNG } from 'pngjs';
@@ -30,6 +32,7 @@ const SUPPORTED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/jpg',
   'image/webp',
+  'image/gif',
 ]);
 
 function normalizeMime(mimeType: string): string {
@@ -77,6 +80,10 @@ export class ImageDecoder implements IImageDecoder {
         return await this.decodeWebp(bytes);
       }
 
+      if (mime === 'image/gif') {
+        return await this.decodeViaCanvas(bytes, mime);
+      }
+
       return null;
     } catch {
       return null;
@@ -109,6 +116,39 @@ export class ImageDecoder implements IImageDecoder {
       width: raw.width,
       height: raw.height,
     };
+  }
+
+  /**
+   * Decode via the renderer's own native image decoder (createImageBitmap +
+   * canvas), for formats with no JS decoder here. GIF is the real-world case
+   * — real sites lean on it for tiny spacer/icon images (e.g. Hacker News),
+   * and hand-rolling LZW/GIF decoding to match pngjs/jpeg-js's approach would
+   * just re-implement what Chromium already does correctly. Only the first
+   * frame of an animated GIF is decoded — animation is a separate feature.
+   */
+  private async decodeViaCanvas(bytes: Uint8Array, mimeType: string): Promise<DecodedImage | null> {
+    if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function') {
+      return null;
+    }
+    // Bytes here always come from our own fetch pipeline (never a
+    // SharedArrayBuffer view), so this is safe at runtime; cast needed
+    // because Uint8Array's backing buffer is typed ArrayBufferLike.
+    const blob = new Blob([bytes as unknown as ArrayBuffer], { type: mimeType });
+    const bitmap = await createImageBitmap(blob);
+    try {
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(bitmap, 0, 0);
+      const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+      return {
+        data: imageData.data,
+        width: bitmap.width,
+        height: bitmap.height,
+      };
+    } finally {
+      bitmap.close();
+    }
   }
 
   private async decodeWebp(bytes: Uint8Array): Promise<DecodedImage | null> {
