@@ -1099,6 +1099,21 @@ export function expandShorthands(
 // USER-AGENT DEFAULTS
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Metadata/raw-text elements the HTML5 tree builder correctly parses into
+ * the DOM (see html5/modes/head.ts's own list) but that must never paint:
+ * their text-node children are markup/script source, not page content. With
+ * no UA default here they fell through to the general display:inline
+ * fallback, so a <style> or <title>'s raw text rendered as visible text on
+ * every real page that used them (e.g. a page's inline <style> block's CSS
+ * source appearing as text on screen).
+ */
+const HIDDEN_ELEMENTS = new Set([
+  'head',
+  'base', 'basefont', 'bgsound', 'link', 'meta',
+  'noscript', 'script', 'style', 'template', 'title',
+]);
+
 const BLOCK_ELEMENTS = new Set([
   'html',
   'body',
@@ -1180,7 +1195,9 @@ export function getUserAgentDefaults(
   const styles = new Map<string, string>();
 
   // Display
-  if (BLOCK_ELEMENTS.has(tag)) {
+  if (HIDDEN_ELEMENTS.has(tag)) {
+    styles.set('display', 'none');
+  } else if (BLOCK_ELEMENTS.has(tag)) {
     styles.set('display', 'block');
   } else if (INLINE_ELEMENTS.has(tag)) {
     styles.set('display', 'inline');
