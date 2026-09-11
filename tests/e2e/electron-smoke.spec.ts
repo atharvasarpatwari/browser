@@ -9,10 +9,10 @@ test('Nova Browser launches in Electron and renders content', async () => {
   try {
     // Bootstrap mounts the browser chrome into #browser-app
     await expect(page.locator('#browser-app')).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('.address-bar')).toBeVisible();
+    await expect(page.locator('.nova-addressbar')).toBeVisible();
 
     // Navigate to a real site through the engine pipeline
-    const addressInput = page.locator('.address-input');
+    const addressInput = page.locator('.nova-addressbar-input');
     await addressInput.fill('https://example.com');
     await addressInput.press('Enter');
 

@@ -69,7 +69,7 @@ class ToolbarView implements IToolbarView {
       this.reloadBtn.title = state.loading ? 'Stop' : 'Reload';
     }
     if (this.shieldBtn) {
-      this.shieldBtn.style.color = state.shieldEnabled ? 'var(--text-success)' : 'var(--text-tertiary)';
+      this.shieldBtn.style.color = state.shieldEnabled ? 'var(--green-400)' : 'var(--tx-tertiary)';
     }
   }
 
@@ -80,19 +80,14 @@ class ToolbarView implements IToolbarView {
   private build(): void {
     if (!this.container) return;
     this.container.innerHTML = '';
-    this.container.className = 'title-bar';
-    this.container.style.cssText = 'display:flex;align-items:center;padding:5px 10px;background:var(--bg-elevated);border-bottom:1px solid var(--border-subtle);flex-shrink:0;gap:7px;user-select:none;';
+    this.container.className = 'nova-navbar';
 
     if (this.config.showTrafficLights) {
       const trafficLights = document.createElement('div');
-      trafficLights.className = 'traffic-lights';
-      trafficLights.style.cssText = 'display:flex;gap:5px;margin-right:6px;';
-      for (const color of ['#ff5f56', '#ffbd2e', '#27c93f']) {
+      trafficLights.className = 'nova-wc';
+      for (const cls of ['nova-wc-close', 'nova-wc-minimize', 'nova-wc-maximize']) {
         const dot = document.createElement('span');
-        dot.className = `tl tl-${color === '#ff5f56' ? 'r' : color === '#ffbd2e' ? 'y' : 'g'}`;
-        dot.style.cssText = `width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;transition:opacity var(--t-fast);`;
-        dot.addEventListener('mouseenter', () => { dot.style.opacity = '0.8'; });
-        dot.addEventListener('mouseleave', () => { dot.style.opacity = '1'; });
+        dot.className = `nova-wc-btn ${cls}`;
         trafficLights.appendChild(dot);
       }
       this.container.appendChild(trafficLights);
@@ -122,14 +117,14 @@ class ToolbarView implements IToolbarView {
     this.container.appendChild(addressBarArea);
 
     if (this.config.showBookmarkButton) {
-      this.bookmarkBtn = this.createIconBtn('☆', 'Bookmark this page');
+      this.bookmarkBtn = this.createNavButton('☆', 'Bookmark this page', false);
       this.bookmarkBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'bookmarkAdd' }));
       this.container.appendChild(this.bookmarkBtn);
     }
 
     if (this.config.showShieldButton) {
-      this.shieldBtn = this.createIconBtn('🛡️', `${this.config.brandName ?? 'Nova'} Shield`);
-      this.shieldBtn.style.color = this.model.state.shieldEnabled ? 'var(--text-success)' : 'var(--text-tertiary)';
+      this.shieldBtn = this.createNavButton('🛡️', `${this.config.brandName ?? 'Nova'} Shield`, false);
+      this.shieldBtn.style.color = this.model.state.shieldEnabled ? 'var(--green-400)' : 'var(--tx-tertiary)';
       this.shieldBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'shieldToggle', enabled: !this.model.state.shieldEnabled }));
       this.container.appendChild(this.shieldBtn);
     }
@@ -137,34 +132,10 @@ class ToolbarView implements IToolbarView {
 
   private createNavButton(text: string, title: string, disabled: boolean): HTMLButtonElement {
     const btn = document.createElement('button');
-    btn.className = 'nav-btn';
+    btn.className = 'nova-nav-btn';
     btn.textContent = text;
     btn.title = title;
     btn.disabled = disabled;
-    btn.style.cssText = 'border:none;background:none;color:var(--text-tertiary);font-size:14px;cursor:pointer;padding:3px 6px;border-radius:var(--radius-sm);line-height:1;transition:all var(--t-fast);font-family:inherit;';
-    btn.addEventListener('mouseenter', () => {
-      if (!btn.disabled) btn.style.color = 'var(--text-primary)';
-    });
-    btn.addEventListener('mouseleave', () => {
-      btn.style.color = 'var(--text-tertiary)';
-    });
-    return btn;
-  }
-
-  private createIconBtn(text: string, title: string): HTMLElement {
-    const btn = document.createElement('button');
-    btn.className = 'addr-btn';
-    btn.textContent = text;
-    btn.title = title;
-    btn.style.cssText = 'border:none;background:none;color:var(--text-tertiary);font-size:14px;cursor:pointer;padding:3px 5px;border-radius:var(--radius-sm);transition:all var(--t-fast);line-height:1;font-family:inherit;';
-    btn.addEventListener('mouseenter', () => {
-      btn.style.background = 'var(--bg-overlay)';
-      btn.style.color = 'var(--text-accent-bright)';
-    });
-    btn.addEventListener('mouseleave', () => {
-      btn.style.background = 'none';
-      btn.style.color = 'var(--text-tertiary)';
-    });
     return btn;
   }
 

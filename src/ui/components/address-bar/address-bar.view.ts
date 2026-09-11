@@ -90,7 +90,7 @@ class AddressBarView implements IAddressBarView {
 
     if (this.securityIcon) {
       this.securityIcon.textContent = state.secure ? '🔒' : '🔓';
-      this.securityIcon.className = state.secure ? 'secure' : 'insecure';
+      this.securityIcon.className = `nova-security ${state.secure ? 'secure' : 'warn'}`;
     }
 
     this.renderSuggestions(state.suggestions);
@@ -129,21 +129,19 @@ class AddressBarView implements IAddressBarView {
     if (!this.container) return;
 
     this.container.innerHTML = '';
-    this.container.className = 'address-bar';
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'address-bar-inner';
+    this.container.className = 'nova-addressbar';
+    this.container.style.position = 'relative';
 
     if (this.config.showSecurityIcon) {
       this.securityIcon = document.createElement('span');
-      this.securityIcon.className = 'security-icon';
+      this.securityIcon.className = 'nova-security warn';
       this.securityIcon.textContent = '🔓';
-      wrapper.appendChild(this.securityIcon);
+      this.container.appendChild(this.securityIcon);
     }
 
     this.inputElement = document.createElement('input');
     this.inputElement.type = 'text';
-    this.inputElement.className = 'address-input';
+    this.inputElement.className = 'nova-addressbar-input';
     this.inputElement.placeholder = 'Search or enter URL';
     this.inputElement.autocomplete = 'off';
     this.inputElement.spellcheck = false;
@@ -157,10 +155,12 @@ class AddressBarView implements IAddressBarView {
 
     this.inputElement.addEventListener('focus', () => {
       this.previousValue = this.inputElement?.value ?? '';
+      this.container?.classList.add('focused');
       this.selectAll();
     });
 
     this.inputElement.addEventListener('blur', () => {
+      this.container?.classList.remove('focused');
       // Delay to allow suggestion click to register.
       setTimeout(() => this.hideSuggestions(), 150);
     });
@@ -169,23 +169,21 @@ class AddressBarView implements IAddressBarView {
       this.selectedSuggestionIndex = -1;
     });
 
-    wrapper.appendChild(this.inputElement);
+    this.container.appendChild(this.inputElement);
 
     if (this.config.showRefreshButton) {
       this.refreshButton = document.createElement('button');
-      this.refreshButton.className = 'refresh-button';
+      this.refreshButton.className = 'nova-addrbar-btn';
       this.refreshButton.textContent = '↻';
       this.refreshButton.title = 'Reload current page';
       this.refreshButton.addEventListener('click', () => {
         this.dispatchEvent({ kind: 'reload' });
       });
-      wrapper.appendChild(this.refreshButton);
+      this.container.appendChild(this.refreshButton);
     }
 
-    this.container.appendChild(wrapper);
-
     this.suggestionsContainer = document.createElement('div');
-    this.suggestionsContainer.className = 'suggestions-dropdown';
+    this.suggestionsContainer.className = 'nova-dropdown';
     this.suggestionsContainer.id = 'address-bar-suggestions';
     this.suggestionsContainer.style.display = 'none';
     this.suggestionsContainer.setAttribute('role', 'listbox');
@@ -220,7 +218,7 @@ class AddressBarView implements IAddressBarView {
 
       case 'ArrowDown': {
         e.preventDefault();
-        const items = this.suggestionsContainer?.querySelectorAll('.suggestion-item');
+        const items = this.suggestionsContainer?.querySelectorAll('.nova-dropdown-item');
         if (items && items.length > 0) {
           this.selectedSuggestionIndex = Math.min(
             this.selectedSuggestionIndex + 1,
@@ -233,7 +231,7 @@ class AddressBarView implements IAddressBarView {
 
       case 'ArrowUp': {
         e.preventDefault();
-        const items = this.suggestionsContainer?.querySelectorAll('.suggestion-item');
+        const items = this.suggestionsContainer?.querySelectorAll('.nova-dropdown-item');
         if (items && items.length > 0) {
           this.selectedSuggestionIndex = Math.max(this.selectedSuggestionIndex - 1, -1);
           if (this.selectedSuggestionIndex === -1) {
@@ -247,7 +245,7 @@ class AddressBarView implements IAddressBarView {
       case 'Tab': {
         // Accept the selected suggestion on Tab.
         if (this.selectedSuggestionIndex >= 0) {
-          const items = this.suggestionsContainer?.querySelectorAll('.suggestion-item');
+          const items = this.suggestionsContainer?.querySelectorAll('.nova-dropdown-item');
           const selected = items?.[this.selectedSuggestionIndex];
           if (selected) {
             e.preventDefault();
@@ -277,14 +275,14 @@ class AddressBarView implements IAddressBarView {
     items.forEach((item, i) => {
       const el = item as HTMLElement;
       if (i === this.selectedSuggestionIndex) {
-        el.style.background = 'var(--bg-overlay, rgba(255,255,255,0.08))';
+        el.classList.add('nova-dropdown-item--selected');
         el.setAttribute('aria-selected', 'true');
         // Update input value to the selected suggestion.
         if (this.inputElement) {
           this.inputElement.value = el.textContent ?? '';
         }
       } else {
-        el.style.background = '';
+        el.classList.remove('nova-dropdown-item--selected');
         el.setAttribute('aria-selected', 'false');
       }
     });
@@ -357,7 +355,7 @@ class AddressBarView implements IAddressBarView {
     for (let i = 0; i < toShow.length; i++) {
       const suggestion = toShow[i]!;
       const item = document.createElement('div');
-      item.className = 'suggestion-item';
+      item.className = 'nova-dropdown-item';
       item.textContent = suggestion;
       item.setAttribute('role', 'option');
       item.setAttribute('aria-selected', 'false');
