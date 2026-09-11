@@ -69,6 +69,36 @@ const NAMED_FONT_SIZES: Record<string, number> = {
   'larger': 18,
 };
 
+const REPLACED_TAGS = new Set(['img', 'br', 'iframe', 'video', 'canvas', 'svg', 'embed', 'object', 'input', 'textarea', 'select']);
+
+/**
+ * Whether an inline element's entire descendant subtree is plain inline
+ * content (text and further plain-inline elements) with no replaced or
+ * block-level element anywhere in it. Such a subtree's real rendered width
+ * is just its text — a nested `<span><a>label</a></span>` is exactly as
+ * measurable as a flat `<b>label</b>`, and treating anything with an
+ * element child as unmeasurable was overly conservative for the common
+ * "inline markup nested a few levels deep" case.
+ */
+function isTextOnlyInlineSubtree(node: DomNode, depth = 0): boolean {
+  if (depth > 12) return false;
+  if (node.nodeType === 'text') return true;
+  if (node.nodeType !== 'element') return false;
+  const el = node as DomElement;
+  if (REPLACED_TAGS.has(el.tagName.toLowerCase())) return false;
+  const display = el.computedStyle?.get('display') ?? 'inline';
+  if (display !== 'inline') return false;
+  return el.children.every(c => isTextOnlyInlineSubtree(c, depth + 1));
+}
+
+/** Concatenates all text within a subtree already confirmed text-only by isTextOnlyInlineSubtree. */
+function collectInlineSubtreeText(node: DomNode, depth = 0): string {
+  if (depth > 12) return '';
+  if (node.nodeType === 'text') return (node as DomNode & { text?: string }).text ?? '';
+  if (node.nodeType !== 'element') return '';
+  return (node as DomElement).children.map(c => collectInlineSubtreeText(c, depth + 1)).join('');
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LAYOUT ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -748,6 +778,7 @@ class LayoutEngine implements ILayoutEngine {
     const ifc = new InlineFormattingContext(availableWidth, startY, {
       exclusionZones,
       defaultFontSize: parentFontSize,
+      startX: contentX,
     });
     const parentStyle = parent.computedStyle ?? new Map();
     const parentLineHeight = this.resolveLineHeight(parentStyle, parentFontSize);
@@ -1559,22 +1590,29 @@ class LayoutEngine implements ILayoutEngine {
     // A genuinely inline element (no explicit width, not replaced) is sized
     // to fit its content — CSS "shrink-to-fit" — not to fill the remaining
     // line like a block box would. Measuring the concatenated text covers
-    // the overwhelmingly common case (an inline element wrapping only text,
-    // e.g. <b>bold</b>/<a>a link</a>); an inline element containing further
-    // elements falls back to the old (wide) estimate rather than
-    // implementing a full recursive pre-measurement pass here. Getting this
-    // wrong isn't cosmetic: the outer line-fitting math in
+    // the common case; an inline element wrapping further PLAIN INLINE
+    // elements (e.g. <span><a>1 hour ago</a></span>) is walked recursively
+    // to collect all its text too, rather than only checking direct
+    // children — a real-world page nests inline markup routinely (a link
+    // inside a span inside a span), and treating anything with an element
+    // child as "unmeasurable" was the common case, not the exception.
+    // Only a genuinely complex subtree (a replaced element like <img>, or
+    // a nested block/inline-block) falls back to the old (wide) estimate.
+    // Getting this wrong isn't cosmetic: the outer line-fitting math in
     // InlineFormattingContext.addBox() uses this width to decide how much
     // room is left on the line, so a wildly-too-wide box forces every
-    // sibling that follows it onto a new line.
+    // sibling that follows it onto a new line — on a real page, this
+    // turned one visual line (e.g. "12 points by user | hide | 3 comments")
+    // into three, each subsequent chunk sliding onto its own spurious line
+    // and colliding with whatever the next row painted at that height.
     const specWidth = elStyle.get('width');
     let contentW: number;
     if (intrinsic.width != null) {
       contentW = intrinsic.width;
     } else if (specWidth && specWidth !== 'auto') {
       contentW = resolve('width', '0');
-    } else if (el.children.every(c => c.nodeType === 'text')) {
-      const text = el.children.map(c => (c as DomNode & { text?: string }).text ?? '').join('');
+    } else if (isTextOnlyInlineSubtree(el)) {
+      const text = collectInlineSubtreeText(el);
       const fontFamily = elStyle.get('font-family') ?? 'sans-serif';
       const fontWeight = elStyle.get('font-weight');
       contentW = getTextMeasurer().measure(text, elFontSize, fontFamily, fontWeight).width;
@@ -1619,8 +1657,13 @@ class LayoutEngine implements ILayoutEngine {
     // whatever plain text preceded it on the line (e.g. "<b>bold</b>" in
     // "text <b>bold</b> more" rendered "bold" on top of "text", not after it).
     if (el.children.length > 0) {
-      const childHeight = this.layoutInlineChildren(el, box.x + marginL + borderL + padL, ifc.getCurrentLineY(), contentW, elFontSize, domTree);
-      box.height = Math.max(box.height, childHeight);
+      const childStartY = ifc.getCurrentLineY();
+      const childBottomY = this.layoutInlineChildren(el, box.x + marginL + borderL + padL, childStartY, contentW, elFontSize, domTree);
+      // layoutInlineChildren returns an absolute bottom-Y (childStartY + real
+      // height), not a bare height — box.height must stay a small relative
+      // size (paint/hit-testing add it to box.y themselves), so subtract
+      // childStartY back off before using it here.
+      box.height = Math.max(box.height, childBottomY - childStartY);
     }
   }
 
