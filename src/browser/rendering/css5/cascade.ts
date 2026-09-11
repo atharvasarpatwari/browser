@@ -1135,7 +1135,6 @@ const BLOCK_ELEMENTS = new Set([
   'footer',
   'main',
   'aside',
-  'table',
   'form',
   'blockquote',
   'hr',
@@ -1187,6 +1186,29 @@ const INLINE_ELEMENTS = new Set([
   'picture',
 ]);
 
+/**
+ * Table constituent elements' `display` comes entirely from the UA
+ * stylesheet in real browsers — HTML has no attribute for it, pages just
+ * rely on `<table>`/`<tr>`/`<td>` implicitly being table/table-row/
+ * table-cell. Without this map these tags matched none of the sets above
+ * and fell back to plain `inline`, which meant the table-layout code path
+ * (gated on seeing `display: table` specifically) never ran for ANY
+ * ordinary HTML table — every `<tr>`/`<td>` rendered as if it were a
+ * `<span>`, silently flattening rows and columns into one inline run.
+ */
+const TABLE_DISPLAY_ELEMENTS: Record<string, string> = {
+  table: 'table',
+  tr: 'table-row',
+  td: 'table-cell',
+  th: 'table-cell',
+  thead: 'table-header-group',
+  tbody: 'table-row-group',
+  tfoot: 'table-footer-group',
+  caption: 'table-caption',
+  col: 'table-column',
+  colgroup: 'table-column-group',
+};
+
 /** Returns user-agent default declarations for a given element tag. */
 export function getUserAgentDefaults(
   tagName: string,
@@ -1197,6 +1219,8 @@ export function getUserAgentDefaults(
   // Display
   if (HIDDEN_ELEMENTS.has(tag)) {
     styles.set('display', 'none');
+  } else if (TABLE_DISPLAY_ELEMENTS[tag]) {
+    styles.set('display', TABLE_DISPLAY_ELEMENTS[tag]);
   } else if (BLOCK_ELEMENTS.has(tag)) {
     styles.set('display', 'block');
   } else if (INLINE_ELEMENTS.has(tag)) {
