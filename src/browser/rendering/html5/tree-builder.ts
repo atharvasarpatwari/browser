@@ -324,6 +324,10 @@ class TreeBuilder implements TreeBuilderContext {
       this.insertionMode = Im.IN_SELECT_IN_TABLE;
     } else if (tag === 'select') {
       this.insertionMode = Im.IN_SELECT;
+    } else if (tag === 'td' || tag === 'th') {
+      this.insertionMode = Im.IN_CELL;
+    } else if (tag === 'tr') {
+      this.insertionMode = Im.IN_ROW;
     } else if (tag === 'tbody' || tag === 'tfoot' || tag === 'thead') {
       this.insertionMode = Im.IN_TABLE_BODY;
     } else if (tag === 'caption') {
@@ -434,6 +438,24 @@ class TreeBuilder implements TreeBuilderContext {
     }
     this.activeFormattingClearUpToMarker();
     this.insertionMode = Im.IN_ROW;
+  }
+
+  /**
+   * §13.2.6.2 "clear the stack back to a table body context": pop elements
+   * until the current node is tbody/thead/tfoot/template/html. Required
+   * before "in table body" mode inserts a new <tr> — without it, a <tr>
+   * that was never explicitly closed (e.g. `<tr style="height:10px"/>`;
+   * the trailing `/` on a non-void element is a no-op per the HTML5
+   * tokenizer, so this never actually closes) is still the current node,
+   * and the next <tr> gets inserted as ITS CHILD instead of its sibling —
+   * nesting an entire table body's worth of subsequent rows one level too
+   * deep instead of laying them out as siblings.
+   */
+  clearStackToTableBodyContext(): void {
+    const bodyContextTags = new Set(['tbody', 'thead', 'tfoot', 'template', 'html']);
+    while (this.openElements.length > 0 && !bodyContextTags.has(this.currentNode()!.tagName)) {
+      this.popCurrentNode();
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
