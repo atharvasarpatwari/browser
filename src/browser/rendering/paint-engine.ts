@@ -17,6 +17,7 @@ import { LayerPromoter } from './compositing/layer-promoter';
 import { parseGradient, isGradientValue } from './css-gradients';
 import { parseBackgrounds } from './enhanced-backgrounds';
 import { parseBorders, parseBorderRadius, renderBorderSide } from './borders-enhanced';
+import type { BorderSide } from './borders-enhanced';
 import { parseBoxShadow, parseTextShadow } from './shadows';
 import { parseFilter } from './css-filters';
 import { parseClipPath, parseMask } from './clip-mask';
@@ -467,8 +468,16 @@ class PaintEngine implements IPaintEngine {
 
       // ── Borders (enhanced with radius, per-side colors, dashed/dotted) ─
       const borderInfo = parseBorders(style, layoutBox.width, layoutBox.height);
-      const hasAnyBorder = borderInfo.top.width > 0 || borderInfo.right.width > 0 ||
-        borderInfo.bottom.width > 0 || borderInfo.left.width > 0;
+      // border-width defaults to the CSS initial value "medium" (3px) even
+      // when border-style is (also correctly) "none" — computed values are
+      // independent per spec, and a real browser never paints a side whose
+      // style is none/hidden regardless of its width. Checking width alone
+      // here meant nearly every element on every page painted a phantom
+      // border, since almost nothing sets border-style explicitly.
+      const isVisible = (side: BorderSide): boolean =>
+        side.width > 0 && side.style !== 'none';
+      const hasAnyBorder = isVisible(borderInfo.top) || isVisible(borderInfo.right) ||
+        isVisible(borderInfo.bottom) || isVisible(borderInfo.left);
       if (hasAnyBorder) {
         const borderSides: { w: number; x: number; y: number; rw: number; rh: number; color: string; style: string }[] = [
           { w: borderInfo.top.width, x: layoutBox.x, y: layoutBox.y, rw: layoutBox.width, rh: borderInfo.top.width, color: colorToString(borderInfo.top.color), style: borderInfo.top.style },
@@ -482,7 +491,7 @@ class PaintEngine implements IPaintEngine {
           commands.push({ type: 'setBorderRadius', params: [borderInfo.radius, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
         }
         for (const s of borderSides) {
-          if (s.w <= 0) continue;
+          if (s.w <= 0 || s.style === 'none') continue;
           if (s.style === 'dashed' || s.style === 'dotted') {
             commands.push({ type: 'setFillStyle', params: [s.color] });
             const dashLen = s.style === 'dotted' ? s.w : s.w * 3;
