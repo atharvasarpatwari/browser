@@ -2,6 +2,7 @@
   "name": "nova-browser",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Nova Browser — A TypeScript browser engine",
   "engines": {
     "node": ">=20.19.0"

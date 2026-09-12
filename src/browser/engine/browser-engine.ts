@@ -55,6 +55,10 @@ import type { IRouter, RouteResult } from '../navigation/router';
 import { RouteType }                  from '../navigation/router';
 import type { ILayoutEngine }         from '../rendering/layout-engine';
 import type { IPageLoader, PageLoadResult } from './engine-types';
+import { createLogger } from '../../common/logger';
+
+const nullRendererLog = createLogger('NullPageRenderer');
+const eventBusLog = createLogger('EngineEventBus');
 
 // Re-export shared types (also imported by networking to avoid circular dep).
 export type { IPageLoader, PageLoadResult } from './engine-types';
@@ -258,7 +262,7 @@ class NullPageLoader implements IPageLoader {
  */
 class NullPageRenderer implements IPageRenderer {
   async render(result: PageLoadResult, _signal: AbortSignal): Promise<void> {
-    console.log(`[NullPageRenderer] Would render ${result.url} (${result.contentType})`);
+    nullRendererLog.info(`Would render ${result.url} (${result.contentType})`);
   }
   getLayoutEngine(): ILayoutEngine | null {
     return null;
@@ -290,7 +294,7 @@ class EngineEventBus {
     for (const h of handlers) {
       try { h(event); }
       catch (err) {
-        console.error(`[EngineEventBus] Handler threw on "${event.kind}":`, err);
+        eventBusLog.error(`Handler threw on "${event.kind}":`, err);
       }
     }
   }
@@ -562,7 +566,7 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   private log(msg: string): void {
     if (this.config.debug) {
-      console.log(`[BrowserEngine:${this.sessionSeq}] ${msg}`);
+      createLogger(`BrowserEngine:${this.sessionSeq}`).info(msg);
     }
   }
 }
