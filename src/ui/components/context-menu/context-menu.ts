@@ -17,6 +17,7 @@ interface IContextMenu extends IDisposable {
 class ContextMenu implements IContextMenu {
   private menuEl: HTMLElement | null = null;
   private _isVisible = false;
+  private closeHandler: ((e: Event) => void) | null = null;
 
   get isVisible(): boolean { return this._isVisible; }
 
@@ -87,10 +88,9 @@ class ContextMenu implements IContextMenu {
     const closeHandler = (e: Event) => {
       if (this.menuEl && !this.menuEl.contains(e.target as Node)) {
         this.hide();
-        document.removeEventListener('mousedown', closeHandler);
-        document.removeEventListener('contextmenu', closeHandler);
       }
     };
+    this.closeHandler = closeHandler;
     setTimeout(() => {
       document.addEventListener('mousedown', closeHandler);
       document.addEventListener('contextmenu', closeHandler);
@@ -101,6 +101,11 @@ class ContextMenu implements IContextMenu {
     if (this.menuEl) {
       this.menuEl.remove();
       this.menuEl = null;
+    }
+    if (this.closeHandler) {
+      document.removeEventListener('mousedown', this.closeHandler);
+      document.removeEventListener('contextmenu', this.closeHandler);
+      this.closeHandler = null;
     }
     this._isVisible = false;
   }

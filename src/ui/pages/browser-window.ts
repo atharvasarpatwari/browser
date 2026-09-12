@@ -225,7 +225,17 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private navigationFetcher: NavigationFetcher | null = null;
   private pipelineController: INavigationController | null = null;
   private localController: INavigationController | null = null;
-  private readonly onBridgeUrlNavigated = () => { this.syncAll(); };
+  private readonly onBridgeUrlNavigated = (e: { readonly kind: string; readonly url?: string }) => {
+    // The address bar's own Enter-key path drives navigation through
+    // NavigationBridge directly (not through this.navigate()), so it never
+    // otherwise reaches handleContentForUrl() — internal nova://* pages typed
+    // straight into the address bar would just sit on whatever was already
+    // rendered. Route it here too so both entry points behave the same way.
+    if (e.kind === 'urlNavigated' && e.url && this.parser.isSpecialPage(e.url)) {
+      this.handleContentForUrl(e.url);
+    }
+    this.syncAll();
+  };
 
   /** Per-tab load errors (keyed by tab id) recorded from navigationFailed bridge events. */
   private readonly tabErrors = new Map<string, { code: string; description: string; url: string }>();
@@ -384,6 +394,34 @@ class BrowserWindowPage implements IBrowserWindowPage {
       if (areas.toolbar) {
         this.toolbarView = new ToolbarView(this.toolbar);
         this.toolbarView.attach(areas.toolbar);
+        this.toolbarView.setEventHandler((e) => {
+          switch (e.kind) {
+            case 'back':
+              this.goBack();
+              break;
+            case 'forward':
+              this.goForward();
+              break;
+            case 'reload':
+              this.reload();
+              break;
+            case 'stop':
+              this.stop();
+              break;
+            case 'home':
+              this.toolbar?.goHome();
+              break;
+            case 'shieldToggle':
+              this.toolbar?.toggleShield();
+              break;
+            case 'bookmarkAdd':
+              this.toolbar?.addBookmark();
+              break;
+            case 'menuClick':
+              this.showMainMenu(e.x, e.y);
+              break;
+          }
+        });
       }
       if (areas.tabBar) {
         this.tabStripView = new TabStripView(this.tabStrip);
@@ -471,6 +509,13 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.bookmarkBar?.addBookmark(tab.title || tab.url, tab.url);
         this.syncBookmarkBar();
       }
+    });
+    this.toolbar.on('home', () => {
+      void this.navigate(this.getHomeUrl());
+    });
+    this.toolbar.on('menuClick', (e) => {
+      const { x, y } = e as { readonly kind: 'menuClick'; readonly x: number; readonly y: number };
+      this.showMainMenu(x, y);
     });
 
     // Wire address bar keyboard shortcuts.
@@ -1027,6 +1072,23 @@ class BrowserWindowPage implements IBrowserWindowPage {
     searchInput.addEventListener('input', () => void renderList());
   }
 
+  private showMainMenu(x: number, y: number): void {
+    if (!this.contextMenu) this.contextMenu = new ContextMenu();
+
+    const items: ContextMenuItem[] = [
+      { label: 'New Tab', icon: '＋', action: () => { this.tabManager?.createTab(); this.syncAll(); } },
+      { separator: true },
+      { label: 'Bookmarks', icon: '⭐', action: () => { void this.navigate('nova://bookmarks'); } },
+      { label: 'History', icon: '🕘', action: () => { void this.navigate('nova://history'); } },
+      { label: 'Downloads', icon: '⬇️', action: () => { void this.navigate('nova://downloads'); } },
+      { separator: true },
+      { label: 'AI Research', icon: '🔎', action: () => { void this.navigate('nova://research'); } },
+      { label: 'Settings', icon: '⚙️', action: () => { void this.navigate('nova://settings'); } },
+    ];
+
+    this.contextMenu.show(x, y, items);
+  }
+
   private showTabContextMenu(tabId: string, x: number, y: number): void {
     if (!this.contextMenu) this.contextMenu = new ContextMenu();
 
@@ -1424,6 +1486,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
           this.contentRenderer!,
           this.paintEngine!,
           controller,
+          this.parser,
         );
         this.navigationFetcher.start();
       }
@@ -1465,6 +1528,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.contentRenderer!,
         this.paintEngine!,
         controller,
+        this.parser,
       );
       this.navigationFetcher.start();
     }
@@ -1612,10 +1676,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.cleanupDownloadsPage();
     this.cleanupNewTabPage();
     this.cleanupResearchPage();
-    if (this.activeContentPanel) {
-      this.activeContentPanel.remove();
-      this.activeContentPanel = null;
-    }
+    this.activeContentPanel = null;
+    // ContentRenderer may have left its own canvas/iframe/new-tab DOM in here
+    // (e.g. the initial renderNewTab() call at mount, which never registers
+    // with activeContentPanel) — clear the whole area so a special-page panel
+    // never ends up stacked as a second child underneath it.
+    if (this.contentArea) this.contentArea.innerHTML = '';
   }
 
   dispose(): void {

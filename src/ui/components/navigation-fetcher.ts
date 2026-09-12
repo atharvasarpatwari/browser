@@ -3,6 +3,7 @@ import type { IBrowserEngine, EngineEvent, PageLoadSession } from '../../browser
 import type { IContentRenderer } from './content-renderer/content-renderer';
 import type { IPaintEngine } from '../../browser/rendering/paint-engine';
 import type { INavigationController, NavigationEvent } from '../../browser/navigation/navigation-controller';
+import type { IUrlParser } from '../../browser/navigation/url-parser';
 
 interface INavigationFetcher extends IDisposable {
   start(): void;
@@ -14,6 +15,7 @@ class NavigationFetcher implements INavigationFetcher {
   private readonly contentRenderer: IContentRenderer;
   private readonly paintEngine: IPaintEngine;
   private readonly navController: INavigationController;
+  private readonly urlParser: IUrlParser;
   private disposed = false;
 
   private readonly engineHandler: (e: EngineEvent) => void;
@@ -24,11 +26,13 @@ class NavigationFetcher implements INavigationFetcher {
     contentRenderer: IContentRenderer,
     paintEngine: IPaintEngine,
     navController: INavigationController,
+    urlParser: IUrlParser,
   ) {
     this.engine = engine;
     this.contentRenderer = contentRenderer;
     this.paintEngine = paintEngine;
     this.navController = navController;
+    this.urlParser = urlParser;
 
     this.engineHandler = (e: EngineEvent) => this.handleEngineEvent(e);
     this.navHandler = (e: NavigationEvent) => this.handleNavEvent(e);
@@ -65,6 +69,7 @@ class NavigationFetcher implements INavigationFetcher {
         if (e.session) this.renderFromEngine(e.session, false);
         break;
       case 'pageLoadError':
+        if (this.urlParser.isSpecialPage(e.session.entry.url)) break;
         this.contentRenderer.renderError(
           'Page Load Failed',
           e.error.message,
@@ -79,6 +84,7 @@ class NavigationFetcher implements INavigationFetcher {
   private handleNavEvent(e: NavigationEvent): void {
     switch (e.kind) {
       case 'navigationStarted':
+        if (this.urlParser.isSpecialPage(e.request.url)) break;
         this.contentRenderer.renderLoading(e.request.url);
         break;
     }
@@ -86,6 +92,11 @@ class NavigationFetcher implements INavigationFetcher {
 
   private renderFromEngine(session: PageLoadSession, freshCanvas: boolean): void {
     const url = session.finalUrl ?? session.entry.url;
+    // Internal pages (nova://settings, nova://history, etc.) are rendered
+    // directly into the content area by BrowserWindowPage — the engine still
+    // runs its own (pointless) fetch/render pipeline for them, but nothing
+    // here should paint over what was already put in the DOM for one.
+    if (this.urlParser.isSpecialPage(url)) return;
     const hostname = this.extractHostname(url);
     try {
       const imageData = this.paintEngine.rasterize();

@@ -31,8 +31,10 @@ class ToolbarView implements IToolbarView {
   private backBtn: HTMLButtonElement | null = null;
   private fwdBtn: HTMLButtonElement | null = null;
   private reloadBtn: HTMLButtonElement | null = null;
+  private homeBtn: HTMLButtonElement | null = null;
   private shieldBtn: HTMLElement | null = null;
   private bookmarkBtn: HTMLElement | null = null;
+  private menuBtn: HTMLElement | null = null;
   private eventHandler: ((event: ToolbarEventUnion) => void) | null = null;
 
   constructor(model: IToolbar, config?: Partial<ToolbarViewConfig>) {
@@ -57,8 +59,10 @@ class ToolbarView implements IToolbarView {
     this.backBtn = null;
     this.fwdBtn = null;
     this.reloadBtn = null;
+    this.homeBtn = null;
     this.shieldBtn = null;
     this.bookmarkBtn = null;
+    this.menuBtn = null;
   }
 
   update(state: ToolbarState): void {
@@ -116,6 +120,10 @@ class ToolbarView implements IToolbarView {
     });
     this.container.appendChild(this.reloadBtn);
 
+    this.homeBtn = this.createNavButton('⌂', 'Home', false);
+    this.homeBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'home' }));
+    this.container.appendChild(this.homeBtn);
+
     const addressBarArea = document.createElement('div');
     addressBarArea.className = 'address-bar-slot';
     addressBarArea.style.cssText = 'flex:1;min-width:0;';
@@ -133,6 +141,13 @@ class ToolbarView implements IToolbarView {
       this.shieldBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'shieldToggle', enabled: !this.model.state.shieldEnabled }));
       this.container.appendChild(this.shieldBtn);
     }
+
+    this.menuBtn = this.createIconBtn('☰', 'Menu');
+    this.menuBtn.addEventListener('click', () => {
+      const rect = this.menuBtn!.getBoundingClientRect();
+      this.dispatchEvent({ kind: 'menuClick', x: rect.right, y: rect.bottom + 4 });
+    });
+    this.container.appendChild(this.menuBtn);
   }
 
   private createNavButton(text: string, title: string, disabled: boolean): HTMLButtonElement {

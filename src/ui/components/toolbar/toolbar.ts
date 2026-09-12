@@ -1,7 +1,7 @@
 import type { IDisposable } from '../../../app/dependency-container';
 
 type ToolbarEventType =
-  | 'back' | 'forward' | 'reload' | 'stop'
+  | 'back' | 'forward' | 'reload' | 'stop' | 'home'
   | 'shieldToggle' | 'menuClick' | 'bookmarkAdd';
 
 interface ToolbarEvent {
@@ -12,12 +12,13 @@ interface BackEvent extends ToolbarEvent { readonly kind: 'back'; }
 interface ForwardEvent extends ToolbarEvent { readonly kind: 'forward'; }
 interface ReloadEvent extends ToolbarEvent { readonly kind: 'reload'; }
 interface StopEvent extends ToolbarEvent { readonly kind: 'stop'; }
+interface HomeEvent extends ToolbarEvent { readonly kind: 'home'; }
 interface ShieldToggleEvent extends ToolbarEvent { readonly kind: 'shieldToggle'; readonly enabled: boolean; }
-interface MenuClickEvent extends ToolbarEvent { readonly kind: 'menuClick'; }
+interface MenuClickEvent extends ToolbarEvent { readonly kind: 'menuClick'; readonly x: number; readonly y: number; }
 interface BookmarkAddEvent extends ToolbarEvent { readonly kind: 'bookmarkAdd'; }
 
 type ToolbarEventUnion =
-  | BackEvent | ForwardEvent | ReloadEvent | StopEvent
+  | BackEvent | ForwardEvent | ReloadEvent | StopEvent | HomeEvent
   | ShieldToggleEvent | MenuClickEvent | BookmarkAddEvent;
 
 interface ToolbarState {
@@ -34,6 +35,8 @@ interface IToolbar extends IDisposable {
   setLoading(loading: boolean): void;
   setShieldEnabled(enabled: boolean): void;
   toggleShield(): void;
+  goHome(): void;
+  addBookmark(): void;
   on(type: ToolbarEventType, handler: (event: ToolbarEventUnion) => void): void;
   off(type: ToolbarEventType, handler: (event: ToolbarEventUnion) => void): void;
 }
@@ -90,11 +93,12 @@ class Toolbar implements IToolbar {
   goForward(): void { this.bus.emit({ kind: 'forward' }); }
   reload(): void { this.bus.emit({ kind: 'reload' }); }
   stop(): void { this.bus.emit({ kind: 'stop' }); }
+  goHome(): void { this.bus.emit({ kind: 'home' }); }
   toggleShield(): void {
     this._shieldEnabled = !this._shieldEnabled;
     this.bus.emit({ kind: 'shieldToggle', enabled: this._shieldEnabled });
   }
-  showMenu(): void { this.bus.emit({ kind: 'menuClick' }); }
+  showMenu(x = 0, y = 0): void { this.bus.emit({ kind: 'menuClick', x, y }); }
   addBookmark(): void { this.bus.emit({ kind: 'bookmarkAdd' }); }
 
   on(type: ToolbarEventType, handler: ToolbarEventHandler): void {
