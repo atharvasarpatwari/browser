@@ -21,6 +21,7 @@ import { createWebSocketClass } from './websocket-api';
 import { createRTCPeerConnectionClass, createRTCSessionDescriptionClass, createRTCIceCandidateClass } from './rtc-api';
 import { createWorkerConstructor } from './worker';
 import { createTypedArrayConstructors } from './typed-arrays';
+import { createCryptoObject } from './crypto-api';
 import { bindStorageAPIs } from './web-storage-bindings';
 import {
   bindWebAPIs, createPerformanceObject, createFullscreenAPIMethods,
@@ -50,6 +51,7 @@ export { GarbageCollector, getGC, setGC } from './gc';
 export { Heap, getHeap, setHeap } from './heap';
 export { RootScanner, WeakRefStore } from './roots';
 export { createWebSocketClass, setPlatformWebSocketFactory } from './websocket-api';
+export { createCryptoObject, createSubtleCryptoObject } from './crypto-api';
 export { createRTCPeerConnectionClass, createRTCSessionDescriptionClass, createRTCIceCandidateClass } from './rtc-api';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1793,6 +1795,10 @@ export function createGlobalEnv(
   env.setLocal('Request', createRequestClass(eventLoop));
   env.setLocal('AbortController', createAbortControllerClass(eventLoop));
   env.setLocal('fetch', createFetchFn(eventLoop, platformFetch, resourceEnforcer, pageOrigin));
+
+  // Web Crypto API — getRandomValues/randomUUID/subtle, delegating to Node's
+  // real webcrypto implementation (see crypto-api.ts)
+  env.setLocal('crypto', createCryptoObject(eventLoop));
 
   // XMLHttpRequest
   env.setLocal('XMLHttpRequest', createXMLHttpRequestClass(eventLoop));
