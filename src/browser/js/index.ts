@@ -24,6 +24,7 @@ import { createTypedArrayConstructors } from './typed-arrays';
 import { createCryptoObject } from './crypto-api';
 import { createCustomElementRegistry, createHTMLElementClass } from './custom-elements';
 import { createCacheStorage } from './cache-api';
+import { createConsoleObject } from './console-api';
 import { bindStorageAPIs } from './web-storage-bindings';
 import {
   bindWebAPIs, createPerformanceObject, createFullscreenAPIMethods,
@@ -56,6 +57,7 @@ export { createWebSocketClass, setPlatformWebSocketFactory } from './websocket-a
 export { createCryptoObject, createSubtleCryptoObject } from './crypto-api';
 export { createCustomElementRegistry, createHTMLElementClass } from './custom-elements';
 export { createCacheStorage } from './cache-api';
+export { createConsoleObject, getConsoleLog, onConsoleMessage, type ConsoleEntry, type ConsoleLevel } from './console-api';
 export { createRTCPeerConnectionClass, createRTCSessionDescriptionClass, createRTCIceCandidateClass } from './rtc-api';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,53 +144,8 @@ export function createGlobalEnv(
 ): Environment {
   const env = new Environment(null);
 
-  // Console
-  const consoleObj = createObject(null);
-  const logs: unknown[] = [];
-  consoleObj.properties.set('log', {
-    value: createNativeFunction('log', (_this, args) => {
-      logs.push(...args);
-      return undefined;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  consoleObj.properties.set('error', {
-    value: createNativeFunction('error', (_this, args) => {
-      logs.push(...args);
-      return undefined;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  consoleObj.properties.set('warn', {
-    value: createNativeFunction('warn', (_this, args) => {
-      logs.push(...args);
-      return undefined;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  consoleObj.properties.set('info', {
-    value: createNativeFunction('info', (_this, args) => {
-      logs.push(...args);
-      return undefined;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  consoleObj.properties.set('clear', {
-    value: createNativeFunction('clear', () => { logs.length = 0; return undefined; }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  consoleObj.properties.set('assert', {
-    value: createNativeFunction('assert', (_this, args) => {
-      const condition = args[0];
-      if (!condition) {
-        const msg = args.length > 1 ? toString(args[1]) : 'Assertion failed';
-        logs.push(msg);
-      }
-      return undefined;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  env.setLocal('console', consoleObj);
+  // Console — see console-api.ts for the structured, externally-readable log
+  env.setLocal('console', createConsoleObject());
 
   // Math
   const mathObj = createObject(null);

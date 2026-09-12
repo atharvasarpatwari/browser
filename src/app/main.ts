@@ -852,7 +852,15 @@ class ApplicationBootstrap {
       resourceLoader,
       prioritizer: new ResourcePrioritizer(),
       controller: this.container.resolve<INavigationController>(Tokens.NavigationController),
-      sanitizer: new HtmlSanitizer(),
+      // keepScriptElements: true — whether a script actually runs is CSP's
+      // job (scriptEnforcer below), which is already wired and checked in
+      // PageRenderer.executeAllScripts(). Without this flag, the sanitizer's
+      // default (stripping <script> as a "dangerous tag", intended for
+      // sanitizing untrusted HTML fragments) deleted every script tag from
+      // every real page before execution ever got a chance to happen —
+      // scriptEnforcer's CSP checks were correctly wired but never reached
+      // because there was nothing left to check by that point.
+      sanitizer: new HtmlSanitizer({ keepScriptElements: true }),
       scriptEnforcer: cspEnforcement.scriptEnforcer,
       resourceEnforcer: cspEnforcement.resourceEnforcer,
       securityLayer,

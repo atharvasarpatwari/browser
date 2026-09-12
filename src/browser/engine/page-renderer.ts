@@ -51,7 +51,7 @@ import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
-import { runJS } from '../js/index';
+import { runJS, createGlobalEnv } from '../js/index';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
@@ -407,6 +407,17 @@ class PageRenderer implements IPageRenderer, IDisposable {
     if (scripts.length === 0) return;
 
     const eventLoop = new JsEventLoop();
+    // One shared global environment for every <script> tag on this page —
+    // real pages routinely split JS across multiple tags expecting a single
+    // shared `window` (a library script, then a script that uses it). Each
+    // runJS() call below defaults to creating its OWN fresh environment when
+    // none is passed, which would silently isolate every script tag from
+    // every other one; passing this explicitly is what prevents that.
+    const globalEnv = createGlobalEnv(
+      doc, domTree, eventLoop, this.deps.controller, undefined,
+      this.deps.resourceEnforcer, this.deps.scriptEnforcer, baseUrl,
+      this.deps.htmlParser, this.deps.storageDir,
+    );
 
     const blockingScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
     const deferScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
@@ -491,7 +502,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
           continue;
         }
       }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
+      const result2 = runJS(source, { document: doc, domTree, eventLoop, globalEnv });
       if (result2.error) {
         console.error(
           `[ScriptEngine] Error executing blocking script: ${result2.error.message}`,
@@ -509,7 +520,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
           continue;
         }
       }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
+      const result2 = runJS(source, { document: doc, domTree, eventLoop, globalEnv });
       if (result2.error) {
         console.error(
           `[ScriptEngine] Error executing defer script: ${result2.error.message}`,
@@ -528,7 +539,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
         }
       }
       // Fire and forget — async scripts don't block rendering
-      runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: baseUrl, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
+      runJS(source, { document: doc, domTree, eventLoop, globalEnv });
       void el; // used only for categorization
     }
   }
