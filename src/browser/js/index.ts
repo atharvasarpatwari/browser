@@ -38,7 +38,7 @@ export { Lexer } from './lexer';
 export { Parser } from './parser';
 export { Interpreter } from './interpreter';
 export { EventLoop, bindTimers } from './event-loop';
-export { createDocumentBinding, createEventObject } from './dom-bindings';
+export { createDocumentBinding, createEventObject, wrapElement } from './dom-bindings';
 export { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 export {
   type JSValue, type JSObject, type JSFunction,

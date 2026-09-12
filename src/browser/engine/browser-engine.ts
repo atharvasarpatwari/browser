@@ -133,6 +133,13 @@ interface IPageRenderer {
   render(result: PageLoadResult, signal: AbortSignal): Promise<void>;
   /** The layout engine backing the most recently rendered page (null before any page / for the null renderer). */
   getLayoutEngine(): ILayoutEngine | null;
+  /**
+   * Hit-tests (x, y) against the rendered page and dispatches a real DOM
+   * event of `type` to whatever element is there, running any page JS
+   * `addEventListener` handlers registered on it. Returns false if there is
+   * no page loaded yet or nothing was hit.
+   */
+  dispatchPointerEvent(type: string, x: number, y: number): boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -203,6 +210,8 @@ interface IBrowserEngine extends ISharedService {
   setPageRenderer(renderer: IPageRenderer): void;
   /** The layout engine of the currently rendered page (null before any page renders). */
   getPageLayoutEngine(): ILayoutEngine | null;
+  /** Dispatch a real DOM pointer event (e.g. 'click') at (x, y) on the current page. */
+  dispatchPointerEvent(type: string, x: number, y: number): boolean;
   /** Add a middleware that runs after routing, before fetching. */
   addMiddleware(mw: EngineMiddleware): void;
 
@@ -266,6 +275,9 @@ class NullPageRenderer implements IPageRenderer {
   }
   getLayoutEngine(): ILayoutEngine | null {
     return null;
+  }
+  dispatchPointerEvent(): boolean {
+    return false;
   }
 }
 
@@ -423,6 +435,10 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   getPageLayoutEngine(): ILayoutEngine | null {
     return this.renderer.getLayoutEngine();
+  }
+
+  dispatchPointerEvent(type: string, x: number, y: number): boolean {
+    return this.renderer.dispatchPointerEvent(type, x, y);
   }
 
   addMiddleware(mw: EngineMiddleware): void {

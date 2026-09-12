@@ -9,6 +9,8 @@ interface IContentRenderer extends IDisposable {
   attach(container: HTMLElement): void;
   setBrandName(name: string): void;
   setLinkHoverHandler(handler: (url: string | null) => void): void;
+  /** Called with content-buffer-space coordinates whenever the rendered canvas is clicked. */
+  setClickHandler(handler: (x: number, y: number) => void): void;
   renderHtml(html: string, options?: ContentRenderOptions): void;
   renderFromImageData(imageData: ImageData, freshCanvas?: boolean): void;
   renderSearchResults(query: string, searchUrl: string, results: readonly SearchResult[]): void;
@@ -28,6 +30,8 @@ class ContentRenderer implements IContentRenderer {
   private container: HTMLElement | null = null;
   private _brandName = 'Nova Browser';
   private _linkHoverHandler: ((url: string | null) => void) | null = null;
+  private _clickHandler: ((x: number, y: number) => void) | null = null;
+  private _clickWiredCanvas: HTMLCanvasElement | null = null;
 
   attach(container: HTMLElement): void {
     this.container = container;
@@ -39,6 +43,10 @@ class ContentRenderer implements IContentRenderer {
 
   setLinkHoverHandler(handler: (url: string | null) => void): void {
     this._linkHoverHandler = handler;
+  }
+
+  setClickHandler(handler: (x: number, y: number) => void): void {
+    this._clickHandler = handler;
   }
 
   renderHtml(html: string, options?: ContentRenderOptions): void {
@@ -101,6 +109,19 @@ class ContentRenderer implements IContentRenderer {
     const ctx = target.getContext('2d');
     if (!ctx) return;
     ctx.putImageData(imageData, 0, 0);
+
+    // Wire the click listener once per canvas element — a fresh canvas gets
+    // its own listener; a reused (repainted-in-place) one keeps the existing.
+    if (this._clickWiredCanvas !== target) {
+      this._clickWiredCanvas = target;
+      target.addEventListener('click', (ev) => {
+        if (!this._clickHandler) return;
+        const rect = target.getBoundingClientRect();
+        const x = (ev.clientX - rect.left) * (target.width / rect.width);
+        const y = (ev.clientY - rect.top) * (target.height / rect.height);
+        this._clickHandler(x, y);
+      });
+    }
   }
 
   renderSearchResults(query: string, searchUrl: string, results: readonly SearchResult[]): void {

@@ -39,6 +39,11 @@ export class EventLoop {
     this._interpreter = interpreter;
   }
 
+  /** The interpreter bound via setInterpreter(), or null if none has run yet. */
+  getInterpreter(): JSFunctionCaller | null {
+    return this._interpreter;
+  }
+
   schedule(fn: () => void, delay: number, recurring: boolean = false): number {
     const id = this.nextTaskId++;
 
@@ -143,6 +148,12 @@ export class EventLoop {
     if (idx >= 0) {
       const task = this.tasks.splice(idx, 1)[0]!;
       this.timers.delete(task.id);
+      // The callback is a real JS closure — callJSFunction needs the
+      // interpreter registered globally to invoke it. drainMicrotasks()
+      // above already reset the global caller to null in its own finally,
+      // so it must be set again here, around the macrotask specifically.
+      const hadCaller = this._interpreter;
+      if (hadCaller) setGlobalCaller(hadCaller);
       try {
         this._enterTimerNesting();
         task.fn();
@@ -150,6 +161,7 @@ export class EventLoop {
         // swallow timer callback errors
       } finally {
         this._exitTimerNesting();
+        if (hadCaller) setGlobalCaller(null);
       }
       // Step 3: Drain all microtasks after each macrotask
       this.drainMicrotasks();
@@ -162,12 +174,18 @@ export class EventLoop {
       // Run RAF callbacks (if no macrotasks were due)
       const cbs = [...this.rafCallbacks];
       this.rafCallbacks = [];
-      for (const { cb } of cbs) {
-        try {
-          cb();
-        } catch {
-          // swallow
+      const hadCaller = this._interpreter;
+      if (hadCaller) setGlobalCaller(hadCaller);
+      try {
+        for (const { cb } of cbs) {
+          try {
+            cb();
+          } catch {
+            // swallow
+          }
         }
+      } finally {
+        if (hadCaller) setGlobalCaller(null);
       }
       this.drainMicrotasks();
     }

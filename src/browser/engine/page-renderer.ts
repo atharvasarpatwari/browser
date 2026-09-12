@@ -51,7 +51,8 @@ import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
-import { runJS, createGlobalEnv } from '../js/index';
+import { runJS, createGlobalEnv, wrapElement, createEventObject } from '../js/index';
+import { callJSFunction, setGlobalCaller, type JSFunction } from '../js/values';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
@@ -98,6 +99,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
   private disposed = false;
   private reflowController: ReflowRepaintController | null = null;
   private transitionEngine: CssTransitionEngine | null = null;
+  /** The shared script EventLoop for the currently rendered page, if it has any scripts. */
+  private pageEventLoop: JsEventLoop | null = null;
+  /** Real-time pump so setTimeout/setInterval/rAF keep firing after the initial script run. */
+  private eventLoopPumpTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(deps: PageRendererDependencies) {
     this.deps = deps;
@@ -402,6 +407,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
     baseUrl: string,
     signal: AbortSignal,
   ): Promise<void> {
+    // A new page is replacing whatever was here — stop pumping the old one's
+    // timers so a stale page's setInterval doesn't keep firing in the background.
+    this.stopEventLoopPump();
+
     const { domTree, resourceLoader } = this.deps;
     const scripts = domTree.getElementsByTagName('script');
     if (scripts.length === 0) return;
@@ -542,6 +551,36 @@ class PageRenderer implements IPageRenderer, IDisposable {
       runJS(source, { document: doc, domTree, eventLoop, globalEnv });
       void el; // used only for categorization
     }
+
+    this.pageEventLoop = eventLoop;
+    this.startEventLoopPump(eventLoop);
+  }
+
+  /**
+   * Ticks the page's timer queue on a real ~60fps interval so setTimeout,
+   * setInterval and requestAnimationFrame callbacks registered by page JS
+   * keep firing after the initial synchronous script run finishes — not just
+   * during it.
+   */
+  private startEventLoopPump(eventLoop: JsEventLoop): void {
+    this.eventLoopPumpTimer = setInterval(() => {
+      try {
+        eventLoop.runOnce();
+        // A fired callback may have mutated the DOM — request a frame so
+        // the mutation (already queued via domTree) gets painted.
+        this.reflowController?.requestFrame();
+      } catch {
+        // swallow — a broken timer callback shouldn't kill the pump
+      }
+    }, 16);
+  }
+
+  private stopEventLoopPump(): void {
+    if (this.eventLoopPumpTimer !== null) {
+      clearInterval(this.eventLoopPumpTimer);
+      this.eventLoopPumpTimer = null;
+    }
+    this.pageEventLoop = null;
   }
 
   /**
@@ -843,6 +882,42 @@ class PageRenderer implements IPageRenderer, IDisposable {
     this.transitionEngine = null;
     this.reflowController?.dispose();
     this.reflowController = null;
+    this.stopEventLoopPump();
+  }
+
+  /**
+   * Hit-tests (x, y) against the live layout tree and, if it lands on an
+   * element, wraps it back into its JS binding and dispatches a real event
+   * of `type` — running any addEventListener handlers page JS registered on
+   * it, exactly like a real browser's click/pointer dispatch.
+   */
+  dispatchPointerEvent(type: string, x: number, y: number): boolean {
+    if (!this.pageEventLoop) return false;
+    const hitElement = this.deps.layoutEngine.getElementAtPoint(x, y);
+    if (!hitElement) return false;
+
+    const wrapped = wrapElement(hitElement, this.deps.domTree);
+    const dispatchFn = wrapped.properties.get('dispatchEvent')?.value as JSFunction | undefined;
+    if (!dispatchFn || dispatchFn.type !== 'closure') return false;
+
+    const eventObj = createEventObject(type, wrapped, { bubbles: true, cancelable: true });
+
+    // dispatchEvent's own body is a native function (runs directly), but the
+    // page's `addEventListener` callbacks it invokes are real closures that
+    // must go through the interpreter tied to this page's environment.
+    const interpreter = this.pageEventLoop.getInterpreter();
+    if (interpreter) setGlobalCaller(interpreter);
+    try {
+      callJSFunction(dispatchFn, wrapped, [eventObj]);
+    } finally {
+      if (interpreter) setGlobalCaller(null);
+    }
+    // Let any promise reactions the handler kicked off settle immediately.
+    this.pageEventLoop.drainMicrotasks();
+    // The handler may have mutated the DOM (e.g. textContent) — those
+    // mutations are only turned into a repaint on the next processed frame.
+    this.reflowController?.requestFrame();
+    return true;
   }
 }
 

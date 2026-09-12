@@ -468,6 +468,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.contentRenderer.setLinkHoverHandler((url) => {
         this.statusBar?.setHoverUrl(url ?? '');
       });
+      this.contentRenderer.setClickHandler((x, y) => {
+        this.browserEngine?.dispatchPointerEvent?.('click', x, y);
+      });
       this.contentRenderer.renderNewTab();
 
       // Listen for navigation events from rendered content (e.g. search result links).
