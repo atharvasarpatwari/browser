@@ -417,6 +417,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         // Keep all internal wiring (navigationBridge, syncAll, tab events)
         // fully intact — just hide the rendered chrome, since an external
         // native shell (e.g. Android Compose) is driving navigation instead.
+        if (areas.titleBar) areas.titleBar.style.display = 'none';
         if (areas.toolbar) areas.toolbar.style.display = 'none';
         if (areas.tabBar) areas.tabBar.style.display = 'none';
         if (areas.bookmarkBar) areas.bookmarkBar.style.display = 'none';

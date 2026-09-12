@@ -21,10 +21,16 @@ interface ITabStripView extends IDisposable {
   setEventHandler(handler: (event: TabStripEventUnion) => void): void;
 }
 
+const ICON_NEW_TAB =
+  '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M7 1.5v11M1.5 7h11"/></svg>';
+const ICON_TAB_CLOSE =
+  '<svg viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6"/></svg>';
+
 class TabStripView implements ITabStripView {
   private readonly config: TabStripViewConfig;
   private readonly model: ITabStrip;
   private container: HTMLElement | null = null;
+  private tabsList: HTMLElement | null = null;
   private tabsContainer: HTMLElement | null = null;
   private newTabButton: HTMLElement | null = null;
   private eventHandler: ((event: TabStripEventUnion) => void) | null = null;
@@ -49,6 +55,7 @@ class TabStripView implements ITabStripView {
       this.container.innerHTML = '';
       this.container = null;
     }
+    this.tabsList = null;
     this.tabsContainer = null;
     this.newTabButton = null;
     this.dragState = null;
@@ -65,25 +72,21 @@ class TabStripView implements ITabStripView {
   private build(): void {
     if (!this.container) return;
     this.container.innerHTML = '';
-    this.container.className = 'tab-bar';
+
+    this.tabsList = document.createElement('div');
+    this.tabsList.className = 'nova-tabs-list';
+    this.container.appendChild(this.tabsList);
 
     this.tabsContainer = document.createElement('div');
-    this.tabsContainer.className = 'tab-bar-inner';
-    this.tabsContainer.style.cssText = 'display:flex;align-items:flex-end;gap:1px;flex:1;overflow-x:auto;min-width:0;padding:4px 6px 0;';
-    this.container.appendChild(this.tabsContainer);
+    this.tabsContainer.className = 'nova-tabs-scroll';
+    this.tabsList.appendChild(this.tabsContainer);
 
     if (this.config.showNewTabButton) {
       this.newTabButton = document.createElement('button');
-      this.newTabButton.className = 'tab-new-btn';
-      this.newTabButton.textContent = '+';
+      this.newTabButton.setAttribute('type', 'button');
+      this.newTabButton.className = 'nova-new-tab';
+      this.newTabButton.innerHTML = ICON_NEW_TAB;
       this.newTabButton.title = 'New Tab';
-      this.newTabButton.style.cssText = 'border:none;background:none;color:var(--text-tertiary);font-size:16px;cursor:pointer;padding:3px 8px;border-radius:var(--radius-sm);line-height:1;transition:all var(--t-fast);flex-shrink:0;margin-left:2px;font-family:inherit;';
-      this.newTabButton.addEventListener('mouseenter', () => {
-        if (this.newTabButton) this.newTabButton.style.color = 'var(--text-primary)';
-      });
-      this.newTabButton.addEventListener('mouseleave', () => {
-        if (this.newTabButton) this.newTabButton.style.color = 'var(--text-tertiary)';
-      });
       this.newTabButton.addEventListener('click', () => {
         this.dispatchEvent({ kind: 'newTabRequested' });
       });
@@ -127,33 +130,9 @@ class TabStripView implements ITabStripView {
 
   private createTabElement(tab: { id: string; title: string; favicon: string | null; loading: boolean; pinned: boolean; active: boolean }): HTMLElement {
     const el = document.createElement('div');
-    el.className = 'tab';
+    el.className = 'nova-tab';
     el.dataset.tabId = tab.id;
-    el.style.cssText = `display:flex;align-items:center;gap:6px;padding:5px 12px;font-size:12px;color:var(--text-secondary);background:var(--bg-elevated);border:1px solid var(--border-subtle);border-bottom:none;border-radius:var(--radius-md) var(--radius-md) 0 0;cursor:pointer;max-width:${this.config.maxTabWidth}px;transition:all var(--t-fast);position:relative;top:1px;flex-shrink:0;user-select:none;`;
-
-    el.addEventListener('click', (e) => {
-      if (!(e.target as HTMLElement).classList.contains('tab-close')) {
-        this.dispatchEvent({ kind: 'tabSelected', tabId: tab.id });
-      }
-    });
-
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'tab-close';
-    closeBtn.textContent = '×';
-    closeBtn.title = 'Close tab';
-    closeBtn.style.cssText = 'border:none;background:none;color:var(--text-tertiary);cursor:pointer;padding:1px 4px;border-radius:var(--radius-sm);font-size:10px;line-height:1;transition:all var(--t-fast);';
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.dispatchEvent({ kind: 'tabClosed', tabId: tab.id });
-    });
-    closeBtn.addEventListener('mouseenter', () => {
-      closeBtn.style.background = 'rgba(240,106,106,.2)';
-      closeBtn.style.color = 'var(--text-danger)';
-    });
-    closeBtn.addEventListener('mouseleave', () => {
-      closeBtn.style.background = 'none';
-      closeBtn.style.color = 'var(--text-tertiary)';
-    });
+    el.draggable = true;
 
     el.addEventListener('mousedown', (e: MouseEvent) => {
       if (e.button === 2) {
@@ -194,96 +173,49 @@ class TabStripView implements ITabStripView {
       el.style.opacity = '1';
     });
 
-    el.draggable = true;
-
     return el;
   }
 
   private updateTabElement(el: HTMLElement, tab: { id: string; title: string; favicon: string | null; loading: boolean; pinned: boolean; active: boolean }): void {
-    el.className = `tab${tab.active ? ' active' : ''}${tab.pinned ? ' pinned' : ''}`;
-
-    if (tab.active) {
-      el.style.background = 'var(--bg-surface)';
-      el.style.color = 'var(--text-primary)';
-      el.style.borderColor = 'var(--border-default)';
-    } else {
-      el.style.background = 'var(--bg-elevated)';
-      el.style.color = 'var(--text-secondary)';
-      el.style.borderColor = 'var(--border-subtle)';
-    }
-
-    if (tab.pinned) {
-      el.style.width = '36px';
-      el.style.minWidth = '36px';
-      el.style.maxWidth = '36px';
-      el.style.justifyContent = 'center';
-      el.style.padding = '4px 0';
-      el.title = tab.title || tab.favicon || '';
-    } else {
-      el.style.width = '';
-      el.style.minWidth = '';
-      el.style.maxWidth = '';
-      el.style.justifyContent = '';
-      el.style.padding = '';
-      el.title = '';
-    }
-
+    el.className = `nova-tab${tab.active ? ' active' : ''}${tab.pinned ? ' pinned' : ''}${tab.loading ? ' loading' : ''}`;
+    el.title = tab.title || 'New Tab';
     el.innerHTML = '';
 
-    if (tab.favicon) {
-      const faviconEl = document.createElement('span');
-      faviconEl.className = 'tab-favicon';
+    const faviconEl = document.createElement('span');
+    faviconEl.className = 'nova-tab-favicon';
+    if (!tab.loading && tab.favicon) {
       faviconEl.textContent = tab.favicon;
-      faviconEl.style.cssText = `font-size:12px;flex-shrink:0;${tab.pinned ? '' : 'margin-right:6px;'}`;
-      el.appendChild(faviconEl);
+    }
+    el.appendChild(faviconEl);
+
+    if (!tab.pinned) {
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'nova-tab-title';
+      titleSpan.textContent = tab.title;
+      el.appendChild(titleSpan);
+
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'nova-tab-close';
+      closeBtn.innerHTML = ICON_TAB_CLOSE;
+      closeBtn.title = 'Close tab';
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.dispatchEvent({ kind: 'tabClosed', tabId: tab.id });
+      });
+      el.appendChild(closeBtn);
     }
 
-    if (tab.loading) {
-      const spinner = document.createElement('span');
-      spinner.className = 'tab-favicon tab-spinner';
-      spinner.textContent = '↻';
-      spinner.style.cssText = 'font-size:12px;flex-shrink:0;animation:spin 1s linear infinite;';
-      el.appendChild(spinner);
+    if (tab.active) {
+      el.setAttribute('aria-selected', 'true');
+    } else {
+      el.removeAttribute('aria-selected');
     }
-
-    const titleSpan = document.createElement('span');
-    titleSpan.className = 'tab-title';
-    titleSpan.textContent = tab.title;
-    titleSpan.style.cssText = tab.pinned
-      ? 'display:none;'
-      : 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;';
-    el.appendChild(titleSpan);
-
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'tab-close';
-    closeBtn.textContent = '×';
-    closeBtn.title = 'Close tab';
-    closeBtn.style.cssText = tab.pinned
-      ? 'display:none;'
-      : 'border:none;background:none;color:var(--text-tertiary);cursor:pointer;padding:1px 4px;border-radius:var(--radius-sm);font-size:10px;line-height:1;transition:all var(--t-fast);flex-shrink:0;';
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.dispatchEvent({ kind: 'tabClosed', tabId: tab.id });
-    });
-    closeBtn.addEventListener('mouseenter', () => {
-      closeBtn.style.background = 'rgba(240,106,106,.2)';
-      closeBtn.style.color = 'var(--text-danger)';
-    });
-    closeBtn.addEventListener('mouseleave', () => {
-      closeBtn.style.background = 'none';
-      closeBtn.style.color = 'var(--text-tertiary)';
-    });
-    el.appendChild(closeBtn);
 
     el.onclick = (e) => {
-      if (!(e.target as HTMLElement).classList.contains('tab-close')) {
+      if (!(e.target as HTMLElement).closest('.nova-tab-close')) {
         this.dispatchEvent({ kind: 'tabSelected', tabId: tab.id });
       }
-    };
-
-    el.oncontextmenu = (e: MouseEvent) => {
-      e.preventDefault();
-      this.dispatchEvent({ kind: 'contextMenu', tabId: tab.id, x: e.clientX, y: e.clientY });
     };
   }
 

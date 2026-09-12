@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-10
 **Session:** Cowork session `session_01W6wSGNKHuZ7Mv7nQRXAgXK` — `https://claude.ai/code/session_01W6wSGNKHuZ7Mv7nQRXAgXK`. This file exists so a future session (human or agent) working on Nova's UI has a pointer back to that conversation as reference — the session itself is not re-openable from inside this repo, only citable.
-**Status:** Reference only — no code changed. File-bridge access, no build/test run.
+**Status:** Reference only (as of this date); **implemented 2026-09-12** — see `doc/2026-09-12-nova-interface-mockup-implementation.md`, which wired the `.nova-*` system into the desktop layout and all five `.view.ts` components (closing the "Open question" below).
 
 ---
 
@@ -33,3 +33,5 @@ Two parallel UI styling systems currently coexist in the source tree:
 2. The compiled `dist/assets/main-DR04VOts.css` defines a **much larger, richer** token set (the `--ob-*`/`--cyan-*`/glass/font/spacing scale above) and a full `.nova-*` component class library that doesn't appear to be emitted by the `.view.ts` files at all.
 
 Either the `.nova-*` system comes from a newer/different UI source file this session's file-bridge search didn't surface (a `browser-window.ts` section or a dedicated stylesheet), or it's a redesign that landed in `dist/` without the `.view.ts` components being updated to match — in which case the actually-running app may currently be a mix of both systems rather than the cohesive look this mockup shows. Worth a session with real build/run access confirming which system the live app renders, before treating this mockup as "what already exists" versus "the fuller expression of a design that's only partly wired up."
+
+**Resolution (2026-09-12):** the latter was true — the `.nova-*` system is the intended design (in `styles.css`) and the `.view.ts` components were not emitting it. `doc/2026-09-12-nova-interface-mockup-implementation.md` rewired the five views + desktop layout onto `.nova-*` classes, so the live desktop UI now matches the mockup's chrome hierarchy (titlebar → tabbar → navbar → bookbar → statusbar).
