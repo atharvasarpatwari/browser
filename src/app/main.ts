@@ -888,6 +888,7 @@ class ApplicationBootstrap {
     // Wire DI-registered blockers into the page so shield toggle affects engine middleware
     page.setTrackerBlocker(blocker);
     page.setAdBlocker(adBlocker);
+    page.setWindowControls(this.container.resolve<IWindowControls>(Tokens.WindowControls));
 
     // Wire SettingsService → BrowserWindowPage so nova://settings gets persistence
     const settingsService = this.container.resolve<ISettingsService>(Tokens.SettingsService);

@@ -19,6 +19,7 @@ import type { IDownloadManager } from '../../browser/downloads/download-manager'
 import type { IBookmarkService } from '../../browser/bookmarks/bookmark-services';
 import type { IHistoryService } from '../../browser/history/history-service';
 import type { IZoomManager } from '../../browser/navigation-controls/zoom';
+import type { IWindowControls } from '../../platform/shared/window-controls';
 
 import { TabManager } from '../../browser/tabs/tab-manager';
 import { TabSessionBridge } from '../../browser/tabs/tab-session-bridge';
@@ -146,6 +147,7 @@ interface IBrowserWindowPage extends IDisposable {
   setHistoryService(service: IHistoryService): void;
   setTrackerBlocker(blocker: ITrackerBlocker): void;
   setAdBlocker(blocker: IAdBlocker): void;
+  setWindowControls(controls: IWindowControls): void;
   setBrowserName(name: IBrowserName): void;
   setResearchService(service: IResearchService): void;
 
@@ -212,6 +214,43 @@ class BrowserWindowPage implements IBrowserWindowPage {
       (this.layout as IDesktopLayout | null)?.toggleDevtools?.();
     }
   };
+  // Standard browser chrome shortcuts: Ctrl/Cmd+T (new tab), Ctrl/Cmd+W
+  // (close tab), Ctrl+Tab / Ctrl+Shift+Tab (cycle tabs), F11 (fullscreen).
+  private readonly onBrowserShortcutsKeydown = (e: KeyboardEvent): void => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 't') {
+      e.preventDefault();
+      this.tabManager?.createTab();
+      this.syncAll();
+    } else if (mod && e.key.toLowerCase() === 'w') {
+      e.preventDefault();
+      const activeId = this.tabManager?.activeTabId;
+      if (activeId && this.tabManager) {
+        this.tabManager.removeTab(activeId);
+        if (this.tabManager.count === 0) this.tabManager.createTab();
+        this.navigationBridge?.syncFromActiveTab();
+        this.syncAll();
+      }
+    } else if (e.ctrlKey && e.key === 'Tab') {
+      e.preventDefault();
+      this.cycleTab(e.shiftKey ? -1 : 1);
+    } else if (e.key === 'F11') {
+      e.preventDefault();
+      void this.windowControls?.toggleFullscreen();
+    }
+  };
+
+  private cycleTab(direction: 1 | -1): void {
+    if (!this.tabManager) return;
+    const tabs = this.tabManager.tabs;
+    if (tabs.length < 2) return;
+    const activeId = this.tabManager.activeTabId;
+    const currentIndex = activeId ? this.tabManager.getTabIndex(activeId) : -1;
+    const nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
+    this.tabManager.activateTab(tabs[nextIndex]!.id);
+    this.navigationBridge?.syncFromActiveTab();
+    this.syncAll();
+  }
   private contentArea: HTMLElement | null = null;
   private currentUrl = '';
   private contentNavigateHandler: ((e: Event) => void) | null = null;
@@ -301,8 +340,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private downloadManager: IDownloadManager | null = null;
   private bookmarkService: IBookmarkService | null = null;
   private historyService: IHistoryService | null = null;
+  private suggestTimer: ReturnType<typeof setTimeout> | null = null;
+  private suggestSeq = 0;
   private browserName: IBrowserName | null = null;
   private diTrackerBlocker: ITrackerBlocker | null = null;
+  private windowControls: IWindowControls | null = null;
   private diAdBlocker: IAdBlocker | null = null;
   private researchService: IResearchService | null = null;
   private downloadsEventHandler: ((event: { kind: string }) => void) | null = null;
@@ -524,6 +566,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
       onForward: () => this.goForward(),
       onReload: () => this.reload(),
       onStop: () => this.stop(),
+      onInput: (query) => this.updateAddressSuggestions(query),
     });
 
     if (!savedTabs) this.tabManager.createTab();
@@ -544,6 +587,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.contentRenderer.setClickHandler((x, y) => {
         this.browserEngine?.dispatchPointerEvent?.('click', x, y);
       });
+      this.contentRenderer.setContextMenuHandler((bufX, bufY, viewX, viewY) => {
+        this.showPageContextMenu(bufX, bufY, viewX, viewY);
+      });
       this.contentRenderer.renderNewTab();
 
       // Listen for navigation events from rendered content (e.g. search result links).
@@ -562,11 +608,13 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.devToolsPanel.setDomTreeProvider(() => this.browserEngine?.getPageDomTree?.() ?? null);
       window.addEventListener('keydown', this.onDevToolsKeydown);
     }
+    window.addEventListener('keydown', this.onBrowserShortcutsKeydown);
 
     this._mounted = true;
   }
 
   async unmount(): Promise<void> {
+    if (this.suggestTimer) clearTimeout(this.suggestTimer);
     this.navigationFetcher?.dispose();
     this.cleanupSettingsPage();
     this.cleanupDownloadsPage();
@@ -586,6 +634,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.contentRenderer?.dispose();
     this.devToolsPanel?.dispose();
     window.removeEventListener('keydown', this.onDevToolsKeydown);
+    window.removeEventListener('keydown', this.onBrowserShortcutsKeydown);
     if (this.contentArea && this.contentNavigateHandler) {
       this.contentArea.removeEventListener('nova-navigate', this.contentNavigateHandler);
     }
@@ -814,6 +863,44 @@ class BrowserWindowPage implements IBrowserWindowPage {
     } catch {
       // Silently ignore — data sections will simply be empty
     }
+  }
+
+  /** Debounced live address-bar suggestions from real bookmark + history matches. */
+  private updateAddressSuggestions(query: string): void {
+    if (this.suggestTimer) clearTimeout(this.suggestTimer);
+
+    const trimmed = query.trim();
+    if (trimmed.length === 0) {
+      this.addressBar?.setSuggestions([]);
+      if (this.addressBar) this.addressBarView?.update(this.addressBar.state);
+      return;
+    }
+
+    const seq = ++this.suggestSeq;
+    this.suggestTimer = setTimeout(() => {
+      void this.fetchAddressSuggestions(trimmed, seq);
+    }, 150);
+  }
+
+  private async fetchAddressSuggestions(query: string, seq: number): Promise<void> {
+    let urls: string[] = [];
+    try {
+      const [bookmarks, history] = await Promise.all([
+        this.bookmarkService?.search(query) ?? Promise.resolve([]),
+        this.historyService?.query({ query, maxResults: 6 }) ?? Promise.resolve({ entries: [], totalCount: 0, hasMore: false }),
+      ]);
+      const bookmarkUrls = bookmarks.filter(b => !b.folder && b.url).map(b => b.url!);
+      const historyUrls = history.entries.map(e => e.url);
+      urls = [...new Set([...bookmarkUrls, ...historyUrls])];
+    } catch {
+      urls = [];
+    }
+
+    // A newer keystroke's query already started — drop this stale result.
+    if (seq !== this.suggestSeq) return;
+
+    this.addressBar?.setSuggestions(urls);
+    if (this.addressBar) this.addressBarView?.update(this.addressBar.state);
   }
 
   private renderDownloadsPanel(): void {
@@ -1070,6 +1157,48 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
     void renderList();
     searchInput.addEventListener('input', () => void renderList());
+  }
+
+  private showPageContextMenu(bufX: number, bufY: number, viewX: number, viewY: number): void {
+    if (!this.contextMenu) this.contextMenu = new ContextMenu();
+
+    let target: ContextTarget | null = null;
+    try {
+      target = this.resolveContextTarget(bufX, bufY);
+    } catch {
+      target = null;
+    }
+
+    const items: ContextMenuItem[] = [
+      { label: 'Back', icon: '◀', disabled: !this.toolbar?.state.canGoBack, action: () => this.goBack() },
+      { label: 'Forward', icon: '▶', disabled: !this.toolbar?.state.canGoForward, action: () => this.goForward() },
+      { label: 'Reload', icon: '↻', action: () => this.reload() },
+    ];
+
+    if (target?.linkUrl) {
+      items.push(
+        { separator: true },
+        { label: 'Open Link in New Tab', icon: '＋', action: () => {
+          this.tabManager?.createTab();
+          void this.navigationBridge?.navigate(target!.linkUrl!);
+          this.syncAll();
+        }},
+        { label: 'Copy Link Address', icon: '🔗', action: () => {
+          void navigator.clipboard?.writeText(target!.linkUrl!).catch(() => {});
+        }},
+      );
+    }
+
+    if (target?.imageUrl) {
+      items.push(
+        { separator: true },
+        { label: 'Copy Image Address', icon: '🖼️', action: () => {
+          void navigator.clipboard?.writeText(target!.imageUrl!).catch(() => {});
+        }},
+      );
+    }
+
+    this.contextMenu.show(viewX, viewY, items);
   }
 
   private showMainMenu(x: number, y: number): void {
@@ -1619,6 +1748,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setAdBlocker(blocker: IAdBlocker): void {
     this.diAdBlocker = blocker;
+  }
+
+  setWindowControls(controls: IWindowControls): void {
+    this.windowControls = controls;
   }
 
   setBrowserName(name: IBrowserName): void {

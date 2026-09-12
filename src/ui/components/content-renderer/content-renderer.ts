@@ -11,6 +11,13 @@ interface IContentRenderer extends IDisposable {
   setLinkHoverHandler(handler: (url: string | null) => void): void;
   /** Called with content-buffer-space coordinates whenever the rendered canvas is clicked. */
   setClickHandler(handler: (x: number, y: number) => void): void;
+  /**
+   * Called whenever the rendered canvas is right-clicked, with the hit-test
+   * point in content-buffer-space (bufX, bufY) and the same point in real
+   * viewport space (viewX, viewY) — the former for engine hit-testing, the
+   * latter for positioning a menu on screen.
+   */
+  setContextMenuHandler(handler: (bufX: number, bufY: number, viewX: number, viewY: number) => void): void;
   /** Scale factor (1 = 100%) applied to the rendered page content. */
   setZoom(factor: number): void;
   renderHtml(html: string, options?: ContentRenderOptions): void;
@@ -33,6 +40,7 @@ class ContentRenderer implements IContentRenderer {
   private _brandName = 'Nova Browser';
   private _linkHoverHandler: ((url: string | null) => void) | null = null;
   private _clickHandler: ((x: number, y: number) => void) | null = null;
+  private _contextMenuHandler: ((bufX: number, bufY: number, viewX: number, viewY: number) => void) | null = null;
   private _clickWiredCanvas: HTMLCanvasElement | null = null;
   private _zoomFactor = 1;
 
@@ -50,6 +58,10 @@ class ContentRenderer implements IContentRenderer {
 
   setClickHandler(handler: (x: number, y: number) => void): void {
     this._clickHandler = handler;
+  }
+
+  setContextMenuHandler(handler: (bufX: number, bufY: number, viewX: number, viewY: number) => void): void {
+    this._contextMenuHandler = handler;
   }
 
   setZoom(factor: number): void {
@@ -135,6 +147,14 @@ class ContentRenderer implements IContentRenderer {
         const x = (ev.clientX - rect.left) * (target.width / rect.width);
         const y = (ev.clientY - rect.top) * (target.height / rect.height);
         this._clickHandler(x, y);
+      });
+      target.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        if (!this._contextMenuHandler) return;
+        const rect = target.getBoundingClientRect();
+        const bufX = (ev.clientX - rect.left) * (target.width / rect.width);
+        const bufY = (ev.clientY - rect.top) * (target.height / rect.height);
+        this._contextMenuHandler(bufX, bufY, ev.clientX, ev.clientY);
       });
     }
   }

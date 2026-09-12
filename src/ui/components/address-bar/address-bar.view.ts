@@ -26,6 +26,7 @@ interface IAddressBarView extends IDisposable {
     onForward?: () => void;
     onReload?: () => void;
     onStop?: () => void;
+    onInput?: (query: string) => void;
   }): void;
   focus(): void;
   blur(): void;
@@ -46,6 +47,7 @@ class AddressBarView implements IAddressBarView {
     onForward?: () => void;
     onReload?: () => void;
     onStop?: () => void;
+    onInput?: (query: string) => void;
   } = {};
   private selectedSuggestionIndex = -1;
   private previousValue = '';
@@ -105,6 +107,7 @@ class AddressBarView implements IAddressBarView {
     onForward?: () => void;
     onReload?: () => void;
     onStop?: () => void;
+    onInput?: (query: string) => void;
   }): void {
     this.navCallbacks = callbacks;
   }
@@ -167,6 +170,7 @@ class AddressBarView implements IAddressBarView {
 
     this.inputElement.addEventListener('input', () => {
       this.selectedSuggestionIndex = -1;
+      this.navCallbacks.onInput?.(this.inputElement?.value ?? '');
     });
 
     wrapper.appendChild(this.inputElement);
