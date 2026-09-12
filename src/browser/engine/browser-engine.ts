@@ -57,6 +57,7 @@ import type { ILayoutEngine }         from '../rendering/layout-engine';
 import type { IDomTree } from '../rendering/dom-tree';
 import type { IPageLoader, PageLoadResult } from './engine-types';
 import type { ConsoleEntry } from '../js/index';
+import type { ResourceLoadResult } from '../networking/resource-loader';
 import { createLogger } from '../../common/logger';
 
 const nullRendererLog = createLogger('NullPageRenderer');
@@ -158,7 +159,8 @@ type EngineEventType =
   | 'pageRepainted'
   | 'pageLoadError'
   | 'pageLoadAborted'
-  | 'consoleMessage';
+  | 'consoleMessage'
+  | 'networkEntry';
 
 interface PageLoadStartedEvent  { kind: 'pageLoadStarted';  session: PageLoadSession }
 interface PageLoadRoutedEvent   { kind: 'pageLoadRouted';   session: PageLoadSession; result: RouteResult }
@@ -168,6 +170,7 @@ interface PageRepaintedEvent    { kind: 'pageRepainted';    session: PageLoadSes
 interface PageLoadErrorEvent    { kind: 'pageLoadError';    session: PageLoadSession; error: Error }
 interface PageLoadAbortedEvent  { kind: 'pageLoadAborted';  session: PageLoadSession }
 interface ConsoleMessageEvent   { kind: 'consoleMessage';   entry: ConsoleEntry }
+interface NetworkEntryEvent     { kind: 'networkEntry';     entry: ResourceLoadResult }
 
 type EngineEvent =
   | PageLoadStartedEvent
@@ -177,7 +180,8 @@ type EngineEvent =
   | PageRepaintedEvent
   | PageLoadErrorEvent
   | PageLoadAbortedEvent
-  | ConsoleMessageEvent;
+  | ConsoleMessageEvent
+  | NetworkEntryEvent;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MIDDLEWARE
@@ -231,6 +235,8 @@ interface IBrowserEngine extends ISharedService {
   notifyPageRepainted(): void;
   /** Notify listeners of a console.log/warn/error/etc call made by the current page. */
   notifyConsoleMessage(entry: ConsoleEntry): void;
+  /** Notify listeners that a resource (document/script/image/stylesheet/etc) finished loading. */
+  notifyNetworkEntry(entry: ResourceLoadResult): void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -483,6 +489,10 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   notifyConsoleMessage(entry: ConsoleEntry): void {
     this.bus.emit({ kind: 'consoleMessage', entry });
+  }
+
+  notifyNetworkEntry(entry: ResourceLoadResult): void {
+    this.bus.emit({ kind: 'networkEntry', entry });
   }
 
   // ── Private: page load pipeline ───────────────────────────────────────────

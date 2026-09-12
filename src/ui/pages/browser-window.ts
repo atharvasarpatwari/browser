@@ -250,6 +250,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (event.kind !== 'consoleMessage') return;
     this.devToolsPanel?.addEntry(event.entry);
   };
+  private readonly engineNetworkEntryHandler = (event: EngineEvent): void => {
+    if (event.kind !== 'networkEntry') return;
+    this.devToolsPanel?.addNetworkEntry(event.entry);
+  };
 
   /**
    * Tracks navigation failure/success on the bridge so pushed ChromeStateSnapshot
@@ -1368,10 +1372,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.browserEngine?.off?.('pageLoadError', this.engineLoadErrorHandler);
     this.browserEngine?.off?.('pageLoadStarted', this.engineLoadStartedHandler);
     this.browserEngine?.off?.('consoleMessage', this.engineConsoleMessageHandler);
+    this.browserEngine?.off?.('networkEntry', this.engineNetworkEntryHandler);
     this.browserEngine = engine;
     engine.on?.('pageLoadError', this.engineLoadErrorHandler);
     engine.on?.('pageLoadStarted', this.engineLoadStartedHandler);
     engine.on?.('consoleMessage', this.engineConsoleMessageHandler);
+    engine.on?.('networkEntry', this.engineNetworkEntryHandler);
     this.syncNavigationPipeline();
   }
 

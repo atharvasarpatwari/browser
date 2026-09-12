@@ -52,6 +52,7 @@ interface IResourceLoader extends IDisposable {
   setMaxConcurrent(max: number): void;
   on(type: RequestEventType, handler: (event: RequestEvent) => void): void;
   off(type: RequestEventType, handler: (event: RequestEvent) => void): void;
+  setOnLoad(listener: ((result: ResourceLoadResult) => void) | null): void;
 }
 
 class ResourceLoader implements IResourceLoader {
@@ -66,6 +67,7 @@ class ResourceLoader implements IResourceLoader {
   private activeCount = 0;
   private readonly pendingQueue = new PriorityQueue<{ resolve: () => void }>();
   private readonly bandwidth = new BandwidthEstimator();
+  private onLoad: ((result: ResourceLoadResult) => void) | null = null;
 
   constructor(
     client: IHttpClient = new FetchHttpClient(),
@@ -90,7 +92,18 @@ class ResourceLoader implements IResourceLoader {
     this.pageOrigin = pageOrigin;
   }
 
-  async loadResource(url: string, _kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
+  async loadResource(url: string, kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
+    const result = await this.loadResourceCore(url, kind, options);
+    this.onLoad?.(result);
+    return result;
+  }
+
+  /** Notified with every resource load's final result (success, error, cached, or blocked) — for a DevTools Network panel. */
+  setOnLoad(listener: ((result: ResourceLoadResult) => void) | null): void {
+    this.onLoad = listener;
+  }
+
+  private async loadResourceCore(url: string, _kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
     // ── Cache check ─────────────────────────────────────────────────────────
     if (this.cache) {
       const cached = await this.cache.get(url);

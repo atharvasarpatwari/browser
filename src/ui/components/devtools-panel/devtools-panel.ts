@@ -17,20 +17,31 @@ const LEVEL_COLOR: Record<DevToolsConsoleLevel, string> = {
   debug: '#9aa0a6',
 };
 
+export interface DevToolsNetworkEntry {
+  readonly url: string;
+  readonly kind: string;
+  readonly statusCode: number;
+  readonly durationMs: number;
+  readonly fromCache: boolean;
+  readonly error: string | null;
+}
+
 const MAX_ROWS = 1000;
 const MAX_TREE_NODES = 2000;
+const MAX_NETWORK_ROWS = 500;
 
-type DevToolsTab = 'console' | 'elements';
+type DevToolsTab = 'console' | 'elements' | 'network';
 
 /**
- * Renders live page console output and a snapshot of the live DOM tree into
- * a container. Visibility is owned by whatever the container is (e.g.
- * DesktopLayout's `devtools` area, shown/hidden via `toggleDevtools()`) —
- * this component only ever manages its own content.
+ * Renders live page console output, a snapshot of the live DOM tree, and a
+ * log of resource loads into a container. Visibility is owned by whatever
+ * the container is (e.g. DesktopLayout's `devtools` area, shown/hidden via
+ * `toggleDevtools()`) — this component only ever manages its own content.
  */
 interface IDevToolsPanel extends IDisposable {
   attach(container: HTMLElement): void;
   addEntry(entry: DevToolsConsoleEntry): void;
+  addNetworkEntry(entry: DevToolsNetworkEntry): void;
   clear(): void;
   /** Provide a way to fetch the live DOM tree on demand for the Elements tab. */
   setDomTreeProvider(provider: () => IDomTree | null): void;
@@ -42,9 +53,12 @@ class DevToolsPanel implements IDevToolsPanel {
   private elementsPane: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
   private rowCount = 0;
+  private networkPane: HTMLElement | null = null;
+  private networkRowCount = 0;
   private activeTab: DevToolsTab = 'console';
   private consoleTabBtn: HTMLButtonElement | null = null;
   private elementsTabBtn: HTMLButtonElement | null = null;
+  private networkTabBtn: HTMLButtonElement | null = null;
   private domTreeProvider: (() => IDomTree | null) | null = null;
 
   attach(container: HTMLElement): void {
@@ -68,8 +82,10 @@ class DevToolsPanel implements IDevToolsPanel {
 
     this.consoleTabBtn = DevToolsPanel.tabButton('Console');
     this.elementsTabBtn = DevToolsPanel.tabButton('Elements');
+    this.networkTabBtn = DevToolsPanel.tabButton('Network');
     this.consoleTabBtn.addEventListener('click', () => this.selectTab('console'));
     this.elementsTabBtn.addEventListener('click', () => this.selectTab('elements'));
+    this.networkTabBtn.addEventListener('click', () => this.selectTab('network'));
 
     const spacer = document.createElement('span');
     spacer.style.flex = '1';
@@ -84,7 +100,7 @@ class DevToolsPanel implements IDevToolsPanel {
     refreshBtn.style.cssText = DevToolsPanel.actionButtonStyle();
     refreshBtn.addEventListener('click', () => this.renderElementsTree());
 
-    header.append(this.consoleTabBtn, this.elementsTabBtn, spacer, refreshBtn, clearBtn);
+    header.append(this.consoleTabBtn, this.elementsTabBtn, this.networkTabBtn, spacer, refreshBtn, clearBtn);
 
     this.consolePane = document.createElement('div');
     this.consolePane.style.cssText = 'flex:1; overflow-y:auto; padding:4px 0;';
@@ -93,7 +109,10 @@ class DevToolsPanel implements IDevToolsPanel {
     this.elementsPane = document.createElement('div');
     this.elementsPane.style.cssText = 'flex:1; overflow:auto; padding:6px 10px; display:none; white-space:pre;';
 
-    this.container.append(header, this.consolePane, this.elementsPane);
+    this.networkPane = document.createElement('div');
+    this.networkPane.style.cssText = 'flex:1; overflow-y:auto; padding:4px 0; display:none;';
+
+    this.container.append(header, this.consolePane, this.elementsPane, this.networkPane);
     this.updateTabStyles();
   }
 
@@ -115,13 +134,16 @@ class DevToolsPanel implements IDevToolsPanel {
   }
 
   private updateTabStyles(): void {
-    if (!this.consoleTabBtn || !this.elementsTabBtn || !this.consolePane || !this.elementsPane) return;
+    if (!this.consoleTabBtn || !this.elementsTabBtn || !this.networkTabBtn
+      || !this.consolePane || !this.elementsPane || !this.networkPane) return;
     const active = 'color:#8ab4f8; border-bottom-color:#8ab4f8;';
     const inactive = 'color:#9aa0a6; border-bottom-color:transparent;';
     this.consoleTabBtn.style.cssText = DevToolsPanel.tabButtonBase() + (this.activeTab === 'console' ? active : inactive);
     this.elementsTabBtn.style.cssText = DevToolsPanel.tabButtonBase() + (this.activeTab === 'elements' ? active : inactive);
+    this.networkTabBtn.style.cssText = DevToolsPanel.tabButtonBase() + (this.activeTab === 'network' ? active : inactive);
     this.consolePane.style.display = this.activeTab === 'console' ? 'block' : 'none';
     this.elementsPane.style.display = this.activeTab === 'elements' ? 'block' : 'none';
+    this.networkPane.style.display = this.activeTab === 'network' ? 'block' : 'none';
   }
 
   private static tabButtonBase(): string {
@@ -218,10 +240,53 @@ class DevToolsPanel implements IDevToolsPanel {
     this.listEl.scrollTop = this.listEl.scrollHeight;
   }
 
+  addNetworkEntry(entry: DevToolsNetworkEntry): void {
+    if (!this.networkPane) return;
+
+    const isError = entry.error !== null || entry.statusCode >= 400 || entry.statusCode === 0;
+    const row = document.createElement('div');
+    row.style.cssText = `
+      display:flex; gap:8px; padding:2px 10px; white-space:nowrap;
+      overflow:hidden; border-bottom:1px solid #292a2d;
+      color:${isError ? LEVEL_COLOR.error : '#e8eaed'};
+    `.trim();
+
+    const status = document.createElement('span');
+    status.textContent = entry.error ? 'ERR' : String(entry.statusCode);
+    status.style.cssText = 'flex:none; width:36px; font-weight:600;';
+
+    const kind = document.createElement('span');
+    kind.textContent = entry.kind;
+    kind.style.cssText = 'flex:none; width:70px; color:#9aa0a6;';
+
+    const url = document.createElement('span');
+    url.textContent = entry.error ? `${entry.url} — ${entry.error}` : entry.url;
+    url.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
+    url.title = url.textContent;
+
+    const duration = document.createElement('span');
+    duration.textContent = entry.fromCache ? '(cache)' : `${entry.durationMs}ms`;
+    duration.style.cssText = 'flex:none; color:#5f6368;';
+
+    row.append(status, kind, url, duration);
+    this.networkPane.appendChild(row);
+
+    this.networkRowCount++;
+    if (this.networkRowCount > MAX_NETWORK_ROWS) {
+      this.networkPane.firstChild?.remove();
+      this.networkRowCount--;
+    }
+
+    this.networkPane.scrollTop = this.networkPane.scrollHeight;
+  }
+
   clear(): void {
     if (this.activeTab === 'console') {
       if (this.listEl) this.listEl.innerHTML = '';
       this.rowCount = 0;
+    } else if (this.activeTab === 'network') {
+      if (this.networkPane) this.networkPane.innerHTML = '';
+      this.networkRowCount = 0;
     } else {
       this.renderElementsTree();
     }
@@ -232,9 +297,11 @@ class DevToolsPanel implements IDevToolsPanel {
     this.container = null;
     this.consolePane = null;
     this.elementsPane = null;
+    this.networkPane = null;
     this.listEl = null;
     this.consoleTabBtn = null;
     this.elementsTabBtn = null;
+    this.networkTabBtn = null;
   }
 }
 

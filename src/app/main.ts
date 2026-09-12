@@ -797,6 +797,7 @@ class ApplicationBootstrap {
     const engine = this.container.resolve<IBrowserEngine>(Tokens.BrowserEngine);
     const resourceLoader = this.container.resolve<IResourceLoader>(Tokens.ResourceLoader);
     engine.setPageLoader(new PageLoader(resourceLoader));
+    resourceLoader.setOnLoad((entry) => engine.notifyNetworkEntry(entry));
 
     // Add ad blocking middleware
     const adBlocker = this.container.resolve<IAdBlocker>(Tokens.AdBlocker);

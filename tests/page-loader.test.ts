@@ -23,6 +23,7 @@ function createMockResourceLoader(): IResourceLoader {
     setMaxConcurrent: vi.fn(),
     on: vi.fn(),
     off: vi.fn(),
+    setOnLoad: vi.fn(),
     dispose: vi.fn(),
   };
 }
