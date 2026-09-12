@@ -1,5 +1,5 @@
 import type { PaintCommand } from '../paint-engine';
-import type { GpuRasterizerConfig } from './types';
+import { type GpuRasterizerConfig, GPUBufferUsage, GPUMapMode } from './types';
 import { Rasterizer, parseColor, type RGBA } from '../rasterizer';
 import { BufferPool } from './buffer-pool';
 import { ShaderModules } from './shader-modules';
