@@ -51,7 +51,7 @@ import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
-import { runJS, createGlobalEnv, wrapElement, createEventObject } from '../js/index';
+import { runJS, createGlobalEnv, wrapElement, createEventObject, onConsoleMessage, type ConsoleEntry } from '../js/index';
 import { callJSFunction, setGlobalCaller, type JSFunction } from '../js/values';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
@@ -88,6 +88,8 @@ interface PageRendererDependencies {
   readonly storageDir?: string;
   /** Optional callback invoked after each reflow/repaint frame (page repaint). */
   readonly onFrameRendered?: () => void;
+  /** Optional callback invoked for every page console.log/warn/error/etc call (DevTools Console panel). */
+  readonly onConsoleMessage?: (entry: ConsoleEntry) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -427,6 +429,14 @@ class PageRenderer implements IPageRenderer, IDisposable {
       this.deps.resourceEnforcer, this.deps.scriptEnforcer, baseUrl,
       this.deps.htmlParser, this.deps.storageDir,
     );
+
+    // Forward every console.log/warn/error/etc the page makes to whoever's
+    // listening (e.g. a DevTools Console panel) — createGlobalEnv binds a
+    // real `console` object into this same env.
+    if (this.deps.onConsoleMessage) {
+      const consoleObj = globalEnv.get('console');
+      onConsoleMessage(consoleObj, (entry) => this.deps.onConsoleMessage?.(entry));
+    }
 
     const blockingScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
     const deferScripts: Array<{ source: string; el: typeof scripts[0] }> = [];

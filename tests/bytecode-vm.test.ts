@@ -707,7 +707,11 @@ describe('Bytecode VM', () => {
       const result = evalJSWithVM('function fib(n) { if (n <= 1) return n; return fib(n-1) + fib(n-2); } fib(20)');
       const elapsed = Date.now() - start;
       expect(result).toBe(6765);
-      expect(elapsed).toBeLessThan(2000);
+      // Budget loosened 2000ms -> 2500ms: this flaked twice on a fully-loaded
+      // full-suite run (fine in isolation every time, ~280ms) — a scheduling
+      // flake under contention, not a real performance regression. See
+      // doc/known-test-failures.md and TODO.md item 3.
+      expect(elapsed).toBeLessThan(2500);
     });
   });
 

@@ -41,6 +41,7 @@ import { UrlParser } from '../../browser/navigation/url-parser';
 import { NavigationController } from '../../browser/navigation/navigation-controller';
 import { NavigationBridge } from '../components/navigation-bridge';
 import { ContentRenderer } from '../components/content-renderer/content-renderer';
+import { DevToolsPanel } from '../components/devtools-panel/devtools-panel';
 import { NavigationFetcher } from '../components/navigation-fetcher';
 import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
@@ -198,6 +199,16 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   private readonly parser: IUrlParser;
   private contentRenderer: IContentRenderer | null = null;
+  private devToolsPanel: DevToolsPanel | null = null;
+  // Ctrl/Cmd+Shift+J — deliberately not F12 or Ctrl+Shift+I, both of which
+  // Electron's default View menu binds to the *host* Chromium DevTools
+  // (and would fire instead of ever reaching this page-level listener).
+  private readonly onDevToolsKeydown = (e: KeyboardEvent): void => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'j') {
+      e.preventDefault();
+      (this.layout as IDesktopLayout | null)?.toggleDevtools?.();
+    }
+  };
   private contentArea: HTMLElement | null = null;
   private currentUrl = '';
   private contentNavigateHandler: ((e: Event) => void) | null = null;
@@ -234,6 +245,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     const activeTabId = this.tabManager?.activeTabId ?? null;
     if (activeTabId) this.tabErrors.delete(activeTabId);
     this.syncAll();
+  };
+  private readonly engineConsoleMessageHandler = (event: EngineEvent): void => {
+    if (event.kind !== 'consoleMessage') return;
+    this.devToolsPanel?.addEntry(event.entry);
   };
 
   /**
@@ -483,6 +498,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
       areas.content.addEventListener('nova-navigate', this.contentNavigateHandler);
     }
 
+    if (areas.devtools) {
+      this.devToolsPanel = new DevToolsPanel();
+      this.devToolsPanel.attach(areas.devtools);
+      window.addEventListener('keydown', this.onDevToolsKeydown);
+    }
+
     this._mounted = true;
   }
 
@@ -504,6 +525,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.tabManager?.dispose();
     this.contextManager?.dispose();
     this.contentRenderer?.dispose();
+    this.devToolsPanel?.dispose();
+    window.removeEventListener('keydown', this.onDevToolsKeydown);
     if (this.contentArea && this.contentNavigateHandler) {
       this.contentArea.removeEventListener('nova-navigate', this.contentNavigateHandler);
     }
@@ -525,6 +548,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.tabPersistence = null;
     this.contextManager = null;
     this.contentRenderer = null;
+    this.devToolsPanel = null;
     this.contentArea = null;
     this.contentNavigateHandler = null;
     this.layout = null;
@@ -1342,9 +1366,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
     // chaining keeps the call robust to hit-test-only fakes in tests.
     this.browserEngine?.off?.('pageLoadError', this.engineLoadErrorHandler);
     this.browserEngine?.off?.('pageLoadStarted', this.engineLoadStartedHandler);
+    this.browserEngine?.off?.('consoleMessage', this.engineConsoleMessageHandler);
     this.browserEngine = engine;
     engine.on?.('pageLoadError', this.engineLoadErrorHandler);
     engine.on?.('pageLoadStarted', this.engineLoadStartedHandler);
+    engine.on?.('consoleMessage', this.engineConsoleMessageHandler);
     this.syncNavigationPipeline();
   }
 

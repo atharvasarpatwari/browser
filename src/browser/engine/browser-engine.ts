@@ -55,6 +55,7 @@ import type { IRouter, RouteResult } from '../navigation/router';
 import { RouteType }                  from '../navigation/router';
 import type { ILayoutEngine }         from '../rendering/layout-engine';
 import type { IPageLoader, PageLoadResult } from './engine-types';
+import type { ConsoleEntry } from '../js/index';
 import { createLogger } from '../../common/logger';
 
 const nullRendererLog = createLogger('NullPageRenderer');
@@ -153,7 +154,8 @@ type EngineEventType =
   | 'pageLoadReady'
   | 'pageRepainted'
   | 'pageLoadError'
-  | 'pageLoadAborted';
+  | 'pageLoadAborted'
+  | 'consoleMessage';
 
 interface PageLoadStartedEvent  { kind: 'pageLoadStarted';  session: PageLoadSession }
 interface PageLoadRoutedEvent   { kind: 'pageLoadRouted';   session: PageLoadSession; result: RouteResult }
@@ -162,6 +164,7 @@ interface PageLoadReadyEvent    { kind: 'pageLoadReady';    session: PageLoadSes
 interface PageRepaintedEvent    { kind: 'pageRepainted';    session: PageLoadSession | null }
 interface PageLoadErrorEvent    { kind: 'pageLoadError';    session: PageLoadSession; error: Error }
 interface PageLoadAbortedEvent  { kind: 'pageLoadAborted';  session: PageLoadSession }
+interface ConsoleMessageEvent   { kind: 'consoleMessage';   entry: ConsoleEntry }
 
 type EngineEvent =
   | PageLoadStartedEvent
@@ -170,7 +173,8 @@ type EngineEvent =
   | PageLoadReadyEvent
   | PageRepaintedEvent
   | PageLoadErrorEvent
-  | PageLoadAbortedEvent;
+  | PageLoadAbortedEvent
+  | ConsoleMessageEvent;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MIDDLEWARE
@@ -220,6 +224,8 @@ interface IBrowserEngine extends ISharedService {
   off(type: EngineEventType, handler: (event: EngineEvent) => void): void;
   /** Notify listeners that the page was repainted (e.g. after async loads). */
   notifyPageRepainted(): void;
+  /** Notify listeners of a console.log/warn/error/etc call made by the current page. */
+  notifyConsoleMessage(entry: ConsoleEntry): void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -461,6 +467,10 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
    */
   notifyPageRepainted(): void {
     this.bus.emit({ kind: 'pageRepainted', session: this._session });
+  }
+
+  notifyConsoleMessage(entry: ConsoleEntry): void {
+    this.bus.emit({ kind: 'consoleMessage', entry });
   }
 
   // ── Private: page load pipeline ───────────────────────────────────────────
