@@ -11,6 +11,8 @@ interface IContentRenderer extends IDisposable {
   setLinkHoverHandler(handler: (url: string | null) => void): void;
   /** Called with content-buffer-space coordinates whenever the rendered canvas is clicked. */
   setClickHandler(handler: (x: number, y: number) => void): void;
+  /** Scale factor (1 = 100%) applied to the rendered page content. */
+  setZoom(factor: number): void;
   renderHtml(html: string, options?: ContentRenderOptions): void;
   renderFromImageData(imageData: ImageData, freshCanvas?: boolean): void;
   renderSearchResults(query: string, searchUrl: string, results: readonly SearchResult[]): void;
@@ -32,6 +34,7 @@ class ContentRenderer implements IContentRenderer {
   private _linkHoverHandler: ((url: string | null) => void) | null = null;
   private _clickHandler: ((x: number, y: number) => void) | null = null;
   private _clickWiredCanvas: HTMLCanvasElement | null = null;
+  private _zoomFactor = 1;
 
   attach(container: HTMLElement): void {
     this.container = container;
@@ -47,6 +50,17 @@ class ContentRenderer implements IContentRenderer {
 
   setClickHandler(handler: (x: number, y: number) => void): void {
     this._clickHandler = handler;
+  }
+
+  setZoom(factor: number): void {
+    this._zoomFactor = factor;
+    const canvas = this.container?.querySelector('canvas');
+    if (canvas) this.applyZoom(canvas);
+  }
+
+  private applyZoom(el: HTMLElement): void {
+    el.style.transform = this._zoomFactor === 1 ? '' : `scale(${this._zoomFactor})`;
+    el.style.transformOrigin = 'top left';
   }
 
   renderHtml(html: string, options?: ContentRenderOptions): void {
@@ -109,6 +123,7 @@ class ContentRenderer implements IContentRenderer {
     const ctx = target.getContext('2d');
     if (!ctx) return;
     ctx.putImageData(imageData, 0, 0);
+    this.applyZoom(target);
 
     // Wire the click listener once per canvas element — a fresh canvas gets
     // its own listener; a reused (repainted-in-place) one keeps the existing.

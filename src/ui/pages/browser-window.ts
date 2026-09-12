@@ -18,6 +18,7 @@ import type { IPaintEngine } from '../../browser/rendering/paint-engine';
 import type { IDownloadManager } from '../../browser/downloads/download-manager';
 import type { IBookmarkService } from '../../browser/bookmarks/bookmark-services';
 import type { IHistoryService } from '../../browser/history/history-service';
+import type { IZoomManager } from '../../browser/navigation-controls/zoom';
 
 import { TabManager } from '../../browser/tabs/tab-manager';
 import { TabSessionBridge } from '../../browser/tabs/tab-session-bridge';
@@ -44,6 +45,7 @@ import { ContentRenderer } from '../components/content-renderer/content-renderer
 import { DevToolsPanel } from '../components/devtools-panel/devtools-panel';
 import { NavigationFetcher } from '../components/navigation-fetcher';
 import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
+import { ZoomManager } from '../../browser/navigation-controls/zoom';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
 import type { DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
@@ -186,6 +188,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private tabStrip: ITabStrip | null = null;
   private bookmarkBar: IBookmarkBar | null = null;
   private statusBar: IStatusBar | null = null;
+  private zoomManager: IZoomManager | null = null;
   private toolbar: IToolbar | null = null;
   private trackerBlocker: ITrackerBlocker | null = null;
   private adBlocker: IAdBlocker | null = null;
@@ -357,6 +360,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.addressBar = new AddressBar();
     this.bookmarkBar = new BookmarkBar(this.bookmarkService ?? undefined);
     this.statusBar = new StatusBar();
+    this.zoomManager = new ZoomManager();
+    this.zoomManager.onEvent((event) => {
+      this.statusBar?.setZoom(event.zoom);
+      this.statusBarView?.update(this.statusBar!.state);
+      this.contentRenderer?.setZoom(event.zoom / 100);
+    });
 
     if (isMobile) {
       // Mobile: attach address bar to mobile header slot, content to content area
@@ -430,7 +439,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
           if (e.kind === 'shieldClicked') {
             this.toolbar?.toggleShield();
           } else if (e.kind === 'zoomChanged') {
-            this.statusBar?.setZoom(e.zoom);
+            this.zoomManager?.setZoom(e.zoom);
           }
         });
       }

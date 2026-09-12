@@ -149,8 +149,7 @@ class StatusBarView implements IStatusBarView {
       zoomOut.title = 'Zoom out';
       zoomOut.style.cssText = 'border:none;background:none;color:var(--text-tertiary);font-size:13px;cursor:pointer;padding:1px 4px;border-radius:3px;line-height:1;';
       zoomOut.addEventListener('click', () => {
-        const current = this.model.state.zoom;
-        if (current > 50) this.dispatchEvent({ kind: 'zoomChanged', zoom: current - 10 });
+        this.dispatchEvent({ kind: 'zoomChanged', zoom: this.model.state.zoom - 10 });
       });
 
       this.zoomEl = document.createElement('span');
@@ -162,8 +161,7 @@ class StatusBarView implements IStatusBarView {
       zoomIn.title = 'Zoom in';
       zoomIn.style.cssText = 'border:none;background:none;color:var(--text-tertiary);font-size:13px;cursor:pointer;padding:1px 4px;border-radius:3px;line-height:1;';
       zoomIn.addEventListener('click', () => {
-        const current = this.model.state.zoom;
-        if (current < 200) this.dispatchEvent({ kind: 'zoomChanged', zoom: current + 10 });
+        this.dispatchEvent({ kind: 'zoomChanged', zoom: this.model.state.zoom + 10 });
       });
 
       zoomGroup.appendChild(zoomOut);
