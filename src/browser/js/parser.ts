@@ -801,6 +801,9 @@ export class Parser {
     while (!this.is(TokenType.RBrace) && !this.is(TokenType.EOF)) {
       if (this.is(TokenType.Static)) {
         this.advance();
+        let accessorKind: 'get' | 'set' | null = null;
+        if (this.is(TokenType.Get)) { this.advance(); accessorKind = 'get'; }
+        else if (this.is(TokenType.Set)) { this.advance(); accessorKind = 'set'; }
         const key = this.parsePropertyKey();
         this.expect(TokenType.LParen);
         const params = this.parseParams();
@@ -811,9 +814,12 @@ export class Parser {
         body.push({
           type: 'MethodDefinition', key,
           value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
-          kind: 'method', computed: false, static: true,
+          kind: accessorKind ?? 'method', computed: false, static: true,
         });
       } else {
+        let accessorKind: 'get' | 'set' | null = null;
+        if (this.is(TokenType.Get)) { this.advance(); accessorKind = 'get'; }
+        else if (this.is(TokenType.Set)) { this.advance(); accessorKind = 'set'; }
         const key = this.parsePropertyKey();
         if (this.is(TokenType.LParen)) {
           this.advance();
@@ -822,7 +828,7 @@ export class Parser {
           this.strictStack.push(true);
           const funcBody = this.parseBlock();
           this.strictStack.pop();
-          const kind = key.type === 'Identifier' && key.name === 'constructor' ? 'constructor' : 'method';
+          const kind = accessorKind ?? (key.type === 'Identifier' && key.name === 'constructor' ? 'constructor' : 'method');
           body.push({
             type: 'MethodDefinition', key,
             value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },

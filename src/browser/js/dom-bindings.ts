@@ -14,6 +14,7 @@ import type { CanvasGradient } from '../rendering/canvas/canvas-gradient';
 import type { CanvasPattern } from '../rendering/canvas/canvas-pattern';
 import { Path2D } from '../rendering/canvas/canvas-path';
 import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../security/blocked-url-schemes';
+import { offerElementForUpgrade, notifyConnectedTree, notifyDisconnectedTree, notifyAttributeChanged } from './custom-elements';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DOM BINDINGS — Bridges the JS interpreter to the Nova DOM tree
@@ -560,6 +561,13 @@ function getAttr(el: DomElement, name: string): string | undefined {
   return el.attributes.get(name);
 }
 
+/** Walks up .parent to see whether `node` is actually reachable from the real document root. */
+function isNodeConnected(node: DomNode, domTree: IDomTree): boolean {
+  let cur: DomNode | null = node;
+  while (cur && cur.nodeType !== 'document') cur = cur.parent;
+  return cur !== null && cur === domTree.getDocument();
+}
+
 export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
   const cached = elementCache.get(el);
   if (cached) return cached;
@@ -686,7 +694,9 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
         return undefined;
       }
 
+      const oldValue = el.attributes.get(name) ?? null;
       domTree.setAttribute(el, name, value);
+      notifyAttributeChanged(obj, el.tagName, name, oldValue, value);
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -718,6 +728,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       if (typeof child === 'object' && child !== null && '__domNode' in child) {
         const domNode = (child as JSObject & { __domNode: DomNode }).__domNode;
         domTree.appendChild(el, domNode);
+        if (isNodeConnected(el, domTree)) notifyConnectedTree(child);
       }
       return args[0];
     }),
@@ -730,7 +741,9 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       const child = args[0] as JSObject;
       if (typeof child === 'object' && child !== null && '__domNode' in child) {
         const domNode = (child as JSObject & { __domNode: DomNode }).__domNode;
+        const wasConnected = isNodeConnected(el, domTree);
         domTree.removeChild(el, domNode);
+        if (wasConnected) notifyDisconnectedTree(child);
       }
       return args[0];
     }),
@@ -748,6 +761,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
           ? (refChild as JSObject & { __domNode: DomNode }).__domNode
           : null;
         domTree.insertBefore(el, newNode, refNode);
+        if (isNodeConnected(el, domTree)) notifyConnectedTree(newChild);
       }
       return args[0];
     }),
@@ -1147,6 +1161,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     writable: true, enumerable: true, configurable: true,
   });
 
+  offerElementForUpgrade(obj, el.tagName);
   return obj;
 }
 

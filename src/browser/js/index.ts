@@ -22,6 +22,8 @@ import { createRTCPeerConnectionClass, createRTCSessionDescriptionClass, createR
 import { createWorkerConstructor } from './worker';
 import { createTypedArrayConstructors } from './typed-arrays';
 import { createCryptoObject } from './crypto-api';
+import { createCustomElementRegistry, createHTMLElementClass } from './custom-elements';
+import { createCacheStorage } from './cache-api';
 import { bindStorageAPIs } from './web-storage-bindings';
 import {
   bindWebAPIs, createPerformanceObject, createFullscreenAPIMethods,
@@ -52,6 +54,8 @@ export { Heap, getHeap, setHeap } from './heap';
 export { RootScanner, WeakRefStore } from './roots';
 export { createWebSocketClass, setPlatformWebSocketFactory } from './websocket-api';
 export { createCryptoObject, createSubtleCryptoObject } from './crypto-api';
+export { createCustomElementRegistry, createHTMLElementClass } from './custom-elements';
+export { createCacheStorage } from './cache-api';
 export { createRTCPeerConnectionClass, createRTCSessionDescriptionClass, createRTCIceCandidateClass } from './rtc-api';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1799,6 +1803,13 @@ export function createGlobalEnv(
   // Web Crypto API — getRandomValues/randomUUID/subtle, delegating to Node's
   // real webcrypto implementation (see crypto-api.ts)
   env.setLocal('crypto', createCryptoObject(eventLoop));
+
+  // Custom Elements — window.HTMLElement (extendable) + window.customElements
+  env.setLocal('HTMLElement', createHTMLElementClass());
+  env.setLocal('customElements', createCustomElementRegistry(eventLoop));
+
+  // Cache API — window.caches, backed by the same fetch used for real requests
+  env.setLocal('caches', createCacheStorage(eventLoop, platformFetch));
 
   // XMLHttpRequest
   env.setLocal('XMLHttpRequest', createXMLHttpRequestClass(eventLoop));

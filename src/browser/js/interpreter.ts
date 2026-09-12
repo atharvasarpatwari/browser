@@ -442,10 +442,19 @@ export class Interpreter {
             hasConstructor = true;
             classObj.properties.set('constructor', { value: fn, writable: true, enumerable: true, configurable: true });
             classProto.properties.set('constructor', { value: fn, writable: true, enumerable: false, configurable: true });
-          } else if (method.static) {
-            classObj.properties.set(key, { value: fn, writable: true, enumerable: true, configurable: true });
           } else {
-            classProto.properties.set(key, { value: fn, writable: true, enumerable: true, configurable: true });
+            const target = method.static ? classObj : classProto;
+            if (method.kind === 'get' || method.kind === 'set') {
+              const existing = target.properties.get(key);
+              target.properties.set(key, {
+                value: undefined, writable: false,
+                getter: method.kind === 'get' ? fn : existing?.getter,
+                setter: method.kind === 'set' ? fn : existing?.setter,
+                enumerable: true, configurable: true,
+              });
+            } else {
+              target.properties.set(key, { value: fn, writable: true, enumerable: true, configurable: true });
+            }
           }
         }
       }
