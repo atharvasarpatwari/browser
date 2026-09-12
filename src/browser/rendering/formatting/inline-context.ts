@@ -57,6 +57,12 @@ export class InlineFormattingContext {
   /** Font weight for text measurement. */
   private fontWeight: string;
 
+  /** Whole-line text direction — mirrors box order within a line for 'rtl'. */
+  private direction: 'ltr' | 'rtl';
+
+  /** Resolved (physical) text alignment for this context's lines. */
+  private textAlign: 'left' | 'right' | 'center' | 'justify';
+
   constructor(
     availableWidth: number,
     startY: number,
@@ -66,6 +72,8 @@ export class InlineFormattingContext {
       fontFamily?: string;
       fontWeight?: string;
       startX?: number;
+      direction?: 'ltr' | 'rtl';
+      textAlign?: 'left' | 'right' | 'center' | 'justify';
     },
   ) {
     this.availableWidth = availableWidth;
@@ -75,6 +83,8 @@ export class InlineFormattingContext {
     this.defaultFontSize = options?.defaultFontSize ?? 16;
     this.fontFamily = options?.fontFamily ?? 'sans-serif';
     this.fontWeight = options?.fontWeight ?? 'normal';
+    this.direction = options?.direction ?? 'ltr';
+    this.textAlign = options?.textAlign ?? 'left';
     // Line boxes track Y relative to this context's own start (0-based) —
     // pushTextSegment/addBox add `this.startY` back on top to get an
     // absolute position, and startNewLine()'s `currentLine.y + lineHeight`
@@ -335,11 +345,30 @@ export class InlineFormattingContext {
       // Ensure minimum height of at least the strut height
       line.height = Math.max(line.height, strutHeight);
 
+      // Horizontal placement: addBox()/pushTextSegment() always accumulate
+      // boxes left-to-right from startX (the "logical order" pass, direction-
+      // agnostic since line-wrapping decisions don't depend on direction).
+      // Re-derive each box's final x here for alignment + RTL mirroring —
+      // ponytail: aligns/mirrors against the full availableWidth rather than
+      // the line's own (possibly float-narrowed) span; fine for the common
+      // whole-page-RTL-no-floats case, revisit if RTL+floats needs the exact
+      // per-line width from getAvailableWidthAt(line.y).
+      const lineWidth = Math.max(0, this.availableWidth);
+      const used = line.usedWidth;
+      let alignOffset = 0;
+      if (this.textAlign === 'right') alignOffset = lineWidth - used;
+      else if (this.textAlign === 'center') alignOffset = (lineWidth - used) / 2;
+
       // Position each box vertically within the line box
       for (const box of line.boxes) {
         // Position relative to line box top
         const offsetFromTop = line.baseline - box.baselineOffset;
         box.box.y = this.startY + line.y + Math.max(0, offsetFromTop);
+
+        const relX = box.box.x - this.startX;
+        box.box.x = this.direction === 'rtl'
+          ? this.startX + alignOffset + (used - (relX + box.box.width))
+          : this.startX + alignOffset + relX;
       }
 
       totalHeight += line.height;

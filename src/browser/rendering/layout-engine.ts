@@ -99,6 +99,18 @@ function collectInlineSubtreeText(node: DomNode, depth = 0): string {
   return (node as DomElement).children.map(c => collectInlineSubtreeText(c, depth + 1)).join('');
 }
 
+/**
+ * Resolves the CSS 2.2 §16.2 logical `text-align` values (`start`/`end`)
+ * against the element's `direction` into a physical alignment. `left`/
+ * `right` are physical and never flip with direction.
+ */
+function resolveTextAlign(value: string, direction: 'ltr' | 'rtl'): 'left' | 'right' | 'center' | 'justify' {
+  if (value === 'start') return direction === 'rtl' ? 'right' : 'left';
+  if (value === 'end') return direction === 'rtl' ? 'left' : 'right';
+  if (value === 'left' || value === 'right' || value === 'center' || value === 'justify') return value;
+  return direction === 'rtl' ? 'right' : 'left';
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LAYOUT ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -775,12 +787,16 @@ class LayoutEngine implements ILayoutEngine {
     domTree?: IDomTree,
   ): number {
     const exclusionZones = this.floatContext?.getExclusionZones() ?? [];
+    const parentStyle = parent.computedStyle ?? new Map();
+    const direction = (parentStyle.get('direction') ?? 'ltr') as 'ltr' | 'rtl';
+    const textAlign = resolveTextAlign(parentStyle.get('text-align') ?? 'start', direction);
     const ifc = new InlineFormattingContext(availableWidth, startY, {
       exclusionZones,
       defaultFontSize: parentFontSize,
       startX: contentX,
+      direction,
+      textAlign,
     });
-    const parentStyle = parent.computedStyle ?? new Map();
     const parentLineHeight = this.resolveLineHeight(parentStyle, parentFontSize);
 
     for (const child of children) {
@@ -1462,10 +1478,15 @@ class LayoutEngine implements ILayoutEngine {
     domTree?: IDomTree,
   ): number {
     const exclusionZones = this.floatContext?.getExclusionZones() ?? [];
+    const parentStyleForDirection = parent.computedStyle ?? new Map();
+    const direction = (parentStyleForDirection.get('direction') ?? 'ltr') as 'ltr' | 'rtl';
+    const textAlign = resolveTextAlign(parentStyleForDirection.get('text-align') ?? 'start', direction);
     const ifc = new InlineFormattingContext(availableWidth, contentY, {
       exclusionZones,
       defaultFontSize: parentFontSize,
       startX: contentX,
+      direction,
+      textAlign,
     });
 
     for (const child of parent.children) {
