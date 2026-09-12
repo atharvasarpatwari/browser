@@ -1,4 +1,5 @@
 import type { IDisposable } from '../../../app/dependency-container';
+import type { IDomTree, DomNode, DomElement, DomTextNode } from '../../../browser/rendering/dom-tree';
 
 export type DevToolsConsoleLevel = 'log' | 'info' | 'warn' | 'error' | 'debug';
 
@@ -17,26 +18,42 @@ const LEVEL_COLOR: Record<DevToolsConsoleLevel, string> = {
 };
 
 const MAX_ROWS = 1000;
+const MAX_TREE_NODES = 2000;
+
+type DevToolsTab = 'console' | 'elements';
 
 /**
- * Renders live page console output into a container. Visibility is owned by
- * whatever the container is (e.g. DesktopLayout's `devtools` area, shown/hidden
- * via `toggleDevtools()`) — this component only ever manages its own content.
+ * Renders live page console output and a snapshot of the live DOM tree into
+ * a container. Visibility is owned by whatever the container is (e.g.
+ * DesktopLayout's `devtools` area, shown/hidden via `toggleDevtools()`) —
+ * this component only ever manages its own content.
  */
 interface IDevToolsPanel extends IDisposable {
   attach(container: HTMLElement): void;
   addEntry(entry: DevToolsConsoleEntry): void;
   clear(): void;
+  /** Provide a way to fetch the live DOM tree on demand for the Elements tab. */
+  setDomTreeProvider(provider: () => IDomTree | null): void;
 }
 
 class DevToolsPanel implements IDevToolsPanel {
   private container: HTMLElement | null = null;
+  private consolePane: HTMLElement | null = null;
+  private elementsPane: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
   private rowCount = 0;
+  private activeTab: DevToolsTab = 'console';
+  private consoleTabBtn: HTMLButtonElement | null = null;
+  private elementsTabBtn: HTMLButtonElement | null = null;
+  private domTreeProvider: (() => IDomTree | null) | null = null;
 
   attach(container: HTMLElement): void {
     this.container = container;
     this.build();
+  }
+
+  setDomTreeProvider(provider: () => IDomTree | null): void {
+    this.domTreeProvider = provider;
   }
 
   private build(): void {
@@ -45,26 +62,126 @@ class DevToolsPanel implements IDevToolsPanel {
 
     const header = document.createElement('div');
     header.style.cssText = `
-      display:flex; align-items:center; gap:8px; padding:6px 10px;
+      display:flex; align-items:center; gap:4px; padding:6px 10px;
       background:#292a2d; border-bottom:1px solid #3c4043; flex:none;
     `.trim();
 
-    const title = document.createElement('span');
-    title.textContent = 'Console';
-    title.style.cssText = 'font-weight:600; color:#9aa0a6; flex:1;';
+    this.consoleTabBtn = DevToolsPanel.tabButton('Console');
+    this.elementsTabBtn = DevToolsPanel.tabButton('Elements');
+    this.consoleTabBtn.addEventListener('click', () => this.selectTab('console'));
+    this.elementsTabBtn.addEventListener('click', () => this.selectTab('elements'));
+
+    const spacer = document.createElement('span');
+    spacer.style.flex = '1';
 
     const clearBtn = document.createElement('button');
     clearBtn.textContent = 'Clear';
-    clearBtn.style.cssText = 'background:#3c4043; color:#e8eaed; border:none; border-radius:3px; padding:3px 10px; font-size:11px; cursor:pointer;';
+    clearBtn.style.cssText = DevToolsPanel.actionButtonStyle();
     clearBtn.addEventListener('click', () => this.clear());
 
-    header.append(title, clearBtn);
+    const refreshBtn = document.createElement('button');
+    refreshBtn.textContent = 'Refresh';
+    refreshBtn.style.cssText = DevToolsPanel.actionButtonStyle();
+    refreshBtn.addEventListener('click', () => this.renderElementsTree());
 
-    const list = document.createElement('div');
-    list.style.cssText = 'flex:1; overflow-y:auto; padding:4px 0;';
+    header.append(this.consoleTabBtn, this.elementsTabBtn, spacer, refreshBtn, clearBtn);
 
-    this.container.append(header, list);
-    this.listEl = list;
+    this.consolePane = document.createElement('div');
+    this.consolePane.style.cssText = 'flex:1; overflow-y:auto; padding:4px 0;';
+    this.listEl = this.consolePane;
+
+    this.elementsPane = document.createElement('div');
+    this.elementsPane.style.cssText = 'flex:1; overflow:auto; padding:6px 10px; display:none; white-space:pre;';
+
+    this.container.append(header, this.consolePane, this.elementsPane);
+    this.updateTabStyles();
+  }
+
+  private static tabButton(label: string): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.style.cssText = 'background:transparent; color:#9aa0a6; border:none; padding:4px 10px; font-size:12px; font-weight:600; cursor:pointer; border-bottom:2px solid transparent;';
+    return btn;
+  }
+
+  private static actionButtonStyle(): string {
+    return 'background:#3c4043; color:#e8eaed; border:none; border-radius:3px; padding:3px 10px; font-size:11px; cursor:pointer;';
+  }
+
+  private selectTab(tab: DevToolsTab): void {
+    this.activeTab = tab;
+    this.updateTabStyles();
+    if (tab === 'elements') this.renderElementsTree();
+  }
+
+  private updateTabStyles(): void {
+    if (!this.consoleTabBtn || !this.elementsTabBtn || !this.consolePane || !this.elementsPane) return;
+    const active = 'color:#8ab4f8; border-bottom-color:#8ab4f8;';
+    const inactive = 'color:#9aa0a6; border-bottom-color:transparent;';
+    this.consoleTabBtn.style.cssText = DevToolsPanel.tabButtonBase() + (this.activeTab === 'console' ? active : inactive);
+    this.elementsTabBtn.style.cssText = DevToolsPanel.tabButtonBase() + (this.activeTab === 'elements' ? active : inactive);
+    this.consolePane.style.display = this.activeTab === 'console' ? 'block' : 'none';
+    this.elementsPane.style.display = this.activeTab === 'elements' ? 'block' : 'none';
+  }
+
+  private static tabButtonBase(): string {
+    return 'background:transparent; border:none; padding:4px 10px; font-size:12px; font-weight:600; cursor:pointer; border-bottom:2px solid transparent;';
+  }
+
+  private renderElementsTree(): void {
+    if (!this.elementsPane) return;
+    const domTree = this.domTreeProvider?.() ?? null;
+    const doc = domTree?.getDocument() ?? null;
+    if (!doc) {
+      this.elementsPane.textContent = '(no page loaded)';
+      return;
+    }
+    this.elementsPane.innerHTML = '';
+    const budget = { remaining: MAX_TREE_NODES };
+    for (const child of doc.children) {
+      this.renderNode(child, 0, this.elementsPane, budget);
+    }
+    if (budget.remaining <= 0) {
+      const truncated = document.createElement('div');
+      truncated.textContent = `… truncated at ${MAX_TREE_NODES} nodes`;
+      truncated.style.color = '#5f6368';
+      this.elementsPane.appendChild(truncated);
+    }
+  }
+
+  private renderNode(node: DomNode, depth: number, out: HTMLElement, budget: { remaining: number }): void {
+    if (budget.remaining <= 0) return;
+
+    if (node.nodeType === 'text') {
+      const text = (node as DomTextNode).text.trim();
+      if (text) {
+        budget.remaining--;
+        const row = document.createElement('div');
+        row.textContent = `${'  '.repeat(depth)}${DevToolsPanel.truncate(text, 120)}`;
+        row.style.color = '#9aa0a6';
+        out.appendChild(row);
+      }
+      return;
+    }
+
+    if (node.nodeType !== 'element') return;
+    const el = node as DomElement;
+    budget.remaining--;
+
+    const row = document.createElement('div');
+    const attrs = Array.from(el.attributes.entries()).filter(([k]) => k !== '').map(([k, v]) => ` ${k}="${v}"`).join('');
+    row.textContent = `${'  '.repeat(depth)}<${el.tagName}${attrs}>`;
+    row.style.color = '#8ab4f8';
+    out.appendChild(row);
+
+    for (const child of el.children) {
+      this.renderNode(child, depth + 1, out, budget);
+      if (budget.remaining <= 0) return;
+    }
+  }
+
+  private static truncate(text: string, max: number): string {
+    return text.length > max ? `${text.slice(0, max)}…` : text;
   }
 
   addEntry(entry: DevToolsConsoleEntry): void {
@@ -102,14 +219,22 @@ class DevToolsPanel implements IDevToolsPanel {
   }
 
   clear(): void {
-    if (this.listEl) this.listEl.innerHTML = '';
-    this.rowCount = 0;
+    if (this.activeTab === 'console') {
+      if (this.listEl) this.listEl.innerHTML = '';
+      this.rowCount = 0;
+    } else {
+      this.renderElementsTree();
+    }
   }
 
   dispose(): void {
     if (this.container) this.container.innerHTML = '';
     this.container = null;
+    this.consolePane = null;
+    this.elementsPane = null;
     this.listEl = null;
+    this.consoleTabBtn = null;
+    this.elementsTabBtn = null;
   }
 }
 

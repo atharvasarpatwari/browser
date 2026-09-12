@@ -54,6 +54,7 @@ import type {
 import type { IRouter, RouteResult } from '../navigation/router';
 import { RouteType }                  from '../navigation/router';
 import type { ILayoutEngine }         from '../rendering/layout-engine';
+import type { IDomTree } from '../rendering/dom-tree';
 import type { IPageLoader, PageLoadResult } from './engine-types';
 import type { ConsoleEntry } from '../js/index';
 import { createLogger } from '../../common/logger';
@@ -141,6 +142,8 @@ interface IPageRenderer {
    * no page loaded yet or nothing was hit.
    */
   dispatchPointerEvent(type: string, x: number, y: number): boolean;
+  /** The DOM tree of the most recently rendered page (null before any page renders). */
+  getDomTree(): IDomTree | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -216,6 +219,8 @@ interface IBrowserEngine extends ISharedService {
   getPageLayoutEngine(): ILayoutEngine | null;
   /** Dispatch a real DOM pointer event (e.g. 'click') at (x, y) on the current page. */
   dispatchPointerEvent(type: string, x: number, y: number): boolean;
+  /** The DOM tree of the currently rendered page (null before any page renders). */
+  getPageDomTree(): IDomTree | null;
   /** Add a middleware that runs after routing, before fetching. */
   addMiddleware(mw: EngineMiddleware): void;
 
@@ -284,6 +289,9 @@ class NullPageRenderer implements IPageRenderer {
   }
   dispatchPointerEvent(): boolean {
     return false;
+  }
+  getDomTree(): IDomTree | null {
+    return null;
   }
 }
 
@@ -445,6 +453,10 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   dispatchPointerEvent(type: string, x: number, y: number): boolean {
     return this.renderer.dispatchPointerEvent(type, x, y);
+  }
+
+  getPageDomTree(): IDomTree | null {
+    return this.renderer.getDomTree();
   }
 
   addMiddleware(mw: EngineMiddleware): void {

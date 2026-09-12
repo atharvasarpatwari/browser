@@ -501,6 +501,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (areas.devtools) {
       this.devToolsPanel = new DevToolsPanel();
       this.devToolsPanel.attach(areas.devtools);
+      this.devToolsPanel.setDomTreeProvider(() => this.browserEngine?.getPageDomTree?.() ?? null);
       window.addEventListener('keydown', this.onDevToolsKeydown);
     }
 
