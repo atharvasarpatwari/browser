@@ -183,12 +183,14 @@ class TabStripView implements ITabStripView {
 
     el.innerHTML = '';
 
-    const faviconEl = document.createElement('span');
-    faviconEl.className = `nova-tab-favicon${tab.loading ? ' loading' : ''}`;
-    if (!tab.loading && tab.favicon) {
-      faviconEl.textContent = tab.favicon;
+    if (tab.loading || tab.favicon) {
+      const faviconEl = document.createElement('span');
+      faviconEl.className = `nova-tab-favicon${tab.loading ? ' loading' : ''}`;
+      if (!tab.loading && tab.favicon) {
+        faviconEl.textContent = tab.favicon;
+      }
+      el.appendChild(faviconEl);
     }
-    el.appendChild(faviconEl);
 
     const titleSpan = document.createElement('span');
     titleSpan.className = 'nova-tab-title';

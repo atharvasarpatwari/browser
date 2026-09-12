@@ -130,7 +130,6 @@ class AddressBarView implements IAddressBarView {
 
     this.container.innerHTML = '';
     this.container.className = 'nova-addressbar';
-    this.container.style.position = 'relative';
 
     if (this.config.showSecurityIcon) {
       this.securityIcon = document.createElement('span');

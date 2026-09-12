@@ -69,7 +69,7 @@ class ToolbarView implements IToolbarView {
       this.reloadBtn.title = state.loading ? 'Stop' : 'Reload';
     }
     if (this.shieldBtn) {
-      this.shieldBtn.style.color = state.shieldEnabled ? 'var(--green-400)' : 'var(--tx-tertiary)';
+      this.shieldBtn.style.color = state.shieldEnabled ? 'var(--green-400)' : '';
     }
   }
 
@@ -124,7 +124,7 @@ class ToolbarView implements IToolbarView {
 
     if (this.config.showShieldButton) {
       this.shieldBtn = this.createNavButton('🛡️', `${this.config.brandName ?? 'Nova'} Shield`, false);
-      this.shieldBtn.style.color = this.model.state.shieldEnabled ? 'var(--green-400)' : 'var(--tx-tertiary)';
+      this.shieldBtn.style.color = this.model.state.shieldEnabled ? 'var(--green-400)' : '';
       this.shieldBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'shieldToggle', enabled: !this.model.state.shieldEnabled }));
       this.container.appendChild(this.shieldBtn);
     }
