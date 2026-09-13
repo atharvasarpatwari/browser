@@ -874,7 +874,7 @@ export function createFetchFn(
                 url: res.url ?? url,
                 statusCode: res.status ?? 200,
                 statusText: res.statusText ?? 'OK',
-                headers: new Map(Object.entries(resHeaders.map).map(([k, v]) => [k, v])) as Map<string, string>,
+                headers: new Map(resHeaders.map) as Map<string, string>,
                 body: '',
                 bodyBinary: null,
                 redirected: res.redirected ?? false,
