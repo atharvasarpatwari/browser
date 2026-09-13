@@ -20,6 +20,13 @@ interface IContentRenderer extends IDisposable {
   setContextMenuHandler(handler: (bufX: number, bufY: number, viewX: number, viewY: number) => void): void;
   /** Scale factor (1 = 100%) applied to the rendered page content. */
   setZoom(factor: number): void;
+  /**
+   * Scale factors to convert a content-buffer-space rect (e.g. a layout box,
+   * in the engine's own pixel space) into the same units as the on-screen
+   * canvas — already zoom-aware, since it reads the canvas's *post-transform*
+   * bounding rect. Returns null if nothing is rendered yet.
+   */
+  getBufferToViewportScale(): { scaleX: number; scaleY: number } | null;
   renderHtml(html: string, options?: ContentRenderOptions): void;
   renderFromImageData(imageData: ImageData, freshCanvas?: boolean): void;
   renderSearchResults(query: string, searchUrl: string, results: readonly SearchResult[]): void;
@@ -68,6 +75,14 @@ class ContentRenderer implements IContentRenderer {
     this._zoomFactor = factor;
     const canvas = this.container?.querySelector('canvas');
     if (canvas) this.applyZoom(canvas);
+  }
+
+  getBufferToViewportScale(): { scaleX: number; scaleY: number } | null {
+    const canvas = this.container?.querySelector('canvas');
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (canvas.width === 0 || canvas.height === 0) return null;
+    return { scaleX: rect.width / canvas.width, scaleY: rect.height / canvas.height };
   }
 
   private applyZoom(el: HTMLElement): void {

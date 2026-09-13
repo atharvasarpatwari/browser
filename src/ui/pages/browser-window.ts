@@ -47,6 +47,8 @@ import { DevToolsPanel } from '../components/devtools-panel/devtools-panel';
 import { NavigationFetcher } from '../components/navigation-fetcher';
 import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
 import { ZoomManager } from '../../browser/navigation-controls/zoom';
+import { FindInPage } from '../../browser/navigation-controls/find-in-page';
+import { FindBar } from '../components/find-bar/find-bar';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
 import type { DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
@@ -191,6 +193,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private bookmarkBar: IBookmarkBar | null = null;
   private statusBar: IStatusBar | null = null;
   private zoomManager: IZoomManager | null = null;
+  private findInPage: FindInPage | null = null;
+  private findBar: FindBar | null = null;
+  private findHighlightEl: HTMLElement | null = null;
   private toolbar: IToolbar | null = null;
   private trackerBlocker: ITrackerBlocker | null = null;
   private adBlocker: IAdBlocker | null = null;
@@ -237,8 +242,47 @@ class BrowserWindowPage implements IBrowserWindowPage {
     } else if (e.key === 'F11') {
       e.preventDefault();
       void this.windowControls?.toggleFullscreen();
+    } else if (mod && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      this.showFindBar();
     }
   };
+
+  private showFindBar(): void {
+    if (!this.findBar || !this.contentArea) return;
+    const rect = this.contentArea.getBoundingClientRect();
+    this.findBar.setPosition(rect.top + 8, window.innerWidth - rect.right + 8);
+    this.findBar.show();
+  }
+
+  private runFind(query: string): void {
+    const domTree = this.browserEngine?.getPageDomTree?.();
+    if (!this.findInPage || !domTree) return;
+    const result = this.findInPage.findInDom(domTree, query);
+    this.findBar?.setMatchCount(result.activeIndex, result.total);
+    this.highlightCurrentMatch();
+  }
+
+  private highlightCurrentMatch(): void {
+    const match = this.findInPage?.getActiveMatch();
+    if (!match?.elementDomId || !this.findHighlightEl || !this.contentArea) {
+      if (this.findHighlightEl) this.findHighlightEl.style.display = 'none';
+      return;
+    }
+    const layoutEngine = this.browserEngine?.getPageLayoutEngine?.();
+    const box = layoutEngine?.getLayoutBox(match.elementDomId);
+    const scale = this.contentRenderer?.getBufferToViewportScale?.();
+    if (!box || !scale) {
+      this.findHighlightEl.style.display = 'none';
+      return;
+    }
+    const contentRect = this.contentArea.getBoundingClientRect();
+    this.findHighlightEl.style.display = 'block';
+    this.findHighlightEl.style.left = `${contentRect.left + box.x * scale.scaleX}px`;
+    this.findHighlightEl.style.top = `${contentRect.top + box.y * scale.scaleY}px`;
+    this.findHighlightEl.style.width = `${box.width * scale.scaleX}px`;
+    this.findHighlightEl.style.height = `${box.height * scale.scaleY}px`;
+  }
 
   private cycleTab(direction: 1 | -1): void {
     if (!this.tabManager) return;
@@ -418,6 +462,30 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.statusBarView?.update(this.statusBar!.state);
       this.contentRenderer?.setZoom(event.zoom / 100);
     });
+
+    this.findInPage = new FindInPage();
+    this.findBar = new FindBar();
+    this.findBar.attach(this.container);
+    this.findBar.onQueryChange((query) => this.runFind(query));
+    this.findBar.onNext(() => {
+      this.findInPage?.findNext();
+      this.findBar?.setMatchCount(this.findInPage?.getCurrentIndex() ?? -1, this.findInPage?.getMatchCount() ?? 0);
+      this.highlightCurrentMatch();
+    });
+    this.findBar.onPrevious(() => {
+      this.findInPage?.findPrevious();
+      this.findBar?.setMatchCount(this.findInPage?.getCurrentIndex() ?? -1, this.findInPage?.getMatchCount() ?? 0);
+      this.highlightCurrentMatch();
+    });
+    this.findBar.onClose(() => {
+      this.findBar?.hide();
+      this.findInPage?.clear();
+      if (this.findHighlightEl) this.findHighlightEl.style.display = 'none';
+    });
+
+    this.findHighlightEl = document.createElement('div');
+    this.findHighlightEl.style.cssText = 'position:fixed; display:none; background:rgba(255,214,0,0.35); border:2px solid rgba(255,180,0,0.9); pointer-events:none; z-index:499;';
+    this.container.appendChild(this.findHighlightEl);
 
     if (isMobile) {
       // Mobile: attach address bar to mobile header slot, content to content area
@@ -633,6 +701,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.contextManager?.dispose();
     this.contentRenderer?.dispose();
     this.devToolsPanel?.dispose();
+    this.findBar?.dispose();
+    this.findInPage?.dispose();
+    this.findHighlightEl?.remove();
     window.removeEventListener('keydown', this.onDevToolsKeydown);
     window.removeEventListener('keydown', this.onBrowserShortcutsKeydown);
     if (this.contentArea && this.contentNavigateHandler) {
@@ -657,6 +728,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.contextManager = null;
     this.contentRenderer = null;
     this.devToolsPanel = null;
+    this.findBar = null;
+    this.findInPage = null;
+    this.findHighlightEl = null;
     this.contentArea = null;
     this.contentNavigateHandler = null;
     this.layout = null;
