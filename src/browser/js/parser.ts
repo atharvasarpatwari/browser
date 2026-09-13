@@ -743,17 +743,25 @@ export class Parser {
   }
 
   /** Parse a pattern — identifier with optional default value, or rest element. Used for function params where '=' is a default value. */
-  private parsePattern(): AST.Identifier | AST.AssignmentPattern | AST.RestElement {
+  private parsePattern(): AST.Identifier | AST.AssignmentPattern | AST.RestElement | AST.ArrayPattern | AST.ObjectPattern {
     if (this.is(TokenType.Ellipsis)) {
       this.advance();
       return { type: 'RestElement', argument: this.parsePattern() as AST.Identifier };
+    }
+    if (this.is(TokenType.LBracket) || this.is(TokenType.LBrace)) {
+      const target = this.is(TokenType.LBracket) ? this.parseArrayPattern() : this.parseObjectPattern();
+      if (this.is(TokenType.Equal)) {
+        this.advance();
+        return { type: 'AssignmentPattern', left: target, right: this.parseExpression(2) };
+      }
+      return target;
     }
     const tok = this.peek();
     this.advance();
     const id: AST.Identifier = { type: 'Identifier', name: tok.value };
     if (this.is(TokenType.Equal)) {
       this.advance();
-      const right = this.parseExpression();
+      const right = this.parseExpression(2);
       return { type: 'AssignmentPattern', left: id, right };
     }
     return id;
@@ -1086,8 +1094,8 @@ export class Parser {
     return next.type === TokenType.Semicolon || next.type === TokenType.RBrace || next.type === TokenType.EOF;
   }
 
-  private parseParams(): (AST.Identifier | AST.RestElement | AST.AssignmentPattern)[] {
-    const params: (AST.Identifier | AST.RestElement | AST.AssignmentPattern)[] = [];
+  private parseParams(): (AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern)[] {
+    const params: (AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern)[] = [];
     while (!this.is(TokenType.RParen) && !this.is(TokenType.EOF)) {
       params.push(this.parsePattern());
       if (this.is(TokenType.Comma)) this.advance();

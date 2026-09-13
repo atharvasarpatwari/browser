@@ -409,8 +409,55 @@ describe('Bytecode VM', () => {
     it('no-arg function', () => {
       expect(evalJSWithVM('function greet() { return "hello"; } greet()')).toBe('hello');
     });
-    it('default parameters', () => {
+    it('missing argument (no default) is undefined', () => {
       expect(evalJSWithVM('function f(a, b) { return a + b; } f(5)')).toBe(NaN);
+    });
+    it('default parameter value: missing arg uses default', () => {
+      expect(evalJSWithVM('function f(a = 5) { return a; } f()')).toBe(5);
+    });
+    it('default parameter value: passed arg overrides default', () => {
+      expect(evalJSWithVM('function f(a = 5) { return a; } f(9)')).toBe(9);
+    });
+    it('default parameter value: explicit undefined uses default', () => {
+      expect(evalJSWithVM('function f(a = 5) { return a; } f(undefined)')).toBe(5);
+    });
+    it('multiple params, only later one has a default', () => {
+      expect(evalJSWithVM('function f(a, b = 10) { return a + b; } f(1)')).toBe(11);
+      expect(evalJSWithVM('function f(a, b = 10) { return a + b; } f(1, 2)')).toBe(3);
+    });
+    it('object destructuring param', () => {
+      expect(evalJSWithVM('function f({a, b}) { return a + b; } f({a: 1, b: 2})')).toBe(3);
+    });
+    it('object destructuring param with default', () => {
+      expect(evalJSWithVM('function f({a} = {a: 5}) { return a; } f()')).toBe(5);
+    });
+  });
+
+  describe('Destructuring', () => {
+    it('array: default for missing element', () => {
+      expect(evalJSWithVM('var [a = 5] = []; a')).toBe(5);
+    });
+    it('array: present element overrides default', () => {
+      expect(evalJSWithVM('var [a = 5] = [9]; a')).toBe(9);
+    });
+    it('array: default alongside plain elements', () => {
+      expect(evalJSWithVM('var [a, b = 2, c] = [1, undefined, 3]; a + b + c')).toBe(6);
+    });
+    it('array: multiple plain elements', () => {
+      expect(evalJSWithVM('var [a, c] = [1, 3]; a + c')).toBe(4);
+    });
+    it('object: simple', () => {
+      expect(evalJSWithVM('var {a, b} = {a: 1, b: 2}; a + b')).toBe(3);
+    });
+    it('object: renamed binding', () => {
+      expect(evalJSWithVM('var {a: x} = {a: 42}; x')).toBe(42);
+    });
+    it('object: default value', () => {
+      expect(evalJSWithVM('var {a = 7} = {}; a')).toBe(7);
+      expect(evalJSWithVM('var {a = 7} = {a: 1}; a')).toBe(1);
+    });
+    it('object: nested pattern', () => {
+      expect(evalJSWithVM('var {a: {b}} = {a: {b: 99}}; b')).toBe(99);
     });
   });
 

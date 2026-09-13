@@ -13,9 +13,9 @@
  * Scope for this session: painter's-algorithm document order only — each
  * box's background+border paints before its children, children paint in
  * tree order, text paints from line-box fragments. z-index / stacking
- * contexts are NOT applied yet (see TODO below) — that's session 5's job
- * (stacking-context.ts), which will re-order/re-group this same display
- * list rather than change how individual commands are built.
+ * contexts are applied afterward, by stacking-context.ts (session 5), which
+ * re-orders/re-groups this same display list rather than changing how
+ * individual commands here are built.
  */
 
 import { BoxType, borderBoxRect, type LayoutBox, type Rect } from "./layout-box";
