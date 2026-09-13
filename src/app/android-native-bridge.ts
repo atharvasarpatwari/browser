@@ -61,12 +61,34 @@ export function isNativeHostPresent(): boolean {
 }
 
 /**
+ * Android-only workaround: inside a Compose `AndroidView`-hosted WebView,
+ * `<html>`/`<body>` percentage and viewport-unit heights (100%, 100vh, 100dvh)
+ * resolve to 0 even though window.innerHeight/visualViewport report the real
+ * size correctly — the root element's own layout box never picks up the
+ * WebView's actual measured size. Setting the height explicitly in pixels
+ * sidesteps the CSS resolution entirely and is kept in sync on resize (e.g.
+ * rotation, or the on-screen keyboard opening/closing).
+ */
+function pinRootHeightToViewport(): void {
+  const apply = (): void => {
+    const h = `${window.innerHeight}px`;
+    document.documentElement.style.height = h;
+    document.body.style.height = h;
+  };
+  apply();
+  window.addEventListener('resize', apply);
+  window.visualViewport?.addEventListener('resize', apply);
+}
+
+/**
  * Wires window.novaNative to the given page and starts pushing state-change
  * snapshots to the native host. No-ops (and logs once) if no native host is
  * present, so it's always safe to call from mountBrowserUI().
  */
 export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
   if (!isNativeHostPresent()) return;
+
+  pinRootHeightToViewport();
 
   window.novaNative = {
     navigate: (url: string) => { void page.navigate(url); },
