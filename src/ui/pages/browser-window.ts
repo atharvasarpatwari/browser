@@ -500,6 +500,14 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.statusBarView = new StatusBarView(this.statusBar);
         this.statusBarView.attach(areas.statusBar);
       }
+      if (this.config.hideChromeUI) {
+        // Same intent as the desktop branch below: an external native shell
+        // (Android Compose's own AddressBar/TabsBar/BottomAppBar) is driving
+        // navigation, so this layout's own address bar and bottom nav — whose
+        // buttons aren't even wired to anything — would just duplicate it.
+        if (areas.addressBar) areas.addressBar.style.display = 'none';
+        if (areas.bottomNav) areas.bottomNav.style.display = 'none';
+      }
     } else {
       if (areas.toolbar) {
         this.toolbarView = new ToolbarView(this.toolbar);
