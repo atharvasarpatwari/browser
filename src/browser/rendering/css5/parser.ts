@@ -1414,6 +1414,31 @@ function flattenCSSNesting(css: string): string {
 // AT-RULE TEXT PARSING
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Nested rule bodies (`@media {...}`, `@supports {...}`, `@layer {...}`,
+ * `@container {...}`) are parsed via a brand-new `CssParser` instance, whose
+ * own `sourceOrder` counter restarts at 0 — so a style rule nested three
+ * rules into the document could carry `sourceOrder: 0`, identical to (or
+ * lower than) a plain top-level rule declared BEFORE it. The cascade uses
+ * `sourceOrder` to break specificity ties ("later wins"), so this let an
+ * earlier top-level rule beat a later, same-specificity rule inside a
+ * matching @container/@supports/@media block. Offsetting every rule inside
+ * a block by the block's own top-level `order` (scaled well above any
+ * realistic rule count per block) keeps relative order correct at every
+ * nesting depth, since a block's own nested at-rules already offset
+ * themselves the same way before this level's offset is layered on top.
+ */
+function offsetSourceOrder(rules: readonly CssRule[], order: number): CssRule[] {
+  const offset = order * 100_000;
+  return rules.map((r) => {
+    if (r.type === 'style') return { ...r, sourceOrder: r.sourceOrder + offset };
+    if (r.type === 'media' || r.type === 'supports' || r.type === 'layer' || r.type === 'container') {
+      return { ...r, rules: offsetSourceOrder(r.rules, order) };
+    }
+    return r;
+  });
+}
+
 function consumeAtRuleFromText(
   css: string, start: number, order: number,
 ): { rule: CssRule | null; end: number } {
@@ -1496,7 +1521,7 @@ function consumeAtRuleFromText(
         const subCss = stripComments(blockBody);
         const subParser = new CssParser();
         const { rules } = subParser.parseStylesheetRobust(subCss);
-        return { rule: { type: 'media', mediaQueries, rules }, end: blockEnd };
+        return { rule: { type: 'media', mediaQueries, rules: offsetSourceOrder(rules, order) }, end: blockEnd };
       }
       case 'font-face': {
         const subParser = new CssParser();
@@ -1511,7 +1536,7 @@ function consumeAtRuleFromText(
       case 'supports': {
         const subParser = new CssParser();
         const { rules } = subParser.parseStylesheetRobust(blockBody);
-        return { rule: { type: 'supports', condition: prelude, rules }, end: blockEnd };
+        return { rule: { type: 'supports', condition: prelude, rules: offsetSourceOrder(rules, order) }, end: blockEnd };
       }
       case 'layer': {
         // @layer name { ... } or anonymous @layer { ... }
@@ -1519,7 +1544,7 @@ function consumeAtRuleFromText(
         const subCss = stripComments(blockBody);
         const subParser = new CssParser();
         const { rules } = subParser.parseStylesheetRobust(subCss);
-        return { rule: { type: 'layer', names, rules }, end: blockEnd };
+        return { rule: { type: 'layer', names, rules: offsetSourceOrder(rules, order) }, end: blockEnd };
       }
       case 'container': {
         // @container [name] (query) { ... }
@@ -1533,7 +1558,7 @@ function consumeAtRuleFromText(
         const subCss = stripComments(blockBody);
         const subParser = new CssParser();
         const { rules } = subParser.parseStylesheetRobust(subCss);
-        return { rule: { type: 'container', name, query, rules }, end: blockEnd };
+        return { rule: { type: 'container', name, query, rules: offsetSourceOrder(rules, order) }, end: blockEnd };
       }
       default:
         return { rule: { type: 'unknown', atKeyword: kw, prelude, body: blockBody }, end: blockEnd };

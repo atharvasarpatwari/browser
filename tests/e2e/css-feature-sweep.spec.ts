@@ -126,7 +126,7 @@ const CASES: Array<{ name: string; html: string; checks: Array<{ x: number; y: n
     checks: [
       { x: 19, y: 20, expect: '#ffffff', label: 'margin-inline-start pushes box right (outside)' },
       { x: 70, y: 20, expect: '#ff0000', label: 'margin-inline-start pushes box right (inside)' },
-      { x: 50, y: 55, expect: '#00ff00', label: 'padding-block top padding visible' },
+      { x: 50, y: 50, expect: '#00ff00', label: 'padding-block top padding visible' },
     ],
   },
   {
@@ -137,6 +137,148 @@ const CASES: Array<{ name: string; html: string; checks: Array<{ x: number; y: n
     checks: [
       { x: 50, y: 45, expect: '#ff0000', label: 'aspect-ratio 2/1 with width:100 gives height:50 — inside' },
       { x: 50, y: 90, expect: '#ffffff', label: 'aspect-ratio 2/1 with width:100 gives height:50 — clearly outside' },
+    ],
+  },
+  {
+    name: 'flexbox-gap-order',
+    html: `<!doctype html><html><body style="margin:0;">
+      <div style="display:flex;gap:10px;width:300px;">
+        <div style="width:50px;height:50px;background:#f00;order:2;"></div>
+        <div style="width:50px;height:50px;background:#0f0;order:1;"></div>
+        <div style="width:50px;height:50px;background:#00f;order:3;"></div>
+      </div>
+    </body></html>`,
+    checks: [
+      { x: 25, y: 25, expect: '#00ff00', label: 'order:1 item renders first despite source order' },
+      { x: 85, y: 25, expect: '#ff0000', label: 'order:2 item renders second, gap respected' },
+      { x: 145, y: 25, expect: '#0000ff', label: 'order:3 item renders third' },
+    ],
+  },
+  {
+    name: 'flexbox-wrap',
+    html: `<!doctype html><html><body style="margin:0;">
+      <div style="display:flex;flex-wrap:wrap;width:100px;">
+        <div style="width:60px;height:40px;background:#f00;"></div>
+        <div style="width:60px;height:40px;background:#0f0;"></div>
+      </div>
+    </body></html>`,
+    checks: [
+      { x: 30, y: 20, expect: '#ff0000', label: 'first item fills row 1' },
+      { x: 30, y: 60, expect: '#00ff00', label: 'second item wraps to row 2 (does not fit remaining 40px)' },
+    ],
+  },
+  {
+    name: 'pseudo-element-before',
+    html: `<!doctype html><html><body style="margin:0;">
+      <style>
+        .box { width:100px;height:50px;background:#fff; }
+        .box::before { content:''; display:block; width:20px; height:20px; background:#f00; }
+      </style>
+      <div class="box"></div>
+    </body></html>`,
+    checks: [
+      { x: 10, y: 10, expect: '#ff0000', label: '::before generated box rendered' },
+      { x: 10, y: 40, expect: '#ffffff', label: 'rest of .box is its own background, not covered by ::before' },
+    ],
+  },
+  {
+    name: 'supports-and-container-gating',
+    html: `<!doctype html><html><body style="margin:0;">
+      <style>
+        .box { background:#fff; width:100px;height:50px; }
+        @supports (display: grid) { .box { background:#0f0; } }
+        @supports not (fizzbuzz-nonexistent-property: 1px) { .box { background:#00f; } }
+
+        .cq { container-type: inline-size; width: 300px; }
+        .item { width:50px;height:50px;background:#f00; margin-top:5px; }
+        @container (min-width: 200px) { .item { background:#0f0; } }
+      </style>
+      <div class="box"></div>
+      <div class="cq"><div class="item"></div></div>
+    </body></html>`,
+    checks: [
+      { x: 50, y: 25, expect: '#0000ff', label: '@supports: later matching rule wins (both conditions true)' },
+      { x: 25, y: 80, expect: '#00ff00', label: '@container (min-width:200px) matches a 300px container' },
+    ],
+  },
+  {
+    name: 'attribute-selectors',
+    html: `<!doctype html><html><body style="margin:0;">
+      <style>
+        .a[data-x^="foo"] { background:#f00; }
+        .b[data-x$="bar"] { background:#0f0; }
+        .c[data-x*="ddl"] { background:#00f; }
+      </style>
+      <div class="a" data-x="foobar" style="width:50px;height:50px;"></div>
+      <div class="b" data-x="foobar" style="width:50px;height:50px;margin-top:5px;"></div>
+      <div class="c" data-x="middle" style="width:50px;height:50px;margin-top:5px;"></div>
+    </body></html>`,
+    checks: [
+      { x: 25, y: 25, expect: '#ff0000', label: '[attr^=] prefix match' },
+      { x: 25, y: 80, expect: '#00ff00', label: '[attr$=] suffix match' },
+      { x: 25, y: 135, expect: '#0000ff', label: '[attr*=] substring match' },
+    ],
+  },
+  {
+    name: 'nth-child-formula',
+    html: `<!doctype html><html><head><style>
+        .item:nth-child(2n) { background:#f00; }
+        .item:nth-child(2n+1) { background:#0f0; }
+      </style></head><body style="margin:0;">
+      <div class="item" style="width:50px;height:30px;"></div>
+      <div class="item" style="width:50px;height:30px;"></div>
+      <div class="item" style="width:50px;height:30px;"></div>
+      <div class="item" style="width:50px;height:30px;"></div>
+    </body></html>`,
+    checks: [
+      { x: 25, y: 15, expect: '#00ff00', label: 'child 1 matches :nth-child(2n+1) (odd)' },
+      { x: 25, y: 45, expect: '#ff0000', label: 'child 2 matches :nth-child(2n) (even)' },
+      { x: 25, y: 75, expect: '#00ff00', label: 'child 3 matches :nth-child(2n+1) (odd)' },
+      { x: 25, y: 105, expect: '#ff0000', label: 'child 4 matches :nth-child(2n) (even)' },
+    ],
+  },
+  {
+    name: 'overflow-hidden-clip',
+    html: `<!doctype html><html><body style="margin:0;">
+      <div style="width:100px;height:50px;overflow:hidden;position:relative;background:#fff;">
+        <div style="position:absolute;left:50px;top:0;width:100px;height:50px;background:#f00;"></div>
+      </div>
+    </body></html>`,
+    checks: [
+      { x: 75, y: 25, expect: '#ff0000', label: 'overflowing absolutely-positioned child visible inside container' },
+      { x: 125, y: 25, expect: '#ffffff', label: 'overflow:hidden clips content past the container edge' },
+    ],
+  },
+  {
+    name: 'grid-repeat-autofill',
+    html: `<!doctype html><html><body style="margin:0;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill, 50px);width:200px;">
+        <div style="height:30px;background:#f00;"></div>
+        <div style="height:30px;background:#0f0;"></div>
+        <div style="height:30px;background:#00f;"></div>
+        <div style="height:30px;background:#ff0;"></div>
+      </div>
+    </body></html>`,
+    checks: [
+      { x: 15, y: 15, expect: '#ff0000', label: 'auto-fill column 1' },
+      { x: 65, y: 15, expect: '#00ff00', label: 'auto-fill column 2 (200px / 50px = 4 columns, not 1)' },
+      { x: 115, y: 15, expect: '#0000ff', label: 'auto-fill column 3' },
+      { x: 165, y: 15, expect: '#ffff00', label: 'auto-fill column 4' },
+    ],
+  },
+  {
+    name: 'multi-column',
+    html: `<!doctype html><html><body style="margin:0;">
+      <div style="column-count:2;column-gap:20px;width:220px;">
+        <div style="height:100px;background:#f00;"></div>
+        <div style="height:100px;background:#0f0;"></div>
+      </div>
+      <div style="height:20px;background:#000;"></div>
+    </body></html>`,
+    checks: [
+      { x: 50, y: 50, expect: '#ff0000', label: 'first block flows into column 1' },
+      { x: 170, y: 50, expect: '#00ff00', label: 'second block flows into column 2 (100px + 20px gap)' },
+      { x: 50, y: 110, expect: '#000000', label: 'element after the multi-column container is not pushed down by a phantom single-column height' },
     ],
   },
 ];

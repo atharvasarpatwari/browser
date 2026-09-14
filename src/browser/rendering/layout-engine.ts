@@ -17,6 +17,7 @@ import type { FlexDirection, FlexWrap, JustifyContent, AlignItems, AlignContent,
 import {
   GridFormattingContext,
   parseTrackList,
+  expandTrackDefs,
   parseGridPlacement,
   parseGridTemplateAreas,
   findAreaPlacement,
@@ -414,6 +415,28 @@ class LayoutEngine implements ILayoutEngine {
     const contentX = box.x + borderLeft + paddingLeft;
     const contentY = box.y + borderTop + paddingTop;
 
+    // Multi-column only applies to block formatting contexts. Its children
+    // must be laid out at the COLUMN width (not the full container width)
+    // from the start — reflowing/wrapping needs to happen at that narrower
+    // width, not at full width followed by a naive shrink-and-translate.
+    const colCountRaw = style.get('column-count');
+    const colWidthRaw = style.get('column-width');
+    const hasColumns = isBlock && ((colCountRaw && colCountRaw !== 'auto') || (colWidthRaw && colWidthRaw !== 'auto'));
+    const colGap = hasColumns ? resolve('column-gap', '0') : 0;
+    let colCount = 1;
+    let colWidthVal = 0;
+    if (hasColumns) {
+      if (colCountRaw && colCountRaw !== 'auto') colCount = parseInt(colCountRaw, 10) || 1;
+      if (colWidthRaw && colWidthRaw !== 'auto') colWidthVal = resolve('column-width', '0');
+      if (colCount <= 0 && colWidthVal <= 0) {
+        colCount = 1;
+      } else if (colCount <= 0) {
+        colCount = Math.max(1, Math.floor((contentWidth + colGap) / (colWidthVal + colGap)));
+      }
+      colWidthVal = Math.max(1, (contentWidth - colGap * (colCount - 1)) / colCount);
+    }
+    const childLayoutWidth = hasColumns ? colWidthVal : contentWidth;
+
     let childY: number;
 
     if (fmtType === 'flex' || fmtType === 'inline-flex') {
@@ -423,22 +446,13 @@ class LayoutEngine implements ILayoutEngine {
     } else if (fmtType === 'table' || fmtType === 'inline-table') {
       childY = this.layoutTableContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
     } else if (isBlock) {
-      childY = this.layoutBlockChildren(node, contentX, contentY, contentWidth, fontSize, domTree);
+      childY = this.layoutBlockChildren(node, contentX, contentY, childLayoutWidth, fontSize, domTree);
     } else {
       childY = this.layoutInlineChildren(node, contentX, contentY, contentWidth, fontSize, domTree);
     }
 
-    // Check for multi-column layout (applies to any block formatting context)
-    const colCountRaw = style.get('column-count');
-    const colWidthRaw = style.get('column-width');
-    const hasColumns = (colCountRaw && colCountRaw !== 'auto') || (colWidthRaw && colWidthRaw !== 'auto');
     if (hasColumns) {
-      const colGap = resolve('column-gap', '0');
       const colRuleW = this.parseBorderWidth(style.get('column-rule-width') ?? 'medium');
-      let colCount = 1;
-      let colWidthVal = 0;
-      if (colCountRaw && colCountRaw !== 'auto') colCount = parseInt(colCountRaw, 10) || 1;
-      if (colWidthRaw && colWidthRaw !== 'auto') colWidthVal = resolve('column-width', '0');
       const mcCtx = new MultiColumnFormattingContext({
         columnCount: colCount,
         columnWidth: colWidthVal,
@@ -453,7 +467,50 @@ class LayoutEngine implements ILayoutEngine {
       const contentH = childY - contentY;
       mcCtx.resolve(contentH);
       this.multiColumnContexts.set(node.domId, mcCtx);
-      box.height = Math.max(box.height, mcCtx.getTotalHeight() + paddingTop + paddingBottom + borderTop + borderBottom);
+
+      // mcCtx only computes column geometry — without actually moving each
+      // direct child into its column box, children stay exactly where
+      // layoutBlockChildren() stacked them (one full-width column) while the
+      // code below shrinks the container to one column's height, corrupting
+      // the position of every element that follows it on the page.
+      const columns = mcCtx.getColumns();
+      if (columns.length > 1) {
+        const targetColHeight = columns[0]!.height;
+        let curCol = 0;
+        let curY = 0;
+        const colHeights = new Array(columns.length).fill(0) as number[];
+        let packedAny = false;
+        for (const child of node.children) {
+          if (child.nodeType !== 'element') continue;
+          const childEl = child as DomElement;
+          const childBox = this.layoutBoxes.get(childEl.domId);
+          if (!childBox) continue;
+          packedAny = true;
+          const outerHeight = childBox.marginTop + childBox.height + childBox.marginBottom;
+          if (curY > 0 && curY + outerHeight > targetColHeight && curCol < columns.length - 1) {
+            curCol++;
+            curY = 0;
+          }
+          const col = columns[curCol]!;
+          const newX = contentX + col.x + childBox.marginLeft;
+          const newY = contentY + curY + childBox.marginTop;
+          const dx = newX - childBox.x;
+          const dy = newY - childBox.y;
+          if (dx !== 0 || dy !== 0) this.translateSubtree(childEl, dx, dy);
+          curY += outerHeight;
+          colHeights[curCol] = Math.max(colHeights[curCol]!, curY);
+        }
+        // Downstream code derives the container's own height from
+        // `childY - contentY` — repoint it at the real packed column
+        // height instead of the pre-packing single-column stack height,
+        // or it would silently overwrite the fix below with the old value.
+        // Content that's plain text/inline rather than discrete element
+        // children (packedAny === false) can't be packed this way — fall
+        // back to mcCtx's own balanced-height estimate instead of 0.
+        childY = packedAny ? contentY + Math.max(...colHeights) : contentY + mcCtx.getTotalHeight();
+      } else {
+        childY = contentY + mcCtx.getTotalHeight();
+      }
     }
 
     // ── Compute content height ────────────────────────────────────────────
@@ -1233,12 +1290,14 @@ class LayoutEngine implements ILayoutEngine {
     // Parse grid-template-columns — use parseTrackList for repeat/minmax support
     const rawCols = style.get('grid-template-columns');
     const colDefs = rawCols && rawCols !== 'none' ? parseTrackList(rawCols) : [];
-    const columns = colDefs.map(d => d.value);
+    const columns = expandTrackDefs(colDefs, colGap, availableWidth, fontSize);
 
-    // Parse grid-template-rows
+    // Parse grid-template-rows. auto-fill/auto-fit here sizes off availableWidth
+    // too (available height is usually indefinite for a grid whose own height
+    // is auto) — ponytail: good enough since row-axis auto-fill is rare.
     const rawRows = style.get('grid-template-rows');
     const rowDefs = rawRows && rawRows !== 'none' ? parseTrackList(rawRows) : [];
-    const rows = rowDefs.map(d => d.value);
+    const rows = expandTrackDefs(rowDefs, rowGap, availableWidth, fontSize);
 
     // Parse grid-template-areas
     const rawAreas = style.get('grid-template-areas');
@@ -2159,6 +2218,25 @@ class LayoutEngine implements ILayoutEngine {
   /** Get the multi-column context for a given element, if any. */
   getMultiColumnContext(domId: string): MultiColumnFormattingContext | undefined {
     return this.multiColumnContexts.get(domId);
+  }
+
+  /**
+   * Shifts an already-laid-out element and all its descendants by (dx, dy).
+   * Layout boxes hold absolute positions, so moving a child into a column
+   * (or any other post-hoc repositioning) without also moving its subtree
+   * would leave that subtree's own children rendering at their stale,
+   * pre-move position while only the child's own box moved.
+   */
+  private translateSubtree(el: DomElement, dx: number, dy: number): void {
+    if (dx === 0 && dy === 0) return;
+    const box = this.layoutBoxes.get(el.domId);
+    if (box) {
+      box.x += dx;
+      box.y += dy;
+    }
+    for (const child of el.children) {
+      if (child.nodeType === 'element') this.translateSubtree(child as DomElement, dx, dy);
+    }
   }
 }
 

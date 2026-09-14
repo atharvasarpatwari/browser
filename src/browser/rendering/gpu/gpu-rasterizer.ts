@@ -218,6 +218,11 @@ export class GpuRasterizer {
         const buf = this.doubleBuffer.getCurrentBuffer();
         if (buf) {
           const encoder = this.device.createCommandEncoder();
+          // Each call is a fresh frame — a `clip`/transform from a previous
+          // rasterize() call must not leak into this one (see Rasterizer's
+          // own rasterize() for the full explanation of why).
+          this.state = defaultState();
+          this.stateStack = [];
 
           for (const cmd of commands) {
             this.execGpu(cmd, buf, encoder);
@@ -262,6 +267,8 @@ export class GpuRasterizer {
       const buf = this.doubleBuffer.getCurrentBuffer();
       if (buf) {
         const encoder = this.device.createCommandEncoder();
+        this.state = defaultState();
+        this.stateStack = [];
 
         for (const cmd of commands) {
           this.execGpu(cmd, buf, encoder);

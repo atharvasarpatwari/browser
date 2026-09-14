@@ -630,6 +630,30 @@ function expandBoxShorthand(
   return result;
 }
 
+/**
+ * `overflow` is a real shorthand for `overflow-x`/`overflow-y` (1 value sets
+ * both, 2 values set x then y) — but it was never expanded here, so
+ * `overflow-x`/`overflow-y` stayed unset and later got force-filled with
+ * their OWN initial value ('visible') by setInitialValues()'s ALL_PROPERTIES
+ * pass. That left a self-contradictory computed style (`overflow: hidden`
+ * alongside `overflow-x/-y: visible`), and every caller that reads
+ * `overflow-x ?? overflow` picked up the bogus 'visible' — since `??` only
+ * falls through on null/undefined, not on an already-present 'visible' —
+ * silently defeating `overflow: hidden`/`scroll`/`auto` everywhere.
+ */
+function expandOverflowShorthand(value: string): Map<string, string> {
+  const parts = splitTokenList(value);
+  const result = new Map<string, string>();
+  if (parts.length === 1) {
+    result.set('overflow-x', parts[0]);
+    result.set('overflow-y', parts[0]);
+  } else if (parts.length === 2) {
+    result.set('overflow-x', parts[0]);
+    result.set('overflow-y', parts[1]);
+  }
+  return result;
+}
+
 function expandBorderShorthand(
   value: string,
 ): Map<string, string> {
@@ -1067,6 +1091,8 @@ export function expandShorthands(
       expanded = expandBorderRadiusShorthand(decl.value);
     } else if (prop === 'background') {
       expanded = expandBackgroundShorthand(decl.value);
+    } else if (prop === 'overflow') {
+      expanded = expandOverflowShorthand(decl.value);
     } else if (prop === 'font') {
       expanded = expandFontShorthand(decl.value);
     } else if (prop === 'list-style') {
@@ -1604,12 +1630,16 @@ export function computeComputedStyles(
   // Apply inline styles — split into important and non-important.
   // Per CSS spec, inline !important beats stylesheet !important.
   if (inlineDecls.length > 0) {
-    // Resolve var() in inline declarations using the custom properties collected so far.
-    const inlineResolved = inlineDecls.map((d) => ({
+    // Resolve var() in inline declarations using the custom properties collected so far,
+    // then expand shorthands (inline `overflow:hidden`/`background:#fff`/`margin:...`
+    // etc. never went through expandShorthands() before — only cascade declarations
+    // did — leaving overflow-x/-y, background-color, etc. unset from an inline
+    // shorthand and vulnerable to being overwritten by their own initial value later.
+    const inlineResolved = expandShorthands(inlineDecls.map((d) => ({
       property: d.property,
       value: d.property.startsWith('--') ? d.value : resolveVarReferences(d.value, earlyCustomProps),
       important: d.important,
-    }));
+    })));
     // Non-important inline styles apply first (override cascade but can be overridden by stylesheet !important)
     for (const decl of inlineResolved) {
       if (!decl.important) {
