@@ -28,7 +28,7 @@ private const val ENGINE_URL = "https://appassets.androidplatform.net/index.html
  * Unlike the old per-tab MiniWeb-era BrowserWebView, this is created exactly
  * once (factory{} only runs on first composition) — the engine owns all tabs
  * internally, so there is no per-tab WebView to switch between. Native
- * Compose chrome (AddressBar/TabsBar) drives this WebView purely through
+ * Compose chrome (AddressBar/TabSwitcherSheet) drives this WebView purely through
  * viewModel actions -> window.novaNative.* (evaluateJavascript); this
  * composable never calls webView.loadUrl() again after the initial load.
  */

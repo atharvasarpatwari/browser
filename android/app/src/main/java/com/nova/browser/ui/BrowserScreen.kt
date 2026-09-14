@@ -5,16 +5,25 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.LibraryBooks
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nova.browser.BrowserViewModel
 import com.nova.browser.ui.components.AddressBar
@@ -23,12 +32,14 @@ import com.nova.browser.ui.components.DownloadsSheet
 import com.nova.browser.ui.components.EngineWebView
 import com.nova.browser.ui.components.ErrorPage
 import com.nova.browser.ui.components.LibrarySheet
-import com.nova.browser.ui.components.TabsBar
+import com.nova.browser.ui.components.TabSwitcherSheet
+import com.nova.browser.ui.theme.IncognitoContent
 
 @Composable
 fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
     var showLibrary by remember { mutableStateOf(false) }
     var showDownloads by remember { mutableStateOf(false) }
+    var showTabSwitcher by remember { mutableStateOf(false) }
     val activeTab = viewModel.activeTab
     val context = LocalContext.current
 
@@ -79,17 +90,25 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
 
     Scaffold(
         topBar = {
-            Column {
-                TabsBar(
-                    tabs = viewModel.tabs,
-                    activeTabId = viewModel.activeTabId.value ?: "",
+            // Mobile-native chrome: one row (tab count + incognito + address
+            // bar), not the desktop chrome's permanently-visible tab strip —
+            // the open-tabs list lives behind the tab-count button instead,
+            // like every mainstream Android browser.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TabCountButton(
+                    count = viewModel.tabs.size,
                     incognito = viewModel.incognito.value,
-                    onToggleIncognito = { viewModel.setIncognito(!viewModel.incognito.value) },
-                    onSelect = viewModel::selectTab,
-                    onClose = viewModel::closeTab,
-                    onNewTab = { viewModel.newTab() }
+                    onClick = { showTabSwitcher = true }
                 )
+                IconButton(onClick = { viewModel.setIncognito(!viewModel.incognito.value) }) {
+                    Icon(
+                        Icons.Filled.VisibilityOff,
+                        contentDescription = "Incognito",
+                        tint = if (viewModel.incognito.value) IncognitoContent else MaterialTheme.colorScheme.primary
+                    )
+                }
                 AddressBar(
+                    modifier = Modifier.weight(1f),
                     text = viewModel.addressBarText.value,
                     onTextChange = { /* draft state is handled locally inside AddressBar */ },
                     onSubmit = { input -> viewModel.navigate(input) },
@@ -168,6 +187,21 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
         )
     }
 
+    if (showTabSwitcher) {
+        TabSwitcherSheet(
+            tabs = viewModel.tabs,
+            activeTabId = viewModel.activeTabId.value ?: "",
+            incognito = viewModel.incognito.value,
+            onSelect = viewModel::selectTab,
+            onClose = viewModel::closeTab,
+            onNewTab = {
+                viewModel.newTab()
+                showTabSwitcher = false
+            },
+            onDismiss = { showTabSwitcher = false }
+        )
+    }
+
     val contextMenuTarget = viewModel.contextMenu.value
     if (contextMenuTarget != null) {
         ContextMenuSheet(
@@ -193,6 +227,28 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                 viewModel.dismissContextMenu()
             },
             onDismiss = { viewModel.dismissContextMenu() }
+        )
+    }
+}
+
+/** The "switch tabs" affordance every mobile browser uses: a square outline with the open-tab count inside. */
+@Composable
+private fun TabCountButton(count: Int, incognito: Boolean, onClick: () -> Unit) {
+    val tint = if (incognito) IncognitoContent else MaterialTheme.colorScheme.onSurface
+    Box(
+        modifier = Modifier
+            .padding(8.dp)
+            .size(30.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Transparent)
+            .border(width = 2.dp, color = tint, shape = RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = if (count > 99) "99+" else count.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = tint
         )
     }
 }
