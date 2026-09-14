@@ -10,7 +10,8 @@ import { PageRenderer } from '../src/browser/engine/page-renderer';
 import type { PageRendererDependencies } from '../src/browser/engine/page-renderer';
 import type { IResourceLoader } from '../src/browser/networking/resource-loader';
 import type { IDomTree, DomDocument, DomElement } from '../src/browser/rendering/dom-tree';
-import type { ICssParser, CssRule } from '../src/browser/rendering/css-parser';
+import type { ICssParser } from '../src/browser/rendering/css-parser';
+import type { CssRule as Css5Rule } from '../src/browser/rendering/css5/types';
 import type { ILayoutEngine } from '../src/browser/rendering/layout-engine';
 import type { IPaintEngine } from '../src/browser/rendering/paint-engine';
 import type { IPageRenderer, PageLoadResult } from '../src/browser/engine/browser-engine';
@@ -73,6 +74,7 @@ function createMockCssParser(): ICssParser {
     parseStylesheet: vi.fn().mockReturnValue({ rules: [], url: null }),
     parseInlineStyle: vi.fn().mockReturnValue(new Map()),
     extractStylesFromDocument: vi.fn().mockReturnValue([]),
+    extractCss5RulesFromDocument: vi.fn().mockReturnValue([]),
     computeStyles: vi.fn().mockReturnValue(new Map()),
     computeStylesForElement: vi.fn().mockReturnValue(new Map()),
     getCss5Parser: vi.fn().mockReturnValue({
@@ -190,7 +192,7 @@ describe('PageRenderer', () => {
 
       expect(mockDeps.htmlParser.parse).toHaveBeenCalled();
       expect(mockDeps.domTree.buildFromHtml).toHaveBeenCalled();
-      expect(mockDeps.cssParser.extractStylesFromDocument).toHaveBeenCalled();
+      expect(mockDeps.cssParser.extractCss5RulesFromDocument).toHaveBeenCalled();
       expect(mockDeps.layoutEngine.layout).toHaveBeenCalled();
       expect(mockDeps.paintEngine.paint).toHaveBeenCalled();
     });
@@ -266,7 +268,7 @@ describe('PageRenderer', () => {
 
       await renderer.render(result, signal);
 
-      expect(mockDeps.cssParser.extractStylesFromDocument).toHaveBeenCalledWith(mockHtmlDoc);
+      expect(mockDeps.cssParser.extractCss5RulesFromDocument).toHaveBeenCalledWith(mockHtmlDoc);
     });
 
     it('should layout the DOM tree', async () => {
@@ -395,23 +397,24 @@ describe('PageRenderer', () => {
     });
 
     it('should handle CSS rules correctly', async () => {
-      const mockRules: CssRule[] = [
+      const mockRules: Css5Rule[] = [
         {
-          selector: 'h1',
-          declarations: new Map([['color', 'red']]),
-          specificity: { id: 0, class: 0, tag: 1 },
-          source: 'style-tag',
+          type: 'style',
+          selectors: [{ type: 'compound', tagName: 'h1', id: null, classes: [], attributes: [], pseudoClasses: [], pseudoElement: null }],
+          declarations: [{ property: 'color', value: 'red', important: false }],
+          specificity: { id: 0, a: 0, b: 1 },
+          sourceOrder: 0,
           sourceUrl: 'test.css',
         },
       ];
-      (mockDeps.cssParser.extractStylesFromDocument as ReturnType<typeof vi.fn>).mockReturnValue(mockRules);
+      (mockDeps.cssParser.extractCss5RulesFromDocument as ReturnType<typeof vi.fn>).mockReturnValue(mockRules);
 
       const result = createMockPageLoadResult();
       const signal = new AbortController().signal;
 
       await renderer.render(result, signal);
 
-      expect(mockDeps.cssParser.extractStylesFromDocument).toHaveBeenCalled();
+      expect(mockDeps.cssParser.extractCss5RulesFromDocument).toHaveBeenCalled();
     });
 
     it('should apply computed styles twice (before and after script execution)', async () => {
@@ -421,7 +424,7 @@ describe('PageRenderer', () => {
       await renderer.render(result, signal);
 
       // CSS parser should be called once for extraction
-      expect(mockDeps.cssParser.extractStylesFromDocument).toHaveBeenCalledTimes(1);
+      expect(mockDeps.cssParser.extractCss5RulesFromDocument).toHaveBeenCalledTimes(1);
       
       // DOM tree should have computed styles set
       // (The exact number depends on DOM structure)

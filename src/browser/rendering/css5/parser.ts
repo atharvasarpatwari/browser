@@ -1907,13 +1907,21 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
           if (i < end && tokens[i]!.type === 'paren-close') i++; // )
 
           if (pseudoName === 'not' || pseudoName === 'is' || pseudoName === 'any' || pseudoName === 'where' || pseudoName === 'has') {
-            const innerTokens = tokenizeSelector(arg);
-            const innerSelector = buildSelectorFromTokens(innerTokens, 0, innerTokens.length);
-            if (innerSelector) {
-              if (pseudoName === 'not') pseudoClasses.push({ type: 'negation', selectors: [innerSelector] });
-              else if (pseudoName === 'has') pseudoClasses.push({ type: 'has', selectors: [innerSelector] });
-              else if (pseudoName === 'where') pseudoClasses.push({ type: 'where', selectors: [innerSelector] });
-              else pseudoClasses.push({ type: 'is', selectors: [innerSelector] });
+            // The argument is a selector LIST (comma-separated alternatives), not
+            // a single selector — split on top-level commas first, or ":is(a, b)"
+            // gets mis-tokenized as one chain ("a b") joined by the comma's
+            // trailing whitespace, silently turning an OR into a descendant combinator.
+            const innerSelectors: CssSelector[] = [];
+            for (const part of splitSelectorList(arg)) {
+              const innerTokens = tokenizeSelector(part);
+              const innerSelector = buildSelectorFromTokens(innerTokens, 0, innerTokens.length);
+              if (innerSelector) innerSelectors.push(innerSelector);
+            }
+            if (innerSelectors.length > 0) {
+              if (pseudoName === 'not') pseudoClasses.push({ type: 'negation', selectors: innerSelectors });
+              else if (pseudoName === 'has') pseudoClasses.push({ type: 'has', selectors: innerSelectors });
+              else if (pseudoName === 'where') pseudoClasses.push({ type: 'where', selectors: innerSelectors });
+              else pseudoClasses.push({ type: 'is', selectors: innerSelectors });
             }
           } else {
             pseudoClasses.push({ type: 'structural', name: pseudoName, value: arg });
@@ -2109,13 +2117,22 @@ function computeCompoundSpecificity(sel: CssCompoundSelector): CssSpecificity {
       continue;
     }
     if (pc.type === 'negation' || pc.type === 'is' || pc.type === 'any' || pc.type === 'has') {
-      // :not() / :is() / :any() specificity = most specific selector in the list
+      // :not() / :is() / :any() specificity = that of its most specific argument,
+      // ADDED to the rest of the compound (e.g. ":is(.a,.b).active" = max(.a,.b) + .active).
+      // A running max merged directly into id/a/b would instead get clamped against
+      // whatever the compound's OTHER simple selectors already contributed, silently
+      // dropping the :is() contribution whenever it doesn't exceed that baseline.
+      let maxSpec: CssSpecificity = { id: 0, a: 0, b: 0 };
       for (const inner of pc.selectors) {
         const innerSpec = computeSelectorSpecificity(inner);
-        if (innerSpec.id > id) id = innerSpec.id;
-        if (innerSpec.a > a) a = innerSpec.a;
-        if (innerSpec.b > b) b = innerSpec.b;
+        const isMoreSpecific = innerSpec.id !== maxSpec.id ? innerSpec.id > maxSpec.id
+          : innerSpec.a !== maxSpec.a ? innerSpec.a > maxSpec.a
+          : innerSpec.b > maxSpec.b;
+        if (isMoreSpecific) maxSpec = innerSpec;
       }
+      id += maxSpec.id;
+      a += maxSpec.a;
+      b += maxSpec.b;
     } else {
       a++;
     }

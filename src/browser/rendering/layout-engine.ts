@@ -1282,10 +1282,18 @@ class LayoutEngine implements ILayoutEngine {
       const rc = (prop: string, fallback: string): number =>
         this.resolveLength(childStyle.get(prop) ?? fallback, fontSize, availableWidth);
 
-      // Parse grid-column / grid-row / grid-area
+      // Parse grid-column / grid-row / grid-area. The cascade fills every
+      // element's grid-column/grid-row with the 'auto' initial value even
+      // when the author never set them (they're in cascade.ts's ALL_PROPERTIES
+      // fallback list), so a truthy-string check here treated every grid-area-only
+      // item as if it also had an explicit grid-column/grid-row of 'auto' — the
+      // area-placement branch below then never ran and everything silently fell
+      // back to plain auto-placement, ignoring grid-template-areas entirely.
       const rawGridArea = childStyle.get('grid-area');
       const rawGridColumn = childStyle.get('grid-column');
       const rawGridRow = childStyle.get('grid-row');
+      const hasGridColumn = !!rawGridColumn && rawGridColumn !== 'auto';
+      const hasGridRow = !!rawGridRow && rawGridRow !== 'auto';
 
       let colStart = -1, colEnd = -1, rowStart = -1, rowEnd = -1;
 
@@ -1297,12 +1305,12 @@ class LayoutEngine implements ILayoutEngine {
         rowStart = parsedRow.start;
         rowEnd = parsedRow.end;
       } else {
-        if (rawGridColumn) {
+        if (hasGridColumn) {
           const parsed = parseGridPlacement(rawGridColumn, false);
           colStart = parsed.start;
           colEnd = parsed.end;
         }
-        if (rawGridRow) {
+        if (hasGridRow) {
           const parsed = parseGridPlacement(rawGridRow, true);
           rowStart = parsed.start;
           rowEnd = parsed.end;
@@ -1310,7 +1318,7 @@ class LayoutEngine implements ILayoutEngine {
       }
 
       // Try area-based placement
-      if (rawGridArea && !rawGridColumn && !rawGridRow) {
+      if (rawGridArea && !hasGridColumn && !hasGridRow) {
         const areaPlacement = findAreaPlacement(rawGridArea, templateAreas);
         if (areaPlacement) {
           colStart = areaPlacement.colStart;

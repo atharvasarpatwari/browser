@@ -1652,6 +1652,11 @@ export function computeComputedStyles(
     }
   }
 
+  // 7.5. Resolve logical margin/padding/inset properties (margin-inline-start,
+  //      padding-block, etc.) to their physical equivalents — layout only
+  //      reads physical properties (margin-left, padding-top, ...).
+  resolveLogicalProperties(computed);
+
   // 8. Set initial values for properties still unset.
   setInitialValues(computed);
 
@@ -1702,6 +1707,61 @@ export function collectKeyframes(stylesheet: CssStylesheet): Map<string, CssKeyf
   }
   walk(stylesheet.rules);
   return keyframes;
+}
+
+// Inline-axis logical properties: physical side depends on `direction`
+// (ltr vs rtl). Block-axis ones (below) map straight to top/bottom —
+// ponytail: vertical writing-modes (vertical-rl/lr) aren't handled, since
+// horizontal-tb covers the overwhelming majority of real pages; add a
+// writing-mode branch here if that ever matters.
+const LOGICAL_INLINE_PROPERTIES: Record<string, { ltr: string; rtl: string }> = {
+  'margin-inline-start': { ltr: 'margin-left', rtl: 'margin-right' },
+  'margin-inline-end': { ltr: 'margin-right', rtl: 'margin-left' },
+  'padding-inline-start': { ltr: 'padding-left', rtl: 'padding-right' },
+  'padding-inline-end': { ltr: 'padding-right', rtl: 'padding-left' },
+  'inset-inline-start': { ltr: 'left', rtl: 'right' },
+  'inset-inline-end': { ltr: 'right', rtl: 'left' },
+};
+
+const LOGICAL_BLOCK_PROPERTIES: Record<string, string> = {
+  'margin-block-start': 'margin-top',
+  'margin-block-end': 'margin-bottom',
+  'padding-block-start': 'padding-top',
+  'padding-block-end': 'padding-bottom',
+  'inset-block-start': 'top',
+  'inset-block-end': 'bottom',
+};
+
+// Two-value shorthands (`margin-inline: 1em 2em`) that expand to the
+// -start/-end longhands above before those get mapped to physical sides.
+const LOGICAL_SHORTHANDS: Record<string, [string, string]> = {
+  'margin-inline': ['margin-inline-start', 'margin-inline-end'],
+  'padding-inline': ['padding-inline-start', 'padding-inline-end'],
+  'inset-inline': ['inset-inline-start', 'inset-inline-end'],
+  'margin-block': ['margin-block-start', 'margin-block-end'],
+  'padding-block': ['padding-block-start', 'padding-block-end'],
+  'inset-block': ['inset-block-start', 'inset-block-end'],
+};
+
+function resolveLogicalProperties(computed: Map<string, string>): void {
+  for (const [shorthand, [startProp, endProp]] of Object.entries(LOGICAL_SHORTHANDS)) {
+    const value = computed.get(shorthand);
+    if (value === undefined) continue;
+    const parts = value.trim().split(/\s+/);
+    if (!computed.has(startProp)) computed.set(startProp, parts[0]!);
+    if (!computed.has(endProp)) computed.set(endProp, parts[1] ?? parts[0]!);
+  }
+
+  const direction = computed.get('direction') === 'rtl' ? 'rtl' : 'ltr';
+
+  for (const [logical, sides] of Object.entries(LOGICAL_INLINE_PROPERTIES)) {
+    const value = computed.get(logical);
+    if (value !== undefined) computed.set(sides[direction], value);
+  }
+  for (const [logical, physical] of Object.entries(LOGICAL_BLOCK_PROPERTIES)) {
+    const value = computed.get(logical);
+    if (value !== undefined) computed.set(physical, value);
+  }
 }
 
 function setInitialValues(computed: Map<string, string>): void {

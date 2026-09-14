@@ -145,7 +145,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     // 4. Extract and compute CSS styles
-    const rules = cssParser.extractStylesFromDocument(htmlDoc);
+    const rules = cssParser.extractCss5RulesFromDocument(htmlDoc);
     this._lastRules = rules;
     this.applyComputedStyles(rules);
 
@@ -273,13 +273,12 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Also builds a UsedStyle object for each element with pixel-resolved
    * box-model values for faster layout.
    */
-  private applyComputedStyles(rules: readonly CssRule[]): void {
-    const { domTree, cssParser } = this.deps;
+  private applyComputedStyles(rules: readonly Css5Rule[]): void {
+    const { domTree } = this.deps;
     const doc = domTree.getDocument();
     if (!doc) return;
 
-    // Build a CSS5 stylesheet from legacy CssRule[] (reparse selectors once).
-    const stylesheet = this.buildCss5Stylesheet(cssParser, rules);
+    const stylesheet = this.buildCss5Stylesheet(rules);
     this._lastStylesheet = stylesheet;
 
     // Determine container dimensions for percentage-based used-style resolution.
@@ -299,7 +298,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * recomputes their computed styles and used styles, and clears the flag.
    */
   private recalcStylesIncremental(): void {
-    const { domTree, cssParser } = this.deps;
+    const { domTree } = this.deps;
     const doc = domTree.getDocument();
     if (!doc) return;
 
@@ -311,8 +310,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     if (dirtyNodes.length === 0) return;
 
     // Build a fresh stylesheet (rules may have changed).
-    const legacyParser = cssParser;
-    const stylesheet = this.buildCss5Stylesheet(legacyParser, this._lastRules);
+    const stylesheet = this.buildCss5Stylesheet(this._lastRules);
     this._lastStylesheet = stylesheet;
 
     for (const el of dirtyNodes) {
@@ -336,7 +334,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
   }
 
-  private _lastRules: readonly CssRule[] = [];
+  private _lastRules: readonly Css5Rule[] = [];
   private _lastStylesheet: Css5Stylesheet | null = null;
 
   /**
@@ -608,54 +606,12 @@ class PageRenderer implements IPageRenderer, IDisposable {
   }
 
   /**
-   * Converts legacy CssRule[] (string selectors) into a CssStylesheet
-   * that the CSS5 cascade engine can consume.
+   * Wraps the rules extractCss5RulesFromDocument() already returned in CSS5's
+   * own shape (structured selectors, real sourceOrder, media/layer/container
+   * nesting intact) into the CssStylesheet shape the cascade engine expects.
    */
-  private buildCss5Stylesheet(cssParser: ICssParser, rules: readonly CssRule[]): Css5Stylesheet {
-    const css5Rules: Css5Rule[] = [];
-    const parser = (cssParser as CssParser).getCss5Parser();
-
-    let order = 0;
-    for (const rule of rules) {
-      if (rule.selector === '__external__') continue;
-
-      // @keyframes rules (selector === '') are carried through the legacy
-      // CssRule[] pipe so the animator can resolve them at runtime.
-      if (rule.keyframes) {
-        css5Rules.push({
-          type: 'keyframes',
-          name: rule.keyframes.name,
-          keyframes: rule.keyframes.frames.map((kf) => ({
-            selectors: kf.selectors,
-            declarations: Array.from(kf.declarations.entries()).map(([property, value]) => ({
-              property,
-              value,
-              important: false,
-            })),
-          })),
-        });
-        continue;
-      }
-
-      const selector = parser.parseSelector(rule.selector);
-      if (!selector) continue;
-
-      const styleRule: CssStyleRule = {
-        type: 'style',
-        selectors: [selector],
-        declarations: Array.from(rule.declarations.entries()).map(([prop, value]) => ({
-          property: prop,
-          value,
-          important: false,
-        })),
-        specificity: { id: rule.specificity.id, a: rule.specificity.class, b: rule.specificity.tag },
-        sourceOrder: order++,
-        sourceUrl: rule.sourceUrl,
-      };
-      css5Rules.push(styleRule);
-    }
-
-    return { rules: css5Rules, url: null };
+  private buildCss5Stylesheet(rules: readonly Css5Rule[]): Css5Stylesheet {
+    return { rules: [...rules], url: null };
   }
 
   /**
@@ -804,8 +760,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
       const parseResult = htmlParser.parse(body, url);
       const doc = domTree.buildFromHtml(parseResult.document);
 
-      const rules = cssParser.extractStylesFromDocument(parseResult.document);
-      const stylesheet = this.buildCss5Stylesheet(cssParser, rules);
+      const rules = cssParser.extractCss5RulesFromDocument(parseResult.document);
+      const stylesheet = this.buildCss5Stylesheet(rules);
       const rootStyleables = this.buildStyleableTree(doc.children, null);
       this.applyStylesRecursive(
         doc.children,

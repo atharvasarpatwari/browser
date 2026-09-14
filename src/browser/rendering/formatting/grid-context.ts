@@ -747,13 +747,13 @@ function parseGridLine(s: string): number {
 export function parseGridTemplateAreas(value: string): { rows: string[][]; columns: number } {
   if (!value || value === 'none') return { rows: [], columns: 0 };
 
-  const lines = value.match(/"[^"]*"/g);
+  const lines = value.match(/"[^"]*"|'[^']*'/g);
   if (!lines) return { rows: [], columns: 0 };
 
   const rows: string[][] = [];
   let columns = 0;
   for (const line of lines) {
-    const inner = line.replace(/"/g, '').trim();
+    const inner = line.slice(1, -1).trim();
     const cells = inner.split(/\s+/);
     rows.push(cells);
     columns = Math.max(columns, cells.length);
