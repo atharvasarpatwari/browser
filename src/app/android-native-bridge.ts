@@ -51,6 +51,11 @@ declare global {
       openInNewTab: (url: string) => void;
       /** Toggle the engine's incognito (private browsing) session. */
       setIncognito: (enabled: boolean) => void;
+      /** Runs a find-in-page search; returns a JSON {current, total} match-count string. */
+      findInPage: (query: string) => string;
+      findNext: () => string;
+      findPrevious: () => string;
+      closeFind: () => void;
     };
   }
 }
@@ -124,6 +129,10 @@ export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
     setIncognito: (enabled: boolean) => {
       page.setIncognitoExternal(enabled);
     },
+    findInPage: (query: string) => JSON.stringify(page.findInPageExternal(query)),
+    findNext: () => JSON.stringify(page.findNextExternal()),
+    findPrevious: () => JSON.stringify(page.findPreviousExternal()),
+    closeFind: () => page.closeFindExternal(),
   };
 
   wireContextMenuDetection(page);

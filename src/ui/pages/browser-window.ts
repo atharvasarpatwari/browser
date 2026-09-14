@@ -181,6 +181,12 @@ interface IBrowserWindowPage extends IDisposable {
   listHistoryExternal(maxResults?: number): Promise<ReadonlyArray<{ id: string; title: string; url: string; visitedAt: number }>>;
   removeHistoryEntryExternal(id: string): Promise<void>;
   clearHistoryExternal(): Promise<void>;
+
+  // ── Find-in-page for external chrome (native shells drive their own find UI) ──
+  findInPageExternal(query: string): { current: number; total: number };
+  findNextExternal(): { current: number; total: number };
+  findPreviousExternal(): { current: number; total: number };
+  closeFindExternal(): void;
 }
 
 class BrowserWindowPage implements IBrowserWindowPage {
@@ -255,12 +261,47 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.findBar.show();
   }
 
-  private runFind(query: string): void {
+  private runFind(query: string): { current: number; total: number } {
     const domTree = this.browserEngine?.getPageDomTree?.();
-    if (!this.findInPage || !domTree) return;
+    if (!this.findInPage || !domTree) return { current: -1, total: 0 };
     const result = this.findInPage.findInDom(domTree, query);
     this.findBar?.setMatchCount(result.activeIndex, result.total);
     this.highlightCurrentMatch();
+    return { current: result.activeIndex, total: result.total };
+  }
+
+  private advanceFind(direction: 'next' | 'previous'): { current: number; total: number } {
+    if (direction === 'next') this.findInPage?.findNext();
+    else this.findInPage?.findPrevious();
+    const current = this.findInPage?.getCurrentIndex() ?? -1;
+    const total = this.findInPage?.getMatchCount() ?? 0;
+    this.findBar?.setMatchCount(current, total);
+    this.highlightCurrentMatch();
+    return { current, total };
+  }
+
+  private closeFind(): void {
+    this.findBar?.hide();
+    this.findInPage?.clear();
+    if (this.findHighlightEl) this.findHighlightEl.style.display = 'none';
+  }
+
+  // ── Find-in-page for external chrome (e.g. Android's own find UI) ──────────
+
+  findInPageExternal(query: string): { current: number; total: number } {
+    return this.runFind(query);
+  }
+
+  findNextExternal(): { current: number; total: number } {
+    return this.advanceFind('next');
+  }
+
+  findPreviousExternal(): { current: number; total: number } {
+    return this.advanceFind('previous');
+  }
+
+  closeFindExternal(): void {
+    this.closeFind();
   }
 
   private highlightCurrentMatch(): void {
@@ -467,21 +508,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.findBar = new FindBar();
     this.findBar.attach(this.container);
     this.findBar.onQueryChange((query) => this.runFind(query));
-    this.findBar.onNext(() => {
-      this.findInPage?.findNext();
-      this.findBar?.setMatchCount(this.findInPage?.getCurrentIndex() ?? -1, this.findInPage?.getMatchCount() ?? 0);
-      this.highlightCurrentMatch();
-    });
-    this.findBar.onPrevious(() => {
-      this.findInPage?.findPrevious();
-      this.findBar?.setMatchCount(this.findInPage?.getCurrentIndex() ?? -1, this.findInPage?.getMatchCount() ?? 0);
-      this.highlightCurrentMatch();
-    });
-    this.findBar.onClose(() => {
-      this.findBar?.hide();
-      this.findInPage?.clear();
-      if (this.findHighlightEl) this.findHighlightEl.style.display = 'none';
-    });
+    this.findBar.onNext(() => this.advanceFind('next'));
+    this.findBar.onPrevious(() => this.advanceFind('previous'));
+    this.findBar.onClose(() => this.closeFind());
 
     this.findHighlightEl = document.createElement('div');
     this.findHighlightEl.style.cssText = 'position:fixed; display:none; background:rgba(255,214,0,0.35); border:2px solid rgba(255,180,0,0.9); pointer-events:none; z-index:499;';

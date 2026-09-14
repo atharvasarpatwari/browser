@@ -381,6 +381,10 @@ describe('android-native-bridge', () => {
       setIncognitoExternal: (_enabled: boolean) => {},
       isIncognito: () => false,
       resolveContextTarget: (_x: number, _y: number) => null,
+      findInPageExternal: (_query: string) => ({ current: -1, total: 0 }),
+      findNextExternal: () => ({ current: -1, total: 0 }),
+      findPreviousExternal: () => ({ current: -1, total: 0 }),
+      closeFindExternal: () => {},
       ...overrides,
     } as unknown as IBrowserWindowPage;
   }
@@ -553,6 +557,34 @@ describe('android-native-bridge', () => {
     window.novaNative!.setIncognito(true);
     window.novaNative!.setIncognito(false);
     expect(calls).toEqual([true, false]);
+  });
+
+  it('window.novaNative.findInPage/findNext/findPrevious delegate to the page and return JSON match counts', () => {
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: () => {} };
+    const queries: string[] = [];
+    const fakePage = makeFakePage({
+      findInPageExternal: (query: string) => { queries.push(query); return { current: 0, total: 3 }; },
+      findNextExternal: () => ({ current: 1, total: 3 }),
+      findPreviousExternal: () => ({ current: 0, total: 3 }),
+    });
+
+    installAndroidNativeBridge(fakePage);
+    expect(JSON.parse(window.novaNative!.findInPage('fox'))).toEqual({ current: 0, total: 3 });
+    expect(JSON.parse(window.novaNative!.findNext())).toEqual({ current: 1, total: 3 });
+    expect(JSON.parse(window.novaNative!.findPrevious())).toEqual({ current: 0, total: 3 });
+    expect(queries).toEqual(['fox']);
+  });
+
+  it('window.novaNative.closeFind delegates to the page', () => {
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: () => {} };
+    let closed = false;
+    const fakePage = makeFakePage({
+      closeFindExternal: () => { closed = true; },
+    });
+
+    installAndroidNativeBridge(fakePage);
+    window.novaNative!.closeFind();
+    expect(closed).toBe(true);
   });
 
   it('window.novaNative.openInNewTab delegates to the page createTab', () => {

@@ -506,6 +506,63 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
      * search query through the engine's configured default search engine
      * (searchTemplate, e.g. "https://duckduckgo.com/?q=%s").
      */
+    // ── Find in page (native find UI, engine does the actual searching) ──────
+
+    data class FindState(val current: Int, val total: Int)
+
+    var isFindActive = mutableStateOf(false)
+        private set
+    var findState = mutableStateOf<FindState?>(null)
+        private set
+
+    fun openFind() {
+        isFindActive.value = true
+    }
+
+    fun closeFind() {
+        isFindActive.value = false
+        findState.value = null
+        callEngine("window.novaNative && window.novaNative.closeFind();")
+    }
+
+    fun findInPage(query: String) {
+        if (query.isEmpty()) {
+            findState.value = null
+            return
+        }
+        callEngineForResult("window.novaNative && window.novaNative.findInPage(${jsString(query)});") {
+            findState.value = it
+        }
+    }
+
+    fun findNext() {
+        callEngineForResult("window.novaNative && window.novaNative.findNext();") { findState.value = it }
+    }
+
+    fun findPrevious() {
+        callEngineForResult("window.novaNative && window.novaNative.findPrevious();") { findState.value = it }
+    }
+
+    /** Like callEngine(), but reads back the JS return value (a JSON {current,total} string). */
+    private fun callEngineForResult(expr: String, onResult: (FindState?) -> Unit) {
+        webView?.post {
+            webView?.evaluateJavascript(expr) { raw -> onResult(parseFindState(raw)) }
+        }
+    }
+
+    /** evaluateJavascript's callback value is itself JSON-encoded (our JS returns a string), so unwrap twice. */
+    private fun parseFindState(raw: String?): FindState? {
+        if (raw.isNullOrEmpty() || raw == "null") return null
+        return try {
+            val jsonStr = org.json.JSONTokener(raw).nextValue() as String
+            val obj = JSONObject(jsonStr)
+            FindState(obj.optInt("current", -1), obj.optInt("total", 0))
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse find result", e)
+            null
+        }
+    }
+
     fun resolveInput(input: String): String {
         val trimmed = input.trim()
         val looksLikeUrl = trimmed.contains(".") && !trimmed.contains(" ")

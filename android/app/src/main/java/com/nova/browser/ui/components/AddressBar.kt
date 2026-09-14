@@ -38,6 +38,7 @@ fun AddressBar(
     onToggleBookmark: () -> Unit,
     onCopyUrl: () -> Unit,
     onShareUrl: () -> Unit,
+    onFindInPage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var isEditing by remember { mutableStateOf(false) }
@@ -118,6 +119,13 @@ fun AddressBar(
                     )
                 }
                 DropdownMenu(expanded = showOverflow, onDismissRequest = { showOverflow = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Find in page") },
+                        onClick = {
+                            showOverflow = false
+                            onFindInPage()
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text("Copy URL") },
                         onClick = {

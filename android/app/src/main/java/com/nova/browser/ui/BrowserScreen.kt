@@ -31,6 +31,7 @@ import com.nova.browser.ui.components.ContextMenuSheet
 import com.nova.browser.ui.components.DownloadsSheet
 import com.nova.browser.ui.components.EngineWebView
 import com.nova.browser.ui.components.ErrorPage
+import com.nova.browser.ui.components.FindBar
 import com.nova.browser.ui.components.LibrarySheet
 import com.nova.browser.ui.components.TabSwitcherSheet
 import com.nova.browser.ui.theme.IncognitoContent
@@ -84,8 +85,8 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
         }
     }
 
-    BackHandler(enabled = viewModel.canGoBack.value) {
-        viewModel.goBack()
+    BackHandler(enabled = viewModel.isFindActive.value || viewModel.canGoBack.value) {
+        if (viewModel.isFindActive.value) viewModel.closeFind() else viewModel.goBack()
     }
 
     Scaffold(
@@ -94,37 +95,51 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
             // bar), not the desktop chrome's permanently-visible tab strip —
             // the open-tabs list lives behind the tab-count button instead,
             // like every mainstream Android browser.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TabCountButton(
-                    count = viewModel.tabs.size,
-                    incognito = viewModel.incognito.value,
-                    onClick = { showTabSwitcher = true }
-                )
-                IconButton(onClick = { viewModel.setIncognito(!viewModel.incognito.value) }) {
-                    Icon(
-                        Icons.Filled.VisibilityOff,
-                        contentDescription = "Incognito",
-                        tint = if (viewModel.incognito.value) IncognitoContent else MaterialTheme.colorScheme.primary
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TabCountButton(
+                        count = viewModel.tabs.size,
+                        incognito = viewModel.incognito.value,
+                        onClick = { showTabSwitcher = true }
+                    )
+                    IconButton(onClick = { viewModel.setIncognito(!viewModel.incognito.value) }) {
+                        Icon(
+                            Icons.Filled.VisibilityOff,
+                            contentDescription = "Incognito",
+                            tint = if (viewModel.incognito.value) IncognitoContent else MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    AddressBar(
+                        modifier = Modifier.weight(1f),
+                        text = viewModel.addressBarText.value,
+                        onTextChange = { /* draft state is handled locally inside AddressBar */ },
+                        onSubmit = { input -> viewModel.navigate(input) },
+                        isLoading = activeTab?.loading ?: false,
+                        isSecure = viewModel.addressBarText.value.startsWith("https://"),
+                        isBookmarked = viewModel.isBookmarked(activeTab?.url ?: ""),
+                        onReload = { viewModel.reload() },
+                        onStop = { viewModel.stop() },
+                        onToggleBookmark = { viewModel.toggleBookmark() },
+                        onCopyUrl = {
+                            activeTab?.let { viewModel.copyToClipboard("URL", it.url) }
+                        },
+                        onShareUrl = {
+                            activeTab?.let { viewModel.shareUrl(it.title, it.url) }
+                        },
+                        onFindInPage = { viewModel.openFind() }
                     )
                 }
-                AddressBar(
-                    modifier = Modifier.weight(1f),
-                    text = viewModel.addressBarText.value,
-                    onTextChange = { /* draft state is handled locally inside AddressBar */ },
-                    onSubmit = { input -> viewModel.navigate(input) },
-                    isLoading = activeTab?.loading ?: false,
-                    isSecure = viewModel.addressBarText.value.startsWith("https://"),
-                    isBookmarked = viewModel.isBookmarked(activeTab?.url ?: ""),
-                    onReload = { viewModel.reload() },
-                    onStop = { viewModel.stop() },
-                    onToggleBookmark = { viewModel.toggleBookmark() },
-                    onCopyUrl = {
-                        activeTab?.let { viewModel.copyToClipboard("URL", it.url) }
-                    },
-                    onShareUrl = {
-                        activeTab?.let { viewModel.shareUrl(it.title, it.url) }
-                    }
-                )
+                if (viewModel.isFindActive.value) {
+                    val find = viewModel.findState.value
+                    FindBar(
+                        current = find?.current ?: -1,
+                        total = find?.total ?: 0,
+                        onQueryChange = { viewModel.findInPage(it) },
+                        onNext = { viewModel.findNext() },
+                        onPrevious = { viewModel.findPrevious() },
+                        onClose = { viewModel.closeFind() }
+                    )
+                }
             }
         },
         bottomBar = {
