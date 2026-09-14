@@ -382,6 +382,9 @@ describe('Bytecode VM', () => {
     it('nested loops', () => {
       expect(evalJSWithVM('var sum = 0; for (var i = 0; i < 3; i++) { for (var j = 0; j < 3; j++) { sum++; } } sum')).toBe(9);
     });
+    it('for loop with multiple comma-separated declarators', () => {
+      expect(evalJSWithVM('var sum = 0; for (var i = 0, len = 5; i < len; i++) { sum += i; } sum')).toBe(10);
+    });
   });
 
   describe('Functions', () => {
@@ -516,6 +519,10 @@ describe('Bytecode VM', () => {
     it('void', () => { expect(evalJSWithVM('void 0')).toBe(undefined); });
     it('instanceof', () => {
       expect(evalJSWithVM('[1] instanceof Array')).toBe(true);
+    });
+    it('in', () => {
+      expect(evalJSWithVM('var o = {a: 1}; "a" in o')).toBe(true);
+      expect(evalJSWithVM('var o = {a: 1}; "b" in o')).toBe(false);
     });
   });
 

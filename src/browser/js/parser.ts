@@ -260,6 +260,7 @@ export class Parser {
       case TokenType.EqualEqualEqual:
       case TokenType.BangEqualEqual:
       case TokenType.Instanceof:
+      case TokenType.In:
         this.advance();
         const right = this.parseExpression(prec);
         return { type: 'BinaryExpression', operator: tok.value, left, right, loc: { line: tok.line, column: tok.column } };
@@ -928,13 +929,24 @@ export class Parser {
         const body = this.parseStatement()!;
         return { type: 'ForOfStatement', left: { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init: null }], kind: kind as 'var' | 'let' | 'const' }, right, body, await: false, loc: { line: tok.line, column: tok.column } };
       }
-      // for (var x = ...)
+      // for (var x = ..., y = ...; ...) — one or more comma-separated declarators
       let init: AST.Expression | null = null;
       if (this.is(TokenType.Equal)) {
         this.advance();
         init = this.parseExpression(2);
       }
-      const decl: AST.VariableDeclaration = { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init }], kind: kind as 'var' | 'let' | 'const' };
+      const declarations: AST.VariableDeclarator[] = [{ type: 'VariableDeclarator', id, init }];
+      while (this.is(TokenType.Comma)) {
+        this.advance();
+        const nextId = this.parseBindingName();
+        let nextInit: AST.Expression | null = null;
+        if (this.is(TokenType.Equal)) {
+          this.advance();
+          nextInit = this.parseExpression(2);
+        }
+        declarations.push({ type: 'VariableDeclarator', id: nextId, init: nextInit });
+      }
+      const decl: AST.VariableDeclaration = { type: 'VariableDeclaration', declarations, kind: kind as 'var' | 'let' | 'const' };
       this.expect(TokenType.Semicolon);
       const test = this.is(TokenType.Semicolon) ? null : this.parseExpression();
       this.expect(TokenType.Semicolon);
