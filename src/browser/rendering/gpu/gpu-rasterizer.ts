@@ -430,8 +430,32 @@ export class GpuRasterizer {
 
   // ── GPU Command Execution ───────────────────────────────────────
 
+  // Mirrors Rasterizer.TRANSLATE_X_INDEX in the software rasterizer — see
+  // that comment for why this exists (a `translate()` did nothing at all
+  // without it, static or animated).
+  private static readonly TRANSLATE_X_INDEX: Partial<Record<PaintCommand['type'], number>> = {
+    fillRect: 0,
+    strokeRect: 0,
+    fillText: 1,
+    strokeText: 1,
+    drawImage: 1,
+  };
+
   private execGpu(cmd: PaintCommand, buf: GPUBuffer, encoder: GPUCommandEncoder): void {
+    const xIdx = GpuRasterizer.TRANSLATE_X_INDEX[cmd.type];
+    if (xIdx !== undefined && (this.state.translateX !== 0 || this.state.translateY !== 0)) {
+      const params = [...cmd.params];
+      params[xIdx] = (params[xIdx] as number) + this.state.translateX;
+      params[xIdx + 1] = (params[xIdx + 1] as number) + this.state.translateY;
+      cmd = { ...cmd, params } as PaintCommand;
+    }
     switch (cmd.type) {
+      case 'translate': {
+        const [dx, dy] = cmd.params as [number, number];
+        this.state.translateX += dx;
+        this.state.translateY += dy;
+        break;
+      }
       case 'fillRect': {
         const [x, y, w, h] = cmd.params as unknown as [number, number, number, number];
         const c = this.state.fillStyle;
@@ -629,6 +653,8 @@ interface RasterState {
   font: string;
   fontSize: number;
   textAlign: string;
+  translateX: number;
+  translateY: number;
 }
 
 const TRANSPARENT: RGBA = { r: 0, g: 0, b: 0, a: 0 };
@@ -643,6 +669,8 @@ function defaultState(): RasterState {
     font: '12px monospace',
     fontSize: 12,
     textAlign: 'start',
+    translateX: 0,
+    translateY: 0,
   };
 }
 
@@ -655,6 +683,8 @@ function cloneState(state: RasterState): RasterState {
     font: state.font,
     fontSize: state.fontSize,
     textAlign: state.textAlign,
+    translateX: state.translateX,
+    translateY: state.translateY,
   };
 }
 

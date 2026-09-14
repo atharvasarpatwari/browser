@@ -281,6 +281,77 @@ const CASES: Array<{ name: string; html: string; checks: Array<{ x: number; y: n
       { x: 50, y: 110, expect: '#000000', label: 'element after the multi-column container is not pushed down by a phantom single-column height' },
     ],
   },
+  {
+    name: 'transform-translate',
+    html: `<!doctype html><html><body style="margin:0;">
+      <div style="width:50px;height:50px;background:#f00;transform:translate(50px, 20px);"></div>
+    </body></html>`,
+    checks: [
+      { x: 25, y: 25, expect: '#ffffff', label: 'box moved away from its original layout position' },
+      { x: 75, y: 45, expect: '#ff0000', label: 'box renders at its translated position' },
+    ],
+  },
+  {
+    name: 'multi-layer-background',
+    html: `<!doctype html><html><body style="margin:0;">
+      <div style="width:100px;height:100px;background-image: linear-gradient(#f00,#f00), linear-gradient(#00f,#00f);"></div>
+    </body></html>`,
+    checks: [
+      { x: 50, y: 50, expect: '#ff0000', label: 'first-listed background layer paints on top' },
+    ],
+  },
+  {
+    name: 'calc-mixed-units',
+    html: `<!doctype html><html><body style="margin:0;">
+      <div style="width:200px;">
+        <div style="width:calc(100% - 20px);height:30px;background:#f00;"></div>
+      </div>
+    </body></html>`,
+    checks: [
+      { x: 170, y: 15, expect: '#ff0000', label: 'calc(100% - 20px) inside the 180px box' },
+      { x: 190, y: 15, expect: '#ffffff', label: 'calc(100% - 20px) stops 20px short of the 200px parent' },
+    ],
+  },
+  {
+    name: 'grid-item-self-align',
+    html: `<!doctype html><html><body style="margin:0;">
+      <div style="display:grid;grid-template-columns:100px;grid-template-rows:100px;width:100px;height:100px;background:#eee;">
+        <div style="width:20px;height:20px;background:#f00;justify-self:end;align-self:end;"></div>
+      </div>
+    </body></html>`,
+    checks: [
+      { x: 90, y: 90, expect: '#ff0000', label: 'justify-self:end + align-self:end pushes item to bottom-right' },
+      { x: 10, y: 10, expect: '#eeeeee', label: 'top-left cell area is uncovered (grid container background)' },
+    ],
+  },
+  {
+    name: 'flex-container-background-paint-order',
+    html: `<!doctype html><html><body style="margin:0;">
+      <div style="display:flex;background:#eee;width:100px;height:100px;padding:10px;">
+        <div style="width:80px;height:80px;background:#f00;"></div>
+      </div>
+    </body></html>`,
+    checks: [
+      { x: 50, y: 50, expect: '#ff0000', label: 'flex item renders on top of its own flex container background' },
+      { x: 5, y: 5, expect: '#eeeeee', label: 'flex container padding area still shows its own background' },
+    ],
+  },
+  {
+    name: 'not-multi-arg',
+    html: `<!doctype html><html><head><style>
+        div.item { background:#f00; }
+        div.item:not(.a, .b) { background:#0f0; }
+      </style></head><body style="margin:0;">
+      <div class="item a" style="width:50px;height:30px;"></div>
+      <div class="item b" style="width:50px;height:30px;margin-top:5px;"></div>
+      <div class="item c" style="width:50px;height:30px;margin-top:5px;"></div>
+    </body></html>`,
+    checks: [
+      { x: 25, y: 15, expect: '#ff0000', label: ':not(.a,.b) does not match .a (stays red)' },
+      { x: 25, y: 50, expect: '#ff0000', label: ':not(.a,.b) does not match .b (stays red)' },
+      { x: 25, y: 85, expect: '#00ff00', label: ':not(.a,.b) matches .c (neither excluded class)' },
+    ],
+  },
 ];
 
 test('CSS feature sweep against real fixtures', async () => {

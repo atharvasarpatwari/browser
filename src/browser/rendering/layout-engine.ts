@@ -32,6 +32,7 @@ import {
 import {
   MultiColumnFormattingContext,
 } from './formatting/multi-column-context';
+import { hasMathFunctions, resolveMathFunctions } from './css5/math-functions';
 
 interface LayoutConfig {
   readonly viewportWidth: number;
@@ -1889,6 +1890,27 @@ class LayoutEngine implements ILayoutEngine {
 
     const named = NAMED_FONT_SIZES[value];
     if (named !== undefined) return named;
+
+    // calc()/min()/max()/clamp() with a %-based operand (e.g. calc(100% -
+    // 20px)) reaches here still unresolved: math-functions.ts deliberately
+    // leaves mixed-unit expressions as-is (it has no idea what the
+    // percentage basis should be), but nothing downstream ever finished the
+    // handoff — resolveLength() has the one thing that was missing, the
+    // actual containingWidth, so resolve it here before falling through to
+    // the plain single-unit checks below (pure-unit calc(), e.g.
+    // calc(50px + 50px), is already resolved to a plain "100px" earlier in
+    // the cascade and never reaches this branch).
+    if (hasMathFunctions(value)) {
+      const resolved = resolveMathFunctions(value, {
+        fontSize,
+        rootFontSize: this.rootFontSize,
+        viewportWidth: this.config.viewportWidth,
+        viewportHeight: this.config.viewportHeight,
+        percentageBasis: containingWidth,
+      });
+      if (resolved !== value) return this.resolveLength(resolved, fontSize, containingWidth);
+      return 0;
+    }
 
     if (value.endsWith('px')) {
       const n = parseFloat(value);

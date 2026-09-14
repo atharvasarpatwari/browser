@@ -510,8 +510,48 @@ export class Rasterizer {
 
   // ?????? Command dispatch ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 
+  /**
+   * Index of the leading x-coordinate within each command's `params` array
+   * (y always immediately follows) — used to offset drawing commands by the
+   * accumulated `translate()` so a CSS `transform: translate(...)` actually
+   * moves what gets painted. `state.translateX/Y` already existed (and was
+   * already saved/restored correctly), but nothing ever wrote to it (no
+   * `case 'translate'` existed) or read it here, so every translate — static
+   * or animated — was silently a no-op. `clearRect` is deliberately excluded:
+   * it only ever runs once, at the very start of a frame, before any
+   * translate is active.
+   */
+  private static readonly TRANSLATE_X_INDEX: Partial<Record<PaintCommand['type'], number>> = {
+    fillRect: 0,
+    strokeRect: 0,
+    clip: 0,
+    fillText: 1,
+    strokeText: 1,
+    drawImage: 1,
+    setFillGradient: 1,
+    setBorderRadius: 1,
+    applyBoxShadow: 1,
+    applyTextShadow: 2,
+    applyFilterList: 1,
+    applyClipShape: 1,
+    applyMask: 1,
+  };
+
   private exec(cmd: PaintCommand): void {
+    const xIdx = Rasterizer.TRANSLATE_X_INDEX[cmd.type];
+    if (xIdx !== undefined && (this.state.translateX !== 0 || this.state.translateY !== 0)) {
+      const params = [...cmd.params];
+      params[xIdx] = (params[xIdx] as number) + this.state.translateX;
+      params[xIdx + 1] = (params[xIdx + 1] as number) + this.state.translateY;
+      cmd = { ...cmd, params } as PaintCommand;
+    }
     switch (cmd.type) {
+      case 'translate': {
+        const [dx, dy] = cmd.params as [number, number];
+        this.state.translateX += dx;
+        this.state.translateY += dy;
+        break;
+      }
       case 'clearRect':
         this.clearRect(cmd.params as unknown as [number, number, number, number]);
         break;
