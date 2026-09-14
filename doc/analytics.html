@@ -481,9 +481,9 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   </div>
   <h1 class="sr-only">Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num" id="statDocs">266</span> Documents</span>
+    <span><span class="num" id="statDocs">267</span> Documents</span>
     <span><span class="num" id="statDays">42</span> Days</span>
-    <span><span class="num" id="statTests">9,405</span> Total Suite Tests</span>
+    <span><span class="num" id="statTests">9,413</span> Total Suite Tests</span>
     <span>Generated <span class="num" id="statGenerated">2026-09-14</span></span>
   </p>
 </header>
@@ -516,10 +516,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <div class="kpi-row" id="kpis">
-  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">266</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
-  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,405</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
-  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">515</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
-  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,366</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">267</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,413</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
+  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">517</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,370</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
   <div class="kpi amber glass"><span class="icon">📐</span><div class="value" id="kpiCompliance">~78%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
 </div>
 
@@ -1151,7 +1151,8 @@ const DOCS = [
 {file:"2026-09-14-js-parser-real-world-compat-sweep.md",date:"2026-09-14",title:"JS Engine — Six More Real-World Parser/Interpreter Gaps (Found Bisecting www.google.com)",category:"JavaScript",tests:14,status:"Completed",rootCauses:7,filesModified:4,filesCreated:1},
 {file:"2026-09-14-css-engine-real-world-gaps.md",date:"2026-09-14",title:"CSS Engine — Six Real Gaps Found Sweeping Against Real-World Fixtures",category:"CSS",tests:1,status:"Completed",rootCauses:6,filesModified:7,filesCreated:2},
 {file:"2026-09-14-css-engine-round-2-more-real-gaps.md",date:"2026-09-14",title:"CSS Engine Round 2 — Five More Real Gaps (Grid Auto-Fill, Multi-Column, Cascade Order, Overflow, Rasterizer State Leak)",category:"CSS",tests:0,status:"Completed",rootCauses:5,filesModified:7,filesCreated:1},
-{file:"2026-09-14-css-engine-round-3-transforms-and-stacking.md",date:"2026-09-14",title:"CSS Engine Round 3 — Transforms Were Completely Non-Functional, Plus Three More Real Gaps",category:"CSS",tests:0,status:"Completed",rootCauses:4,filesModified:7,filesCreated:1}
+{file:"2026-09-14-css-engine-round-3-transforms-and-stacking.md",date:"2026-09-14",title:"CSS Engine Round 3 — Transforms Were Completely Non-Functional, Plus Three More Real Gaps",category:"CSS",tests:0,status:"Completed",rootCauses:4,filesModified:7,filesCreated:1},
+{file:"2026-09-14-nova-start-page.md",date:"2026-09-14",title:"Nova Start Page — New New-Tab-Page Design, Wired to Real Bookmarks/History",category:"UI",tests:8,status:"Completed",rootCauses:2,filesModified:2,filesCreated:2}
 ];
 
 const CAT_COLORS={CSS:'#60a5fa',HTML5:'#f472b6',JavaScript:'#fbbf24',Layout:'#34d399',Rendering:'#a855f7',Security:'#f87171','IPC/Networking':'#00f0ff',UI:'#f472b6',Architecture:'#94a3b8',Plan:'#fbbf24'};

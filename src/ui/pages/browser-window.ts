@@ -952,6 +952,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
       } else if (event.action === 'remove' && event.url && this.bookmarkService) {
         const bm = await this.bookmarkService.getBookmarkByUrl(event.url);
         if (bm) await this.bookmarkService.removeBookmark(bm.id);
+        await this.loadNewTabData();
+      } else if (event.action === 'add' && event.url && event.title && this.bookmarkService) {
+        await this.bookmarkService.addBookmark(event.title, event.url);
+        await this.loadNewTabData();
       }
     });
 
