@@ -33,6 +33,9 @@ export type Expression =
   | SequenceExpression
   | TemplateLiteral
   | TaggedTemplateExpression
+  // ClassDeclaration doubles as a class *expression* node too (`var x = class {}`,
+  // `new class {}`) — same shape (id is already optional), no separate type needed.
+  | ClassDeclaration
   | SpreadElement
   | RestElement
   | AssignmentPattern

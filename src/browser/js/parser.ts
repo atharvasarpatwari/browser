@@ -81,9 +81,20 @@ export class Parser {
     return this.parseExpression(2);
   }
 
+  /**
+   * A comma chain of 3+ items parses as a right-nested SequenceExpression
+   * (`a,b,c` -> {a, {b, c}}, one pairwise node per comma), not a flat list —
+   * see the Comma case in parseInfix(). Flatten it back out so arrow-param
+   * detection/extraction below doesn't stop at the first nested level.
+   */
+  private flattenSequence(expr: AST.Expression): AST.Expression[] {
+    if (expr.type !== 'SequenceExpression') return [expr];
+    return expr.expressions.flatMap((e) => this.flattenSequence(e));
+  }
+
   private isValidArrowParams(left: AST.Expression): boolean {
     if (left.type === 'Identifier') return true;
-    if (left.type === 'SequenceExpression') return left.expressions.every(e => e.type === 'Identifier');
+    if (left.type === 'SequenceExpression') return this.flattenSequence(left).every(e => e.type === 'Identifier');
     return false;
   }
 
@@ -93,7 +104,7 @@ export class Parser {
     if (left.type === 'Identifier') {
       params.push(left);
     } else if (left.type === 'SequenceExpression') {
-      for (const e of left.expressions) {
+      for (const e of this.flattenSequence(left)) {
         if (e.type === 'Identifier') params.push(e);
       }
     }
@@ -168,7 +179,17 @@ export class Parser {
         return this.parseObjectExpression();
 
       case TokenType.Function:
+      // Reached only for `async function(...)` — parseExpression()'s own
+      // Async handling above covers every async-arrow shape and explicitly
+      // excludes this one. parseFunctionExpression() already consumes an
+      // optional leading `async` itself.
+      case TokenType.Async:
         return this.parseFunctionExpression();
+
+      // Class expression: `var x = class {}`, `new class {}`, `(class {}).x`.
+      // parseClassDeclaration() already tolerates a missing name.
+      case TokenType.Class:
+        return this.parseClassDeclaration();
 
       case TokenType.LParen:
         return this.parseParenExpression();
@@ -339,6 +360,24 @@ export class Parser {
         this.expect(TokenType.RParen);
         return { type: 'CallExpression', callee: left, arguments: args, optional: false, loc: { line: tok.line, column: tok.column } };
 
+      // Tagged template: tag`...` — a template literal immediately following
+      // an expression with no operator between them (e.g. String.raw`a${b}c`,
+      // or the minifier idiom (0, fn)``). Binds as tightly as a call.
+      case TokenType.TemplateHead: {
+        const quasi = this.parseTemplateLiteral(tok);
+        return { type: 'TaggedTemplateExpression', tag: left, quasi, loc: { line: tok.line, column: tok.column } };
+      }
+      case TokenType.TemplateEnd: {
+        this.advance();
+        const quasi: AST.TemplateLiteral = {
+          type: 'TemplateLiteral',
+          quasis: [{ type: 'TemplateElement', value: tok.value, tail: true }],
+          expressions: [],
+          loc: { line: tok.line, column: tok.column },
+        };
+        return { type: 'TaggedTemplateExpression', tag: left, quasi, loc: { line: tok.line, column: tok.column } };
+      }
+
       // Ternary
       case TokenType.Question:
         this.advance();
@@ -478,7 +517,9 @@ export class Parser {
 
     if (this.is(TokenType.LParen)) {
       isMethod = true;
+      this.expect(TokenType.LParen);
       const params = this.parseParams();
+      this.expect(TokenType.RParen);
       const body = this.parseBlock();
       return {
         type: 'PropertyDefinition', key, value: {
@@ -1272,7 +1313,9 @@ export class Parser {
       case TokenType.Dot:
       case TokenType.QuestionDot:
       case TokenType.LBracket:
-      case TokenType.LParen: return 17;
+      case TokenType.LParen:
+      case TokenType.TemplateHead:
+      case TokenType.TemplateEnd: return 17;
 
       default: return 0;
     }

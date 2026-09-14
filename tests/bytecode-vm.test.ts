@@ -197,6 +197,23 @@ function evalJS(source: string, env?: Environment): JSValue {
   return interp.run(program);
 }
 
+/**
+ * Same as evalJS(), but drives the parser the way the real page-script path
+ * (runJS() in src/browser/js/index.ts) actually does: `new Parser([], lexer)`,
+ * pulling tokens from the Lexer on demand rather than tokenizing everything
+ * upfront via lexer.tokenize(). This distinction matters — a lexer bug can
+ * exist only on this lazy path (lastTokenType regex-vs-division tracking was
+ * one), and evalJS()/evalJSWithVM() above, which both eagerly tokenize(),
+ * would never catch it.
+ */
+function evalJSLazy(source: string, env?: Environment): JSValue {
+  const lexer = new Lexer(source);
+  const parser = new Parser([], lexer);
+  const program = parser.parse();
+  const interp = new Interpreter(env);
+  return interp.run(program);
+}
+
 function evalJSWithVM(source: string, env?: Environment): JSValue {
   const globalEnv = env ?? createTestGlobalEnv();
   const tokens = new Lexer(source).tokenize();
@@ -434,6 +451,13 @@ describe('Bytecode VM', () => {
     it('object destructuring param with default', () => {
       expect(evalJSWithVM('function f({a} = {a: 5}) { return a; } f()')).toBe(5);
     });
+    it('arrow function with 3+ params (comma chain nests, must be flattened)', () => {
+      expect(evalJSWithVM('var f = (a, b, c) => a + b + c; f(1, 2, 3)')).toBe(6);
+      expect(evalJSWithVM('var f = (a, b, c, d) => a + b + c + d; f(1, 2, 3, 4)')).toBe(10);
+    });
+    it('async function expression', () => {
+      expect(evalJSWithVM('var f = async function(a, b) { return a + b; }; typeof f')).toBe('function');
+    });
   });
 
   describe('Destructuring', () => {
@@ -497,6 +521,16 @@ describe('Bytecode VM', () => {
     it('nested objects', () => {
       expect(evalJSWithVM('var obj = { inner: { val: 99 } }; obj.inner.val')).toBe(99);
     });
+    it('method shorthand', () => {
+      expect(evalJSWithVM('var obj = { add(a, b) { return a + b; } }; obj.add(2, 3)')).toBe(5);
+    });
+    // Getter/setter object-literal properties are a separate, pre-existing gap
+    // in the bytecode VM (OP.OBJECT_CREATE has no accessor-property concept —
+    // it always writes a plain value, so a getter closure comes back as
+    // itself instead of being invoked). That VM path is dormant for real
+    // page scripts (runJS() never enables it — see Interpreter.setUseVM),
+    // so it's out of scope here; see the tree-walking-interpreter coverage
+    // below instead, which is what real pages actually execute through.
   });
 
   describe('Member expressions', () => {
@@ -672,6 +706,60 @@ describe('Bytecode VM', () => {
   describe('String methods via VM', () => {
     it('string length', () => {
       expect(evalJSWithVM('"hello".length')).toBe(5);
+    });
+  });
+
+  describe('Lazy tokenization (matches the real runJS() page-script path)', () => {
+    it('division right after an identifier is not misread as a regex', () => {
+      // Real bug: lastTokenType was only ever updated by Lexer.tokenize()'s
+      // own loop, so the lazy `new Parser([], lexer)` path (what runJS() and
+      // therefore every real page script actually uses) never advanced it
+      // past its TokenType.EOF default — a regex-context trigger — so every
+      // `/` was read as a regex literal, division or not.
+      expect(evalJSLazy('var m = 10, n = 5, k = 2, b = true; b = b ? m / n : k; b')).toBe(2);
+    });
+    it('division after an identifier inside a larger expression', () => {
+      expect(evalJSLazy('var a = 20, b = 4; a / b + 1')).toBe(6);
+    });
+  });
+
+  describe('Object literal accessors (tree-walking interpreter only — no bytecode-compiler support)', () => {
+    it('getter is invoked, not returned as a raw closure', () => {
+      expect(evalJS('var obj = { get val() { return 42; } }; obj.val')).toBe(42);
+    });
+    it('setter is invoked on assignment', () => {
+      expect(evalJS('var log = []; var obj = { set val(v) { log.push(v); } }; obj.val = 7; log[0]')).toBe(7);
+    });
+    it('get/set pair on the same key', () => {
+      const src = 'var stored = 0; var obj = { get val() { return stored; }, set val(v) { stored = v * 2; } }; obj.val = 5; obj.val';
+      expect(evalJS(src)).toBe(10);
+    });
+  });
+
+  describe('Tagged templates (tree-walking interpreter only — no bytecode-compiler support)', () => {
+    it('plain function tag receives strings array and substitution values', () => {
+      const src = 'function tag(strings, a, b) { return strings.join("|") + ":" + a + "," + b; } tag`x${1}y${2}z`';
+      expect(evalJSLazy(src)).toBe('x|y|z:1,2');
+    });
+    it('member-expression tag preserves `this` binding', () => {
+      expect(evalJSLazy('var obj = { tag: function(s) { return s[0]; } }; obj.tag`hello`')).toBe('hello');
+    });
+    it('parenthesized comma-expression tag with an empty template (minifier idiom)', () => {
+      expect(evalJSLazy('var f = () => "F"; (0, f)``')).toBe('F');
+    });
+  });
+
+  describe('Class expressions (tree-walking interpreter only — no bytecode-compiler support)', () => {
+    it('anonymous class expression assigned to a variable', () => {
+      const src = 'var C = class { constructor(a) { this.a = a; } getVal() { return this.a; } }; new C(5).getVal()';
+      expect(evalJSLazy(src)).toBe(5);
+    });
+    it('`new class {}` — anonymous class instantiated directly (real-world singleton idiom)', () => {
+      const src = 'var o = new class { constructor() { this.ready = false; } async load() { return 1; } }; o.ready';
+      expect(evalJSLazy(src)).toBe(false);
+    });
+    it('named class declaration is unaffected', () => {
+      expect(evalJSLazy('class Named {} typeof Named')).toBe('function');
     });
   });
 

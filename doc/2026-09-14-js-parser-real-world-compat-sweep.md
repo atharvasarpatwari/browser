@@ -1,0 +1,50 @@
+# JS Engine — Six More Real-World Parser/Interpreter Gaps (Found Bisecting www.google.com)
+
+**Date:** 2026-09-14
+**Session:** Direct continuation of the `in`-operator parser-hang fix (see `2026-09-14-js-in-operator-parser-hang.md`). After that fix, `www.google.com` progressed much further but still hit real errors on real Google code. Kept bisecting each new failure point one at a time — each fix consistently let the script parse further before the next genuine gap surfaced.
+**Status:** Completed
+
+---
+
+## Summary
+Six more real, independent bugs, each found by bisecting an actual failing chunk of Google's homepage JS down to a minimal repro, fixing it, and confirming the real script advanced past that point. All are common, everyday JS patterns — none are exotic.
+
+## Root Causes
+1. **Division after certain contexts was silently read as a regex literal — but only in the JS engine's real page-script code path.** `Lexer.lastTokenType` (used by `isRegexContext()` to disambiguate `/` as division vs. a regex start) was only ever updated inside `Lexer.tokenize()`'s own loop. `Parser`'s lazy, pull-based tokenization (`new Parser([], lexer)`, calling `lexer.nextToken()` directly) — which is exactly what `runJS()` uses for every real page script — never touched `tokenize()`, so `lastTokenType` stayed stuck at its `TokenType.EOF` default forever, and `EOF` is one of the trigger cases for "treat `/` as a regex." Every division operator after a value expression (`b ? m/n : k`, `a/b`, anything) was misread as the start of a regex literal that then greedily swallowed everything up to the next unescaped `/` in the source — in Google's case, hundreds of characters of unrelated code. Fixed by moving the tracking into `nextToken()`/`readTemplatePart()` themselves (wrapped via new `scanToken()`/`scanTemplatePart()` private methods), so both the eager and lazy tokenization paths stay correct.
+2. **3+ comma-separated arrow-function parameters were rejected.** `(a, b, c) => ...` parses its parameter list as a right-nested `SequenceExpression` (`a, (b, c)`, one pairwise node per comma — see the `Comma` case in `parseInfix()`), not a flat array. `isValidArrowParams()`/`parseArrowFunctionFromParams()` only checked one level deep, so anything past the second parameter caused the whole thing to be misread as a plain parenthesized expression instead of an arrow function. Fixed with a `flattenSequence()` helper used by both.
+3. **`async function(...)` as an expression (not a statement) was silently discarded.** `parsePrefix()`'s switch had no case for `TokenType.Async`; the `default` branch consumed the token as a bogus `null` literal, and the trailing `function(...) {...}` was left to be misparsed as a separate top-level statement. `parseFunctionExpression()` already correctly handled the `async` prefix internally — it just needed a dispatch entry.
+4. **Tagged template literals (`` tag`...` ``) were entirely unimplemented.** The AST already had a `TaggedTemplateExpression` type, but the parser never produced one (a template literal token has no precedence entry, so the Pratt loop never even offered it to `parseInfix()`) and neither engine could evaluate one. Added the precedence entries, the parse case (handles both the has-substitutions and no-substitution template shapes), and `Interpreter.evalTaggedTemplate()` (calls the tag with a strings array plus substitution values, reusing the existing `callFunction()` helper).
+5. **Object-literal method shorthand (`{ foo(a, b) {...} }`) and getter/setter shorthand never actually consumed their own parameter list's parentheses.** `parseProperty()`'s method branch checked `is(LParen)` but never called `expect(LParen)`/`expect(RParen)` around `parseParams()` — parsing would immediately go off the rails and fail on the following `{`. (Class-body methods already did this correctly; only the plain object-literal path had the bug.)
+6. **Class *expressions* (`var X = class {}`, `new class {}`) were unhandled** — `parsePrefix()` only dispatched `TokenType.Class` at the statement level (`parseClassDeclaration()` for `class X {}` as a top-level declaration). Added `ClassDeclaration` to the `Expression` AST union (its shape already tolerates a missing name) and a `parsePrefix()` case reusing the same parse method. Refactored `Interpreter.execClassDecl()` into a shared `buildClassObject()` returning the constructor value, called both by the statement path (which then declares it) and a new `evalExpr()` case (which just returns it) — no duplicated class-building logic.
+
+## Bonus fix found while testing #5/#6
+**Object-literal getters/setters never invoked the accessor — they returned the raw closure.** `Interpreter.evalObject()` ignored `PropertyDefinition.kind` entirely, always writing a plain `value` property. Class methods already handled `get`/`set` correctly (`execClassDecl`'s per-method loop); `evalObject()` just needed the same treatment. Confirmed the *parser* had this right all along (both #5's fix and this gap are separable — #5 was "can't even parse `get x(){}`'s params," this is "once parsed, executing it didn't wire up the getter").
+
+## Notes
+- **The bytecode VM's object-literal accessor support remains a separate, known, pre-existing gap** — `OP.OBJECT_CREATE` has no accessor-property concept at the opcode level; a getter closure comes back as itself instead of being invoked. Confirmed **out of scope for real pages**: `runJS()` (the actual page-script execution path) never enables VM mode (`Interpreter.setUseVM()` is never called anywhere in `src/browser/`), so this only affects the bytecode-compiler test harness itself, not anything a website can hit. Documented in `tests/bytecode-vm.test.ts` rather than fixed, since fixing it means extending the bytecode format (new opcode or encoding), a materially bigger and riskier change than everything else in this doc.
+- **Two more real gaps were found but deliberately not fixed**, to keep this session's scope to "the parser," not "make one specific 1.1MB minified Google bundle fully execute": `get`/`set` used as a literal method *name* (`{ get() {...} }`, no getter — a method just named "get") isn't disambiguated from the getter syntax, and the bisection was still finding new (unrelated) errors past line 458 of the largest dumped script when it was set aside. Both are real, separately-scoped follow-ups, not silently ignored.
+- All six fixes were found by literally extracting the failing script from a real `www.google.com` load (via temporary dump-to-file instrumentation, removed afterward), bisecting to a minimal repro (down to one line in most cases), confirming the fix in isolation, then re-confirming the *original* real script advanced past that exact point — not guessed at from reading code.
+
+## Files Modified
+| File | Change |
+|------|--------|
+| `src/browser/js/lexer.ts` | `nextToken()`/`readTemplatePart()` now wrap new `scanToken()`/`scanTemplatePart()` and update `lastTokenType` on every call, fixing regex-vs-division detection on the lazy tokenization path |
+| `src/browser/js/parser.ts` | Added `flattenSequence()`; fixed `isValidArrowParams()`/`parseArrowFunctionFromParams()` to use it; added `parsePrefix()` cases for `TokenType.Async` (function expressions) and `TokenType.Class` (class expressions); added `TaggedTemplateExpression` parsing (`parseInfix()` cases for `TemplateHead`/`TemplateEnd` + precedence entries); fixed `parseProperty()`'s method/getter/setter branch to consume its own parens |
+| `src/browser/js/ast.ts` | Added `ClassDeclaration` to the `Expression` union (reused, not duplicated — see inline comment) |
+| `src/browser/js/interpreter.ts` | Added `evalTaggedTemplate()`; refactored `execClassDecl()` into `buildClassObject()` (returns the constructor value) + a thin statement wrapper, with a new `evalExpr()` case for class expressions; fixed `evalObject()` to wire up `get`/`set` accessors instead of ignoring `kind` |
+| `tests/bytecode-vm.test.ts` | Added `evalJSLazy()` (mirrors `runJS()`'s real lazy-tokenization invocation — `evalJS()`/`evalJSWithVM()` both eagerly `tokenize()` and would never have caught bug #1); 14 new tests across arrow params, async function expressions, tagged templates, class expressions, object-literal accessors, and lazy-path division |
+
+## Test Results
+```
+npx tsc --noEmit -p .                                            → 0 errors (repo-wide)
+npx vitest run                                                    → 222 files / 9248 tests passed (9234 baseline + 14 new)
+npx playwright test --config=playwright-electron.config.cjs       → 4/4 passed (one transient resource-contention
+                                                                     flake on fidelity-audit.spec.ts, confirmed clean
+                                                                     on immediate rerun alone and rerun of the full suite)
+```
+
+## Verification Steps
+1. For each of the six bugs: extracted the actual failing script from a live `www.google.com` load (temporary instrumentation dumping blocking/defer script sources to disk on error), bisected the dump to a minimal one-line-or-few-line repro run through the parser/interpreter directly via `tsx`, confirmed the failure, applied the fix, confirmed the repro now works.
+2. After each fix, re-ran the *original* dumped script (tens of KB to over 1MB) and confirmed it parsed further than before — never just the isolated repro.
+3. Added regression tests using a new `evalJSLazy()` helper for anything specific to the lazy tokenization path (the lexer fix) or requiring the tree-walking interpreter specifically (tagged templates, class expressions, object accessors — none of which the bytecode compiler/VM implements), rather than the file's existing `evalJSWithVM()` helper, which would not have exercised the actual bug in either case.
+4. Ran the full unit suite and full Electron e2e suite (including the real-page-rendering fidelity audit) — all green, one confirmed-flaky e2e rerun unrelated to these changes.

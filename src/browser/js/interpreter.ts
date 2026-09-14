@@ -398,6 +398,12 @@ export class Interpreter {
   }
 
   private execClassDecl(stmt: AST.ClassDeclaration, env: Environment): void {
+    const classObj = this.buildClassObject(stmt, env);
+    if (stmt.id) env.declare(stmt.id.name, classObj, 'var');
+  }
+
+  /** Shared by execClassDecl() (class as a statement) and evalExpr()'s ClassDeclaration case (class as an expression, e.g. `var x = class {}`). */
+  private buildClassObject(stmt: AST.ClassDeclaration, env: Environment): JSObject {
     const className = stmt.id?.name ?? '';
     const classProto = createObject(null);
 
@@ -478,7 +484,7 @@ export class Interpreter {
       classProto.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: false, configurable: true });
     }
 
-    env.declare(className, classObj, 'var');
+    return classObj;
   }
 
   private execReturn(stmt: AST.ReturnStatement, env: Environment): ReturnSignal {
@@ -706,6 +712,8 @@ export class Interpreter {
       case 'ArrowFunctionExpression': return this.evalArrowFunction(expr, env);
       case 'SequenceExpression': return this.evalSequence(expr, env);
       case 'TemplateLiteral': return this.evalTemplateLiteral(expr, env);
+      case 'TaggedTemplateExpression': return this.evalTaggedTemplate(expr, env);
+      case 'ClassDeclaration': return this.buildClassObject(expr, env);
       case 'AwaitExpression': return this.evalAwait(expr, env);
       case 'YieldExpression': return this.evalYield(expr, env);
       default: return undefined;
@@ -729,6 +737,35 @@ export class Interpreter {
       }
     }
     return result;
+  }
+
+  /**
+   * tag`a${b}c` — call tag(stringsArray, ...substitutionValues), where
+   * stringsArray is the cooked quasi strings plus a non-enumerable .raw
+   * array. ponytail: .raw reuses the same (already-escape-processed) quasi
+   * text as the cooked strings — this engine's lexer doesn't separately
+   * track each template segment's raw source text, so String.raw-style
+   * tags get cooked strings instead of the true raw ones. Upgrade if a
+   * caller actually needs raw vs. cooked to differ.
+   */
+  private evalTaggedTemplate(expr: AST.TaggedTemplateExpression, env: Environment): JSValue {
+    let thisObj: JSValue = undefined;
+    let callee: JSValue;
+    if (expr.tag.type === 'MemberExpression') {
+      thisObj = this.evalExpr(expr.tag.object, env);
+      const key = expr.tag.computed ? String(this.evalExpr(expr.tag.property, env)) : (expr.tag.property as AST.Identifier).name;
+      callee = this.getPropertyValue(thisObj, key);
+    } else {
+      callee = this.evalExpr(expr.tag, env);
+    }
+    if (typeof callee !== 'object' || callee === null) {
+      throw new TypeError(`${expr.tag.type === 'Identifier' ? expr.tag.name : 'tag'} is not a function`);
+    }
+    const cooked = expr.quasi.quasis.map((q) => q.value);
+    const strings = createArray(cooked);
+    strings.properties.set('raw', { value: createArray(cooked), writable: false, enumerable: false, configurable: false });
+    const substitutions = expr.quasi.expressions.map((e) => this.evalExpr(e, env));
+    return this.callFunction(callee as JSFunction, thisObj, [strings, ...substitutions]);
   }
 
   private evalIdentifier(expr: AST.Identifier, env: Environment): JSValue {
@@ -1418,6 +1455,17 @@ export class Interpreter {
       const key = prop.computed
         ? String(this.evalExpr(prop.key, env))
         : prop.key.type === 'Identifier' ? prop.key.name : String(prop.key);
+      if (prop.kind === 'get' || prop.kind === 'set') {
+        const fn = prop.value ? this.evalExpr(prop.value, env) as JSFunction : undefined;
+        const existing = obj.properties.get(key);
+        obj.properties.set(key, {
+          value: undefined, writable: false,
+          getter: prop.kind === 'get' ? fn : existing?.getter,
+          setter: prop.kind === 'set' ? fn : existing?.setter,
+          enumerable: true, configurable: true,
+        });
+        continue;
+      }
       const value = prop.value ? this.evalExpr(prop.value, env) : undefined;
       obj.properties.set(key, { value, writable: true, enumerable: true, configurable: true });
     }

@@ -52,7 +52,24 @@ export class Lexer {
     return tokens;
   }
 
+  /**
+   * Produces the next token, tracking `lastTokenType` for regex-vs-division
+   * disambiguation (isRegexContext()). This must wrap every call site that
+   * advances the token stream — tokenize()'s own loop used to be the only
+   * place updating lastTokenType, which left it permanently stuck at its
+   * TokenType.EOF default (a regex-context trigger) for the Parser's lazy,
+   * pull-based tokenization (`new Parser([], lexer)`, used for every real
+   * page script): every `/` was read as a regex literal, division or not.
+   */
   nextToken(): Token {
+    const tok = this.scanToken();
+    if (tok.type !== TokenType.Whitespace && tok.type !== TokenType.Comment) {
+      this.lastTokenType = tok.type;
+    }
+    return tok;
+  }
+
+  private scanToken(): Token {
     this.skipWhitespace();
     if (this.pos >= this.source.length) {
       return this.makeToken(TokenType.EOF, '', this.line, this.column);
@@ -325,7 +342,14 @@ export class Lexer {
     return this.makeToken(TokenType.TemplateEnd, this.source.slice(start, this.pos), line, col);
   }
 
+  /** Wraps scanTemplatePart() to keep lastTokenType current — see nextToken(). */
   readTemplatePart(line: number, col: number): Token {
+    const tok = this.scanTemplatePart(line, col);
+    this.lastTokenType = tok.type;
+    return tok;
+  }
+
+  private scanTemplatePart(line: number, col: number): Token {
     const start = this.pos;
     while (this.pos < this.source.length) {
       const ch = this.source[this.pos]!;
