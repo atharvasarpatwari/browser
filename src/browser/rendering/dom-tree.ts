@@ -1,7 +1,7 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { HtmlDocument, HtmlElement, HtmlNode } from './html-parser';
-import { NodeType } from './html-parser';
-import { querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll, type SelectableElement } from './css5/selector';
+import { NodeType, HtmlParser } from './html-parser';
+import { querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll, matchesSelectorString, type SelectableElement } from './css5/selector';
 import { CssParser as Css5Parser } from './css5/parser';
 
 type DomNodeType = 'document' | 'element' | 'text' | 'comment';
@@ -148,8 +148,11 @@ interface IDomTree extends IDisposable {
   getElementById(id: string): DomElement | null;
   getElementsByTagName(tagName: string): readonly DomElement[];
   getElementsByClassName(names: string): readonly DomElement[];
-  querySelector(selector: string): DomElement | null;
-  querySelectorAll(selector: string): readonly DomElement[];
+  querySelector(selector: string, scopeRoot?: DomElement): DomElement | null;
+  querySelectorAll(selector: string, scopeRoot?: DomElement): readonly DomElement[];
+  matches(element: DomElement, selector: string): boolean;
+  /** Parse an HTML fragment (e.g. for innerHTML) into detached nodes, ready to appendChild/insertBefore. */
+  parseFragment(html: string): DomNode[];
   insertBefore(parent: DomElement, newChild: DomNode, referenceChild: DomNode | null): void;
   appendChild(parent: DomElement, child: DomNode): void;
   removeChild(parent: DomElement, child: DomNode): void;
@@ -293,7 +296,12 @@ class DomTree implements IDomTree {
     return result;
   }
 
-  querySelector(selector: string): DomElement | null {
+  querySelector(selector: string, scopeRoot?: DomElement): DomElement | null {
+    // Element.querySelector excludes the scope element itself, unlike
+    // Document.querySelector which legitimately matches the document root —
+    // route through querySelectorAll's exclusion so a root-selector match
+    // doesn't short-circuit the search before its descendants are checked.
+    if (scopeRoot) return this.querySelectorAll(selector, scopeRoot)[0] ?? null;
     const root = this.document?.bodyElement ?? this.document?.htmlElement;
     if (!root) return null;
     const selectable = this.toSelectable(root);
@@ -301,14 +309,34 @@ class DomTree implements IDomTree {
     return result instanceof SelectableDomNode ? result.domElement : null;
   }
 
-  querySelectorAll(selector: string): readonly DomElement[] {
-    const root = this.document?.bodyElement ?? this.document?.htmlElement;
+  querySelectorAll(selector: string, scopeRoot?: DomElement): readonly DomElement[] {
+    const root = scopeRoot ?? this.document?.bodyElement ?? this.document?.htmlElement;
     if (!root) return [];
     const selectable = this.toSelectable(root);
     const results = css5QuerySelectorAll(selectable, selector);
     return results
       .map(r => r instanceof SelectableDomNode ? r.domElement : null)
-      .filter((e): e is DomElement => e !== null);
+      .filter((e): e is DomElement => e !== null && e !== scopeRoot);
+  }
+
+  matches(element: DomElement, selector: string): boolean {
+    return matchesSelectorString(this.toSelectable(element), selector);
+  }
+
+  parseFragment(html: string): DomNode[] {
+    // A fragment is parsed as its own tiny document, then only its body's
+    // children are lifted out — same "parse in a body context" model real
+    // engines use for innerHTML, so `<tr>`/`<td>`-only fragments and stray
+    // text nodes come out the same shape a real page would produce.
+    const result = new HtmlParser().parse(html);
+    const bodyHtml = result.document.bodyElement;
+    if (!bodyHtml) return [];
+    const nodes: DomNode[] = [];
+    for (const child of bodyHtml.children) {
+      const converted = this.convertNode(child, null);
+      if (converted) nodes.push(converted);
+    }
+    return nodes;
   }
 
   toSelectable(element: DomElement): SelectableDomNode {

@@ -42,6 +42,8 @@ function createMockDomTree(): IDomTree {
     getElementsByClassName: vi.fn().mockReturnValue([]),
     querySelector: vi.fn(),
     querySelectorAll: vi.fn().mockReturnValue([]),
+    matches: vi.fn().mockReturnValue(false),
+    parseFragment: vi.fn().mockReturnValue([]),
     insertBefore: vi.fn(),
     appendChild: vi.fn(),
     removeChild: vi.fn(),

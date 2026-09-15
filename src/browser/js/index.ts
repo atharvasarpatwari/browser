@@ -4,7 +4,7 @@ import type { INavigationController } from '../navigation/navigation-controller'
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
-import { createDocumentBinding, wrapElement } from './dom-bindings';
+import { createDocumentBinding, wrapElement, createEventObject } from './dom-bindings';
 import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
@@ -206,7 +206,8 @@ export function createGlobalEnv(
     }
     return undefined;
   };
-  const jsonStrify = (val: JSValue): string | undefined => {
+  const jsonStrify = (val: JSValue, replacerFn?: JSFunction, holder?: JSValue, key = ''): string | undefined => {
+    if (replacerFn) val = callJSFunction(replacerFn, holder, [key, val]);
     if (val === undefined || typeof val === 'function') return undefined;
     if (val === null) return 'null';
     if (typeof val === 'boolean') return val ? 'true' : 'false';
@@ -223,15 +224,15 @@ export function createGlobalEnv(
         const elems: string[] = [];
         for (let i = 0; i < len; i++) {
           const v = obj.properties.get(String(i))?.value;
-          elems.push(jsonStrify(v) ?? 'null');
+          elems.push(jsonStrify(v, replacerFn, obj, String(i)) ?? 'null');
         }
         return `[${elems.join(',')}]`;
       }
       const pairs: string[] = [];
       for (const [k, desc] of obj.properties) {
-        const v = desc.value;
-        if (v === undefined || typeof v === 'function') continue;
-        pairs.push(`"${k}":${jsonStrify(v) ?? 'null'}`);
+        const v = jsonStrify(desc.value, replacerFn, obj, k);
+        if (v === undefined) continue;
+        pairs.push(`"${k}":${v}`);
       }
       return `{${pairs.join(',')}}`;
     }
@@ -252,7 +253,11 @@ export function createGlobalEnv(
   jsonObj.properties.set('stringify', {
     value: createNativeFunction('stringify', (_this, args) => {
       const val = args[0];
-      const result = jsonStrify(val);
+      const replacer = args[1];
+      const replacerFn = typeof replacer === 'object' && replacer !== null && (replacer as JSFunction).type === 'closure' ? replacer as JSFunction : undefined;
+      const wrapper = createObject(null);
+      wrapper.properties.set('', { value: val, writable: true, enumerable: true, configurable: true });
+      const result = jsonStrify(val, replacerFn, wrapper, '');
       return result === undefined ? undefined : result;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -261,7 +266,32 @@ export function createGlobalEnv(
 
   // Constructors
   env.setLocal('String', createNativeFunction('String', (_this, args) => args.length > 0 ? toString(args[0]) : ''));
-  env.setLocal('Number', createNativeFunction('Number', (_this, args) => args.length > 0 ? toNumber(args[0]) : 0));
+  env.setLocal('Number', (() => {
+    const numCtorObj = createObject(null);
+    numCtorObj.type = 'function';
+    numCtorObj.callable = true;
+    numCtorObj.nativeFn = (_this: unknown, args: unknown[]) => (args as JSValue[]).length > 0 ? toNumber((args as JSValue[])[0]) : 0;
+    const numStaticFns: Record<string, NativeFunction> = {
+      isInteger: (_t, a) => typeof a[0] === 'number' && Number.isInteger(a[0]),
+      isFinite: (_t, a) => typeof a[0] === 'number' && Number.isFinite(a[0]),
+      isNaN: (_t, a) => typeof a[0] === 'number' && Number.isNaN(a[0]),
+      isSafeInteger: (_t, a) => typeof a[0] === 'number' && Number.isSafeInteger(a[0]),
+      parseFloat: (_t, a) => parseFloat(toString(a[0])),
+      parseInt: (_t, a) => parseInt(toString(a[0]), a[1] !== undefined ? toNumber(a[1]) : 10),
+    };
+    for (const [name, fn] of Object.entries(numStaticFns)) {
+      numCtorObj.properties.set(name, { value: createNativeFunction(name, fn), writable: true, enumerable: false, configurable: true });
+    }
+    const numStaticConsts: Record<string, number> = {
+      EPSILON: Number.EPSILON, MAX_SAFE_INTEGER: Number.MAX_SAFE_INTEGER, MIN_SAFE_INTEGER: Number.MIN_SAFE_INTEGER,
+      MAX_VALUE: Number.MAX_VALUE, MIN_VALUE: Number.MIN_VALUE,
+      POSITIVE_INFINITY: Infinity, NEGATIVE_INFINITY: -Infinity, NaN: NaN,
+    };
+    for (const [name, val] of Object.entries(numStaticConsts)) {
+      numCtorObj.properties.set(name, { value: val, writable: false, enumerable: false, configurable: false });
+    }
+    return numCtorObj;
+  })());
   env.setLocal('Boolean', createNativeFunction('Boolean', (_this, args) => args.length > 0 ? toBoolean(args[0]) : false));
   env.setLocal('Array', createNativeFunction('Array', (_this, args) => createArray(args)));
 
@@ -312,6 +342,27 @@ export function createGlobalEnv(
         if (desc.enumerable) entries.push(createArray([k, desc.value]));
       }
       return createArray(entries);
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectCtorObj.properties.set('fromEntries', {
+    value: createNativeFunction('fromEntries', (_this, args) => {
+      const result = createObject(null);
+      const source = args[0];
+      if (typeof source !== 'object' || source === null) return result;
+      const srcObj = source as JSObject;
+      const len = srcObj.type === 'array' ? Number(srcObj.properties.get('length')?.value ?? 0) : srcObj.properties.size;
+      const pairs: JSValue[] = srcObj.type === 'array'
+        ? Array.from({ length: len }, (_, i) => srcObj.properties.get(String(i))?.value)
+        : [...srcObj.properties.values()].map(d => d.value);
+      for (const pair of pairs) {
+        if (typeof pair !== 'object' || pair === null) continue;
+        const pairObj = pair as JSObject;
+        const key = toString(pairObj.properties.get('0')?.value);
+        const value = pairObj.properties.get('1')?.value;
+        result.properties.set(key, { value, writable: true, enumerable: true, configurable: true });
+      }
+      return result;
     }),
     writable: true, enumerable: false, configurable: true,
   });
@@ -426,10 +477,11 @@ export function createGlobalEnv(
   for (const name of ['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError']) {
     env.setLocal(name, createNativeFunction(name, (_this, args) => {
       const msg = args.length > 0 ? toString(args[0]) : '';
-      const err = createObject(null);
+      const err = createObject(null) as JSObject & { __type_override?: string };
       err.properties.set('message', { value: msg, writable: true, enumerable: true, configurable: true });
       err.properties.set('name', { value: name, writable: true, enumerable: true, configurable: true });
-      err.properties.set('stack', { value: '', writable: true, enumerable: true, configurable: true });
+      err.properties.set('stack', { value: msg ? `${name}: ${msg}` : name, writable: true, enumerable: true, configurable: true });
+      err.__type_override = 'error';
       return err;
     }));
   }
@@ -1687,6 +1739,30 @@ export function createGlobalEnv(
   // DOM binding
   const docBinding = createDocumentBinding(doc, domTree);
   env.setLocal('document', docBinding);
+
+  // Event / MouseEvent / CustomEvent constructors — dispatchEvent()/
+  // addEventListener() were fully implemented but nothing could ever
+  // construct an event to hand them: `new Event(...)` resolved to no
+  // global at all, so every dispatch silently carried type: undefined
+  // and matched no listener.
+  const eventInit = (options: JSValue): { bubbles?: boolean; cancelable?: boolean; composed?: boolean } => {
+    if (typeof options !== 'object' || options === null) return {};
+    const o = options as JSObject;
+    return {
+      bubbles: toBoolean(o.properties.get('bubbles')?.value ?? false),
+      cancelable: toBoolean(o.properties.get('cancelable')?.value ?? false),
+      composed: toBoolean(o.properties.get('composed')?.value ?? false),
+    };
+  };
+  env.setLocal('Event', createNativeFunction('Event', (_this, args) => createEventObject(toString(args[0]), undefined, eventInit(args[1]))));
+  env.setLocal('MouseEvent', createNativeFunction('MouseEvent', (_this, args) => createEventObject(toString(args[0]), undefined, eventInit(args[1]))));
+  env.setLocal('KeyboardEvent', createNativeFunction('KeyboardEvent', (_this, args) => createEventObject(toString(args[0]), undefined, eventInit(args[1]))));
+  env.setLocal('CustomEvent', createNativeFunction('CustomEvent', (_this, args) => {
+    const evt = createEventObject(toString(args[0]), undefined, eventInit(args[1]));
+    const detail = typeof args[1] === 'object' && args[1] !== null ? (args[1] as JSObject).properties.get('detail')?.value : undefined;
+    evt.properties.set('detail', { value: detail, writable: false, enumerable: true, configurable: false });
+    return evt;
+  }));
 
   // document.write() / document.open() — requires an HtmlParser
   if (htmlParser) {

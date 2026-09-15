@@ -410,6 +410,16 @@ export function querySelectorAll(root: SelectableElement, selector: string): Sel
 }
 
 /**
+ * Check whether a single element (not its descendants) matches a selector
+ * string — the engine behind Element.matches()/.closest().
+ */
+export function matchesSelectorString(element: SelectableElement, selector: string): boolean {
+  const parsed = parseSelectorString(selector);
+  if (!parsed) return false;
+  return matchesSelectorList(element, parsed);
+}
+
+/**
  * Parse a CSS selector string into CssSelector[].
  * Delegates to the parser module's parseSelector.
  */

@@ -6,7 +6,7 @@ import {
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
-  setGlobalCaller, callJSFunction, JSError,
+  setGlobalCaller, callJSFunction, JSError, isJSObjectWithMeta,
 } from './values';
 import { GarbageCollector, getGC } from './gc';
 import { createPromiseConstructor, wrapAsyncResult, isPromiseObject, isPromiseFulfilled, isPromiseRejected, isPromisePending, getPromiseResult, createPromiseObj, fulfillPromise, rejectPromise } from './promise';
@@ -22,6 +22,54 @@ import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERPRETER — Tree-walking evaluator
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Internal validation errors (bad member access, illegal `super()`, CSP
+// rejections, etc.) must be raised as JSError-wrapped values, not native
+// TS Error instances — a native throw here unwinds straight past every
+// sandboxed try/catch (execTry only recognizes JSError) and silently kills
+// the rest of the running script.
+function jsError(name: string, message: string): JSError {
+  const err = createObject(null) as JSObject & { __type_override?: string };
+  err.properties.set('message', { value: message, writable: true, enumerable: true, configurable: true });
+  err.properties.set('name', { value: name, writable: true, enumerable: true, configurable: true });
+  err.properties.set('stack', { value: `${name}: ${message}`, writable: true, enumerable: true, configurable: true });
+  err.__type_override = 'error';
+  return new JSError(err);
+}
+
+// A match/search/replace pattern argument may be a real regex object
+// (built from a regex literal or `new RegExp(...)`, carrying a native
+// RegExp on .nativeRegExp) or a plain string pattern.
+function toNativeRegex(pattern: JSValue, forceFlags = ''): RegExp {
+  if (typeof pattern === 'object' && pattern !== null && isJSObjectWithMeta(pattern) && pattern.nativeRegExp) {
+    const re = pattern.nativeRegExp;
+    const flags = [...new Set((re.flags + forceFlags).split(''))].join('');
+    return flags === re.flags ? re : new RegExp(re.source, flags);
+  }
+  return new RegExp(toString(pattern), forceFlags);
+}
+
+// String.prototype.replace/replaceAll: the search pattern may be a real
+// regex object (nativeRegExp) or a plain string, and the replacement may be
+// a callable JSFunction (bridged into a native replacer) or a plain string.
+function stringReplaceImpl(str: string, pattern: JSValue, replacement: JSValue, all: boolean): string {
+  let nativePattern: string | RegExp = toString(pattern);
+  if (typeof pattern === 'object' && pattern !== null && isJSObjectWithMeta(pattern) && pattern.nativeRegExp) {
+    nativePattern = pattern.nativeRegExp;
+    if (all && !nativePattern.flags.includes('g')) {
+      nativePattern = new RegExp(nativePattern.source, nativePattern.flags + 'g');
+    }
+  }
+  const isFn = typeof replacement === 'object' && replacement !== null && (replacement as JSFunction).type === 'closure';
+  const replacer = isFn
+    ? (...args: unknown[]) => toString(callJSFunction(replacement as JSFunction, undefined, args as JSValue[]))
+    : toString(replacement ?? '');
+  if (all && typeof nativePattern === 'string') {
+    return str.split(nativePattern).join(typeof replacer === 'string' ? replacer : '');
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (str as any).replace(nativePattern, replacer);
+}
 
 export class Interpreter {
   private globalEnv: Environment;
@@ -133,7 +181,7 @@ export class Interpreter {
         return result;
       } catch (err) {
         if (err instanceof JSError) throw err;
-        throw new JSError(err instanceof Error ? err.message : String(err));
+        throw jsError(err instanceof Error ? err.name : 'Error', err instanceof Error ? err.message : String(err));
       }
     }
     // Bytecode function — use VM if enabled
@@ -686,7 +734,7 @@ export class Interpreter {
 
   private evalExpr(expr: AST.Expression, env: Environment): JSValue {
     switch (expr.type) {
-      case 'Literal': return this.evalLiteral(expr);
+      case 'Literal': return this.evalLiteral(expr, env);
       case 'Identifier': return this.evalIdentifier(expr, env);
       case 'ThisExpression': return env.get('this') ?? undefined;
       case 'SuperExpression': {
@@ -720,8 +768,16 @@ export class Interpreter {
     }
   }
 
-  private evalLiteral(expr: AST.Literal): JSValue {
-    if (expr.value && typeof expr.value === 'object' && 'type' in expr.value) {
+  private evalLiteral(expr: AST.Literal, env: Environment): JSValue {
+    if (expr.value && typeof expr.value === 'object' && 'type' in expr.value && expr.value.type === 'RegExp') {
+      // A regex literal (/pattern/flags) must produce a real RegExp object —
+      // not its own source text — so .exec()/.test()/named groups etc. work.
+      // Route through the global RegExp constructor's own nativeFn so the
+      // literal gets the exact same object shape `new RegExp(...)` builds.
+      const regExpCtor = env.get('RegExp');
+      if (typeof regExpCtor === 'object' && regExpCtor !== null && 'nativeFn' in regExpCtor && (regExpCtor as JSObject).nativeFn) {
+        return (regExpCtor as JSObject).nativeFn!(undefined, [expr.value.pattern, expr.value.flags]) as JSValue;
+      }
       return expr.raw;
     }
     return expr.value as JSValue;
@@ -759,7 +815,7 @@ export class Interpreter {
       callee = this.evalExpr(expr.tag, env);
     }
     if (typeof callee !== 'object' || callee === null) {
-      throw new TypeError(`${expr.tag.type === 'Identifier' ? expr.tag.name : 'tag'} is not a function`);
+      throw jsError('TypeError', `${expr.tag.type === 'Identifier' ? expr.tag.name : 'tag'} is not a function`);
     }
     const cooked = expr.quasi.quasis.map((q) => q.value);
     const strings = createArray(cooked);
@@ -1010,7 +1066,7 @@ export class Interpreter {
         }
         return thisObj ?? createObject(null);
       }
-      throw new TypeError('super() called outside of a derived class constructor');
+      throw jsError('TypeError', 'super() called outside of a derived class constructor');
     }
 
     // Evaluate callee and cache the member object to avoid double-evaluation
@@ -1030,7 +1086,8 @@ export class Interpreter {
         thisObj = this.evalExpr(expr.callee.object, env);
         if (thisObj === undefined || thisObj === null) {
           if (expr.callee.optional) return undefined;
-          throw new TypeError(`Cannot read properties of ${thisObj}`);
+          const propName = !expr.callee.computed ? (expr.callee.property as AST.Identifier).name : undefined;
+          throw jsError('TypeError', `Cannot read properties of ${thisObj}${propName ? ` (reading '${propName}')` : ''}`);
         }
         const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
         callee = this.getPropertyValue(thisObj, key);
@@ -1068,7 +1125,7 @@ export class Interpreter {
           return result;
         } catch (err) {
           if (err instanceof JSError) throw err;
-          throw new JSError(err instanceof Error ? err.message : String(err));
+          throw jsError(err instanceof Error ? err.name : 'Error', err instanceof Error ? err.message : String(err));
         }
       }
       if (fn.type === 'closure' && !fn.isNative) {
@@ -1208,7 +1265,8 @@ export class Interpreter {
     const obj = this.evalExpr(expr.object, env);
     if (obj === undefined || obj === null) {
       if (expr.optional) return undefined;
-      throw new TypeError(`Cannot read properties of ${obj}`);
+      const propName = !expr.computed ? (expr.property as AST.Identifier).name : undefined;
+      throw jsError('TypeError', `Cannot read properties of ${obj}${propName ? ` (reading '${propName}')` : ''}`);
     }
     if (typeof obj === 'string') {
       const key = expr.computed ? String(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;
@@ -1220,17 +1278,27 @@ export class Interpreter {
         toLowerCase: (_t, _a) => (obj as string).toLowerCase(),
         charAt: (_t, a) => (obj as string).charAt(toNumber(a[0])),
         charCodeAt: (_t, a) => (obj as string).charCodeAt(toNumber(a[0])),
+        at: (_t, a) => {
+          const s = obj as string;
+          let i = toNumber(a[0]);
+          if (i < 0) i += s.length;
+          return i >= 0 && i < s.length ? s[i] : undefined;
+        },
         indexOf: (_t, a) => (obj as string).indexOf(toString(a[0])),
         lastIndexOf: (_t, a) => (obj as string).lastIndexOf(toString(a[0])),
         slice: (_t, a) => (obj as string).slice(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         substring: (_t, a) => (obj as string).substring(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         split: (_t, a) => {
-          const sep = a[0] !== undefined ? toString(a[0]) : undefined;
-          const parts = sep !== undefined ? (obj as string).split(sep) : [obj as string];
+          if (a[0] === undefined) return createArray([obj as string]);
+          const pattern = a[0];
+          const parts = typeof pattern === 'object' && pattern !== null && isJSObjectWithMeta(pattern) && pattern.nativeRegExp
+            ? (obj as string).split(pattern.nativeRegExp)
+            : (obj as string).split(toString(pattern));
           return createArray(parts.map(p => p as unknown as JSValue));
         },
-        replace: (_t, a) => (obj as string).replace(toString(a[0]), toString(a[1] ?? '')),
+        replace: (_t, a) => stringReplaceImpl(obj as string, a[0], a[1], false),
+        replaceAll: (_t, a) => stringReplaceImpl(obj as string, a[0], a[1], true),
         trim: (_t, _a) => (obj as string).trim(),
         trimStart: (_t, _a) => (obj as string).trimStart(),
         trimEnd: (_t, _a) => (obj as string).trimEnd(),
@@ -1242,10 +1310,19 @@ export class Interpreter {
         padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
         padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
         match: (_t, a) => {
-          const m = (obj as string).match(new RegExp(toString(a[0])));
+          const m = (obj as string).match(toNativeRegex(a[0]));
           return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
         },
-        search: (_t, a) => (obj as string).search(new RegExp(toString(a[0]))),
+        matchAll: (_t, a) => {
+          const matches = [...(obj as string).matchAll(toNativeRegex(a[0], 'g'))];
+          return createArray(matches.map(m => {
+            const result = createArray(m.map(v => (v !== undefined ? v : null) as unknown as JSValue));
+            result.properties.set('index', { value: m.index, writable: true, enumerable: true, configurable: true });
+            result.properties.set('input', { value: m.input, writable: true, enumerable: true, configurable: true });
+            return result as unknown as JSValue;
+          }));
+        },
+        search: (_t, a) => (obj as string).search(toNativeRegex(a[0])),
         valueOf: (_t: JSValue, _a: JSValue[]) => obj,
         toString: (_t: JSValue, _a: JSValue[]) => obj,
       };
@@ -1315,17 +1392,27 @@ export class Interpreter {
         toLowerCase: (_t, _a) => (obj as string).toLowerCase(),
         charAt: (_t, a) => (obj as string).charAt(toNumber(a[0])),
         charCodeAt: (_t, a) => (obj as string).charCodeAt(toNumber(a[0])),
+        at: (_t, a) => {
+          const s = obj as string;
+          let i = toNumber(a[0]);
+          if (i < 0) i += s.length;
+          return i >= 0 && i < s.length ? s[i] : undefined;
+        },
         indexOf: (_t, a) => (obj as string).indexOf(toString(a[0])),
         lastIndexOf: (_t, a) => (obj as string).lastIndexOf(toString(a[0])),
         slice: (_t, a) => (obj as string).slice(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         substring: (_t, a) => (obj as string).substring(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         split: (_t, a) => {
-          const sep = a[0] !== undefined ? toString(a[0]) : undefined;
-          const parts = sep !== undefined ? (obj as string).split(sep) : [obj as string];
+          if (a[0] === undefined) return createArray([obj as string]);
+          const pattern = a[0];
+          const parts = typeof pattern === 'object' && pattern !== null && isJSObjectWithMeta(pattern) && pattern.nativeRegExp
+            ? (obj as string).split(pattern.nativeRegExp)
+            : (obj as string).split(toString(pattern));
           return createArray(parts.map(p => p as unknown as JSValue));
         },
-        replace: (_t, a) => (obj as string).replace(toString(a[0]), toString(a[1] ?? '')),
+        replace: (_t, a) => stringReplaceImpl(obj as string, a[0], a[1], false),
+        replaceAll: (_t, a) => stringReplaceImpl(obj as string, a[0], a[1], true),
         trim: (_t, _a) => (obj as string).trim(),
         trimStart: (_t, _a) => (obj as string).trimStart(),
         trimEnd: (_t, _a) => (obj as string).trimEnd(),
@@ -1337,9 +1424,19 @@ export class Interpreter {
         padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
         padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
         match: (_t, a) => {
-          const m = (obj as string).match(new RegExp(toString(a[0])));
+          const m = (obj as string).match(toNativeRegex(a[0]));
           return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
         },
+        matchAll: (_t, a) => {
+          const matches = [...(obj as string).matchAll(toNativeRegex(a[0], 'g'))];
+          return createArray(matches.map(m => {
+            const result = createArray(m.map(v => (v !== undefined ? v : null) as unknown as JSValue));
+            result.properties.set('index', { value: m.index, writable: true, enumerable: true, configurable: true });
+            result.properties.set('input', { value: m.input, writable: true, enumerable: true, configurable: true });
+            return result as unknown as JSValue;
+          }));
+        },
+        search: (_t, a) => (obj as string).search(toNativeRegex(a[0])),
         valueOf: (_t: JSValue, _a: JSValue[]) => obj,
         toString: (_t: JSValue, _a: JSValue[]) => obj,
       };
@@ -1401,7 +1498,7 @@ export class Interpreter {
         if (key in symMethods) return createNativeFunction(key, symMethods[key]);
         return undefined;
       }
-      const desc = o.properties.get(key);
+      const desc = o.properties?.get(key);
       if (desc) {
         if (desc.getter) return callJSFunction(desc.getter, obj, []);
         return desc.value;

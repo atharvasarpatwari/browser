@@ -15,6 +15,8 @@ import type { CanvasPattern } from '../rendering/canvas/canvas-pattern';
 import { Path2D } from '../rendering/canvas/canvas-path';
 import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../security/blocked-url-schemes';
 import { offerElementForUpgrade, notifyConnectedTree, notifyDisconnectedTree, notifyAttributeChanged } from './custom-elements';
+import { getAllPropertyDefinitions } from '../rendering/css5/property-definitions';
+import { expandShorthands } from '../rendering/css5/cascade';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DOM BINDINGS — Bridges the JS interpreter to the Nova DOM tree
@@ -32,6 +34,204 @@ interface DomEventFlags {
 
 function isClosure(v: JSValue): v is JSFunction {
   return typeof v === 'object' && v !== null && 'type' in v && (v as JSFunction).type === 'closure';
+}
+
+// ── element.style live binding ──────────────────────────────────────────────
+// `element.style` used to be a one-time snapshot: a plain object populated
+// from computedStyle at wrap time, with no connection back to the DOM. Reading
+// it looked right, but `el.style.background = 'red'` was a dead end — it set
+// a property on that disconnected object and nothing else, so no real page's
+// runtime style changes (toggling visibility, JS-driven color/layout changes,
+// etc.) ever took visible effect. Fixed by making every property a live
+// getter/setter: the getter reads the element's current computed value, and
+// the setter writes through to the actual inline `style` attribute (so the
+// next cascade recompute — e.g. after all scripts finish — sees it) and also
+// updates computedStyle directly so layout/paint for *this* frame and any
+// synchronous read-after-write in the same script see the change immediately.
+
+function cssPropToJs(prop: string): string {
+  return prop.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
+function jsPropToCss(prop: string): string {
+  if (prop === 'cssFloat') return 'float';
+  return prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+}
+
+function parseStyleAttrText(text: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const part of text.split(';')) {
+    const i = part.indexOf(':');
+    if (i === -1) continue;
+    const k = part.slice(0, i).trim().toLowerCase();
+    const v = part.slice(i + 1).trim();
+    if (k && v) map.set(k, v);
+  }
+  return map;
+}
+
+function serializeStyleAttrText(map: Map<string, string>): string {
+  return Array.from(map.entries()).map(([k, v]) => `${k}: ${v}`).join('; ');
+}
+
+// Shorthands aren't in the property registry (they're not real computed-style
+// keys — `background` expands to `background-color`/`background-image`/etc.),
+// so they need their own entries in the style object and their own expansion
+// on write, matching what the cascade already does for inline declarations.
+const STYLE_SHORTHAND_PROPS = new Set([
+  'margin', 'padding', 'border', 'border-width', 'border-style', 'border-color',
+  'border-radius', 'background', 'font', 'list-style', 'animation', 'overflow',
+]);
+
+/** Writes one CSS property through to the element's real `style` attribute and computedStyle. */
+function setElementStyleProperty(el: DomElement, domTree: IDomTree, cssProp: string, value: string): void {
+  const map = parseStyleAttrText(el.attributes.get('style') ?? '');
+  if (value === '') map.delete(cssProp);
+  else map.set(cssProp, value);
+  domTree.setAttribute(el, 'style', serializeStyleAttrText(map));
+  if (!el.computedStyle) return;
+  if (value === '') { el.computedStyle.delete(cssProp); return; }
+  if (STYLE_SHORTHAND_PROPS.has(cssProp)) {
+    for (const decl of expandShorthands([{ property: cssProp, value, important: false }])) {
+      el.computedStyle.set(decl.property, decl.value);
+    }
+  } else {
+    el.computedStyle.set(cssProp, value);
+  }
+}
+
+function buildStyleObject(el: DomElement, domTree: IDomTree): JSObject {
+  const styleObj = createObject(null);
+  const cssProps = new Set<string>(Object.keys(getAllPropertyDefinitions()));
+  for (const k of STYLE_SHORTHAND_PROPS) cssProps.add(k);
+  if (el.computedStyle) for (const k of el.computedStyle.keys()) cssProps.add(k);
+
+  for (const cssProp of cssProps) {
+    const jsProp = cssPropToJs(cssProp);
+    styleObj.properties.set(jsProp, {
+      value: undefined,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+      getter: createNativeFunction(jsProp, () => el.computedStyle?.get(cssProp) ?? ''),
+      setter: createNativeFunction(jsProp, (_thisArg, args) => {
+        setElementStyleProperty(el, domTree, cssProp, toString(args[0]));
+      }),
+    });
+  }
+
+  styleObj.properties.set('cssFloat', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('cssFloat', () => el.computedStyle?.get('float') ?? ''),
+    setter: createNativeFunction('cssFloat', (_thisArg, args) => {
+      setElementStyleProperty(el, domTree, 'float', toString(args[0]));
+    }),
+  });
+
+  styleObj.properties.set('setProperty', {
+    value: createNativeFunction('setProperty', (_thisArg, args) => {
+      setElementStyleProperty(el, domTree, jsPropToCss(toString(args[0])), args[1] === undefined ? '' : toString(args[1]));
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  styleObj.properties.set('getPropertyValue', {
+    value: createNativeFunction('getPropertyValue', (_thisArg, args) => el.computedStyle?.get(jsPropToCss(toString(args[0]))) ?? ''),
+    writable: true, enumerable: false, configurable: true,
+  });
+  styleObj.properties.set('removeProperty', {
+    value: createNativeFunction('removeProperty', (_thisArg, args) => {
+      const cssProp = jsPropToCss(toString(args[0]));
+      const old = el.computedStyle?.get(cssProp) ?? '';
+      setElementStyleProperty(el, domTree, cssProp, '');
+      return old;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+
+  return styleObj;
+}
+
+// ── element.classList (DOMTokenList) ────────────────────────────────────────
+// classList was entirely unimplemented — `el.classList` was `undefined` for
+// every element, so any script touching it (an extremely common DOM pattern)
+// crashed. Backed by the same `class` attribute as className, read fresh on
+// every call so `add`/`remove`/`toggle` calls made through one captured
+// reference are immediately visible to the next.
+
+function classTokens(el: DomElement): string[] {
+  return (getAttr(el, 'class') ?? '').split(/\s+/).filter(Boolean);
+}
+
+function setClassTokens(el: DomElement, domTree: IDomTree, tokens: string[]): void {
+  domTree.setAttribute(el, 'class', tokens.join(' '));
+}
+
+function buildClassList(el: DomElement, domTree: IDomTree): JSObject {
+  const listObj = createObject(null);
+  listObj.properties.set('length', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('length', () => classTokens(el).length),
+  });
+  listObj.properties.set('value', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('value', () => classTokens(el).join(' ')),
+    setter: createNativeFunction('value', (_t, args) => setClassTokens(el, domTree, toString(args[0]).split(/\s+/).filter(Boolean))),
+  });
+  listObj.properties.set('add', {
+    value: createNativeFunction('add', (_t, args) => {
+      const tokens = classTokens(el);
+      for (const a of args) { const t = toString(a); if (!tokens.includes(t)) tokens.push(t); }
+      setClassTokens(el, domTree, tokens);
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  listObj.properties.set('remove', {
+    value: createNativeFunction('remove', (_t, args) => {
+      const toRemove = new Set(args.map(toString));
+      setClassTokens(el, domTree, classTokens(el).filter(t => !toRemove.has(t)));
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  listObj.properties.set('contains', {
+    value: createNativeFunction('contains', (_t, args) => classTokens(el).includes(toString(args[0]))),
+    writable: true, enumerable: false, configurable: true,
+  });
+  listObj.properties.set('toggle', {
+    value: createNativeFunction('toggle', (_t, args) => {
+      const token = toString(args[0]);
+      const tokens = classTokens(el);
+      const has = tokens.includes(token);
+      const force = args.length > 1 ? toBoolean(args[1]) : undefined;
+      const shouldHave = force === undefined ? !has : force;
+      if (shouldHave !== has) {
+        setClassTokens(el, domTree, shouldHave ? [...tokens, token] : tokens.filter(t => t !== token));
+      }
+      return shouldHave;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  listObj.properties.set('replace', {
+    value: createNativeFunction('replace', (_t, args) => {
+      const oldToken = toString(args[0]);
+      const newToken = toString(args[1]);
+      const tokens = classTokens(el);
+      const idx = tokens.indexOf(oldToken);
+      if (idx === -1) return false;
+      tokens[idx] = newToken;
+      setClassTokens(el, domTree, [...new Set(tokens)]);
+      return true;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  listObj.properties.set('item', {
+    value: createNativeFunction('item', (_t, args) => classTokens(el)[toNumber(args[0])] ?? null),
+    writable: true, enumerable: false, configurable: true,
+  });
+  listObj.properties.set('toString', {
+    value: createNativeFunction('toString', () => classTokens(el).join(' ')),
+    writable: true, enumerable: false, configurable: true,
+  });
+  return listObj;
 }
 
 /** Typed access to event extension flags on a JSObject. */
@@ -608,6 +808,31 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     }),
   });
 
+  // classList (live DOMTokenList backed by the same class attribute)
+  obj.properties.set('classList', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get classList', () => buildClassList(el, domTree)),
+  });
+
+  // dataset (DOMStringMap over data-* attributes, rebuilt fresh on each read
+  // so it reflects whatever data-* attributes exist at access time)
+  obj.properties.set('dataset', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get dataset', () => {
+      const ds = createObject(null);
+      for (const attrName of el.attributes.keys()) {
+        if (!attrName.startsWith('data-')) continue;
+        const camel = attrName.slice(5).replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+        ds.properties.set(camel, {
+          value: undefined, writable: false, enumerable: true, configurable: true,
+          getter: createNativeFunction(camel, () => el.attributes.get(attrName) ?? ''),
+          setter: createNativeFunction(camel, (_t2, a2) => { domTree.setAttribute(el, attrName, toString(a2[0])); }),
+        });
+      }
+      return ds;
+    }),
+  });
+
   // textContent (getter/setter — clears children and sets text)
   obj.properties.set('textContent', {
     value: getTextContent(el),
@@ -621,53 +846,66 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     }),
   });
 
-  // children (element nodes only)
+  // children/childNodes/parentNode/firstChild/lastChild — these were plain
+  // snapshots taken once at wrap-time, so any DOM mutation after the first
+  // wrap (appendChild, innerHTML, insertBefore, ...) never showed up here
+  // for any already-held reference to this element. Live getters instead.
+  const wrapChild = (c: DomNode): JSValue => c.nodeType === 'element' ? wrapElement(c as DomElement, domTree) : wrapTextNode(c);
   obj.properties.set('children', {
-    value: createArray(
-      el.children.filter((c): c is DomElement => c.nodeType === 'element')
-        .map(c => wrapElement(c, domTree))
-    ),
-    writable: false, enumerable: true, configurable: false,
-  });
-
-  // childNodes (all nodes)
-  obj.properties.set('childNodes', {
-    value: createArray(el.children.map(c =>
-      c.nodeType === 'element' ? wrapElement(c as DomElement, domTree) : wrapTextNode(c)
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get children', () => createArray(
+      el.children.filter((c): c is DomElement => c.nodeType === 'element').map(c => wrapElement(c, domTree))
     )),
-    writable: false, enumerable: true, configurable: false,
   });
-
-  // parentNode
+  obj.properties.set('childNodes', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get childNodes', () => createArray(el.children.map(wrapChild))),
+  });
   obj.properties.set('parentNode', {
-    value: el.parent && el.parent.nodeType === 'element'
-      ? wrapElement(el.parent as DomElement, domTree) : null,
-    writable: false, enumerable: true, configurable: false,
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get parentNode', () =>
+      el.parent && el.parent.nodeType === 'element' ? wrapElement(el.parent as DomElement, domTree) : null),
   });
-
-  // firstChild
   obj.properties.set('firstChild', {
-    value: el.children.length > 0
-      ? (el.children[0].nodeType === 'element'
-        ? wrapElement(el.children[0] as DomElement, domTree)
-        : wrapTextNode(el.children[0]))
-      : null,
-    writable: false, enumerable: true, configurable: false,
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get firstChild', () => el.children.length > 0 ? wrapChild(el.children[0]) : null),
+  });
+  obj.properties.set('lastChild', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get lastChild', () => el.children.length > 0 ? wrapChild(el.children[el.children.length - 1]) : null),
+  });
+  obj.properties.set('nextSibling', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get nextSibling', () => {
+      const siblings = el.parent?.children ?? [];
+      const idx = siblings.indexOf(el);
+      return idx !== -1 && idx + 1 < siblings.length ? wrapChild(siblings[idx + 1]) : null;
+    }),
+  });
+  obj.properties.set('previousSibling', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get previousSibling', () => {
+      const siblings = el.parent?.children ?? [];
+      const idx = siblings.indexOf(el);
+      return idx > 0 ? wrapChild(siblings[idx - 1]) : null;
+    }),
   });
 
-  // innerHTML (read-only getter — returns concatenated child HTML)
+  // innerHTML (live: the setter was a plain-value snapshot — assigning it
+  // only overwrote this JS property and never touched the real DOM tree, so
+  // nothing rendered and no query/traversal method ever saw the new content)
   obj.properties.set('innerHTML', {
-    value: getInnerHTML(el),
-    writable: true, enumerable: true, configurable: true,
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get innerHTML', () => getInnerHTML(el)),
+    setter: createNativeFunction('set innerHTML', (_t, args) => {
+      for (const child of [...el.children]) domTree.removeChild(el, child);
+      for (const node of domTree.parseFragment(toString(args[0]))) domTree.appendChild(el, node);
+    }),
   });
 
-  // style
-  const styleObj = createObject(null);
-  const elStyle = el.computedStyle ?? new Map();
-  for (const [k, v] of elStyle) {
-    styleObj.properties.set(k, { value: v, writable: true, enumerable: true, configurable: true });
-  }
-  obj.properties.set('style', { value: styleObj, writable: true, enumerable: true, configurable: true });
+  // style — a live view onto the element's real inline style (see
+  // buildStyleObject's comment for why this can't be a plain snapshot).
+  obj.properties.set('style', { value: buildStyleObject(el, domTree), writable: true, enumerable: true, configurable: true });
 
   // getAttribute
   obj.properties.set('getAttribute', {
@@ -764,6 +1002,77 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
         if (isNodeConnected(el, domTree)) notifyConnectedTree(newChild);
       }
       return args[0];
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // remove/append/prepend/before/after — modern child/sibling mutation
+  // sugar over appendChild/insertBefore/removeChild; a JSValue arg that
+  // isn't a wrapped DOM node is converted to a text node, per spec.
+  const toInsertableNode = (val: JSValue): DomNode =>
+    (typeof val === 'object' && val !== null && '__domNode' in val)
+      ? (val as JSObject & { __domNode: DomNode }).__domNode
+      : makeTextNode(toString(val), null);
+
+  obj.properties.set('remove', {
+    value: createNativeFunction('remove', () => {
+      if (el.parent && el.parent.nodeType === 'element') {
+        const wasConnected = isNodeConnected(el, domTree);
+        domTree.removeChild(el.parent as DomElement, el);
+        if (wasConnected) notifyDisconnectedTree(obj);
+      }
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('append', {
+    value: createNativeFunction('append', (_t, args) => {
+      for (const a of args) {
+        const node = toInsertableNode(a);
+        domTree.appendChild(el, node);
+        if (isNodeConnected(el, domTree) && node.nodeType === 'element') notifyConnectedTree(wrapElement(node as DomElement, domTree));
+      }
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('prepend', {
+    value: createNativeFunction('prepend', (_t, args) => {
+      const ref = el.children[0] ?? null;
+      for (const a of args) {
+        const node = toInsertableNode(a);
+        domTree.insertBefore(el, node, ref);
+        if (isNodeConnected(el, domTree) && node.nodeType === 'element') notifyConnectedTree(wrapElement(node as DomElement, domTree));
+      }
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('before', {
+    value: createNativeFunction('before', (_t, args) => {
+      if (!el.parent || el.parent.nodeType !== 'element') return undefined;
+      const parent = el.parent as DomElement;
+      for (const a of args) {
+        const node = toInsertableNode(a);
+        domTree.insertBefore(parent, node, el);
+        if (isNodeConnected(parent, domTree) && node.nodeType === 'element') notifyConnectedTree(wrapElement(node as DomElement, domTree));
+      }
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('after', {
+    value: createNativeFunction('after', (_t, args) => {
+      if (!el.parent || el.parent.nodeType !== 'element') return undefined;
+      const parent = el.parent as DomElement;
+      const idx = parent.children.indexOf(el);
+      const ref = idx !== -1 && idx + 1 < parent.children.length ? parent.children[idx + 1] : null;
+      for (const a of args) {
+        const node = toInsertableNode(a);
+        domTree.insertBefore(parent, node, ref);
+        if (isNodeConnected(parent, domTree) && node.nodeType === 'element') notifyConnectedTree(wrapElement(node as DomElement, domTree));
+      }
+      return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -899,13 +1208,36 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     writable: true, enumerable: true, configurable: true,
   });
 
-  // matches (simple selector matching)
+  // matches (checks the element itself, not its descendants)
   obj.properties.set('matches', {
-    value: createNativeFunction('matches', (_this, args) => {
+    value: createNativeFunction('matches', (_this, args) => domTree.matches(el, toString(args[0]))),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // closest (walks up from the element itself through ancestors)
+  obj.properties.set('closest', {
+    value: createNativeFunction('closest', (_this, args) => {
       const sel = toString(args[0]);
-      const matched = domTree.querySelector(sel);
-      return matched === el;
+      let cur: DomElement | null = el;
+      while (cur) {
+        if (domTree.matches(cur, sel)) return wrapElement(cur, domTree);
+        cur = cur.parent && cur.parent.nodeType === 'element' ? cur.parent as DomElement : null;
+      }
+      return null;
     }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // querySelector/querySelectorAll (scoped to this element's descendants)
+  obj.properties.set('querySelector', {
+    value: createNativeFunction('querySelector', (_this, args) => {
+      const found = domTree.querySelector(toString(args[0]), el);
+      return found ? wrapElement(found, domTree) : null;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('querySelectorAll', {
+    value: createNativeFunction('querySelectorAll', (_this, args) => createArray(domTree.querySelectorAll(toString(args[0]), el).map(e => wrapElement(e, domTree)))),
     writable: true, enumerable: true, configurable: true,
   });
 

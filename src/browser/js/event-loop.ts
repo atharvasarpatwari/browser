@@ -143,8 +143,21 @@ export class EventLoop {
     // Step 1: Drain all microtasks (nextTick + regular) BEFORE any macrotask
     this.drainMicrotasks();
 
-    // Step 2: Execute one due macrotask
-    const idx = this.tasks.findIndex(t => now - t.scheduledAt >= t.delay);
+    // Step 2: Execute one due macrotask — the one with the earliest deadline,
+    // not just the first due task in insertion order (findIndex picked
+    // whichever timer was scheduled first, so a later-but-shorter timer
+    // that becomes due in the same tick as an earlier-but-longer one would
+    // lose to it, firing macrotasks out of deadline order).
+    let idx = -1;
+    let bestDeadline = Infinity;
+    for (let i = 0; i < this.tasks.length; i++) {
+      const t = this.tasks[i]!;
+      const deadline = t.scheduledAt + t.delay;
+      if (now - t.scheduledAt >= t.delay && deadline < bestDeadline) {
+        bestDeadline = deadline;
+        idx = i;
+      }
+    }
     if (idx >= 0) {
       const task = this.tasks.splice(idx, 1)[0]!;
       this.timers.delete(task.id);
@@ -310,9 +323,10 @@ export function bindTimers(
       return 0 as unknown as JSValue;
     }
 
+    const extraArgs = args.slice(2);
     const timerFn = () => {
       if (typeof fn === 'object' && fn !== null && 'type' in fn && fn.type === 'closure') {
-        try { callJSFunction(fn, _this, []); } catch { /* swallow */ }
+        try { callJSFunction(fn, _this, extraArgs); } catch { /* swallow */ }
       }
     };
     return eventLoop.schedule(timerFn, delay) as unknown as JSValue;
@@ -344,9 +358,10 @@ export function bindTimers(
       return 0 as unknown as JSValue;
     }
 
+    const extraArgs = args.slice(2);
     const timerFn = () => {
       if (typeof fn === 'object' && fn !== null && 'type' in fn && fn.type === 'closure') {
-        try { callJSFunction(fn, _this, []); } catch { /* swallow */ }
+        try { callJSFunction(fn, _this, extraArgs); } catch { /* swallow */ }
       }
     };
     return eventLoop.schedule(timerFn, interval, true) as unknown as JSValue;

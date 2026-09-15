@@ -335,6 +335,16 @@ export function toString(val: JSValue): string {
       return getArrayElements(obj).map(e => toString(e)).join(',');
     }
     const override = obj.__type_override;
+    // Error-shaped objects (new TypeError(...), a caught error, etc.)
+    // stringify as "Name: message" — matching Error.prototype.toString —
+    // rather than falling through to the generic "[object Object]" below.
+    if (override === 'error') {
+      const name = obj.properties.get('name')?.value;
+      const message = obj.properties.get('message')?.value;
+      const nameStr = typeof name === 'string' ? name : 'Error';
+      const messageStr = typeof message === 'string' ? message : '';
+      return messageStr ? `${nameStr}: ${messageStr}` : nameStr;
+    }
     if (override === 'arraybuffer') return '[object ArrayBuffer]';
     if (override === 'dataview') return '[object DataView]';
     if (override === 'sharedarraybuffer') return '[object SharedArrayBuffer]';
@@ -450,7 +460,11 @@ function arrayIndexOf(_this: JSValue, args: JSValue[]): JSValue {
 }
 
 function arrayIncludes(_this: JSValue, args: JSValue[]): JSValue {
-  return arrayIndexOf(_this, args) !== -1;
+  if (typeof _this !== 'object' || _this === null) return false;
+  const elems = getArrayElements(_this as JSObject);
+  const search = args[0];
+  // SameValueZero: unlike indexOf's ===, includes() must treat NaN as matching NaN.
+  return elems.some(v => v === search || (typeof v === 'number' && typeof search === 'number' && Number.isNaN(v) && Number.isNaN(search)));
 }
 
 function arraySlice(_this: JSValue, args: JSValue[]): JSValue {
@@ -637,6 +651,13 @@ const arrayNativeMethods: Record<string, NativeFunction> = {
   splice: arraySplice,
   unshift: arrayUnshift,
   flat: arrayFlat,
+  at: (_this, args) => {
+    if (typeof _this !== 'object' || _this === null) return undefined;
+    const elems = getArrayElements(_this as JSObject);
+    let i = toNumber(args[0]);
+    if (i < 0) i += elems.length;
+    return i >= 0 && i < elems.length ? elems[i] : undefined;
+  },
   keys: (_this) => {
     if (typeof _this !== 'object' || _this === null) return createArray([]);
     const len = Number((_this as JSObject).properties.get('length')?.value ?? 0);
@@ -776,7 +797,16 @@ export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]
       return fn.nativeFn(thisArg, args) as JSValue;
     } catch (err) {
       if (err instanceof JSError) throw err;
-      throw new JSError(err instanceof Error ? err.message : String(err));
+      // Wrap as a proper Error-shaped value (not a bare string) so sandboxed
+      // `catch(e)` sees e.message/e.name like a real thrown Error.
+      const name = err instanceof Error ? err.name : 'Error';
+      const message = err instanceof Error ? err.message : String(err);
+      const errObj = createObject(null) as JSObjectWithMeta;
+      errObj.properties.set('message', { value: message, writable: true, enumerable: true, configurable: true });
+      errObj.properties.set('name', { value: name, writable: true, enumerable: true, configurable: true });
+      errObj.properties.set('stack', { value: `${name}: ${message}`, writable: true, enumerable: true, configurable: true });
+      errObj.__type_override = 'error';
+      throw new JSError(errObj);
     }
   }
   // Non-native: delegate to the interpreter
@@ -791,7 +821,17 @@ export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]
 export class JSError extends Error {
   value: JSValue;
   constructor(value: JSValue) {
-    super(toString(value));
+    // An Error-shaped thrown value (has its own .message, e.g. `new
+    // TypeError(...)` or the objects jsError()/native-throw wrapping
+    // build) should surface THAT message here, not a generic
+    // toString(value) — for a plain object that stringifies to
+    // "[object Object]", masking whatever the real error said from
+    // anything reading this outer, unhandled-error-level .message
+    // (RunJSResult.error.message, devtools, etc.).
+    const msg = typeof value === 'object' && value !== null && 'properties' in value
+      ? (value as JSObject).properties.get('message')?.value
+      : undefined;
+    super(typeof msg === 'string' ? msg : toString(value));
     this.value = value;
   }
 }
