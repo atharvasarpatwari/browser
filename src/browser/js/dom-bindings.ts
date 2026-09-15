@@ -808,6 +808,24 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     }),
   });
 
+  // name / type (reflected IDL attributes — always mirror the content
+  // attribute, unlike value/checked which diverge from theirs after the
+  // user or script touches them). Missing entirely before: `input.name =
+  // 'x'` was just an ad-hoc JS property invisible to anything inspecting
+  // the real element (getAttribute, form-walking code, FormData, ...).
+  obj.properties.set('name', {
+    value: getAttr(el, 'name') ?? '',
+    writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get name', () => getAttr(el, 'name') ?? ''),
+    setter: createNativeFunction('set name', (_t, args) => domTree.setAttribute(el, 'name', toString(args[0]))),
+  });
+  obj.properties.set('type', {
+    value: getAttr(el, 'type') ?? '',
+    writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get type', () => getAttr(el, 'type') ?? (el.tagName === 'input' ? 'text' : '')),
+    setter: createNativeFunction('set type', (_t, args) => domTree.setAttribute(el, 'type', toString(args[0]))),
+  });
+
   // classList (live DOMTokenList backed by the same class attribute)
   obj.properties.set('classList', {
     value: undefined, writable: false, enumerable: true, configurable: true,

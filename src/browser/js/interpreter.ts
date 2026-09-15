@@ -28,6 +28,23 @@ import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
 // TS Error instances — a native throw here unwinds straight past every
 // sandboxed try/catch (execTry only recognizes JSError) and silently kills
 // the rest of the running script.
+// Computed property keys (`obj[expr]`, `{[expr]: ...}`) were coerced with
+// native TS `String()`, which has no idea how to render this engine's own
+// object values — a symbol (this engine's own JSObject, not a real native
+// Symbol) stringifies to the generic "[object Object]", so EVERY symbol
+// used as a computed key collided under that one key regardless of which
+// symbol it was, and `obj[Symbol.iterator] = fn` was unreadable by anything
+// that later looked it up the same way. Symbols get a stable, per-symbol
+// key derived from their unique id; everything else still goes through
+// this engine's own toString() (matching real Object-to-string coercion
+// instead of native String()'s generic object fallback).
+function toPropertyKey(val: JSValue): string {
+  if (typeof val === 'object' && val !== null && isJSObjectWithMeta(val) && val.__type_override === 'symbol' && val.symbolId !== undefined) {
+    return `@@symbol:${val.symbolId}`;
+  }
+  return toString(val);
+}
+
 function jsError(name: string, message: string): JSError {
   const err = createObject(null) as JSObject & { __type_override?: string };
   err.properties.set('message', { value: message, writable: true, enumerable: true, configurable: true });
@@ -94,6 +111,8 @@ export class Interpreter {
   private scriptEnforcer?: CspScriptEnforcer;
   /** Page origin for CSP enforcement */
   private pageOrigin?: string;
+  /** Stack of in-flight generator-body yield sinks (see runGeneratorBody) */
+  private yieldSinkStack: JSValue[][] = [];
 
   constructor(globalEnv?: Environment, eventLoop?: EventLoop, scriptEnforcer?: CspScriptEnforcer, pageOrigin?: string) {
     this.gc = getGC();
@@ -201,10 +220,11 @@ export class Interpreter {
       if (fn.async && this.eventLoop) return wrapAsyncResult(result.value, this.eventLoop);
       return result.value;
     }
+    if (fn.generator) return this.runGeneratorBody(fn, thisArg, args);
     const callEnv = new Environment(fn.closure);
     callEnv.markFunctionScope();
     callEnv.setLocal('arguments', createArray(args));
-    fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+    this.bindParams(fn, callEnv, args);
     if (thisArg === undefined && !fn.isStrict) {
       callEnv.setLocal('this', this.globalEnv.get('this') ?? createObject(null));
     } else {
@@ -250,7 +270,7 @@ export class Interpreter {
             const callEnv = new Environment(fn.closure);
             callEnv.markFunctionScope();
             callEnv.setLocal('arguments', createArray(args));
-            fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+            this.bindParams(fn, callEnv, args);
             callEnv.setLocal('this', thisArg);
             // We need to re-execute with the resolved value... but we can't easily do that.
             // Instead, resolve the continuation promise with the resolved value.
@@ -432,7 +452,7 @@ export class Interpreter {
           }
           this.destructPattern(prop.argument, restObj, env, kind);
         } else {
-          const key = prop.key.type === 'Identifier' ? prop.key.name : String(this.evalExpr(prop.key, env));
+          const key = prop.key.type === 'Identifier' ? prop.key.name : toPropertyKey(this.evalExpr(prop.key, env));
           const propVal = obj?.properties?.get(key)?.value;
           this.destructPattern(prop.value as any, propVal, env, kind);
         }
@@ -440,8 +460,35 @@ export class Interpreter {
     }
   }
 
+  // Every function call bound parameters with a plain positional zip
+  // (`fn.params.forEach((p,i) => env.setLocal(p, args[i]))`), which only
+  // works for plain identifier params. `createFunction`'s own call sites
+  // reduced every parameter — including `...rest`, `a = 5`, `[a,b]`,
+  // `{a,b}` — down to `(p as AST.Identifier).name`, which for anything but
+  // a plain identifier reads a field that doesn't exist and silently binds
+  // a parameter literally named "undefined": a rest parameter's own name
+  // was never in scope at all. Reuses destructPattern (already correct for
+  // `var`/`let`/`const` destructuring) now that paramNodes preserves the
+  // real parameter AST instead of discarding it at creation time.
+  private bindParams(fn: JSFunction, callEnv: Environment, args: JSValue[]): void {
+    const nodes = fn.paramNodes as (AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern)[] | undefined;
+    if (!nodes) {
+      fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+      return;
+    }
+    let idx = 0;
+    for (const node of nodes) {
+      if (node.type === 'RestElement') {
+        this.destructPattern(node.argument as AST.Identifier, createArray(args.slice(idx)), callEnv, 'var');
+      } else {
+        this.destructPattern(node, args[idx], callEnv, 'var');
+        idx++;
+      }
+    }
+  }
+
   private execFuncDecl(stmt: AST.FunctionDeclaration, env: Environment): void {
-    const fn = createFunction(stmt.id.name, stmt.params.map(p => (p as AST.Identifier).name), stmt.body, env, stmt.async, false, stmt.generator, false, undefined, stmt.strictMode);
+    const fn = createFunction(stmt.id.name, stmt.params.map(p => (p as AST.Identifier).name), stmt.body, env, stmt.async, false, stmt.generator, false, undefined, stmt.strictMode, stmt.params);
     env.declare(stmt.id.name, fn, 'var');
   }
 
@@ -484,7 +531,7 @@ export class Interpreter {
       for (const method of stmt.body.body) {
         if (method.type === 'MethodDefinition') {
           const key = method.key.type === 'Identifier' ? method.key.name : String(method.key);
-          const fn = createFunction(key, method.value.params.map(p => (p as AST.Identifier).name), method.value.body, env, false, false, false, false, undefined, true);
+          const fn = createFunction(key, method.value.params.map(p => (p as AST.Identifier).name), method.value.body, env, false, false, false, false, undefined, true, method.value.params);
           // Set 'super' in the method's closure so super.method() works
           const superVal = classObj.properties.get('super')?.value;
           if (superVal && typeof superVal === 'object' && superVal !== null) {
@@ -615,11 +662,65 @@ export class Interpreter {
     return undefined;
   }
 
+  // for-of only ever handled array-shaped objects (.length + indexed
+  // properties) — so `for (const x of someMap)`, `of someSet`, `of
+  // 'a string'`, or `of` any generator/custom iterator (anything whose
+  // protocol is a callable .next()) silently iterated zero times. Extracts
+  // every value up front rather than pulling lazily, which is fine here
+  // since this engine's generators (see runGeneratorBody) already run
+  // eagerly to completion themselves.
+  private forOfValues(iterable: JSValue): JSValue[] {
+    if (typeof iterable === 'string') return [...iterable];
+    if (typeof iterable !== 'object' || iterable === null) return [];
+    const obj = iterable as JSObject;
+    if (obj.type === 'array') {
+      const length = Number(obj.properties.get('length')?.value ?? 0);
+      const out: JSValue[] = [];
+      for (let i = 0; i < length; i++) out.push(obj.properties.get(String(i))?.value);
+      return out;
+    }
+    // General protocol: obj[Symbol.iterator]() → an iterator to drain below.
+    const symbolGlobal = this.globalEnv.get('Symbol');
+    const iterSym = typeof symbolGlobal === 'object' && symbolGlobal !== null ? (symbolGlobal as JSObject).properties.get('iterator')?.value : undefined;
+    if (iterSym !== undefined) {
+      const iterFn = this.getPropertyValue(obj, toPropertyKey(iterSym));
+      if (typeof iterFn === 'object' && iterFn !== null && (iterFn as JSFunction).type === 'closure') {
+        const iterator = callJSFunction(iterFn as JSFunction, obj, []);
+        if (typeof iterator === 'object' && iterator !== null && iterator !== obj) return this.forOfValues(iterator);
+      }
+    }
+    if (isJSObjectWithMeta(obj) && (obj.__mapObj || obj.__mapPrim)) {
+      const entriesFn = this.getPropertyValue(obj, 'entries');
+      if (typeof entriesFn === 'object' && entriesFn !== null && (entriesFn as JSFunction).type === 'closure') {
+        return this.forOfValues(callJSFunction(entriesFn as JSFunction, obj, []));
+      }
+    }
+    if (isJSObjectWithMeta(obj) && (obj.__setObj || obj.__setPrim)) {
+      const valuesFn = this.getPropertyValue(obj, 'values');
+      if (typeof valuesFn === 'object' && valuesFn !== null && (valuesFn as JSFunction).type === 'closure') {
+        return this.forOfValues(callJSFunction(valuesFn as JSFunction, obj, []));
+      }
+    }
+    // A .next()-based iterator (a generator's returned object, or any
+    // hand-built { next() {...} } iterator) — drain it fully.
+    const nextFn = this.getPropertyValue(obj, 'next');
+    if (typeof nextFn === 'object' && nextFn !== null && (nextFn as JSFunction).type === 'closure') {
+      const out: JSValue[] = [];
+      for (let guard = 0; guard < 1_000_000; guard++) {
+        const step = callJSFunction(nextFn as JSFunction, obj, []);
+        if (typeof step !== 'object' || step === null) break;
+        const stepObj = step as JSObject;
+        if (toBoolean(stepObj.properties.get('done')?.value)) break;
+        out.push(stepObj.properties.get('value')?.value);
+      }
+      return out;
+    }
+    return [];
+  }
+
   private execForOf(stmt: AST.ForOfStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     const iterable = this.evalExpr(stmt.right, env);
-    if (typeof iterable !== 'object' || iterable === null) return undefined;
-    const arr = iterable as JSObject;
-    const length = Number(arr.properties.get('length')?.value ?? 0);
+    const values = this.forOfValues(iterable);
     const loopEnv = new Environment(env);
     const varName = stmt.left.type === 'VariableDeclaration'
       ? (stmt.left.declarations[0]!.id as AST.Identifier).name
@@ -628,8 +729,7 @@ export class Interpreter {
       loopEnv.declareTDZ(varName, stmt.left.kind as 'let' | 'const');
       loopEnv.initialize(varName, undefined);
     }
-    for (let i = 0; i < length; i++) {
-      const val = arr.properties.get(String(i))?.value;
+    for (const val of values) {
       loopEnv.set(varName, val);
       const result = this.exec(stmt.body, loopEnv);
       if (isBreakSignal(result) && !result.label) return undefined;
@@ -809,7 +909,7 @@ export class Interpreter {
     let callee: JSValue;
     if (expr.tag.type === 'MemberExpression') {
       thisObj = this.evalExpr(expr.tag.object, env);
-      const key = expr.tag.computed ? String(this.evalExpr(expr.tag.property, env)) : (expr.tag.property as AST.Identifier).name;
+      const key = expr.tag.computed ? toPropertyKey(this.evalExpr(expr.tag.property, env)) : (expr.tag.property as AST.Identifier).name;
       callee = this.getPropertyValue(thisObj, key);
     } else {
       callee = this.evalExpr(expr.tag, env);
@@ -856,7 +956,7 @@ export class Interpreter {
       const obj = this.evalExpr(expr.argument.object, env) as JSObject;
       if (typeof obj !== 'object' || obj === null) return 0;
       const key = expr.argument.computed
-        ? String(this.evalExpr(expr.argument.property, env))
+        ? toPropertyKey(this.evalExpr(expr.argument.property, env))
         : (expr.argument.property as AST.Identifier).name;
       const old = toNumber(obj.properties.get(key)?.value);
       const newVal = expr.operator === '++' ? old + 1 : old - 1;
@@ -954,7 +1054,7 @@ export class Interpreter {
       const obj = this.evalExpr(expr.left.object, env) as JSObject;
       if (typeof obj !== 'object' || obj === null) return right;
       const key = expr.left.computed
-        ? String(this.evalExpr(expr.left.property, env))
+        ? toPropertyKey(this.evalExpr(expr.left.property, env))
         : (expr.left.property as AST.Identifier).name;
       if (expr.operator === '=') {
         const existingDesc = obj.properties.get(key);
@@ -1079,7 +1179,7 @@ export class Interpreter {
       // super.method(): look up method on parent prototype, but use current 'this'
       if (expr.callee.object.type === 'SuperExpression') {
         const superProto = this.evalExpr(expr.callee.object, env);
-        const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+        const key = expr.callee.computed ? toPropertyKey(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
         callee = this.getPropertyValue(superProto, key);
         thisObj = env.get('this');
       } else {
@@ -1089,7 +1189,7 @@ export class Interpreter {
           const propName = !expr.callee.computed ? (expr.callee.property as AST.Identifier).name : undefined;
           throw jsError('TypeError', `Cannot read properties of ${thisObj}${propName ? ` (reading '${propName}')` : ''}`);
         }
-        const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+        const key = expr.callee.computed ? toPropertyKey(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
         callee = this.getPropertyValue(thisObj, key);
       }
     } else {
@@ -1128,11 +1228,14 @@ export class Interpreter {
           throw jsError(err instanceof Error ? err.name : 'Error', err instanceof Error ? err.message : String(err));
         }
       }
+      if (fn.type === 'closure' && !fn.isNative && fn.generator) {
+        return this.runGeneratorBody(fn, thisObj, args);
+      }
       if (fn.type === 'closure' && !fn.isNative) {
         const callEnv = new Environment(fn.closure);
         callEnv.markFunctionScope();
         callEnv.setLocal('arguments', createArray(args));
-        fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+        this.bindParams(fn, callEnv, args);
         if (fn.isArrow) {
           callEnv.setLocal('this', fn.closure.get('this') ?? createObject(null));
         } else if (thisObj === undefined && !fn.isStrict) {
@@ -1213,7 +1316,7 @@ export class Interpreter {
           callEnv.setLocal('__superCtor', superClass);
         }
 
-        fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+        this.bindParams(fn, callEnv, args);
         const result = this.execBlock((fn.body as AST.BlockStatement).body as AST.Statement[], callEnv);
         if (isReturnSignal(result) && typeof result.value === 'object' && result.value !== null) {
           return result.value;
@@ -1247,7 +1350,7 @@ export class Interpreter {
       callEnv.markFunctionScope();
       callEnv.setLocal('this', instance);
       callEnv.setLocal('arguments', createArray(args));
-      fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+      this.bindParams(fn, callEnv, args);
       const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
       if (bodyNode.type === 'BlockStatement') {
         const result = this.execBlock(bodyNode.body as AST.Statement[], callEnv);
@@ -1269,7 +1372,7 @@ export class Interpreter {
       throw jsError('TypeError', `Cannot read properties of ${obj}${propName ? ` (reading '${propName}')` : ''}`);
     }
     if (typeof obj === 'string') {
-      const key = expr.computed ? String(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;
+      const key = expr.computed ? toPropertyKey(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;
       if (key === 'length') return (obj as string).length;
       const idx = parseInt(key, 10);
       if (!isNaN(idx)) return (obj as string)[idx] ?? undefined;
@@ -1284,6 +1387,8 @@ export class Interpreter {
           if (i < 0) i += s.length;
           return i >= 0 && i < s.length ? s[i] : undefined;
         },
+        normalize: (_t, a) => (obj as string).normalize(a[0] !== undefined ? toString(a[0]) as any : undefined),
+        localeCompare: (_t, a) => (obj as string).localeCompare(toString(a[0])),
         indexOf: (_t, a) => (obj as string).indexOf(toString(a[0])),
         lastIndexOf: (_t, a) => (obj as string).lastIndexOf(toString(a[0])),
         slice: (_t, a) => (obj as string).slice(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
@@ -1333,7 +1438,7 @@ export class Interpreter {
     }
     const nativeObj = obj as JSObject;
     const key = expr.computed
-      ? String(this.evalExpr(expr.property, env))
+      ? toPropertyKey(this.evalExpr(expr.property, env))
       : (expr.property as AST.Identifier).name;
 
     // Closure (function) objects: provide .length, .name, .prototype, .constructor
@@ -1398,6 +1503,8 @@ export class Interpreter {
           if (i < 0) i += s.length;
           return i >= 0 && i < s.length ? s[i] : undefined;
         },
+        normalize: (_t, a) => (obj as string).normalize(a[0] !== undefined ? toString(a[0]) as any : undefined),
+        localeCompare: (_t, a) => (obj as string).localeCompare(toString(a[0])),
         indexOf: (_t, a) => (obj as string).indexOf(toString(a[0])),
         lastIndexOf: (_t, a) => (obj as string).lastIndexOf(toString(a[0])),
         slice: (_t, a) => (obj as string).slice(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
@@ -1550,7 +1657,7 @@ export class Interpreter {
         continue;
       }
       const key = prop.computed
-        ? String(this.evalExpr(prop.key, env))
+        ? toPropertyKey(this.evalExpr(prop.key, env))
         : prop.key.type === 'Identifier' ? prop.key.name : String(prop.key);
       if (prop.kind === 'get' || prop.kind === 'set') {
         const fn = prop.value ? this.evalExpr(prop.value, env) as JSFunction : undefined;
@@ -1570,12 +1677,12 @@ export class Interpreter {
   }
 
   private evalFunctionExpr(expr: AST.FunctionExpression, env: Environment): JSValue {
-    return createFunction(expr.id?.name ?? 'anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, false, expr.generator, false, undefined, expr.strictMode);
+    return createFunction(expr.id?.name ?? 'anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, false, expr.generator, false, undefined, expr.strictMode, expr.params);
   }
 
   private evalArrowFunction(expr: AST.ArrowFunctionExpression, env: Environment): JSValue {
     const strict = expr.body.type === 'BlockStatement' ? this.hasStrictDirective(expr.body) : false;
-    return createFunction('anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, true, false, false, undefined, strict);
+    return createFunction('anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, true, false, false, undefined, strict, expr.params);
   }
 
   private evalSequence(expr: AST.SequenceExpression, env: Environment): JSValue {
@@ -1608,7 +1715,78 @@ export class Interpreter {
 
   private evalYield(expr: AST.YieldExpression, env: Environment): JSValue {
     const val = expr.argument ? this.evalExpr(expr.argument, env) : undefined;
-    return val;
+    const sink = this.yieldSinkStack[this.yieldSinkStack.length - 1];
+    if (sink) {
+      if (expr.delegate) for (const v of this.forOfValues(val)) sink.push(v);
+      else sink.push(val);
+    }
+    // A real `yield` suspends here and resumes with whatever .next(v) is
+    // next called with — this tree-walking interpreter has no way to pause
+    // mid-body (see runGeneratorBody), so .next(v) can never feed v back in.
+    return undefined;
+  }
+
+  /**
+   * Generator functions (`function* () { yield ... }`) can't actually
+   * suspend in a tree-walking interpreter — there's no way to pause
+   * mid-body and resume later from the exact same point. Instead this runs
+   * the whole body once, eagerly, collecting every yielded value in order
+   * via yieldSinkStack, then hands back a real .next()-based iterator that
+   * replays those collected values one per call. This is faithful for the
+   * common "yield a sequence of values" iterable pattern (including
+   * `for...of` and `yield*` delegation, both of which only ever pull
+   * values forward) but NOT for two-way communication (a value passed to
+   * .next(v) can't be fed back into an already-finished run) or for
+   * infinite/lazy generators, which still run to completion up front,
+   * gated only by the interpreter's existing runaway-script timeout.
+   */
+  private runGeneratorBody(fn: JSFunction, thisObj: JSValue, args: JSValue[]): JSObject {
+    const callEnv = new Environment(fn.closure);
+    callEnv.markFunctionScope();
+    callEnv.setLocal('arguments', createArray(args));
+    this.bindParams(fn, callEnv, args);
+    if (fn.isArrow) callEnv.setLocal('this', fn.closure.get('this') ?? createObject(null));
+    else if (thisObj === undefined && !fn.isStrict) callEnv.setLocal('this', this.globalEnv.get('this') ?? createObject(null));
+    else callEnv.setLocal('this', thisObj);
+
+    const sink: JSValue[] = [];
+    this.yieldSinkStack.push(sink);
+    let returnValue: JSValue;
+    try {
+      const result = this.execBlock((fn.body as AST.BlockStatement).body as AST.Statement[], callEnv);
+      if (isReturnSignal(result)) returnValue = result.value;
+      else if (isThrowSignal(result)) throw new JSError(result.value);
+    } finally {
+      this.yieldSinkStack.pop();
+    }
+
+    const iterObj = createObject(null);
+    let idx = 0;
+    let done = false;
+    const stepResult = (value: JSValue, isDone: boolean): JSObject => {
+      const r = createObject(null);
+      r.properties.set('value', { value, writable: true, enumerable: true, configurable: true });
+      r.properties.set('done', { value: isDone, writable: true, enumerable: true, configurable: true });
+      return r;
+    };
+    iterObj.properties.set('next', {
+      value: createNativeFunction('next', () => {
+        if (done) return stepResult(undefined, true);
+        if (idx < sink.length) return stepResult(sink[idx++], false);
+        done = true;
+        return stepResult(returnValue, true);
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    iterObj.properties.set('return', {
+      value: createNativeFunction('return', (_t, a) => { done = true; return stepResult(a[0], true); }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    iterObj.properties.set('throw', {
+      value: createNativeFunction('throw', (_t, a) => { done = true; throw new JSError(a[0]); }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    return iterObj;
   }
 
   /** Check if a block statement body starts with a 'use strict' directive. */

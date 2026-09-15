@@ -92,21 +92,67 @@ export class Parser {
     return expr.expressions.flatMap((e) => this.flattenSequence(e));
   }
 
+  /**
+   * Convert an expression parsed by the generic expression grammar into a
+   * parameter/destructuring pattern — needed because `(a, {b, c = 1}) =>`
+   * is only disambiguated from a parenthesized expression *after* it's
+   * already been parsed as one (real arrow-function grammar is ambiguous
+   * with a parenthesized expression until the `=>` is seen).
+   */
+  private expressionToPattern(expr: AST.Expression): AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern | null {
+    if (expr.type === 'Identifier') return expr;
+    if (expr.type === 'AssignmentExpression' && expr.operator === '=') {
+      const left = this.expressionToPattern(expr.left as AST.Expression);
+      if (!left || left.type === 'RestElement' || left.type === 'AssignmentPattern') return null;
+      return { type: 'AssignmentPattern', left, right: expr.right, loc: expr.loc };
+    }
+    if (expr.type === 'SpreadElement') {
+      const arg = this.expressionToPattern(expr.argument);
+      if (!arg || arg.type === 'RestElement') return null;
+      return { type: 'RestElement', argument: arg, loc: expr.loc };
+    }
+    if (expr.type === 'ArrayExpression') {
+      const elements = expr.elements.map(e => e === null ? null : this.expressionToPattern(e));
+      if (elements.some((e, i) => expr.elements[i] !== null && e === null)) return null;
+      return { type: 'ArrayPattern', elements: elements as (AST.Identifier | AST.AssignmentPattern | AST.RestElement | AST.ArrayPattern | AST.ObjectPattern | null)[], loc: expr.loc };
+    }
+    if (expr.type === 'ObjectExpression') {
+      const properties: (AST.ObjectPatternProperty | AST.RestElement)[] = [];
+      for (const prop of expr.properties) {
+        if (prop.type === 'SpreadElement') {
+          const arg = this.expressionToPattern(prop.argument);
+          if (!arg || arg.type === 'RestElement') return null;
+          properties.push({ type: 'RestElement', argument: arg, loc: prop.loc });
+        } else {
+          if (prop.value === null) return null;
+          const value = this.expressionToPattern(prop.value);
+          if (!value || value.type === 'RestElement') return null;
+          properties.push({ type: 'Property', key: prop.key, value, shorthand: prop.shorthand, computed: prop.computed, loc: prop.loc });
+        }
+      }
+      return { type: 'ObjectPattern', properties, loc: expr.loc };
+    }
+    return null;
+  }
+
   private isValidArrowParams(left: AST.Expression): boolean {
     if (left.type === 'Identifier') return true;
-    if (left.type === 'SequenceExpression') return this.flattenSequence(left).every(e => e.type === 'Identifier');
-    return false;
+    if (left.type === 'SequenceExpression') return this.flattenSequence(left).every(e => this.expressionToPattern(e) !== null);
+    return this.expressionToPattern(left) !== null;
   }
 
   private parseArrowFunctionFromParams(left: AST.Expression): AST.ArrowFunctionExpression {
     const tok = this.peek();
-    const params: AST.Identifier[] = [];
-    if (left.type === 'Identifier') {
-      params.push(left);
-    } else if (left.type === 'SequenceExpression') {
+    const params: (AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern)[] = [];
+    if (left.type === 'SequenceExpression') {
+      // `() => ...` also parses as an empty SequenceExpression.
       for (const e of this.flattenSequence(left)) {
-        if (e.type === 'Identifier') params.push(e);
+        const p = this.expressionToPattern(e);
+        if (p) params.push(p);
       }
+    } else {
+      const p = this.expressionToPattern(left);
+      if (p) params.push(p);
     }
     this.advance(); // =>
     let body: AST.BlockStatement | AST.Expression;
@@ -244,7 +290,7 @@ export class Parser {
     const tok = this.peek();
     this.advance();
     let isDelegate = delegate;
-    if (this.is(TokenType.Generator)) {
+    if (this.is(TokenType.Star)) {
       this.advance();
       isDelegate = true;
     }
@@ -535,9 +581,18 @@ export class Parser {
       return { type: 'PropertyDefinition', key, value, kind, computed, shorthand: false, method: false };
     }
 
-    // Shorthand property
+    // Shorthand property, optionally with a default (`{a = 1}`) — only
+    // valid when this object literal turns out to be a destructuring
+    // pattern (`const {a = 1} = x` or an arrow param), but real engines
+    // parse it permissively here and only matter once it's actually used
+    // as a pattern (via expressionToPattern) rather than as a value.
     if (key.type === 'Identifier') {
       isShorthand = true;
+      if (this.is(TokenType.Equal)) {
+        this.advance();
+        const right = this.parseAssignExpr();
+        return { type: 'PropertyDefinition', key, value: { type: 'AssignmentExpression', operator: '=', left: key, right, loc: key.loc }, kind, computed, shorthand: true, method: false };
+      }
       return { type: 'PropertyDefinition', key, value: key, kind, computed, shorthand: true, method: false };
     }
 
@@ -566,7 +621,7 @@ export class Parser {
     if (this.is(TokenType.Async)) { this.advance(); async = true; }
     this.expect(TokenType.Function);
     let generator = false;
-    if (this.is(TokenType.Generator)) { this.advance(); generator = true; }
+    if (this.is(TokenType.Star)) { this.advance(); generator = true; }
     let id: AST.Identifier | null = null;
     if (this.is(TokenType.Identifier)) {
       id = { type: 'Identifier', name: this.peek().value };
@@ -590,8 +645,32 @@ export class Parser {
       this.advance(); // )
       return this.parseArrowFunctionFromParams({ type: 'SequenceExpression', expressions: [], loc: { line: openTok.line, column: openTok.column } });
     }
-    const expr = this.parseExpression();
+    // A leading/embedded `...` (`(...args) => `, `(a, ...rest) => `) is only
+    // ever valid here as an arrow rest parameter — real comma-expression
+    // grammar has no such thing — but the generic expression parser has no
+    // way to parse a bare `...expr` at all, since spread is otherwise only
+    // legal inside call arguments / array / object literals. Build the
+    // parenthesized item list by hand instead of delegating straight to
+    // parseExpression() so a `...` item can be recognized before it's
+    // reached as if it were a normal expression term.
+    const items: AST.Expression[] = [];
+    let sawSpread = false;
+    for (;;) {
+      if (this.is(TokenType.Ellipsis)) {
+        sawSpread = true;
+        const spreadTok = this.peek();
+        this.advance();
+        items.push({ type: 'SpreadElement', argument: this.parseAssignExpr(), loc: { line: spreadTok.line, column: spreadTok.column } });
+      } else {
+        items.push(this.parseAssignExpr());
+      }
+      if (this.is(TokenType.Comma)) { this.advance(); continue; }
+      break;
+    }
     this.expect(TokenType.RParen);
+    const expr: AST.Expression = (items.length === 1 && !sawSpread)
+      ? items[0]
+      : { type: 'SequenceExpression', expressions: items, loc: { line: openTok.line, column: openTok.column } };
     // Arrow function: (params) => body
     if (this.is(TokenType.Arrow) && this.isValidArrowParams(expr)) {
       return this.parseArrowFunctionFromParams(expr);
@@ -815,7 +894,7 @@ export class Parser {
     if (this.is(TokenType.Async)) { this.advance(); async = true; }
     this.expect(TokenType.Function);
     let generator = false;
-    if (this.is(TokenType.Generator)) { this.advance(); generator = true; }
+    if (this.is(TokenType.Star)) { this.advance(); generator = true; }
     const id: AST.Identifier = { type: 'Identifier', name: this.peek().value };
     this.advance();
     this.expect(TokenType.LParen);

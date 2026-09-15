@@ -366,6 +366,30 @@ export function createGlobalEnv(
     }),
     writable: true, enumerable: false, configurable: true,
   });
+  objectCtorObj.properties.set('groupBy', {
+    value: createNativeFunction('groupBy', (_this, args) => {
+      const result = createObject(null);
+      const source = args[0];
+      const fn = args[1];
+      if (typeof source !== 'object' || source === null || source.type !== 'array') return result;
+      if (typeof fn !== 'object' || fn === null || (fn as JSFunction).type !== 'closure') return result;
+      const len = Number(source.properties.get('length')?.value ?? 0);
+      for (let i = 0; i < len; i++) {
+        const item = source.properties.get(String(i))?.value;
+        const key = toString(callJSFunction(fn as JSFunction, undefined, [item, i]));
+        const existing = result.properties.get(key)?.value as JSObject | undefined;
+        if (existing) {
+          const n = Number(existing.properties.get('length')?.value ?? 0);
+          existing.properties.set(String(n), { value: item, writable: true, enumerable: true, configurable: true });
+          existing.properties.set('length', { value: n + 1, writable: true, enumerable: false, configurable: true });
+        } else {
+          result.properties.set(key, { value: createArray([item]), writable: true, enumerable: true, configurable: true });
+        }
+      }
+      return result;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
   objectCtorObj.properties.set('assign', {
     value: createNativeFunction('assign', (_this, args) => {
       const target = args[0];
@@ -727,6 +751,282 @@ export function createGlobalEnv(
   regExpProto.properties.set('flags', { value: '', writable: false, enumerable: false, configurable: false });
   regExpCtorObj.properties.set('prototype', { value: regExpProto, writable: false, enumerable: false, configurable: false });
   env.setLocal('RegExp', regExpCtorObj);
+
+  // URLSearchParams — wraps a real native URLSearchParams (available as a
+  // global in both Node and the renderer's V8 runtime), the same "wrap a
+  // real native object" pattern already used for RegExp/Date.
+  const uspProto = createObject(null);
+  function wrapURLSearchParams(native: URLSearchParams): JSObject {
+    const obj = createObject(uspProto) as JSObjectWithMeta;
+    obj.__type_override = 'urlsearchparams';
+    obj.nativeURLSearchParams = native;
+    return obj;
+  }
+  function toURLSearchParamsInit(arg: JSValue): ConstructorParameters<typeof URLSearchParams>[0] {
+    if (arg === undefined) return undefined;
+    if (typeof arg === 'string') return arg;
+    if (typeof arg === 'object' && arg !== null) {
+      const o = arg as JSObject;
+      if (isJSObjectWithMeta(o) && o.nativeURLSearchParams) return o.nativeURLSearchParams;
+      if (o.type === 'array') {
+        const len = Number(o.properties.get('length')?.value ?? 0);
+        const pairs: [string, string][] = [];
+        for (let i = 0; i < len; i++) {
+          const p = o.properties.get(String(i))?.value as JSObject | undefined;
+          if (p) pairs.push([toString(p.properties.get('0')?.value), toString(p.properties.get('1')?.value)]);
+        }
+        return pairs;
+      }
+      const result: Record<string, string> = {};
+      for (const [k, desc] of o.properties) {
+        if (desc.enumerable) result[k] = toString(desc.value);
+      }
+      return result;
+    }
+    return toString(arg);
+  }
+  const uspCtor = createNativeFunction('URLSearchParams', (_this, args) => wrapURLSearchParams(new URLSearchParams(toURLSearchParamsInit(args[0]))));
+  const uspCtorObj = createObject(null);
+  uspCtorObj.type = 'function';
+  uspCtorObj.callable = true;
+  uspCtorObj.nativeFn = uspCtor.nativeFn;
+  const uspNativeOf = (v: JSValue): URLSearchParams | undefined =>
+    typeof v === 'object' && v !== null && isJSObjectWithMeta(v) ? v.nativeURLSearchParams : undefined;
+  for (const method of ['get', 'getAll', 'has', 'toString']) {
+    uspProto.properties.set(method, {
+      value: createNativeFunction(method, (thisArg, a) => {
+        const native = uspNativeOf(thisArg);
+        if (!native) return method === 'getAll' ? createArray([]) : method === 'has' ? false : method === 'toString' ? '' : null;
+        if (method === 'get') return native.get(toString(a[0])) ?? null;
+        if (method === 'getAll') return createArray(native.getAll(toString(a[0])));
+        if (method === 'has') return native.has(toString(a[0]));
+        return native.toString();
+      }),
+      writable: true, enumerable: false, configurable: true,
+    });
+  }
+  for (const method of ['set', 'append', 'delete', 'sort']) {
+    uspProto.properties.set(method, {
+      value: createNativeFunction(method, (thisArg, a) => {
+        const native = uspNativeOf(thisArg);
+        if (!native) return undefined;
+        if (method === 'set') native.set(toString(a[0]), toString(a[1]));
+        else if (method === 'append') native.append(toString(a[0]), toString(a[1]));
+        else if (method === 'delete') native.delete(toString(a[0]));
+        else native.sort();
+        return undefined;
+      }),
+      writable: true, enumerable: false, configurable: true,
+    });
+  }
+  uspProto.properties.set('forEach', {
+    value: createNativeFunction('forEach', (thisArg, a) => {
+      const native = uspNativeOf(thisArg);
+      const fn = a[0] as JSFunction;
+      if (!native || typeof fn !== 'object' || fn === null || fn.type !== 'closure') return undefined;
+      for (const [k, v] of native.entries()) callJSFunction(fn, undefined, [v, k, thisArg]);
+      return undefined;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  uspCtorObj.properties.set('prototype', { value: uspProto, writable: false, enumerable: false, configurable: false });
+  env.setLocal('URLSearchParams', uspCtorObj);
+
+  // URL — wraps a real native URL the same way.
+  const urlProto = createObject(null);
+  const urlNativeOf = (v: JSValue): URL | undefined =>
+    typeof v === 'object' && v !== null && isJSObjectWithMeta(v) ? v.nativeURL : undefined;
+  const urlCtor = createNativeFunction('URL', (_this, args) => {
+    const native = new URL(toString(args[0]), args[1] !== undefined ? toString(args[1]) : undefined);
+    const obj = createObject(urlProto) as JSObjectWithMeta;
+    obj.__type_override = 'url';
+    obj.nativeURL = native;
+    return obj;
+  });
+  const urlCtorObj = createObject(null);
+  urlCtorObj.type = 'function';
+  urlCtorObj.callable = true;
+  urlCtorObj.nativeFn = urlCtor.nativeFn;
+  const urlStringProps = ['href', 'protocol', 'username', 'password', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'] as const;
+  for (const prop of urlStringProps) {
+    urlProto.properties.set(prop, {
+      value: undefined, writable: false, enumerable: true, configurable: true,
+      getter: createNativeFunction(prop, (thisArg) => urlNativeOf(thisArg)?.[prop] ?? ''),
+      setter: createNativeFunction(prop, (thisArg, a) => { const n = urlNativeOf(thisArg); if (n) n[prop] = toString(a[0]); }),
+    });
+  }
+  urlProto.properties.set('origin', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('origin', (thisArg) => urlNativeOf(thisArg)?.origin ?? ''),
+  });
+  urlProto.properties.set('searchParams', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('searchParams', (thisArg) => {
+      const n = urlNativeOf(thisArg);
+      return n ? wrapURLSearchParams(n.searchParams) : wrapURLSearchParams(new URLSearchParams());
+    }),
+  });
+  urlProto.properties.set('toString', {
+    value: createNativeFunction('toString', (thisArg) => urlNativeOf(thisArg)?.href ?? ''),
+    writable: true, enumerable: false, configurable: true,
+  });
+  urlCtorObj.properties.set('prototype', { value: urlProto, writable: false, enumerable: false, configurable: false });
+  env.setLocal('URL', urlCtorObj);
+
+  // FormData — string values only (no File support). Constructed from an
+  // optional <form> element by walking its real DOM subtree for named
+  // input/textarea/select controls, reading each control's *current*
+  // value/checked off its JS wrapper (where .value/.checked assignments
+  // actually live — they don't reflect back to DOM attributes, matching
+  // real browsers where the value/checked *property* is independent of
+  // the value/checked *attribute* once the user or script touches it).
+  const formDataProto = createObject(null);
+  function getElementProp(el: DomElement, prop: string): JSValue {
+    const wrapped = wrapElement(el, domTree);
+    const desc = wrapped.properties.get(prop);
+    if (!desc) return undefined;
+    if (desc.getter) return callJSFunction(desc.getter, wrapped, []);
+    return desc.value;
+  }
+  function collectFormEntries(form: DomElement): [string, string][] {
+    const entries: [string, string][] = [];
+    const walk = (node: DomElement): void => {
+      for (const child of node.children) {
+        if (child.nodeType !== 'element') continue;
+        const childEl = child as DomElement;
+        const name = childEl.attributes.get('name');
+        if (name && ['input', 'textarea', 'select'].includes(childEl.tagName) && !childEl.attributes.has('disabled')) {
+          const type = (getElementProp(childEl, 'type') as string | undefined) ?? childEl.attributes.get('type') ?? 'text';
+          if (childEl.tagName === 'input' && (type === 'checkbox' || type === 'radio')) {
+            if (getElementProp(childEl, 'checked')) {
+              entries.push([name, toString(getElementProp(childEl, 'value') ?? childEl.attributes.get('value') ?? 'on')]);
+            }
+          } else {
+            entries.push([name, toString(getElementProp(childEl, 'value') ?? childEl.attributes.get('value') ?? '')]);
+          }
+        }
+        walk(childEl);
+      }
+    };
+    walk(form);
+    return entries;
+  }
+  function wrapFormData(entries: [string, string][]): JSObject {
+    const obj = createObject(formDataProto) as JSObjectWithMeta;
+    obj.__type_override = 'formdata';
+    obj.__formEntries = entries;
+    return obj;
+  }
+  const fdEntriesOf = (v: JSValue): [string, string][] | undefined =>
+    typeof v === 'object' && v !== null && isJSObjectWithMeta(v) ? v.__formEntries : undefined;
+  const fdCtorObj = createObject(null);
+  fdCtorObj.type = 'function';
+  fdCtorObj.callable = true;
+  fdCtorObj.nativeFn = (_this: unknown, args: unknown[]) => {
+    const formArg = (args as JSValue[])[0];
+    const formEl = typeof formArg === 'object' && formArg !== null && '__domNode' in formArg
+      ? (formArg as JSObject & { __domNode: DomElement }).__domNode
+      : undefined;
+    return wrapFormData(formEl ? collectFormEntries(formEl) : []);
+  };
+  fdCtorObj.properties.set('prototype', { value: formDataProto, writable: false, enumerable: false, configurable: false });
+  env.setLocal('FormData', fdCtorObj);
+  formDataProto.properties.set('append', {
+    value: createNativeFunction('append', (thisArg, a) => { fdEntriesOf(thisArg)?.push([toString(a[0]), toString(a[1])]); return undefined; }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('set', {
+    value: createNativeFunction('set', (thisArg, a) => {
+      const entries = fdEntriesOf(thisArg);
+      if (!entries) return undefined;
+      const key = toString(a[0]);
+      const filtered = entries.filter(([k]) => k !== key);
+      filtered.push([key, toString(a[1])]);
+      entries.length = 0;
+      entries.push(...filtered);
+      return undefined;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('get', {
+    value: createNativeFunction('get', (thisArg, a) => fdEntriesOf(thisArg)?.find(([k]) => k === toString(a[0]))?.[1] ?? null),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('getAll', {
+    value: createNativeFunction('getAll', (thisArg, a) => createArray((fdEntriesOf(thisArg) ?? []).filter(([k]) => k === toString(a[0])).map(([, v]) => v))),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('has', {
+    value: createNativeFunction('has', (thisArg, a) => (fdEntriesOf(thisArg) ?? []).some(([k]) => k === toString(a[0]))),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('delete', {
+    value: createNativeFunction('delete', (thisArg, a) => {
+      const entries = fdEntriesOf(thisArg);
+      if (!entries) return undefined;
+      const key = toString(a[0]);
+      const kept = entries.filter(([k]) => k !== key);
+      entries.length = 0;
+      entries.push(...kept);
+      return undefined;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('forEach', {
+    value: createNativeFunction('forEach', (thisArg, a) => {
+      const fn = a[0] as JSFunction;
+      if (typeof fn !== 'object' || fn === null || fn.type !== 'closure') return undefined;
+      for (const [k, v] of fdEntriesOf(thisArg) ?? []) callJSFunction(fn, undefined, [v, k, thisArg]);
+      return undefined;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+
+  // TextEncoder/TextDecoder — wrap real native ones (available in both Node
+  // and the renderer's V8 runtime), bridging through the sandboxed
+  // Uint8Array constructor so encode() returns a real, usable typed array
+  // rather than a plain array of byte values.
+  const teCtorObj = createObject(null);
+  teCtorObj.type = 'function';
+  teCtorObj.callable = true;
+  teCtorObj.nativeFn = () => {
+    const obj = createObject(null);
+    obj.properties.set('encoding', { value: 'utf-8', writable: false, enumerable: true, configurable: false });
+    obj.properties.set('encode', {
+      value: createNativeFunction('encode', (_t, a) => {
+        const bytes = Array.from(new TextEncoder().encode(a[0] !== undefined ? toString(a[0]) : ''));
+        // Looked up lazily (not at setup time): Uint8Array is registered
+        // later in createGlobalEnv, so env.get() here — at call time,
+        // well after setup finishes — is what makes it resolvable at all.
+        const uint8ArrayCtor = env.get('Uint8Array') as JSObject | undefined;
+        return uint8ArrayCtor?.nativeFn ? uint8ArrayCtor.nativeFn(undefined, [createArray(bytes as unknown as JSValue[])]) : createArray(bytes as unknown as JSValue[]);
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    return obj;
+  };
+  env.setLocal('TextEncoder', teCtorObj);
+
+  const tdCtorObj = createObject(null);
+  tdCtorObj.type = 'function';
+  tdCtorObj.callable = true;
+  tdCtorObj.nativeFn = (_this: unknown, args: unknown[]) => {
+    const encoding = (args as JSValue[])[0] !== undefined ? toString((args as JSValue[])[0]) : 'utf-8';
+    const obj = createObject(null);
+    obj.properties.set('encoding', { value: encoding, writable: false, enumerable: true, configurable: false });
+    obj.properties.set('decode', {
+      value: createNativeFunction('decode', (_t, a) => {
+        const input = a[0];
+        const view = typeof input === 'object' && input !== null && isJSObjectWithMeta(input) ? (input as { __nativeView?: unknown }).__nativeView : undefined;
+        if (view instanceof Uint8Array) return new TextDecoder(encoding).decode(view);
+        if (ArrayBuffer.isView(view as ArrayBufferView)) return new TextDecoder(encoding).decode(new Uint8Array((view as ArrayBufferView).buffer));
+        return '';
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    return obj;
+  };
+  env.setLocal('TextDecoder', tdCtorObj);
 
   // Map constructor
   const mapProto = createObject(null);

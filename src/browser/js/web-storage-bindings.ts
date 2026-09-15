@@ -90,8 +90,7 @@ function wrapStorage(storage: IStorage, callerOrigin?: string, storageOrigin?: s
     value: createNativeFunction('getItem', (_this, args) => {
       checkOrigin();
       const key = toString(args[0]);
-      const result = storage.getItem(key);
-      return result === null ? undefined : result;
+      return storage.getItem(key);
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -134,16 +133,16 @@ function wrapStorage(storage: IStorage, callerOrigin?: string, storageOrigin?: s
     value: createNativeFunction('key', (_this, args) => {
       checkOrigin();
       const index = toNumber(args[0]);
-      const result = storage.key(index);
-      return result === null ? undefined : result;
+      return storage.key(index);
     }),
     writable: true, enumerable: true, configurable: true,
   });
 
-  // length (getter)
+  // length (live getter — was a snapshot taken once at wrap-time, so it
+  // never reflected any setItem/removeItem/clear call made afterward)
   obj.properties.set('length', {
-    value: storage.length,
-    writable: false, enumerable: true, configurable: true,
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get length', () => storage.length),
   });
 
   return obj;

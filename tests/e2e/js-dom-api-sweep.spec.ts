@@ -408,6 +408,153 @@ const CASES: Case[] = [
       })();
     `, 10),
   },
+  {
+    name: 'language-features',
+    labels: [
+      'generator function + for-of drains yielded values',
+      'yield* delegates into a sub-iterable',
+      'for-of iterates a Map as [key, value] pairs',
+      'for-of iterates a Set',
+      'for-of iterates a custom Symbol.iterator object',
+      'function rest parameter',
+      'function default parameter',
+      'function destructured object param with nested default',
+      'function destructured array param',
+      'arrow function destructured object param',
+      'arrow function rest parameter',
+      'arrow function destructured param with outer default',
+      'URL parses hostname/pathname/search/hash',
+      'URLSearchParams get/has via URL.searchParams',
+      'FormData reads real form control values',
+      'TextEncoder/TextDecoder round-trip',
+      'Array.prototype.toSorted does not mutate the original',
+      'Array.prototype.with returns a copy with one index replaced',
+      'Object.groupBy partitions by callback result',
+      'Symbol used as a computed object-literal key is retrievable',
+    ],
+    html: harnessHtml(`
+      try {
+        function* gen() { yield 1; yield 2; yield 3; }
+        var out = [];
+        for (var v of gen()) out.push(v);
+        mark(0, JSON.stringify(out) === JSON.stringify([1,2,3]));
+      } catch(e) { }
+
+      try {
+        function* inner() { yield 'a'; yield 'b'; }
+        function* outer() { yield 1; yield* inner(); yield 2; }
+        var out2 = [];
+        for (var v2 of outer()) out2.push(v2);
+        mark(1, JSON.stringify(out2) === JSON.stringify([1,'a','b',2]));
+      } catch(e) { }
+
+      try {
+        var m = new Map([['x',1],['y',2]]);
+        var out3 = [];
+        for (var pair of m) out3.push(pair[0] + ':' + pair[1]);
+        mark(2, JSON.stringify(out3) === JSON.stringify(['x:1','y:2']));
+      } catch(e) { }
+
+      try {
+        var s = new Set([1,2,3]);
+        var out4 = [];
+        for (var v4 of s) out4.push(v4);
+        mark(3, JSON.stringify(out4) === JSON.stringify([1,2,3]));
+      } catch(e) { }
+
+      try {
+        var custom = { [Symbol.iterator]: function() {
+          var i = 0;
+          return { next: function() { return i < 3 ? {value: i++, done:false} : {value:undefined, done:true}; } };
+        }};
+        var out5 = [];
+        for (var v5 of custom) out5.push(v5);
+        mark(4, JSON.stringify(out5) === JSON.stringify([0,1,2]));
+      } catch(e) { }
+
+      try {
+        function withRest(a, ...rest) { return a + ':' + rest.join(','); }
+        mark(5, withRest(1,2,3,4) === '1:2,3,4');
+      } catch(e) { }
+
+      try {
+        function withDefault(a, b = 10) { return a + b; }
+        mark(6, withDefault(5) === 15 && withDefault(5, 1) === 6);
+      } catch(e) { }
+
+      try {
+        function withObjDestructure({x, y = 100}) { return x + y; }
+        mark(7, withObjDestructure({x: 1}) === 101 && withObjDestructure({x: 1, y: 2}) === 3);
+      } catch(e) { }
+
+      try {
+        function withArrDestructure([a, , b]) { return a + b; }
+        mark(8, withArrDestructure([1, 99, 2]) === 3);
+      } catch(e) { }
+
+      try {
+        var arrowObj = ({a, b}) => a + b;
+        mark(9, arrowObj({a: 3, b: 4}) === 7);
+      } catch(e) { }
+
+      try {
+        var arrowRest = (...args) => args.length;
+        mark(10, arrowRest(1,2,3) === 3);
+      } catch(e) { }
+
+      try {
+        var arrowNested = (a, {b, c = 5} = {}) => a + b + c;
+        mark(11, arrowNested(1, {b: 2}) === 8);
+      } catch(e) { }
+
+      try {
+        var u = new URL('https://example.com:8080/path?a=1&b=2#hash');
+        mark(12, u.hostname === 'example.com' && u.pathname === '/path' && u.search === '?a=1&b=2' && u.hash === '#hash' && u.port === '8080');
+      } catch(e) { }
+
+      try {
+        var u2 = new URL('https://example.com/?a=1&b=2');
+        mark(13, u2.searchParams.get('a') === '1' && u2.searchParams.has('b') === true && u2.searchParams.get('c') === null);
+      } catch(e) { }
+
+      try {
+        var form = document.createElement('form');
+        var inp = document.createElement('input');
+        inp.name = 'username'; inp.value = 'bob';
+        form.appendChild(inp);
+        var fd = new FormData(form);
+        mark(14, fd.get('username') === 'bob' && fd.get('missing') === null);
+      } catch(e) { }
+
+      try {
+        var enc = new TextEncoder();
+        var bytes = enc.encode('hi');
+        var dec = new TextDecoder();
+        mark(15, dec.decode(bytes) === 'hi' && bytes.length === 2);
+      } catch(e) { }
+
+      try {
+        var orig = [3,1,2];
+        var sorted = orig.toSorted();
+        mark(16, JSON.stringify(sorted) === JSON.stringify([1,2,3]) && JSON.stringify(orig) === JSON.stringify([3,1,2]));
+      } catch(e) { }
+
+      try {
+        mark(17, JSON.stringify([1,2,3].with(1, 99)) === JSON.stringify([1,99,3]));
+      } catch(e) { }
+
+      try {
+        var grouped = Object.groupBy([1,2,3,4], function(n){ return n % 2 === 0 ? 'even' : 'odd'; });
+        mark(18, JSON.stringify(grouped.odd) === JSON.stringify([1,3]) && JSON.stringify(grouped.even) === JSON.stringify([2,4]));
+      } catch(e) { }
+
+      try {
+        var key = Symbol('mykey');
+        var withSymKey = { [key]: 'value1' };
+        mark(19, withSymKey[key] === 'value1');
+      } catch(e) { }
+    `, 20),
+  },
 ];
 
 test('JS/DOM API sweep against real fixtures', async () => {

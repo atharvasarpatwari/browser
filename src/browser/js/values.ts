@@ -82,6 +82,12 @@ export interface JSObjectWithMeta extends JSObject {
   nativeDate?: Date;
   /** Native RegExp object for RegExp wrappers */
   nativeRegExp?: RegExp;
+  /** Native URL object for URL wrappers */
+  nativeURL?: URL;
+  /** Native URLSearchParams object for URLSearchParams wrappers */
+  nativeURLSearchParams?: URLSearchParams;
+  /** FormData internal entries (string values only — no File support) */
+  __formEntries?: [string, string][];
   /** Symbol numeric ID */
   symbolId?: number;
   /** Map internal object-key store */
@@ -117,6 +123,8 @@ export interface JSFunction {
   type: 'closure';
   name: string;
   params: string[];
+  /** Raw parameter AST nodes (Identifier/RestElement/AssignmentPattern/ArrayPattern/ObjectPattern), when known — lets the interpreter bind default values, rest params, and destructured params correctly instead of the plain-name-only fallback `params` gives. */
+  paramNodes?: unknown[];
   body: unknown; // AST.BlockStatement | AST.Expression | BytecodeFunction
   closure: Environment;
   async: boolean;
@@ -658,6 +666,33 @@ const arrayNativeMethods: Record<string, NativeFunction> = {
     if (i < 0) i += elems.length;
     return i >= 0 && i < elems.length ? elems[i] : undefined;
   },
+  // ES2023 non-mutating counterparts of sort/reverse/splice/index-assign —
+  // missing entirely; only their mutating originals existed.
+  toSorted: (_this, args) => {
+    if (typeof _this !== 'object' || _this === null) return createArray([]);
+    const elems = getArrayElements(_this as JSObject);
+    const cmpFn = args[0];
+    if (typeof cmpFn === 'object' && cmpFn !== null && (cmpFn as JSFunction).type === 'closure') {
+      elems.sort((a, b) => toNumber(callJSFunction(cmpFn as JSFunction, undefined, [a, b])));
+    } else {
+      elems.sort((a, b) => { const sa = toString(a), sb = toString(b); return sa < sb ? -1 : sa > sb ? 1 : 0; });
+    }
+    return createArray(elems);
+  },
+  toReversed: (_this) => {
+    if (typeof _this !== 'object' || _this === null) return createArray([]);
+    return createArray(getArrayElements(_this as JSObject).reverse());
+  },
+  with: (_this, args) => {
+    if (typeof _this !== 'object' || _this === null) return createArray([]);
+    const elems = getArrayElements(_this as JSObject);
+    let i = toNumber(args[0]);
+    if (i < 0) i += elems.length;
+    if (i < 0 || i >= elems.length) throw new RangeError('Invalid index');
+    const copy = [...elems];
+    copy[i] = args[1];
+    return createArray(copy);
+  },
   keys: (_this) => {
     if (typeof _this !== 'object' || _this === null) return createArray([]);
     const len = Number((_this as JSObject).properties.get('length')?.value ?? 0);
@@ -733,6 +768,7 @@ export function createFunction(
   isBytecode = false,
   upvalues?: UpvalueRef[],
   isStrict = false,
+  paramNodes?: unknown[],
 ): JSFunction {
   if (isStrict) {
     const seen = new Set<string>();
@@ -747,6 +783,7 @@ export function createFunction(
     type: 'closure',
     name,
     params,
+    paramNodes,
     body,
     closure,
     async,
