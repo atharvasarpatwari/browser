@@ -45,6 +45,23 @@ function toPropertyKey(val: JSValue): string {
   return toString(val);
 }
 
+// Assignment (`obj.x = v`) only ever checked obj's OWN properties for an
+// existing setter — a setter (or getter) declared on a class/object
+// PROTOTYPE (every non-static class accessor: `set label(v) {...}`) was
+// invisible here, so assigning through it silently fell back to just
+// creating a same-named plain value property directly on the instance,
+// shadowing the accessor instead of invoking it. Reads already walked the
+// prototype chain correctly (getPropertyValue/evalMember); writes didn't.
+function findPropertyDescriptor(obj: JSObject, key: string) {
+  let cur: JSObject | null = obj;
+  while (cur) {
+    const desc = cur.properties.get(key);
+    if (desc) return desc;
+    cur = cur.prototype;
+  }
+  return undefined;
+}
+
 function jsError(name: string, message: string): JSError {
   const err = createObject(null) as JSObject & { __type_override?: string };
   err.properties.set('message', { value: message, writable: true, enumerable: true, configurable: true });
@@ -508,6 +525,7 @@ export class Interpreter {
       prototype: classProto,
       callable: true,
     };
+    (classObj as JSObject & { __classClosure?: Environment }).__classClosure = env;
 
     // Set up prototype with constructor
     classProto.properties.set('constructor', {
@@ -525,20 +543,47 @@ export class Interpreter {
       }
     }
 
+    // Every method's closure previously WAS `env` itself — the same,
+    // shared enclosing-scope environment for every class declared there —
+    // and `super`/`__superCtor` were bound onto it with setLocal(), which
+    // mutates in place. Two classes in the same scope (`class B extends A
+    // {}`, `class C extends B {}` at top level, an extremely ordinary
+    // pattern) meant building C overwrote the *same* environment's `super`
+    // that B's own methods had already captured, so calling B's method
+    // later saw C's superclass instead of A — `super.greet()` inside B
+    // resolved to B's own prototype, recursing into itself forever. Each
+    // class now gets its own child environment to bind `super` on, so
+    // sibling/later classes in the same scope can never retroactively
+    // change an earlier class's methods' idea of `super`.
+    // Static methods need a *different* super binding than instance
+    // methods: `super.staticMethod()` resolves against the parent CLASS
+    // OBJECT itself, not the parent's instance prototype — reusing one
+    // shared closure/binding for both would make static super calls
+    // resolve against the wrong target (a static super lookup landing on
+    // the instance prototype instead, where the parent's static method
+    // was never stored, always returning undefined).
+    const classClosureEnv = new Environment(env);
+    const staticClosureEnv = new Environment(env);
+    const superClassVal = classObj.properties.get('super')?.value;
+    if (superClassVal && typeof superClassVal === 'object' && superClassVal !== null) {
+      const superProto = (superClassVal as JSObject).prototype ?? superClassVal;
+      classClosureEnv.setLocal('super', superProto);
+      classClosureEnv.setLocal('__superCtor', superClassVal);
+      staticClosureEnv.setLocal('super', superClassVal);
+      staticClosureEnv.setLocal('__superCtor', superClassVal);
+    }
+
     // Store methods from body
     let hasConstructor = false;
     if (stmt.body.type === 'ClassBody') {
       for (const method of stmt.body.body) {
         if (method.type === 'MethodDefinition') {
-          const key = method.key.type === 'Identifier' ? method.key.name : String(method.key);
-          const fn = createFunction(key, method.value.params.map(p => (p as AST.Identifier).name), method.value.body, env, false, false, false, false, undefined, true, method.value.params);
-          // Set 'super' in the method's closure so super.method() works
-          const superVal = classObj.properties.get('super')?.value;
-          if (superVal && typeof superVal === 'object' && superVal !== null) {
-            const superProto = (superVal as JSObject).prototype ?? superVal;
-            fn.closure.setLocal('super', superProto);
-            fn.closure.setLocal('__superCtor', superVal);
-          }
+          // A computed key (`[expr]() {}`) needs evaluating; previously this
+          // did native String(method.key) — stringifying the AST node
+          // object itself ("[object Object]") rather than evaluating the
+          // expression it holds, so every computed method name collided.
+          const key = !method.computed && method.key.type === 'Identifier' ? method.key.name : toPropertyKey(this.evalExpr(method.key, env));
+          const fn = createFunction(key, method.value.params.map(p => (p as AST.Identifier).name), method.value.body, method.static ? staticClosureEnv : classClosureEnv, false, false, false, false, undefined, true, method.value.params);
           if (key === 'constructor') {
             hasConstructor = true;
             classObj.properties.set('constructor', { value: fn, writable: true, enumerable: true, configurable: true });
@@ -557,12 +602,36 @@ export class Interpreter {
               target.properties.set(key, { value: fn, writable: true, enumerable: true, configurable: true });
             }
           }
+        } else if (method.type === 'PropertyDefinition') {
+          // Class fields (`x = 1`, `static y = 2`) were silently skipped
+          // entirely — this loop only ever matched MethodDefinition, so a
+          // field declaration parsed fine but never became a real
+          // property on anything. Static fields evaluate immediately (with
+          // `this` bound to the class itself, per spec); instance fields
+          // are deferred to evalNew, run per-instance with `this` bound to
+          // the new instance, since their initializer can reference it.
+          const key = !method.computed && method.key.type === 'Identifier' ? method.key.name : toPropertyKey(this.evalExpr(method.key, env));
+          if (method.static) {
+            const staticEnv = new Environment(env);
+            staticEnv.setLocal('this', classObj);
+            const value = method.value ? this.evalExpr(method.value, staticEnv) : undefined;
+            classObj.properties.set(key, { value, writable: true, enumerable: true, configurable: true });
+          } else {
+            const withFields = classObj as JSObject & { __instanceFields?: { key: string; value: unknown }[] };
+            (withFields.__instanceFields ??= []).push({ key, value: method.value });
+          }
         }
       }
     }
 
     // Generate default constructor for derived classes without one
     if (!hasConstructor && stmt.superClass) {
+      // Must close over classClosureEnv (which has __superCtor bound to
+      // THIS class's own superclass), not the plain outer env — this
+      // constructor's whole body is `super(...)`, and when a grandchild
+      // class's own super() call runs *this* constructor's body, it does
+      // so via a fresh Environment(pfn.closure) with no other way to learn
+      // what "the parent of the parent" is except through this closure.
       const defaultCtor = createFunction(className, [], {
         type: 'BlockStatement',
         body: [{
@@ -574,7 +643,7 @@ export class Interpreter {
             optional: false,
           },
         }],
-      } as unknown as AST.BlockStatement, env, false, false, false, false, undefined, true);
+      } as unknown as AST.BlockStatement, classClosureEnv, false, false, false, false, undefined, true);
       classObj.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: true, configurable: true });
       classProto.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: false, configurable: true });
     }
@@ -889,10 +958,46 @@ export class Interpreter {
       result += expr.quasis[i]!.value;
       if (i < expr.expressions.length) {
         const val = this.evalExpr(expr.expressions[i]!, env);
-        result += val === undefined ? 'undefined' : val === null ? 'null' : String(val);
+        result += val === undefined ? 'undefined' : val === null ? 'null' : this.jsToString(val);
       }
     }
     return result;
+  }
+
+  // Real string coercion (template-literal interpolation, `+`, String())
+  // must call a class/object's own toString()/valueOf() when it has one —
+  // this engine's generic values.ts toString() only knows the object's
+  // internal *shape* (array/typed-array/etc.), so a custom `class Money {
+  // toString() { return '$' + this.amt; } }` instance always printed the
+  // generic "[object Object]" instead, since nothing ever looked up and
+  // called the user's own method.
+  private jsToPrimitive(val: JSValue, hint: 'string' | 'number' | 'default' = 'default'): JSValue {
+    if (typeof val !== 'object' || val === null) return val;
+    const obj = val as JSObject;
+    const callIfPrimitiveResult = (fn: JSValue, args: JSValue[]): JSValue | undefined => {
+      if (typeof fn !== 'object' || fn === null || (fn as JSFunction).type !== 'closure') return undefined;
+      const result = callJSFunction(fn as JSFunction, obj, args);
+      return (typeof result !== 'object' || result === null) ? result : undefined;
+    };
+    // Symbol.toPrimitive takes priority over valueOf/toString per spec —
+    // an object defining it decides its own coercion for every hint.
+    const symbolGlobal = this.globalEnv.get('Symbol');
+    const toPrimitiveSym = typeof symbolGlobal === 'object' && symbolGlobal !== null ? (symbolGlobal as JSObject).properties.get('toPrimitive')?.value : undefined;
+    if (toPrimitiveSym !== undefined) {
+      const toPrimitiveFn = this.getPropertyValue(obj, toPropertyKey(toPrimitiveSym));
+      const result = callIfPrimitiveResult(toPrimitiveFn, [hint]);
+      if (result !== undefined) return result;
+    }
+    const order = hint === 'string' ? ['toString', 'valueOf'] : ['valueOf', 'toString'];
+    for (const name of order) {
+      const result = callIfPrimitiveResult(this.getPropertyValue(obj, name), []);
+      if (result !== undefined) return result;
+    }
+    return val;
+  }
+
+  private jsToString(val: JSValue): string {
+    return toString(this.jsToPrimitive(val, 'string'));
   }
 
   /**
@@ -943,10 +1048,10 @@ export class Interpreter {
     }
     const val = this.evalExpr(expr.argument, env);
     switch (expr.operator) {
-      case '-': return -toNumber(val);
-      case '+': return toNumber(val);
+      case '-': return -toNumber(this.jsToPrimitive(val, 'number'));
+      case '+': return toNumber(this.jsToPrimitive(val, 'number'));
       case '!': return !toBoolean(val);
-      case '~': return ~toNumber(val);
+      case '~': return ~toNumber(this.jsToPrimitive(val, 'number'));
       default: return val;
     }
   }
@@ -958,9 +1063,15 @@ export class Interpreter {
       const key = expr.argument.computed
         ? toPropertyKey(this.evalExpr(expr.argument.property, env))
         : (expr.argument.property as AST.Identifier).name;
-      const old = toNumber(obj.properties.get(key)?.value);
+      // Same class of bug as the `=`/compound-assignment paths: this read
+      // only the instance's own plain value (no getter, no prototype walk)
+      // and wrote back a plain value unconditionally (no setter at all) —
+      // `obj.x++` on a getter/setter-backed accessor silently ignored both.
+      const updateDesc = findPropertyDescriptor(obj, key);
+      const old = toNumber(updateDesc?.getter ? callJSFunction(updateDesc.getter, obj, []) : updateDesc?.value);
       const newVal = expr.operator === '++' ? old + 1 : old - 1;
-      obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
+      if (updateDesc?.setter) callJSFunction(updateDesc.setter, obj, [newVal]);
+      else obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
       return expr.prefix ? newVal : old;
     }
     const name = (expr.argument as AST.Identifier)?.name;
@@ -976,9 +1087,18 @@ export class Interpreter {
     const right = this.evalExpr(expr.right, env);
 
     switch (expr.operator) {
-      case '+':
-        if (typeof left === 'string' || typeof right === 'string') return toString(left) + toString(right);
-        return toNumber(left) + toNumber(right);
+      case '+': {
+        // ToPrimitive both sides first (default hint) — `left`/`right` may
+        // be objects whose own valueOf()/toString() decide whether this
+        // is really string concatenation or numeric addition; checking
+        // `typeof left === 'string'` before coercing missed every object
+        // operand entirely, e.g. `money + 5` never even tried Money's own
+        // toString() and just silently coerced it as NaN instead.
+        const leftPrim = this.jsToPrimitive(left);
+        const rightPrim = this.jsToPrimitive(right);
+        if (typeof leftPrim === 'string' || typeof rightPrim === 'string') return toString(leftPrim) + toString(rightPrim);
+        return toNumber(leftPrim) + toNumber(rightPrim);
+      }
       case '-': return toNumber(left) - toNumber(right);
       case '*': return toNumber(left) * toNumber(right);
       case '/': return toNumber(left) / toNumber(right);
@@ -1057,7 +1177,7 @@ export class Interpreter {
         ? toPropertyKey(this.evalExpr(expr.left.property, env))
         : (expr.left.property as AST.Identifier).name;
       if (expr.operator === '=') {
-        const existingDesc = obj.properties.get(key);
+        const existingDesc = findPropertyDescriptor(obj, key);
         if (existingDesc?.setter) {
           callJSFunction(existingDesc.setter, obj, [right]);
         } else {
@@ -1079,21 +1199,14 @@ export class Interpreter {
         }
         return right;
       }
-      let current: JSValue;
-      if (obj.properties.has(key)) {
-        const d = obj.properties.get(key)!;
-        current = d.getter ? callJSFunction(d.getter, obj, []) : d.value;
-      } else if (obj.prototype) {
-        let proto: JSObject | null = obj.prototype;
-        let found = false;
-        while (proto) {
-          if (proto.properties.has(key)) { current = proto.properties.get(key)!.value; found = true; break; }
-          proto = proto.prototype;
-        }
-        if (!found) current = undefined;
-      } else {
-        current = undefined;
-      }
+      // Same prototype-chain gap as the setter checks: an inherited
+      // accessor's descriptor (found only via the prototype walk) was read
+      // with plain `.value` instead of calling `.getter`, and a getter-only
+      // descriptor always has `value: undefined` — so `obj.n += 5` on a
+      // class accessor read `undefined` as the current value regardless of
+      // what the getter actually returned.
+      const currentDesc = findPropertyDescriptor(obj, key);
+      const current: JSValue = currentDesc?.getter ? callJSFunction(currentDesc.getter, obj, []) : currentDesc?.value;
       let newVal: JSValue;
       switch (expr.operator) {
         case '+=': newVal = (typeof current === 'string' || typeof right === 'string') ? toString(current) + toString(right) : toNumber(current) + toNumber(right); break;
@@ -1110,8 +1223,9 @@ export class Interpreter {
         case '??=': newVal = (current !== null && current !== undefined) ? current : right; break;
         default: newVal = right;
       }
-      obj.properties.has(key) && obj.properties.get(key)!.setter
-        ? callJSFunction(obj.properties.get(key)!.setter!, obj, [newVal])
+      const compoundSetter = findPropertyDescriptor(obj, key)?.setter;
+      compoundSetter
+        ? callJSFunction(compoundSetter, obj, [newVal])
         : obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
       return newVal;
     }
@@ -1158,7 +1272,7 @@ export class Interpreter {
             }
           }
           pEnv.setLocal('arguments', createArray(args));
-          pfn.params.forEach((p, i) => pEnv.setLocal(p, args[i]));
+          this.bindParams(pfn, pEnv, args);
           const pResult = this.execBlock((pfn.body as AST.BlockStatement).body as AST.Statement[], pEnv);
           if (isReturnSignal(pResult) && typeof pResult.value === 'object' && pResult.value !== null) {
             return pResult.value;
@@ -1296,6 +1410,32 @@ export class Interpreter {
       const classObj = ctor as JSObject;
       const classProto = classObj.prototype ?? createObject(null);
       const instance = createObject(classProto);
+
+      // Instance field initializers (`x = 1` in a class body) — run base
+      // class first, most-derived last (so a subclass field can shadow an
+      // inherited one), each in its own class's closure scope with `this`
+      // bound to the new instance, since an initializer can reference it
+      // (`y = this.x * 2`). buildClassObject only ever collected these;
+      // nothing previously consumed the list, so class fields were
+      // declared but never actually became properties on any instance.
+      const classChain: JSObject[] = [];
+      let curClass: JSObject | undefined = classObj;
+      while (curClass) {
+        classChain.unshift(curClass);
+        const superVal: JSValue = curClass.properties?.get('super')?.value;
+        curClass = typeof superVal === 'object' && superVal !== null ? superVal as JSObject : undefined;
+      }
+      for (const c of classChain) {
+        const fields = (c as JSObject & { __instanceFields?: { key: string; value: unknown }[] }).__instanceFields;
+        const closureEnv = (c as JSObject & { __classClosure?: Environment }).__classClosure;
+        if (!fields || !closureEnv) continue;
+        const fieldEnv = new Environment(closureEnv);
+        fieldEnv.setLocal('this', instance);
+        for (const f of fields) {
+          const value = f.value ? this.evalExpr(f.value as AST.Expression, fieldEnv) : undefined;
+          instance.properties.set(f.key, { value, writable: true, enumerable: true, configurable: true });
+        }
+      }
 
       const superClass = classObj.properties?.get('super')?.value;
       const initFn = classObj.properties?.get('constructor');

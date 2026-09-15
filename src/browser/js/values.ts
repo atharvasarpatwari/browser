@@ -72,6 +72,10 @@ export interface JSObjectWithMeta extends JSObject {
   __remote?: JSObject;
   /** Signal listeners for AbortSignal */
   __signalListeners?: Set<(ev: unknown) => void>;
+  /** Class instance field definitions (`x = 1` in a class body) — evaluated per-instance at construction time, with `this` bound, rather than once at class-definition time (their initializer can reference `this`). Untyped `unknown` here to avoid this file depending on ./ast; the interpreter casts to the real Expression type it stored. */
+  __instanceFields?: { key: string; value: unknown }[];
+  /** The environment a class was defined in, needed to give instance field initializers (and any constructor-less default) the right closure scope. */
+  __classClosure?: Environment;
   /** Associated animation object */
   __animation?: unknown;
   /** Range internal state */
@@ -388,12 +392,21 @@ export function instanceofCheck(left: JSValue, right: JSValue): boolean {
   if (typeof left !== 'object' || left === null) return false;
   if (!right || typeof right !== 'object') return false;
   const rightObj = right as JSObject;
-  const isNativeFn = 'closure' in right || (rightObj.type === 'function' && rightObj.callable);
+  // A user-defined class is its own JSObject shape (type: 'class'), neither
+  // a closure nor a plain callable `type: 'function'` object — `x
+  // instanceof MyClass` always returned false, unconditionally, for every
+  // class in the engine.
+  const isClass = rightObj.type === 'class';
+  const isNativeFn = 'closure' in right || isClass || (rightObj.type === 'function' && rightObj.callable);
   if (!isNativeFn) return false;
   const ctorName = ('closure' in right) ? (right as JSFunction).name : (rightObj.properties?.get('name')?.value as string ?? '');
   const leftObj = left as JSObject;
   if (ctorName === 'Array' && leftObj.type === 'array') return true;
-  const ctorProto = rightObj.properties?.get('prototype')?.value;
+  // A class's user-visible `.prototype` is never placed in its own
+  // .properties map (only its *structural* `.prototype` link, used for
+  // this engine's own prototype-chain walks, is set) — fall back to that
+  // structural link directly for classes instead of the empty lookup.
+  const ctorProto = isClass ? rightObj.prototype : rightObj.properties?.get('prototype')?.value;
   if (!ctorProto || typeof ctorProto !== 'object' || ctorProto === null) return false;
   let proto = leftObj.prototype;
   while (proto) {

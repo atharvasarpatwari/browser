@@ -785,19 +785,24 @@ describe('SharedArrayBuffer', () => {
 // â”€â”€ toString for typed arrays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('TypedArray toString', () => {
-  it('should toString as [object Uint8Array]', () => {
+  // Real %TypedArray%.prototype.toString is spec'd as Array.prototype.toString
+  // (join with ','), not a generic "[object Name]" tag — this engine's own
+  // toString() method (typed-arrays.ts) already implemented that correctly,
+  // it just wasn't reachable via string coercion (`+`, template literals)
+  // until that coercion path started calling an object's own toString().
+  it('should toString as comma-joined elements', () => {
     const val = evalExpr(`
       const arr = new Uint8Array(4);
       '' + arr;
     `);
-    expect(val).toBe('[object Uint8Array]');
+    expect(val).toBe('0,0,0,0');
   });
 
-  it('should toString as [object Float64Array]', () => {
+  it('should toString as comma-joined elements for Float64Array', () => {
     const val = evalExpr(`
       const arr = new Float64Array(4);
       '' + arr;
     `);
-    expect(val).toBe('[object Float64Array]');
+    expect(val).toBe('0,0,0,0');
   });
 });

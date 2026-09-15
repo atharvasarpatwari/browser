@@ -555,6 +555,154 @@ const CASES: Case[] = [
       } catch(e) { }
     `, 20),
   },
+  {
+    name: 'class-features',
+    labels: [
+      'static field with initializer',
+      'instance field with initializer referencing this',
+      'instanceof works for a user-defined class and its subclass',
+      'setter declared on a class works through assignment',
+      'compound assignment (+=) invokes an inherited setter',
+      'increment (++) invokes a getter/setter pair',
+      'computed method name evaluates the key expression',
+      'private field is stored and readable via a method',
+      'private method is callable from an instance method',
+      'custom toString() is used by template-literal interpolation',
+      'custom valueOf()/Symbol.toPrimitive is used by + and unary +',
+      '3-level super chain resolves each level correctly (no infinite recursion)',
+      'independent class hierarchies in the same scope do not share super',
+      'static super call resolves against the parent class, not its prototype',
+      'getter/setter pair inherited two levels down',
+    ],
+    html: harnessHtml(`
+      try {
+        class Counter { static count = 5; }
+        mark(0, Counter.count === 5);
+      } catch(e) { }
+
+      try {
+        class WithFields { x = 10; y = this.x * 2; }
+        var wf = new WithFields();
+        mark(1, wf.x === 10 && wf.y === 20);
+      } catch(e) { }
+
+      try {
+        class Animal { constructor(n) { this.name = n; } }
+        class Dog extends Animal {}
+        var d = new Dog('Rex');
+        mark(2, d instanceof Animal && d instanceof Dog);
+      } catch(e) { }
+
+      try {
+        class Box {
+          constructor(v) { this._v = v; }
+          get value() { return this._v; }
+          set value(v) { this._v = v; }
+        }
+        var b = new Box(1);
+        b.value = 42;
+        mark(3, b.value === 42);
+      } catch(e) { }
+
+      try {
+        class Acc {
+          get n() { return this._n || 0; }
+          set n(v) { this._n = v; }
+        }
+        var a = new Acc();
+        a.n = 10;
+        a.n += 5;
+        mark(4, a.n === 15);
+      } catch(e) { }
+
+      try {
+        class Acc2 {
+          get n() { return this._n || 0; }
+          set n(v) { this._n = v; }
+        }
+        var a2 = new Acc2();
+        a2.n = 10;
+        a2.n++;
+        mark(5, a2.n === 11);
+      } catch(e) { }
+
+      try {
+        var methodName = 'dynamicMethod';
+        class Dyn { [methodName]() { return 'called'; } }
+        mark(6, new Dyn().dynamicMethod() === 'called');
+      } catch(e) { }
+
+      try {
+        class PrivateBox {
+          #value;
+          constructor(v) { this.#value = v; }
+          getValue() { return this.#value; }
+        }
+        mark(7, new PrivateBox(99).getValue() === 99);
+      } catch(e) { }
+
+      try {
+        class PrivateCounter {
+          #count = 0;
+          #increment() { this.#count++; return this.#count; }
+          tick() { return this.#increment(); }
+        }
+        var pc = new PrivateCounter();
+        mark(8, pc.tick() === 1 && pc.tick() === 2);
+      } catch(e) { }
+
+      try {
+        class Money {
+          constructor(amt) { this.amt = amt; }
+          toString() { return '$' + this.amt; }
+        }
+        var m = new Money(5);
+        mark(9, \`Price: \${m}\` === 'Price: $5');
+      } catch(e) { }
+
+      try {
+        class Temp {
+          constructor(c) { this.c = c; }
+          [Symbol.toPrimitive](hint) {
+            if (hint === 'number') return this.c;
+            return 'Temp(' + this.c + ')';
+          }
+        }
+        var t = new Temp(20);
+        mark(10, (+t === 20) && (t + '' === 'Temp(20)'));
+      } catch(e) { }
+
+      try {
+        class A { greet() { return 'A'; } }
+        class B extends A { greet() { return super.greet() + 'B'; } }
+        class C extends B { greet() { return super.greet() + 'C'; } }
+        mark(11, new C().greet() === 'ABC');
+      } catch(e) { }
+
+      try {
+        class X1 { m() { return 'X1'; } }
+        class Y1 extends X1 { m() { return super.m() + 'Y1'; } }
+        class X2 { m() { return 'X2'; } }
+        class Y2 extends X2 { m() { return super.m() + 'Y2'; } }
+        mark(12, new Y1().m() === 'X1Y1' && new Y2().m() === 'X2Y2');
+      } catch(e) { }
+
+      try {
+        class Base { static create() { return 'base'; } }
+        class Derived extends Base { static create() { return super.create() + '-derived'; } }
+        mark(13, Derived.create() === 'base-derived');
+      } catch(e) { }
+
+      try {
+        class GA { get val() { return this._v || 0; } set val(v) { this._v = v; } }
+        class GB extends GA {}
+        class GC extends GB {}
+        var gc = new GC();
+        gc.val = 77;
+        mark(14, gc.val === 77);
+      } catch(e) { }
+    `, 15),
+  },
 ];
 
 test('JS/DOM API sweep against real fixtures', async () => {

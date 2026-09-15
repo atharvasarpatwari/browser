@@ -94,6 +94,21 @@ export class Lexer {
       return this.readTemplate(startLine, startCol);
     }
 
+    // Private class fields/methods (#name) — previously fell through to
+    // Illegal, which parsePropertyKey()'s permissive `tok.value` fallback
+    // then quietly accepted as a property literally named "#", so
+    // `#value;`/`this.#value` silently split into two unrelated garbled
+    // members instead of ever throwing. Lexed as one ordinary identifier
+    // token whose name happens to include the leading '#', so declarations,
+    // reads and writes all go through the same Identifier/property-key
+    // paths as everything else. This does not enforce real member privacy
+    // (obj.#x is still readable from outside its class here, unlike real
+    // JS) — ponytail: add true encapsulation if something depends on
+    // private fields actually being inaccessible from outside the class.
+    if (ch === '#' && this.isIdentifierStart(this.peek(1) ?? '')) {
+      return this.readIdentifier(startLine, startCol, true);
+    }
+
     // Identifiers and keywords
     if (this.isIdentifierStart(ch)) {
       return this.readIdentifier(startLine, startCol);
@@ -378,13 +393,15 @@ export class Lexer {
     return this.makeToken(TokenType.TemplateTail, this.source.slice(start, this.pos), line, col);
   }
 
-  private readIdentifier(line: number, col: number): Token {
+  private readIdentifier(line: number, col: number, isPrivate = false): Token {
     const start = this.pos;
+    if (isPrivate) this.advance(); // '#'
     while (this.pos < this.source.length && this.isIdentifierPart(this.source[this.pos]!)) {
       this.advance();
     }
     const value = this.source.slice(start, this.pos);
-    const type = lookupKeyword(value);
+    // A private name (#foo) is never a keyword, however it spells.
+    const type = isPrivate ? TokenType.Identifier : lookupKeyword(value);
     return this.makeToken(type, value, line, col);
   }
 

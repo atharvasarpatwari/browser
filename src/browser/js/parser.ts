@@ -934,22 +934,41 @@ export class Parser {
         if (this.is(TokenType.Get)) { this.advance(); accessorKind = 'get'; }
         else if (this.is(TokenType.Set)) { this.advance(); accessorKind = 'set'; }
         const key = this.parsePropertyKey();
-        this.expect(TokenType.LParen);
-        const params = this.parseParams();
-        this.expect(TokenType.RParen);
-        this.strictStack.push(true);
-        const funcBody = this.parseBlock();
-        this.strictStack.pop();
-        body.push({
-          type: 'MethodDefinition', key,
-          value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
-          kind: accessorKind ?? 'method', computed: false, static: true,
-        });
+        // parsePropertyKey() consumes `]` itself for a computed `[expr]`
+        // key, so the previous token tells us which form it was — this
+        // was hardcoded to `computed: false` unconditionally, so a
+        // computed method name evaluated to the *variable's own name*
+        // instead of its value (`[methodName]() {}` defined a method
+        // literally called "methodName", not whatever methodName held).
+        const computed = this.peek(-1)?.type === TokenType.RBracket;
+        if (this.is(TokenType.LParen)) {
+          this.advance();
+          const params = this.parseParams();
+          this.expect(TokenType.RParen);
+          this.strictStack.push(true);
+          const funcBody = this.parseBlock();
+          this.strictStack.pop();
+          body.push({
+            type: 'MethodDefinition', key,
+            value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
+            kind: accessorKind ?? 'method', computed, static: true,
+          });
+        } else {
+          // A static field (`static x = 1;`), not a method — the static
+          // branch previously assumed every `static <key>` was a method
+          // and unconditionally expected `(` next, so `static count = 0`
+          // failed to parse at all.
+          let init: AST.Expression | null = null;
+          if (this.is(TokenType.Equal)) { this.advance(); init = this.parseExpression(); }
+          if (this.is(TokenType.Semicolon)) this.advance();
+          body.push({ type: 'PropertyDefinition', key, value: init, kind: 'init', computed, shorthand: false, method: false, static: true });
+        }
       } else {
         let accessorKind: 'get' | 'set' | null = null;
         if (this.is(TokenType.Get)) { this.advance(); accessorKind = 'get'; }
         else if (this.is(TokenType.Set)) { this.advance(); accessorKind = 'set'; }
         const key = this.parsePropertyKey();
+        const computed = this.peek(-1)?.type === TokenType.RBracket;
         if (this.is(TokenType.LParen)) {
           this.advance();
           const params = this.parseParams();
@@ -961,13 +980,13 @@ export class Parser {
           body.push({
             type: 'MethodDefinition', key,
             value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
-            kind, computed: false, static: false,
+            kind, computed, static: false,
           });
         } else {
           let init: AST.Expression | null = null;
           if (this.is(TokenType.Equal)) { this.advance(); init = this.parseExpression(); }
           if (this.is(TokenType.Semicolon)) this.advance();
-          body.push({ type: 'PropertyDefinition', key, value: init, kind: 'init', computed: false, shorthand: false, method: false });
+          body.push({ type: 'PropertyDefinition', key, value: init, kind: 'init', computed, shorthand: false, method: false });
         }
       }
     }

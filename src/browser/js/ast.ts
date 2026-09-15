@@ -106,6 +106,8 @@ export interface PropertyDefinition {
   computed: boolean;
   shorthand: boolean;
   method: boolean;
+  /** Only meaningful inside a ClassBody (`static x = 1`) — always absent/false for object-literal properties. */
+  static?: boolean;
   loc?: SourceLocation;
 }
 
