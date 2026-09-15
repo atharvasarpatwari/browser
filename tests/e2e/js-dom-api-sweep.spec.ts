@@ -431,6 +431,9 @@ const CASES: Case[] = [
       'Array.prototype.with returns a copy with one index replaced',
       'Object.groupBy partitions by callback result',
       'Symbol used as a computed object-literal key is retrievable',
+      'malformed URL throws a catchable TypeError',
+      'relative URL resolves against a base (path, dot-dot, protocol-relative)',
+      'malformed regex literal throws a catchable SyntaxError',
     ],
     html: harnessHtml(`
       try {
@@ -553,7 +556,30 @@ const CASES: Case[] = [
         var withSymKey = { [key]: 'value1' };
         mark(19, withSymKey[key] === 'value1');
       } catch(e) { }
-    `, 20),
+
+      try {
+        var threw = false;
+        try { new URL('not a valid url'); } catch(e2) { threw = e2 instanceof TypeError; }
+        mark(20, threw === true);
+      } catch(e) { }
+
+      try {
+        var r1 = new URL('/other/path', 'https://example.com/a/b/c').pathname === '/other/path';
+        var r2 = new URL('../up', 'https://example.com/a/b/c').pathname === '/a/up';
+        var r3 = new URL('//other.com/x', 'https://example.com/a/b').hostname === 'other.com';
+        mark(21, r1 && r2 && r3);
+      } catch(e) { }
+
+      try {
+        // A malformed regex can't be written directly here without risking
+        // the outer script's own lexer misreading past an unterminated
+        // character class — round-trip it through eval() instead, same as
+        // it was root-caused with.
+        var regexThrew = false;
+        try { eval('/[unclosed/'); } catch(e3) { regexThrew = e3 instanceof SyntaxError; }
+        mark(22, regexThrew === true);
+      } catch(e) { }
+    `, 23),
   },
   {
     name: 'class-features',

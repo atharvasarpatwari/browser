@@ -840,6 +840,33 @@ export function setGlobalCaller(caller: JSFunctionCaller | null): void {
   _globalCaller = caller;
 }
 
+// Error prototypes, registered by index.ts's Error/TypeError/RangeError/...
+// global-constructor setup, and looked up here so any internally-built
+// error object (an engine-thrown JSError, a wrapped native exception) gets
+// linked to the SAME prototype chain `new TypeError(...)` in user code
+// would produce. Without this link `err instanceof TypeError` — an
+// extremely common error-handling pattern — is always false for every
+// error this engine throws on its own behalf, since instanceof walks
+// .prototype and a plain createObject(null) error has none to walk.
+// ponytail: this is one shared, module-level map, not scoped per page/
+// interpreter — with multiple tabs open, the most-recently-loaded page's
+// Error prototypes win for any error the ENGINE throws on a script's
+// behalf (a script's own `new TypeError()` is unaffected either way, since
+// that always resolves against its own environment's own constructor).
+// Scope per-Interpreter instead if that cross-tab mix-up ever matters.
+const errorPrototypes = new Map<string, JSObject>();
+export function registerErrorPrototype(name: string, proto: JSObject): void {
+  errorPrototypes.set(name, proto);
+}
+export function makeErrorObject(name: string, message: string): JSObject {
+  const err = createObject(errorPrototypes.get(name) ?? null) as JSObjectWithMeta;
+  err.__type_override = 'error';
+  err.properties.set('message', { value: message, writable: true, enumerable: true, configurable: true });
+  err.properties.set('name', { value: name, writable: true, enumerable: true, configurable: true });
+  err.properties.set('stack', { value: message ? `${name}: ${message}` : name, writable: true, enumerable: true, configurable: true });
+  return err;
+}
+
 export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]): JSValue {
   // Fast path: native functions can be called directly
   if (fn.isNative && fn.nativeFn) {
@@ -851,12 +878,7 @@ export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]
       // `catch(e)` sees e.message/e.name like a real thrown Error.
       const name = err instanceof Error ? err.name : 'Error';
       const message = err instanceof Error ? err.message : String(err);
-      const errObj = createObject(null) as JSObjectWithMeta;
-      errObj.properties.set('message', { value: message, writable: true, enumerable: true, configurable: true });
-      errObj.properties.set('name', { value: name, writable: true, enumerable: true, configurable: true });
-      errObj.properties.set('stack', { value: `${name}: ${message}`, writable: true, enumerable: true, configurable: true });
-      errObj.__type_override = 'error';
-      throw new JSError(errObj);
+      throw new JSError(makeErrorObject(name, message));
     }
   }
   // Non-native: delegate to the interpreter

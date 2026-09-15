@@ -9,7 +9,7 @@ import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta } from './values';
+import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, registerErrorPrototype, makeErrorObject } from './values';
 import type { JSValue, JSObject, JSObjectWithMeta } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
 import {
@@ -497,17 +497,48 @@ export function createGlobalEnv(
   });
   env.setLocal('Object', objectCtorObj);
 
-  // Error constructors
-  for (const name of ['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError']) {
-    env.setLocal(name, createNativeFunction(name, (_this, args) => {
-      const msg = args.length > 0 ? toString(args[0]) : '';
-      const err = createObject(null) as JSObject & { __type_override?: string };
-      err.properties.set('message', { value: msg, writable: true, enumerable: true, configurable: true });
-      err.properties.set('name', { value: name, writable: true, enumerable: true, configurable: true });
-      err.properties.set('stack', { value: msg ? `${name}: ${msg}` : name, writable: true, enumerable: true, configurable: true });
-      err.__type_override = 'error';
-      return err;
-    }));
+  // Error constructors — each subtype's own prototype chains to
+  // Error.prototype (TypeError.prototype.__proto__ === Error.prototype,
+  // matching real JS), and every prototype is registered so any
+  // internally-built error (jsError(), a wrapped native exception —
+  // see makeErrorObject in values.ts) links to the exact same chain a
+  // script's own `new TypeError(...)` would produce. Without this,
+  // `e instanceof TypeError`/`instanceof Error` — a very ordinary
+  // error-handling check — was always false: the previous createNativeFunction-
+  // based constructors had no discoverable .prototype at all (same "no
+  // .properties map" shape as the old Number/Array before this session's
+  // earlier fixes), and every constructed error had prototype: null.
+  const errorProto = createObject(null);
+  errorProto.properties.set('name', { value: 'Error', writable: true, enumerable: false, configurable: true });
+  errorProto.properties.set('message', { value: '', writable: true, enumerable: false, configurable: true });
+  errorProto.properties.set('toString', {
+    value: createNativeFunction('toString', (thisArg) => {
+      const obj = thisArg as JSObject | undefined;
+      const name = toString(obj?.properties?.get('name')?.value ?? 'Error');
+      const msg = toString(obj?.properties?.get('message')?.value ?? '');
+      return msg ? `${name}: ${msg}` : name;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  function makeErrorCtor(name: string, proto: JSObject): JSObject {
+    const ctorObj = createObject(null);
+    ctorObj.type = 'function';
+    ctorObj.callable = true;
+    ctorObj.nativeFn = (_this: unknown, args: unknown[]) => {
+      const msg = (args as JSValue[]).length > 0 ? toString((args as JSValue[])[0]) : '';
+      return makeErrorObject(name, msg);
+    };
+    ctorObj.properties.set('prototype', { value: proto, writable: false, enumerable: false, configurable: false });
+    proto.properties.set('constructor', { value: ctorObj, writable: true, enumerable: false, configurable: true });
+    return ctorObj;
+  }
+  registerErrorPrototype('Error', errorProto);
+  env.setLocal('Error', makeErrorCtor('Error', errorProto));
+  for (const name of ['TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'EvalError', 'URIError']) {
+    const proto = createObject(errorProto);
+    proto.properties.set('name', { value: name, writable: true, enumerable: false, configurable: true });
+    registerErrorPrototype(name, proto);
+    env.setLocal(name, makeErrorCtor(name, proto));
   }
 
   // Promise

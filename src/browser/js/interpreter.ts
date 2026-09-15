@@ -6,7 +6,7 @@ import {
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
-  setGlobalCaller, callJSFunction, JSError, isJSObjectWithMeta,
+  setGlobalCaller, callJSFunction, JSError, isJSObjectWithMeta, makeErrorObject,
 } from './values';
 import { GarbageCollector, getGC } from './gc';
 import { createPromiseConstructor, wrapAsyncResult, isPromiseObject, isPromiseFulfilled, isPromiseRejected, isPromisePending, getPromiseResult, createPromiseObj, fulfillPromise, rejectPromise } from './promise';
@@ -63,12 +63,32 @@ function findPropertyDescriptor(obj: JSObject, key: string) {
 }
 
 function jsError(name: string, message: string): JSError {
-  const err = createObject(null) as JSObject & { __type_override?: string };
-  err.properties.set('message', { value: message, writable: true, enumerable: true, configurable: true });
-  err.properties.set('name', { value: name, writable: true, enumerable: true, configurable: true });
-  err.properties.set('stack', { value: `${name}: ${message}`, writable: true, enumerable: true, configurable: true });
-  err.__type_override = 'error';
-  return new JSError(err);
+  // makeErrorObject links the built error to whatever prototype index.ts
+  // registered for `name` (TypeError, RangeError, ...), so `e instanceof
+  // TypeError` works for engine-thrown errors exactly like it does for
+  // ones a script builds itself via `new TypeError(...)` — a plain
+  // createObject(null) here (this function's original body) has no such
+  // link, so instanceof against any Error subtype was always false.
+  return new JSError(makeErrorObject(name, message));
+}
+
+// Every "plain callable JSObject" constructor built this session (URL,
+// URLSearchParams, FormData, TextEncoder, TextDecoder, the fuller Array/
+// Number redefinitions, regex-literal construction) throws real native
+// errors when given bad input (`new URL('not a url')` really does throw
+// from the underlying native URL parser) — but three of the four places
+// that invoke a JSObject's own `.nativeFn` called it completely
+// unwrapped, so any such throw escaped every sandboxed try/catch exactly
+// like the try/catch-escape bug fixed earlier the same day, just at call
+// sites that bug-hunt hadn't reached yet. Centralized here so a future
+// native-callable dispatch site can't reintroduce the same gap silently.
+function callNativeSafe(fn: NativeFunction, thisArg: JSValue, args: JSValue[]): JSValue {
+  try {
+    return fn(thisArg, args) as JSValue;
+  } catch (err) {
+    if (err instanceof JSError) throw err;
+    throw jsError(err instanceof Error ? err.name : 'Error', err instanceof Error ? err.message : String(err));
+  }
 }
 
 // A match/search/replace pattern argument may be a real regex object
@@ -945,7 +965,7 @@ export class Interpreter {
       // literal gets the exact same object shape `new RegExp(...)` builds.
       const regExpCtor = env.get('RegExp');
       if (typeof regExpCtor === 'object' && regExpCtor !== null && 'nativeFn' in regExpCtor && (regExpCtor as JSObject).nativeFn) {
-        return (regExpCtor as JSObject).nativeFn!(undefined, [expr.value.pattern, expr.value.flags]) as JSValue;
+        return callNativeSafe((regExpCtor as JSObject).nativeFn!, undefined, [expr.value.pattern, expr.value.flags]);
       }
       return expr.raw;
     }
@@ -1391,7 +1411,7 @@ export class Interpreter {
 
     // Callable JSObject with nativeFn (e.g., Promise constructor)
     if (typeof callee === 'object' && callee !== null && 'callable' in callee && (callee as JSObject).callable && (callee as JSObject).nativeFn) {
-      return (callee as JSObject).nativeFn!(thisObj, args) as JSValue;
+      return callNativeSafe((callee as JSObject).nativeFn!, thisObj, args);
     }
 
     if (typeof callee === 'function') {
@@ -1478,7 +1498,7 @@ export class Interpreter {
     // Callable JSObject with nativeFn (e.g., new Promise(...))
     if (typeof ctor === 'object' && ctor !== null && 'callable' in ctor && (ctor as JSObject).callable && (ctor as JSObject).nativeFn) {
       const obj = ctor as JSObject;
-      const result = obj.nativeFn!(createObject(null), args);
+      const result = callNativeSafe(obj.nativeFn!, createObject(null), args);
       return (typeof result === 'object' && result !== null) ? result : createObject(null);
     }
 
