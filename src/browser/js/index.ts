@@ -265,7 +265,39 @@ export function createGlobalEnv(
   env.setLocal('JSON', jsonObj);
 
   // Constructors
-  env.setLocal('String', createNativeFunction('String', (_this, args) => args.length > 0 ? toString(args[0]) : ''));
+  env.setLocal('String', (() => {
+    const stringCtor = createNativeFunction('String', (_this, args) => args.length > 0 ? toString(args[0]) : '');
+    // String.fromCharCode/fromCodePoint/raw were entirely absent — a plain
+    // native function had no properties map to hang static methods off of
+    // until this session, so nothing had ever added them. `String.raw` in
+    // particular threw "tag is not a function" for every tagged-template
+    // use (`` String.raw`a\nb` ``), a real, if uncommon, real-world pattern.
+    stringCtor.properties.set('fromCharCode', {
+      value: createNativeFunction('fromCharCode', (_t, args) => String.fromCharCode(...args.map(toNumber))),
+      writable: true, enumerable: false, configurable: true,
+    });
+    stringCtor.properties.set('fromCodePoint', {
+      value: createNativeFunction('fromCodePoint', (_t, args) => String.fromCodePoint(...args.map(toNumber))),
+      writable: true, enumerable: false, configurable: true,
+    });
+    stringCtor.properties.set('raw', {
+      value: createNativeFunction('raw', (_t, args) => {
+        const strings = args[0];
+        if (typeof strings !== 'object' || strings === null) return '';
+        const rawProp = (strings as JSObject).properties.get('raw')?.value;
+        const raw = typeof rawProp === 'object' && rawProp !== null ? rawProp as JSObject : strings as JSObject;
+        const len = Number(raw.properties.get('length')?.value ?? 0);
+        let result = '';
+        for (let i = 0; i < len; i++) {
+          result += toString(raw.properties.get(String(i))?.value);
+          if (i < len - 1) result += toString(args[i + 1]);
+        }
+        return result;
+      }),
+      writable: true, enumerable: false, configurable: true,
+    });
+    return stringCtor;
+  })());
   env.setLocal('Number', (() => {
     const numCtorObj = createObject(null);
     numCtorObj.type = 'function';
@@ -492,6 +524,24 @@ export function createGlobalEnv(
       result.properties.set('enumerable', { value: desc.enumerable, writable: true, enumerable: true, configurable: true });
       result.properties.set('configurable', { value: desc.configurable, writable: true, enumerable: true, configurable: true });
       return result;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectCtorObj.properties.set('getPrototypeOf', {
+    value: createNativeFunction('getPrototypeOf', (_this, args) => {
+      const obj = args[0];
+      return typeof obj === 'object' && obj !== null ? (obj as JSObject).prototype : null;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectCtorObj.properties.set('setPrototypeOf', {
+    value: createNativeFunction('setPrototypeOf', (_this, args) => {
+      const obj = args[0];
+      const proto = args[1];
+      if (typeof obj === 'object' && obj !== null) {
+        (obj as JSObject).prototype = typeof proto === 'object' && proto !== null ? (proto as JSObject) : null;
+      }
+      return obj;
     }),
     writable: true, enumerable: false, configurable: true,
   });

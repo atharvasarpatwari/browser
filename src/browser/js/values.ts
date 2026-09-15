@@ -126,6 +126,10 @@ export interface PropertyDescriptor {
 export interface JSFunction {
   type: 'closure';
   name: string;
+  /** Static properties (e.g. `Ctor.prototype = ...`, `Ctor.staticProp = 5`) — a plain
+   *  function is a legal assignment target for these in real JS, so it needs the
+   *  same properties map a JSObject has, not just the ad hoc `__proto_obj` cache. */
+  properties: Map<string, PropertyDescriptor>;
   params: string[];
   /** Raw parameter AST nodes (Identifier/RestElement/AssignmentPattern/ArrayPattern/ObjectPattern), when known — lets the interpreter bind default values, rest params, and destructured params correctly instead of the plain-name-only fallback `params` gives. */
   paramNodes?: unknown[];
@@ -406,7 +410,17 @@ export function instanceofCheck(left: JSValue, right: JSValue): boolean {
   // .properties map (only its *structural* `.prototype` link, used for
   // this engine's own prototype-chain walks, is set) — fall back to that
   // structural link directly for classes instead of the empty lookup.
-  const ctorProto = isClass ? rightObj.prototype : rightObj.properties?.get('prototype')?.value;
+  // A plain function used as a constructor (`function Ctor(){}`) has NO
+  // .properties map at all (createFunction's closures never had one), so
+  // `Ctor.prototype` — normally lazily created and cached on first access
+  // as `__proto_obj` by getPropertyValue's function-object special case —
+  // is invisible to the .properties lookup too; fall back to that cache,
+  // which by the time anything checks `x instanceof Ctor` has almost
+  // always already been populated (evalNew's own construction of `x`
+  // reads Ctor.prototype to link the new instance, which populates it).
+  const ctorProto = isClass
+    ? rightObj.prototype
+    : (rightObj.properties?.get('prototype')?.value ?? (rightObj as { __proto_obj?: JSObject }).__proto_obj);
   if (!ctorProto || typeof ctorProto !== 'object' || ctorProto === null) return false;
   let proto = leftObj.prototype;
   while (proto) {
@@ -794,6 +808,7 @@ export function createFunction(
   }
   return {
     type: 'closure',
+    properties: new Map(),
     name,
     params,
     paramNodes,
@@ -812,6 +827,7 @@ export function createFunction(
 export function createNativeFunction(name: string, fn: NativeFunction): JSFunction {
   return {
     type: 'closure',
+    properties: new Map(),
     name,
     params: [],
     body: null,

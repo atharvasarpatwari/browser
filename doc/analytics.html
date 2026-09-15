@@ -481,9 +481,9 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   </div>
   <h1 class="sr-only">Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num" id="statDocs">271</span> Documents</span>
+    <span><span class="num" id="statDocs">272</span> Documents</span>
     <span><span class="num" id="statDays">44</span> Days</span>
-    <span><span class="num" id="statTests">9,414</span> Total Suite Tests</span>
+    <span><span class="num" id="statTests">9,424</span> Total Suite Tests</span>
     <span>Generated <span class="num" id="statGenerated">2026-09-16</span></span>
   </p>
 </header>
@@ -516,10 +516,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <div class="kpi-row" id="kpis">
-  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">271</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
-  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,414</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
-  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">558</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
-  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,400</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">272</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,424</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
+  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">566</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,410</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
   <div class="kpi amber glass"><span class="icon">📐</span><div class="value" id="kpiCompliance">~78%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
 </div>
 
@@ -1156,7 +1156,8 @@ const DOCS = [
 {file:"2026-09-15-js-engine-try-catch-escape-and-dom-live-bindings.md",date:"2026-09-15",title:"JS Engine — Try/Catch Escape Bug Uncovers 17 Real Gaps (classList, innerHTML, regex literals, Event, and more)",category:"JavaScript",tests:1,status:"Completed",rootCauses:18,filesModified:8,filesCreated:2},
 {file:"2026-09-15-js-engine-round-2-generators-iteration-parameters.md",date:"2026-09-15",title:"JS Engine Round 2 — Generators, for-of, Destructured Parameters, and 8 More Real Gaps",category:"JavaScript",tests:0,status:"Completed",rootCauses:12,filesModified:7,filesCreated:1},
 {file:"2026-09-15-js-engine-round-3-class-features.md",date:"2026-09-15",title:"JS Engine Round 3 — Classes Were Fundamentally Broken: instanceof, Setters, Fields, and a Stack Overflow",category:"JavaScript",tests:0,status:"Completed",rootCauses:9,filesModified:6,filesCreated:1},
-{file:"2026-09-16-js-engine-round-4-native-ctor-escape-and-error-instanceof.md",date:"2026-09-16",title:"JS Engine Round 4 — More Try/Catch Escape Sites, Plus instanceof TypeError Was Always False",category:"JavaScript",tests:0,status:"Completed",rootCauses:2,filesModified:4,filesCreated:1}
+{file:"2026-09-16-js-engine-round-4-native-ctor-escape-and-error-instanceof.md",date:"2026-09-16",title:"JS Engine Round 4 — More Try/Catch Escape Sites, Plus instanceof TypeError Was Always False",category:"JavaScript",tests:0,status:"Completed",rootCauses:2,filesModified:4,filesCreated:1},
+{file:"2026-09-16-js-engine-round-5-prototype-inheritance-and-function-methods.md",date:"2026-09-16",title:"JS Engine Round 5 — The Classic Prototype-Inheritance Pattern Was Completely Broken (and So Was Every Template Literal Escape)",category:"JavaScript",tests:10,status:"Completed",rootCauses:8,filesModified:9,filesCreated:1}
 ];
 
 const CAT_COLORS={CSS:'#60a5fa',HTML5:'#f472b6',JavaScript:'#fbbf24',Layout:'#34d399',Rendering:'#a855f7',Security:'#f87171','IPC/Networking':'#00f0ff',UI:'#f472b6',Architecture:'#94a3b8',Plan:'#fbbf24'};

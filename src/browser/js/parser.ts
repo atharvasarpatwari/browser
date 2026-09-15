@@ -181,7 +181,7 @@ export class Parser {
 
       case TokenType.TemplateEnd:
         this.advance();
-        return { type: 'TemplateLiteral', quasis: [{ type: 'TemplateElement', value: tok.value, tail: true }], expressions: [], loc: { line: tok.line, column: tok.column } };
+        return { type: 'TemplateLiteral', quasis: [{ type: 'TemplateElement', value: tok.value, raw: tok.raw ?? tok.value, tail: true }], expressions: [], loc: { line: tok.line, column: tok.column } };
 
       case TokenType.TemplateHead:
         return this.parseTemplateLiteral(tok);
@@ -417,7 +417,7 @@ export class Parser {
         this.advance();
         const quasi: AST.TemplateLiteral = {
           type: 'TemplateLiteral',
-          quasis: [{ type: 'TemplateElement', value: tok.value, tail: true }],
+          quasis: [{ type: 'TemplateElement', value: tok.value, raw: tok.raw ?? tok.value, tail: true }],
           expressions: [],
           loc: { line: tok.line, column: tok.column },
         };
@@ -461,7 +461,7 @@ export class Parser {
     const quasis: AST.TemplateElement[] = [];
     const expressions: AST.Expression[] = [];
 
-    quasis.push({ type: 'TemplateElement', value: headToken.value, tail: false });
+    quasis.push({ type: 'TemplateElement', value: headToken.value, raw: headToken.raw ?? headToken.value, tail: false });
     this.advance(); // consume TemplateHead
 
     while (true) {
@@ -475,19 +475,19 @@ export class Parser {
       if (this.lexer) {
         const seg = this.lexer.readTemplatePart(headToken.line, headToken.column);
         if (seg.type === TokenType.TemplateMiddle) {
-          quasis.push({ type: 'TemplateElement', value: seg.value, tail: false });
+          quasis.push({ type: 'TemplateElement', value: seg.value, raw: seg.raw ?? seg.value, tail: false });
         } else if (seg.type === TokenType.TemplateTail) {
-          quasis.push({ type: 'TemplateElement', value: seg.value, tail: true });
+          quasis.push({ type: 'TemplateElement', value: seg.value, raw: seg.raw ?? seg.value, tail: true });
           break;
         }
       } else {
         const next = this.peek();
         if (next.type === TokenType.TemplateMiddle) {
           this.advance();
-          quasis.push({ type: 'TemplateElement', value: next.value, tail: false });
+          quasis.push({ type: 'TemplateElement', value: next.value, raw: next.raw ?? next.value, tail: false });
         } else if (next.type === TokenType.TemplateTail) {
           this.advance();
-          quasis.push({ type: 'TemplateElement', value: next.value, tail: true });
+          quasis.push({ type: 'TemplateElement', value: next.value, raw: next.raw ?? next.value, tail: true });
           break;
         } else {
           break;

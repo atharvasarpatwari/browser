@@ -142,6 +142,11 @@ export interface Token {
   readonly value: string;
   readonly line: number;
   readonly column: number;
+  /** Template literal segments only: the untouched source text (escape
+   *  sequences not decoded), for String.raw / TaggedTemplateExpression's
+   *  `.raw` array. Absent on every other token, where `value` already IS
+   *  the raw source text. */
+  readonly raw?: string;
 }
 
 export function tokenTypeName(tt: TokenType): string {

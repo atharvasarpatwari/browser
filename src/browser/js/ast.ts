@@ -219,6 +219,10 @@ export interface TemplateLiteral {
 export interface TemplateElement {
   type: 'TemplateElement';
   value: string;
+  /** Untouched source text for this segment (escapes not decoded) — what
+   *  String.raw / a tagged template's `.raw` array must see instead of the
+   *  cooked `value`. */
+  raw: string;
   tail: boolean;
 }
 

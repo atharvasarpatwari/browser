@@ -55,7 +55,12 @@ function toPropertyKey(val: JSValue): string {
 function findPropertyDescriptor(obj: JSObject, key: string) {
   let cur: JSObject | null = obj;
   while (cur) {
-    const desc = cur.properties.get(key);
+    // cur.properties can be undefined here — a plain function/closure
+    // (createFunction's result, e.g. `function Ctor(){}`) has no
+    // .properties map at all, and assigning straight to one of those
+    // (`Ctor.prototype = ...`) reaches this walk with such an object as
+    // `obj` on the very first iteration.
+    const desc = cur.properties?.get(key);
     if (desc) return desc;
     cur = cur.prototype;
   }
@@ -549,7 +554,7 @@ export class Interpreter {
 
     // Set up prototype with constructor
     classProto.properties.set('constructor', {
-      value: { type: 'closure', name: className, params: [], body: { type: 'BlockStatement', body: [] }, closure: env, async: false, generator: false, isArrow: false, isNative: false } as JSFunction,
+      value: { type: 'closure', properties: new Map(), name: className, params: [], body: { type: 'BlockStatement', body: [] }, closure: env, async: false, generator: false, isArrow: false, isNative: false } as JSFunction,
       writable: true, enumerable: false, configurable: true,
     });
 
@@ -609,6 +614,10 @@ export class Interpreter {
             classObj.properties.set('constructor', { value: fn, writable: true, enumerable: true, configurable: true });
             classProto.properties.set('constructor', { value: fn, writable: true, enumerable: false, configurable: true });
           } else {
+            // Real class methods and accessors are non-enumerable (unlike
+            // object-literal methods) — this matters now that for-in
+            // filters by the enumerable flag instead of listing every
+            // property regardless of it.
             const target = method.static ? classObj : classProto;
             if (method.kind === 'get' || method.kind === 'set') {
               const existing = target.properties.get(key);
@@ -616,10 +625,10 @@ export class Interpreter {
                 value: undefined, writable: false,
                 getter: method.kind === 'get' ? fn : existing?.getter,
                 setter: method.kind === 'set' ? fn : existing?.setter,
-                enumerable: true, configurable: true,
+                enumerable: false, configurable: true,
               });
             } else {
-              target.properties.set(key, { value: fn, writable: true, enumerable: true, configurable: true });
+              target.properties.set(key, { value: fn, writable: true, enumerable: false, configurable: true });
             }
           }
         } else if (method.type === 'PropertyDefinition') {
@@ -731,7 +740,28 @@ export class Interpreter {
   private execForIn(stmt: AST.ForInStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     const obj = this.evalExpr(stmt.right, env);
     if (typeof obj !== 'object' || obj === null) return undefined;
-    const keys = [...(obj as JSObject).properties.keys()];
+    // for-in listed every key in .properties unconditionally — regardless
+    // of its enumerable flag, and regardless of whether it was even a
+    // string key. Every non-enumerable built-in method (every one, on
+    // every array/Map/Set/... instance, since those are attached directly
+    // to each instance's own .properties) leaked into the loop right
+    // alongside real data properties: `for (var k in [1,2,3])` produced
+    // "0","1","2" followed by "length","push","pop","join",... Now visits
+    // own enumerable string keys first, then walks the prototype chain for
+    // inherited enumerable ones not already seen — real for-in's order and
+    // shadowing semantics (an own property, even non-enumerable, hides a
+    // same-named inherited one regardless of that one's own flag).
+    const seenKeys = new Set<string>();
+    const keys: string[] = [];
+    let curObj: JSObject | null = obj as JSObject;
+    while (curObj) {
+      for (const [key, desc] of curObj.properties) {
+        if (seenKeys.has(key) || key.startsWith('@@symbol:')) continue;
+        seenKeys.add(key);
+        if (desc.enumerable) keys.push(key);
+      }
+      curObj = curObj.prototype;
+    }
     const loopEnv = new Environment(env);
     const varName = stmt.left.type === 'VariableDeclaration'
       ? (stmt.left.declarations[0]!.id as AST.Identifier).name
@@ -1023,11 +1053,8 @@ export class Interpreter {
   /**
    * tag`a${b}c` — call tag(stringsArray, ...substitutionValues), where
    * stringsArray is the cooked quasi strings plus a non-enumerable .raw
-   * array. ponytail: .raw reuses the same (already-escape-processed) quasi
-   * text as the cooked strings — this engine's lexer doesn't separately
-   * track each template segment's raw source text, so String.raw-style
-   * tags get cooked strings instead of the true raw ones. Upgrade if a
-   * caller actually needs raw vs. cooked to differ.
+   * array of the same segments' untouched source text (the lexer now
+   * tracks both per quasi — see TemplateElement.raw).
    */
   private evalTaggedTemplate(expr: AST.TaggedTemplateExpression, env: Environment): JSValue {
     let thisObj: JSValue = undefined;
@@ -1043,8 +1070,9 @@ export class Interpreter {
       throw jsError('TypeError', `${expr.tag.type === 'Identifier' ? expr.tag.name : 'tag'} is not a function`);
     }
     const cooked = expr.quasi.quasis.map((q) => q.value);
+    const raw = expr.quasi.quasis.map((q) => q.raw);
     const strings = createArray(cooked);
-    strings.properties.set('raw', { value: createArray(cooked), writable: false, enumerable: false, configurable: false });
+    strings.properties.set('raw', { value: createArray(raw), writable: false, enumerable: false, configurable: false });
     const substitutions = expr.quasi.expressions.map((e) => this.evalExpr(e, env));
     return this.callFunction(callee as JSFunction, thisObj, [strings, ...substitutions]);
   }
@@ -1422,8 +1450,15 @@ export class Interpreter {
   }
 
   private evalNew(expr: AST.NewExpression, env: Environment): JSValue {
-    const ctor = this.evalExpr(expr.callee, env);
-    const args = expr.arguments.map(a => this.evalExpr(a, env));
+    let ctor = this.evalExpr(expr.callee, env);
+    let args = expr.arguments.map(a => this.evalExpr(a, env));
+    // Unwrap `fn.bind(...)` results back to the real target — see the
+    // __boundTarget comment in makeFunctionCallHelper.
+    while (typeof ctor === 'object' && ctor !== null && (ctor as unknown as { __boundTarget?: JSFunction }).__boundTarget) {
+      const boundCtor = ctor as unknown as { __boundTarget: JSFunction; __boundArgs: JSValue[] };
+      args = [...boundCtor.__boundArgs, ...args];
+      ctor = boundCtor.__boundTarget;
+    }
 
     // Class constructor (type: 'class' on a JSObject)
     if (typeof ctor === 'object' && ctor !== null && 'type' in ctor && (ctor as JSObject).type === 'class') {
@@ -1505,7 +1540,15 @@ export class Interpreter {
     // Function constructor (JSFunction closure)
     if (typeof ctor === 'object' && ctor !== null && 'type' in ctor && (ctor as JSFunction).type === 'closure') {
       const fn = ctor as JSFunction;
-      const instance = createObject(null);
+      // The new instance must link to fn's own .prototype object (real
+      // JS's [[Prototype]] on construction) — this always built a bare,
+      // unlinked createObject(null) instead, so the entire pre-class
+      // "function Ctor() {}; Ctor.prototype.method = ...; new Ctor()"
+      // inheritance pattern was completely broken: every inherited
+      // property/method read back undefined, and `instance instanceof
+      // Ctor` was always false.
+      const protoVal = this.getPropertyValue(fn, 'prototype');
+      const instance = createObject(typeof protoVal === 'object' && protoVal !== null ? protoVal as JSObject : null);
       const callEnv = new Environment(fn.closure);
       callEnv.markFunctionScope();
       callEnv.setLocal('this', instance);
@@ -1609,6 +1652,13 @@ export class Interpreter {
       if (key === 'arguments') return undefined;
       if (key === 'caller') return undefined;
       if (key === 'prototype' && !fn.isArrow) {
+        // A reassigned prototype (`Ctor.prototype = Object.create(...)`, the
+        // classic subclassing idiom) is stored as a real property, in
+        // fn.properties — check that before falling back to the lazily
+        // cached __proto_obj, or a reassignment would silently keep
+        // returning the original auto-created prototype object.
+        const existing = fn.properties?.get('prototype');
+        if (existing) return existing.value;
         let protoObj = (nativeObj as any).__proto_obj;
         if (!protoObj) {
           protoObj = createObject(null);
@@ -1616,6 +1666,9 @@ export class Interpreter {
           (nativeObj as any).__proto_obj = protoObj;
         }
         return protoObj;
+      }
+      if (key === 'call' || key === 'apply' || key === 'bind') {
+        return this.makeFunctionCallHelper(fn, key);
       }
       // For other properties, fall through to the general path
     }
@@ -1646,7 +1699,89 @@ export class Interpreter {
         proto = proto.prototype;
       }
     }
-    return undefined;
+    return this.objectPrototypeFallback(nativeObj, key);
+  }
+
+  // Function.prototype.call/apply/bind — plain function objects had no
+  // properties map at all until this session, so these three universally
+  // used methods were simply absent from every function: `Parent.call(this,
+  // ...)`, the backbone of the classic prototype-inheritance pattern, and
+  // `fn.bind(x)`/`fn.apply(x, args)` all silently evaluated to `undefined`
+  // instead of ever invoking the target function.
+  private makeFunctionCallHelper(fn: JSFunction, key: 'call' | 'apply' | 'bind'): JSFunction {
+    const toArgsArray = (val: JSValue): JSValue[] => {
+      if (typeof val !== 'object' || val === null || !('type' in val) || (val as JSObject).type !== 'array') return [];
+      const arr = val as JSObject;
+      const len = Number(arr.properties.get('length')?.value ?? 0);
+      const out: JSValue[] = [];
+      for (let i = 0; i < len; i++) out.push(arr.properties.get(String(i))?.value);
+      return out;
+    };
+    if (key === 'call') {
+      return createNativeFunction('call', (_t, args) => this.callFunction(fn, args[0], args.slice(1)));
+    }
+    if (key === 'apply') {
+      return createNativeFunction('apply', (_t, args) => this.callFunction(fn, args[0], toArgsArray(args[1])));
+    }
+    // bind: called once (as `fn.bind(this, ...presetArgs)`) to produce a new
+    // function that always invokes `fn` with that fixed `this` and those
+    // preset args prepended to whatever args it's later called with.
+    return createNativeFunction('bind', (_t, bindArgs) => {
+      const thisArg = bindArgs[0];
+      const presetArgs = bindArgs.slice(1);
+      const bound = createNativeFunction(`bound ${fn.name}`, (_t2, callArgs) => this.callFunction(fn, thisArg, [...presetArgs, ...callArgs]));
+      // A bound function is still constructible (`new (fn.bind(x))()`) — real
+      // JS ignores the bound `this` in that case and constructs the original
+      // target instead, just with the preset args prepended. Tag it so
+      // evalNew can unwrap back to the real target instead of treating this
+      // like any other opaque native function (which would call it with a
+      // throwaway instance as `this`, silently discarding the bound `this`
+      // override in the process without ever linking to fn.prototype).
+      (bound as unknown as { __boundTarget?: JSFunction; __boundArgs?: JSValue[] }).__boundTarget = fn;
+      (bound as unknown as { __boundTarget?: JSFunction; __boundArgs?: JSValue[] }).__boundArgs = presetArgs;
+      return bound;
+    });
+  }
+
+  // Object.prototype fallback (hasOwnProperty, isPrototypeOf,
+  // propertyIsEnumerable, toString, valueOf, toLocaleString). Every plain
+  // object/array/class instance's prototype chain terminates in a
+  // null-prototyped object from createObject(null), never a real
+  // Object.prototype — so these near-universal methods were simply absent:
+  // `obj.hasOwnProperty(k)` silently evaluated to `undefined` (not a
+  // function, but not a crash either, since calling a non-function callee
+  // is itself a no-op here) instead of ever running, quietly defeating the
+  // extremely common for-in-with-hasOwnProperty-guard idiom. Skips
+  // toString/valueOf for functions — those get more specific handling from
+  // the closure special case above and shouldn't fall back to the generic
+  // "[object Object]" that a plain object gets.
+  private objectPrototypeFallback(target: JSObject, key: string): JSValue {
+    const isFunction = (target as unknown as { type?: string }).type === 'closure';
+    switch (key) {
+      case 'hasOwnProperty':
+        return createNativeFunction('hasOwnProperty', (t, a) =>
+          typeof t === 'object' && t !== null ? !!(t as JSObject).properties?.has(toPropertyKey(a[0])) : false);
+      case 'isPrototypeOf':
+        return createNativeFunction('isPrototypeOf', (_t, a) => {
+          let proto = typeof a[0] === 'object' && a[0] !== null ? (a[0] as JSObject).prototype : null;
+          while (proto) {
+            if (proto === target) return true;
+            proto = proto.prototype;
+          }
+          return false;
+        });
+      case 'propertyIsEnumerable':
+        return createNativeFunction('propertyIsEnumerable', (t, a) =>
+          typeof t === 'object' && t !== null ? !!(t as JSObject).properties?.get(toPropertyKey(a[0]))?.enumerable : false);
+      case 'toString':
+        return isFunction ? undefined : createNativeFunction('toString', (t) => toString(t));
+      case 'valueOf':
+        return isFunction ? undefined : createNativeFunction('valueOf', (t) => t as JSValue);
+      case 'toLocaleString':
+        return isFunction ? undefined : createNativeFunction('toLocaleString', (t) => toString(t));
+      default:
+        return undefined;
+    }
   }
 
   private getPropertyValue(obj: JSValue, key: string): JSValue {
@@ -1752,6 +1887,9 @@ export class Interpreter {
           }
           return protoObj;
         }
+        if (key === 'call' || key === 'apply' || key === 'bind') {
+          return this.makeFunctionCallHelper(fn, key);
+        }
         // Fall through to normal property lookup for other keys
       }
       if ((o as any).__type_override === 'symbol') {
@@ -1791,6 +1929,7 @@ export class Interpreter {
           proto = proto.prototype;
         }
       }
+      return this.objectPrototypeFallback(o, key);
     }
     return undefined;
   }

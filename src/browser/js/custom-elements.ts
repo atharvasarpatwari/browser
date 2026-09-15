@@ -224,7 +224,7 @@ export function createCustomElementRegistry(eventLoop: EventLoop): JSObject {
 export function createHTMLElementClass(): JSObject {
   const proto = createObject(null);
   const ctorFn: JSFunction = {
-    type: 'closure', name: 'HTMLElement', params: [], isNative: false,
+    type: 'closure', properties: new Map(), name: 'HTMLElement', params: [], isNative: false,
     body: { type: 'BlockStatement', body: [] },
     closure: new Environment(), async: false, generator: false, isArrow: false,
   };

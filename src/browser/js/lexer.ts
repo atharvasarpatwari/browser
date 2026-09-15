@@ -271,6 +271,59 @@ export class Lexer {
     return this.makeToken(TokenType.Number, this.source.slice(start, this.pos), line, col);
   }
 
+  /** Decode the escape sequence starting at `this.pos` (the character right
+   *  after an already-consumed backslash), advancing `pos` past it, and
+   *  return the cooked character(s) it produces (empty for a line-
+   *  continuation escape). Shared by readString and the template scanners
+   *  so plain strings and template literals decode escapes identically —
+   *  template literals used to skip this decoding entirely and kept the
+   *  raw backslash sequences in their "cooked" value. */
+  private decodeEscape(): string {
+    const ch = this.source[this.pos] ?? '';
+    let result: string;
+    switch (ch) {
+      case 'n': result = '\n'; break;
+      case 'r': result = '\r'; break;
+      case 't': result = '\t'; break;
+      case '\\': result = '\\'; break;
+      case "'": result = "'"; break;
+      case '"': result = '"'; break;
+      case '`': result = '`'; break;
+      case '$': result = '$'; break;
+      case '0': result = '\0'; break;
+      case 'b': result = '\b'; break;
+      case 'f': result = '\f'; break;
+      case 'v': result = '\v'; break;
+      case 'u': {
+        const hex = this.source.slice(this.pos + 1, this.pos + 5);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+          result = String.fromCharCode(parseInt(hex, 16));
+          this.advance(4);
+        } else {
+          result = 'u';
+        }
+        break;
+      }
+      case 'x': {
+        const hex = this.source.slice(this.pos + 1, this.pos + 3);
+        if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+          result = String.fromCharCode(parseInt(hex, 16));
+          this.advance(2);
+        } else {
+          result = 'x';
+        }
+        break;
+      }
+      case '\n':
+        this.line++; this.column = 1;
+        result = '';
+        break;
+      default: result = ch; break;
+    }
+    this.advance();
+    return result;
+  }
+
   private readString(line: number, col: number): Token {
     const quote = this.source[this.pos]!;
     this.advance();
@@ -278,45 +331,7 @@ export class Lexer {
     while (this.pos < this.source.length && this.source[this.pos] !== quote) {
       if (this.source[this.pos] === '\\') {
         this.advance();
-        const ch = this.source[this.pos] ?? '';
-        switch (ch) {
-          case 'n': value += '\n'; break;
-          case 'r': value += '\r'; break;
-          case 't': value += '\t'; break;
-          case '\\': value += '\\'; break;
-          case "'": value += "'"; break;
-          case '"': value += '"'; break;
-          case '`': value += '`'; break;
-          case '0': value += '\0'; break;
-          case 'b': value += '\b'; break;
-          case 'f': value += '\f'; break;
-          case 'v': value += '\v'; break;
-          case 'u': {
-            const hex = this.source.slice(this.pos + 1, this.pos + 5);
-            if (/^[0-9a-fA-F]{4}$/.test(hex)) {
-              value += String.fromCharCode(parseInt(hex, 16));
-              this.advance(4);
-            } else {
-              value += 'u';
-            }
-            break;
-          }
-          case 'x': {
-            const hex = this.source.slice(this.pos + 1, this.pos + 3);
-            if (/^[0-9a-fA-F]{2}$/.test(hex)) {
-              value += String.fromCharCode(parseInt(hex, 16));
-              this.advance(2);
-            } else {
-              value += 'x';
-            }
-            break;
-          }
-          case '\n':
-            this.line++; this.column = 1;
-            break;
-          default: value += ch; break;
-        }
-        this.advance();
+        value += this.decodeEscape();
       } else {
         if (this.source[this.pos] === '\n') { this.line++; this.column = 1; }
         value += this.source[this.pos];
@@ -330,31 +345,35 @@ export class Lexer {
   private readTemplate(line: number, col: number): Token {
     this.advance(); // opening backtick
     const start = this.pos;
+    let cooked = '';
     while (this.pos < this.source.length) {
       const ch = this.source[this.pos]!;
       if (ch === '`') {
-        const value = this.source.slice(start, this.pos);
+        const raw = this.source.slice(start, this.pos);
         this.advance(); // closing backtick
-        return this.makeToken(TokenType.TemplateEnd, value, line, col);
+        return this.makeToken(TokenType.TemplateEnd, cooked, line, col, raw);
       }
       if (ch === '$' && this.peek(1) === '{') {
-        const value = this.source.slice(start, this.pos);
+        const raw = this.source.slice(start, this.pos);
         this.advance(); // skip ${
         this.advance();
-        return this.makeToken(TokenType.TemplateHead, value, line, col);
+        return this.makeToken(TokenType.TemplateHead, cooked, line, col, raw);
       }
       if (ch === '\\') {
         this.advance();
-        if (this.pos < this.source.length) {
-          if (this.source[this.pos] === '\n') { this.line++; this.column = 1; }
-          this.advance();
-        }
+        // Cooked value decodes escapes like a normal string (this used to
+        // just skip the escaped char and keep the raw backslash sequence
+        // as the "cooked" text — every `\n`/`\t`/`\${`/... in a template
+        // literal, tagged or not, came through as literal backslash-n
+        // etc. instead of the character it's supposed to represent).
+        cooked += this.decodeEscape();
         continue;
       }
       if (ch === '\n') { this.line++; this.column = 1; }
+      cooked += ch;
       this.advance();
     }
-    return this.makeToken(TokenType.TemplateEnd, this.source.slice(start, this.pos), line, col);
+    return this.makeToken(TokenType.TemplateEnd, cooked, line, col, this.source.slice(start, this.pos));
   }
 
   /** Wraps scanTemplatePart() to keep lastTokenType current — see nextToken(). */
@@ -366,31 +385,30 @@ export class Lexer {
 
   private scanTemplatePart(line: number, col: number): Token {
     const start = this.pos;
+    let cooked = '';
     while (this.pos < this.source.length) {
       const ch = this.source[this.pos]!;
       if (ch === '`') {
-        const value = this.source.slice(start, this.pos);
+        const raw = this.source.slice(start, this.pos);
         this.advance(); // closing backtick
-        return this.makeToken(TokenType.TemplateTail, value, line, col);
+        return this.makeToken(TokenType.TemplateTail, cooked, line, col, raw);
       }
       if (ch === '$' && this.peek(1) === '{') {
-        const value = this.source.slice(start, this.pos);
+        const raw = this.source.slice(start, this.pos);
         this.advance(); // skip ${
         this.advance();
-        return this.makeToken(TokenType.TemplateMiddle, value, line, col);
+        return this.makeToken(TokenType.TemplateMiddle, cooked, line, col, raw);
       }
       if (ch === '\\') {
         this.advance();
-        if (this.pos < this.source.length) {
-          if (this.source[this.pos] === '\n') { this.line++; this.column = 1; }
-          this.advance();
-        }
+        cooked += this.decodeEscape();
         continue;
       }
       if (ch === '\n') { this.line++; this.column = 1; }
+      cooked += ch;
       this.advance();
     }
-    return this.makeToken(TokenType.TemplateTail, this.source.slice(start, this.pos), line, col);
+    return this.makeToken(TokenType.TemplateTail, cooked, line, col, this.source.slice(start, this.pos));
   }
 
   private readIdentifier(line: number, col: number, isPrivate = false): Token {
@@ -599,8 +617,8 @@ export class Lexer {
     return this.source[this.pos + offset] ?? '';
   }
 
-  private makeToken(type: TokenType, value: string, line: number, column: number): Token {
-    return { type, value, line, column };
+  private makeToken(type: TokenType, value: string, line: number, column: number, raw?: string): Token {
+    return raw !== undefined ? { type, value, line, column, raw } : { type, value, line, column };
   }
 
   private isDigit(ch: string): boolean {

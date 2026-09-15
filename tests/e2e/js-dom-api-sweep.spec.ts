@@ -729,6 +729,98 @@ const CASES: Case[] = [
       } catch(e) { }
     `, 15),
   },
+  {
+    name: 'prototype-and-function-methods',
+    labels: [
+      'for-in over an array visits only enumerable indices, not built-in methods',
+      'for-in over a class instance visits only own fields, not methods',
+      'classic function-prototype inheritance: inherited property, inherited method, instanceof',
+      'Object.create-based subclassing with Parent.call(this, ...) forwarding',
+      'Function.prototype.call invokes with the given this and args',
+      'Function.prototype.apply invokes with the given this and an args array',
+      'Function.prototype.bind presets this/args; new on a bound function still constructs the target',
+      'Object.prototype.hasOwnProperty distinguishes own vs. inherited properties',
+      'Object.getPrototypeOf returns the constructor\'s prototype object',
+      'template literals decode escape sequences; String.raw sees the true unescaped text',
+    ],
+    html: harnessHtml(`
+      try {
+        var seen = [];
+        for (var k in [10, 20, 30]) seen.push(k);
+        mark(0, seen.join(',') === '0,1,2');
+      } catch(e) { }
+
+      try {
+        class Pt { constructor(x, y) { this.x = x; this.y = y; } dist() { return this.x + this.y; } }
+        var seen2 = [];
+        for (var k2 in new Pt(1, 2)) seen2.push(k2);
+        mark(1, seen2.join(',') === 'x,y');
+      } catch(e) { }
+
+      try {
+        function Animal(name) { this.name = name; }
+        Animal.prototype.speak = function() { return this.name + ' makes a sound'; };
+        function Dog(name) { Animal.call(this, name); }
+        Dog.prototype = Object.create(Animal.prototype);
+        Dog.prototype.bark = function() { return this.name + ' barks'; };
+        var d = new Dog('Rex');
+        mark(2, d.speak() === 'Rex makes a sound' && d.bark() === 'Rex barks' && d instanceof Animal && d instanceof Dog);
+      } catch(e) { }
+
+      try {
+        function Base(v) { this.v = v; }
+        function Sub(v, w) { Base.call(this, v); this.w = w; }
+        Sub.prototype = Object.create(Base.prototype);
+        var s = new Sub(1, 2);
+        mark(3, s.v === 1 && s.w === 2 && s instanceof Base);
+      } catch(e) { }
+
+      try {
+        function greet(greeting) { return greeting + ', ' + this.name; }
+        mark(4, greet.call({ name: 'Ann' }, 'Hi') === 'Hi, Ann');
+      } catch(e) { }
+
+      try {
+        function sum3(a, b, c) { return this.label + ':' + (a + b + c); }
+        mark(5, sum3.apply({ label: 'S' }, [1, 2, 3]) === 'S:6');
+      } catch(e) { }
+
+      try {
+        function add(a, b) { return this.base + a + b; }
+        var bound = add.bind({ base: 100 }, 1);
+        function Greeter(g) { this.g = g; }
+        var Bound = Greeter.bind(null, 'Hi');
+        var g = new Bound();
+        mark(6, bound(2) === 103 && g.g === 'Hi');
+      } catch(e) { }
+
+      try {
+        function F() {}
+        F.prototype.inherited = 1;
+        var f = new F();
+        f.own = 2;
+        mark(7, f.hasOwnProperty('own') === true && f.hasOwnProperty('inherited') === false);
+      } catch(e) { }
+
+      try {
+        function G() {}
+        var g2 = new G();
+        mark(8, Object.getPrototypeOf(g2) === G.prototype);
+      } catch(e) { }
+
+      try {
+        var tmpl = \`a\\nb\`;
+        var rawTag = String.raw\`a\\nb\`;
+        // tmpl's \\n is a decoded (cooked) newline: 3 chars, real 0x0A in the middle.
+        // rawTag's \\n stays as the literal 2-char escape sequence: 4 chars, a literal
+        // backslash (charCode 92) at index 1. Checked by charCode, not a hand-escaped
+        // string literal, since this file's own template literal already needs one
+        // level of backslash-doubling and a second comparison string would need two.
+        mark(9, tmpl.length === 3 && tmpl.charCodeAt(1) === 10 &&
+          rawTag.length === 4 && rawTag.charCodeAt(1) === 92 && rawTag.charCodeAt(2) === 110);
+      } catch(e) { }
+    `, 10),
+  },
 ];
 
 test('JS/DOM API sweep against real fixtures', async () => {
