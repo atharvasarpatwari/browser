@@ -371,6 +371,27 @@ export function toString(val: JSValue): string {
   return '[object Object]';
 }
 
+// Computed property keys (`obj[expr]`, `{[expr]: ...}`) were coerced with
+// native TS `String()`, which has no idea how to render this engine's own
+// object values — a symbol (this engine's own JSObject, not a real native
+// Symbol) stringifies to the generic "[object Object]", so EVERY symbol
+// used as a computed key collided under that one key regardless of which
+// symbol it was, and `obj[Symbol.iterator] = fn` was unreadable by anything
+// that later looked it up the same way. Symbols get a stable, per-symbol
+// key derived from their unique id; everything else still goes through
+// this engine's own toString() (matching real Object-to-string coercion
+// instead of native String()'s generic object fallback). Exported (not just
+// an interpreter-local helper) so other modules — e.g. index.ts's
+// Array.from, which needs to look up a value's Symbol.iterator without any
+// Interpreter instance in scope — can derive the same key a computed
+// `[Symbol.iterator]` property definition would have used.
+export function toPropertyKey(val: JSValue): string {
+  if (typeof val === 'object' && val !== null && isJSObjectWithMeta(val) && val.__type_override === 'symbol' && val.symbolId !== undefined) {
+    return `@@symbol:${val.symbolId}`;
+  }
+  return toString(val);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: Type operations
 // ─────────────────────────────────────────────────────────────────────────────

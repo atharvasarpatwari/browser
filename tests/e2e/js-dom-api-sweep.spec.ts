@@ -821,6 +821,78 @@ const CASES: Case[] = [
       } catch(e) { }
     `, 10),
   },
+  {
+    name: 'static-blocks-array-from-new-target',
+    labels: [
+      'static block runs once with this bound to the class',
+      'a class can reference its own name inside a static block/field initializer',
+      'Array.from converts a string to a char array',
+      'Array.from converts a plain array-like object',
+      'Array.from converts a Set and a Map',
+      'Array.from drains a generator',
+      'new.target is the constructor when called with new',
+      'new.target is undefined when the same function is called without new',
+      'new.target stays the most-derived class through a super() call',
+    ],
+    html: harnessHtml(`
+      try {
+        class C {
+          static sVal;
+          static { this.sVal = 99; }
+        }
+        mark(0, C.sVal === 99);
+      } catch(e) { }
+
+      try {
+        class Singleton {
+          static instance = new Singleton();
+          static { Singleton.ready = true; }
+        }
+        mark(1, Singleton.instance instanceof Singleton && Singleton.ready === true);
+      } catch(e) { }
+
+      try {
+        mark(2, JSON.stringify(Array.from('abc')) === '["a","b","c"]');
+      } catch(e) { }
+
+      try {
+        mark(3, JSON.stringify(Array.from({length: 3, 0: 'x', 1: 'y', 2: 'z'})) === '["x","y","z"]');
+      } catch(e) { }
+
+      try {
+        var fromSet = Array.from(new Set([1, 2, 3]));
+        var fromMap = Array.from(new Map([['a', 1], ['b', 2]]));
+        mark(4, JSON.stringify(fromSet) === '[1,2,3]' && JSON.stringify(fromMap) === '[["a",1],["b",2]]');
+      } catch(e) { }
+
+      try {
+        function* gen() { yield 1; yield 2; yield 3; }
+        mark(5, JSON.stringify(Array.from(gen())) === '[1,2,3]');
+      } catch(e) { }
+
+      try {
+        var sawNewTarget;
+        function Foo() { sawNewTarget = new.target; }
+        var inst = new Foo();
+        mark(6, sawNewTarget === Foo);
+      } catch(e) { }
+
+      try {
+        var sawPlainCallTarget = 'not set';
+        function Bar() { sawPlainCallTarget = new.target; }
+        Bar();
+        mark(7, sawPlainCallTarget === undefined);
+      } catch(e) { }
+
+      try {
+        var seenTarget = null;
+        class Base { constructor() { seenTarget = new.target; } }
+        class Derived extends Base {}
+        new Derived();
+        mark(8, seenTarget === Derived);
+      } catch(e) { }
+    `, 9),
+  },
 ];
 
 test('JS/DOM API sweep against real fixtures', async () => {

@@ -2,7 +2,7 @@ import type * as AST from './ast';
 import {
   Environment,
   type JSValue, type JSObject, type JSFunction, type NativeFunction,
-  toBoolean, toNumber, toString, getType, instanceofCheck,
+  toBoolean, toNumber, toString, toPropertyKey, getType, instanceofCheck,
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
@@ -28,23 +28,6 @@ import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
 // TS Error instances — a native throw here unwinds straight past every
 // sandboxed try/catch (execTry only recognizes JSError) and silently kills
 // the rest of the running script.
-// Computed property keys (`obj[expr]`, `{[expr]: ...}`) were coerced with
-// native TS `String()`, which has no idea how to render this engine's own
-// object values — a symbol (this engine's own JSObject, not a real native
-// Symbol) stringifies to the generic "[object Object]", so EVERY symbol
-// used as a computed key collided under that one key regardless of which
-// symbol it was, and `obj[Symbol.iterator] = fn` was unreadable by anything
-// that later looked it up the same way. Symbols get a stable, per-symbol
-// key derived from their unique id; everything else still goes through
-// this engine's own toString() (matching real Object-to-string coercion
-// instead of native String()'s generic object fallback).
-function toPropertyKey(val: JSValue): string {
-  if (typeof val === 'object' && val !== null && isJSObjectWithMeta(val) && val.__type_override === 'symbol' && val.symbolId !== undefined) {
-    return `@@symbol:${val.symbolId}`;
-  }
-  return toString(val);
-}
-
 // Assignment (`obj.x = v`) only ever checked obj's OWN properties for an
 // existing setter — a setter (or getter) declared on a class/object
 // PROTOTYPE (every non-static class accessor: `set label(v) {...}`) was
@@ -589,6 +572,19 @@ export class Interpreter {
     // was never stored, always returning undefined).
     const classClosureEnv = new Environment(env);
     const staticClosureEnv = new Environment(env);
+    // A class binds its own name in an inner scope wrapping its body (like a
+    // named function expression) — this class isn't necessarily bound to
+    // that name in any OUTER scope yet (a static field/block runs during
+    // buildClassObject, before the `class C {}` declaration finishes binding
+    // C in the enclosing scope) or ever (a named class *expression*,
+    // `class Named {}` assigned to some other variable, never binds `Named`
+    // anywhere outside itself). Without this, the common self-referencing
+    // static-initializer idiom (`class Singleton { static instance = new
+    // Singleton(); }`) saw its own name as undefined.
+    if (className) {
+      classClosureEnv.setLocal(className, classObj);
+      staticClosureEnv.setLocal(className, classObj);
+    }
     const superClassVal = classObj.properties.get('super')?.value;
     if (superClassVal && typeof superClassVal === 'object' && superClassVal !== null) {
       const superProto = (superClassVal as JSObject).prototype ?? superClassVal;
@@ -641,7 +637,14 @@ export class Interpreter {
           // the new instance, since their initializer can reference it.
           const key = !method.computed && method.key.type === 'Identifier' ? method.key.name : toPropertyKey(this.evalExpr(method.key, env));
           if (method.static) {
-            const staticEnv = new Environment(env);
+            // Closes over staticClosureEnv (not the plain outer env) so a
+            // static field initializer gets the same super/__superCtor and
+            // self-name bindings a static method or static block gets —
+            // it previously closed over `env` directly, so `static x =
+            // super.baseValue` or `static y = Singleton.other` (self-
+            // reference) silently saw `super`/the class's own name as
+            // undefined instead of resolving them.
+            const staticEnv = new Environment(staticClosureEnv);
             staticEnv.setLocal('this', classObj);
             const value = method.value ? this.evalExpr(method.value, staticEnv) : undefined;
             classObj.properties.set(key, { value, writable: true, enumerable: true, configurable: true });
@@ -649,6 +652,20 @@ export class Interpreter {
             const withFields = classObj as JSObject & { __instanceFields?: { key: string; value: unknown }[] };
             (withFields.__instanceFields ??= []).push({ key, value: method.value });
           }
+        } else if (method.type === 'StaticBlock') {
+          // `static { ... }` runs once, immediately, in declaration order
+          // among the class's other static elements (fields execute this
+          // same way, right above) — with `this` bound to the class and
+          // `super` available exactly like a static method. This was
+          // entirely unimplemented: the parser had no way to even produce
+          // this node, so a static block either failed to parse outright
+          // or (when it happened to parse as *something* by accident) was
+          // silently discarded — its side effects never ran.
+          const blockEnv = new Environment(staticClosureEnv);
+          blockEnv.markFunctionScope();
+          blockEnv.setLocal('this', classObj);
+          const result = this.execBlock(method.body, blockEnv);
+          if (isThrowSignal(result)) throw new JSError(result.value);
         }
       }
     }
@@ -956,6 +973,12 @@ export class Interpreter {
       case 'Literal': return this.evalLiteral(expr, env);
       case 'Identifier': return this.evalIdentifier(expr, env);
       case 'ThisExpression': return env.get('this') ?? undefined;
+      // Arrow functions never set their own __newTarget binding (matching
+      // how they never set their own `this`), so this naturally walks up to
+      // the nearest enclosing ordinary function's value; env.get() returns
+      // undefined for a name nothing ever bound, so top-level/module-scope
+      // use is safely undefined rather than a lookup error.
+      case 'NewTargetExpression': return env.get('__newTarget');
       case 'SuperExpression': {
         // When super is used as super.x or super[expr], return the parent prototype.
         // When super is used as super(), the CallExpression handler detects
@@ -1300,6 +1323,12 @@ export class Interpreter {
           const pEnv = new Environment(pfn.closure);
           pEnv.markFunctionScope();
           pEnv.setLocal('this', thisObj ?? createObject(null));
+          // new.target stays the ORIGINALLY invoked (most-derived) class
+          // throughout an entire super() chain, per spec — pEnv is rooted
+          // fresh at the parent constructor's own closure, which has no
+          // idea what `new.target` was outside it, so it must be carried
+          // over explicitly rather than left to default to undefined.
+          pEnv.setLocal('__newTarget', env.get('__newTarget'));
           const args: JSValue[] = [];
           for (const a of expr.arguments) {
             if (a.type === 'SpreadElement') {
@@ -1400,10 +1429,19 @@ export class Interpreter {
         this.bindParams(fn, callEnv, args);
         if (fn.isArrow) {
           callEnv.setLocal('this', fn.closure.get('this') ?? createObject(null));
+          // Arrows never get their own new.target binding either — leave
+          // __newTarget unset so `new.target` inside one resolves through
+          // the closure chain to the enclosing ordinary function's value.
         } else if (thisObj === undefined && !fn.isStrict) {
           callEnv.setLocal('this', this.globalEnv.get('this') ?? createObject(null));
+          callEnv.setLocal('__newTarget', undefined);
         } else {
           callEnv.setLocal('this', thisObj);
+          // A plain (non-new) call always has new.target === undefined,
+          // even from inside a constructor that's itself mid-construction —
+          // shadow whatever the enclosing scope's __newTarget was rather
+          // than leaving it unset (which would incorrectly inherit it).
+          callEnv.setLocal('__newTarget', undefined);
         }
         const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
         let result: JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal;
@@ -1501,6 +1539,7 @@ export class Interpreter {
         callEnv.markFunctionScope();
         callEnv.setLocal('this', instance);
         callEnv.setLocal('arguments', createArray(args));
+        callEnv.setLocal('__newTarget', classObj);
 
         if (superClass && typeof superClass === 'object' && superClass !== null) {
           // Set super to the parent prototype for super.x / super[expr] member access
@@ -1553,6 +1592,7 @@ export class Interpreter {
       callEnv.markFunctionScope();
       callEnv.setLocal('this', instance);
       callEnv.setLocal('arguments', createArray(args));
+      callEnv.setLocal('__newTarget', fn);
       this.bindParams(fn, callEnv, args);
       const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
       if (bodyNode.type === 'BlockStatement') {

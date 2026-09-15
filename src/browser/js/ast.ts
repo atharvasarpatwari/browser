@@ -17,6 +17,7 @@ export type Expression =
   | Identifier
   | Literal
   | ThisExpression
+  | NewTargetExpression
   | ArrayExpression
   | ObjectExpression
   | FunctionExpression
@@ -65,6 +66,12 @@ export interface RegExpLiteral {
 
 export interface ThisExpression {
   type: 'ThisExpression';
+  loc?: SourceLocation;
+}
+
+/** `new.target` — the only meta-property this engine supports. */
+export interface NewTargetExpression {
+  type: 'NewTargetExpression';
   loc?: SourceLocation;
 }
 
@@ -478,7 +485,7 @@ export interface ClassDeclaration {
 
 export interface ClassBody {
   type: 'ClassBody';
-  body: (PropertyDefinition | MethodDefinition)[];
+  body: (PropertyDefinition | MethodDefinition | StaticBlock)[];
 }
 
 export interface MethodDefinition {
@@ -488,4 +495,11 @@ export interface MethodDefinition {
   kind: 'constructor' | 'method' | 'get' | 'set';
   computed: boolean;
   static: boolean;
+}
+
+/** `static { ... }` — runs once, in declaration order among the class's
+ *  other static elements, with `this` bound to the class itself. */
+export interface StaticBlock {
+  type: 'StaticBlock';
+  body: Statement[];
 }

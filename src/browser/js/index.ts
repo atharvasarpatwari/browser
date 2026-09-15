@@ -9,7 +9,7 @@ import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, registerErrorPrototype, makeErrorObject } from './values';
+import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, toPropertyKey, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, registerErrorPrototype, makeErrorObject } from './values';
 import type { JSValue, JSObject, JSObjectWithMeta } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
 import {
@@ -125,6 +125,90 @@ export function runJS(source: string, options: RunJSOptions): RunJSResult {
     const message = err instanceof Error ? err.message : String(err);
     return { value: undefined, error: { message }, eventLoop };
   }
+}
+
+// Array.from only ever handled real array-shaped sources (.type === 'array')
+// — every other spec-mandated source (a plain string, an array-like object
+// like `{length:3, 0:'a', ...}` or `arguments`, a Map/Set, or any custom
+// Symbol.iterator/`.next()`-based iterable) silently produced an empty
+// array instead of throwing OR converting, which is easy to miss since
+// `Array.from('abc')` looking like `[]` doesn't look like an obvious crash.
+// Mirrors the interpreter's own `forOfValues` iterable-draining logic
+// (arrays, Symbol.iterator protocol, Map/Set, generic `.next()`
+// iterators) since that's a private Interpreter method and this native
+// function has no Interpreter instance to call it on — plus one extra
+// fallback `forOfValues` doesn't need: a non-iterable array-like object,
+// which Array.from explicitly supports converting but a real for-of loop
+// would reject.
+/** Own-or-inherited property lookup by plain value (no getter support needed
+ *  for the fixed set of built-in method names this is used for) — Map/Set's
+ *  `entries`/`values` live on a shared prototype object, not each
+ *  instance's own `.properties`, so a bare `obj.properties.get(key)` alone
+ *  would miss them. */
+function lookupMethod(obj: JSObject, key: string): JSValue {
+  let cur: JSObject | null = obj;
+  while (cur) {
+    const desc = cur.properties.get(key);
+    if (desc) return desc.value;
+    cur = cur.prototype;
+  }
+  return undefined;
+}
+
+function iterableToArray(source: JSValue, env: Environment): JSValue[] {
+  if (typeof source === 'string') return [...source];
+  if (typeof source !== 'object' || source === null) return [];
+  const obj = source as JSObject;
+  if (obj.type === 'array') {
+    const length = Number(obj.properties.get('length')?.value ?? 0);
+    const out: JSValue[] = [];
+    for (let i = 0; i < length; i++) out.push(obj.properties.get(String(i))?.value);
+    return out;
+  }
+  const symbolGlobal = env.get('Symbol');
+  const iterSym = typeof symbolGlobal === 'object' && symbolGlobal !== null ? (symbolGlobal as JSObject).properties.get('iterator')?.value : undefined;
+  if (iterSym !== undefined) {
+    const iterFn = lookupMethod(obj, toPropertyKey(iterSym));
+    if (typeof iterFn === 'object' && iterFn !== null && (iterFn as JSFunction).type === 'closure') {
+      const iterator = callJSFunction(iterFn as JSFunction, obj, []);
+      if (typeof iterator === 'object' && iterator !== null && iterator !== obj) return iterableToArray(iterator, env);
+    }
+  }
+  if (isJSObjectWithMeta(obj) && (obj.__mapObj || obj.__mapPrim)) {
+    const entriesFn = lookupMethod(obj, 'entries');
+    if (typeof entriesFn === 'object' && entriesFn !== null && (entriesFn as JSFunction).type === 'closure') {
+      return iterableToArray(callJSFunction(entriesFn as JSFunction, obj, []), env);
+    }
+  }
+  if (isJSObjectWithMeta(obj) && (obj.__setObj || obj.__setPrim)) {
+    const valuesFn = lookupMethod(obj, 'values');
+    if (typeof valuesFn === 'object' && valuesFn !== null && (valuesFn as JSFunction).type === 'closure') {
+      return iterableToArray(callJSFunction(valuesFn as JSFunction, obj, []), env);
+    }
+  }
+  const nextFn = lookupMethod(obj, 'next');
+  if (typeof nextFn === 'object' && nextFn !== null && (nextFn as JSFunction).type === 'closure') {
+    const out: JSValue[] = [];
+    for (let guard = 0; guard < 1_000_000; guard++) {
+      const step = callJSFunction(nextFn as JSFunction, obj, []);
+      if (typeof step !== 'object' || step === null) break;
+      const stepObj = step as JSObject;
+      if (toBoolean(stepObj.properties.get('done')?.value)) break;
+      out.push(stepObj.properties.get('value')?.value);
+    }
+    return out;
+  }
+  // Array-like fallback (has a .length but no iterator protocol) —
+  // Array.from explicitly supports this source shape (e.g. `arguments`
+  // objects, or a plain `{length:3, 0:'a', ...}`).
+  const lengthDesc = obj.properties.get('length');
+  if (lengthDesc) {
+    const length = Number(lengthDesc.value ?? 0);
+    const out: JSValue[] = [];
+    for (let i = 0; i < length; i++) out.push(obj.properties.get(String(i))?.value);
+    return out;
+  }
+  return [];
 }
 
 /**
@@ -1659,21 +1743,14 @@ export function createGlobalEnv(
       value: createNativeFunction('from', (_this, args) => {
         const source = args[0];
         const mapFn = args[1] as JSFunction | undefined;
-        if (typeof source !== 'object' || source === null) return createArray([]);
-        const srcObj = source as JSObject;
-        if (srcObj.type === 'array') {
-          const len = Number(srcObj.properties.get('length')?.value ?? 0);
-          const result: JSValue[] = [];
-          for (let i = 0; i < len; i++) {
-            let val = srcObj.properties.get(String(i))?.value;
-            if (typeof mapFn === 'object' && mapFn !== null && mapFn.type === 'closure') {
-              val = callJSFunction(mapFn, undefined, [val, i]);
-            }
-            result.push(val);
+        const values = iterableToArray(source, env);
+        const result = values.map((val, i) => {
+          if (typeof mapFn === 'object' && mapFn !== null && mapFn.type === 'closure') {
+            return callJSFunction(mapFn, undefined, [val, i]);
           }
-          return createArray(result);
-        }
-        return createArray([]);
+          return val;
+        });
+        return createArray(result);
       }),
       writable: true, enumerable: false, configurable: true,
     });

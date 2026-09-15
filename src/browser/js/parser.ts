@@ -498,9 +498,19 @@ export class Parser {
     return { type: 'TemplateLiteral', quasis, expressions, loc: { line: headToken.line, column: headToken.column } };
   }
 
-  private parseNewExpression(): AST.NewExpression {
+  private parseNewExpression(): AST.NewExpression | AST.NewTargetExpression {
     const tok = this.peek();
     this.advance();
+    // `new.target` — the meta-property, not a constructor call. Without this
+    // check, `.target` fell straight into parseExpression(18) as if it were
+    // the constructor callee, which doesn't start a valid expression — the
+    // resulting mis-parse silently produced garbage (extra, nonsensical
+    // console.log arguments in practice) rather than a clean error.
+    if (this.is(TokenType.Dot)) {
+      this.advance();
+      this.expect(TokenType.Identifier); // "target"
+      return { type: 'NewTargetExpression', loc: { line: tok.line, column: tok.column } };
+    }
     const callee = this.parseExpression(18);
     let args: AST.Expression[] = [];
     if (this.is(TokenType.LParen)) {
@@ -926,10 +936,22 @@ export class Parser {
 
   private parseClassBody(): AST.ClassBody {
     this.expect(TokenType.LBrace);
-    const body: (AST.PropertyDefinition | AST.MethodDefinition)[] = [];
+    const body: (AST.PropertyDefinition | AST.MethodDefinition | AST.StaticBlock)[] = [];
     while (!this.is(TokenType.RBrace) && !this.is(TokenType.EOF)) {
       if (this.is(TokenType.Static)) {
         this.advance();
+        // `static { ... }` — a static initialization block, not a member
+        // named "static" followed by a property. Without this check the
+        // `{` fell straight into parsePropertyKey() (expecting a member
+        // name or a computed `[expr]` key), which mis-parsed the block's
+        // contents as if they were a key expression — anywhere from an
+        // outright parse error to silently swallowing the block with no
+        // effect, depending on what happened to be inside it.
+        if (this.is(TokenType.LBrace)) {
+          const blockBody = this.parseBlock();
+          body.push({ type: 'StaticBlock', body: blockBody.body });
+          continue;
+        }
         let accessorKind: 'get' | 'set' | null = null;
         if (this.is(TokenType.Get)) { this.advance(); accessorKind = 'get'; }
         else if (this.is(TokenType.Set)) { this.advance(); accessorKind = 'set'; }
