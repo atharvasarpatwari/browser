@@ -602,11 +602,12 @@ class ApplicationBootstrap {
     );
     c.register<IBrowserWindowPage>(
       Tokens.BrowserWindowPage,
-      // hideChromeUI: when the Android native shell is present (NovaStateBridge
-      // registered before this script runs), the native Compose chrome drives
-      // navigation instead of this page's own toolbar/tab-strip — see
-      // android-native-bridge.ts.
-      () => new BrowserWindowPage({ hideChromeUI: isNativeHostPresent() }),
+      // forceDesktopChrome: when the Android native shell is present
+      // (NovaStateBridge registered before this script runs), always build
+      // the real desktop chrome (toolbar/tab-strip/address-bar/bookmark-bar)
+      // instead of switching to MobileLayout's unfinished stub just because
+      // the viewport happens to be phone-width — see android-native-bridge.ts.
+      () => new BrowserWindowPage({ forceDesktopChrome: isNativeHostPresent() }),
       ServiceLifetime.Singleton,
     );
 
@@ -893,6 +894,18 @@ class ApplicationBootstrap {
     // Wire SettingsService → BrowserWindowPage so nova://settings gets persistence
     const settingsService = this.container.resolve<ISettingsService>(Tokens.SettingsService);
     page.setSettingsService(settingsService);
+
+    // Apply persisted HTTPS-Only Mode setting to the security layer, and keep it live
+    securityLayer.https.setEnforceHttps(settingsService.getBoolean('httpsOnlyMode', true));
+    settingsService.onChange((key, value) => {
+      if (key === 'httpsOnlyMode') securityLayer.https.setEnforceHttps(Boolean(value));
+    });
+
+    // Apply persisted CSP-enforcement setting, and keep it live
+    cspEnforcement.policyStore.setEnabled(settingsService.getBoolean('enableCsp', true));
+    settingsService.onChange((key, value) => {
+      if (key === 'enableCsp') cspEnforcement.policyStore.setEnabled(Boolean(value));
+    });
 
     // Wire ResearchService → BrowserWindowPage so nova://research works
     const researchService = this.container.resolve<IResearchService>(Tokens.ResearchService);

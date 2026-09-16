@@ -55,6 +55,7 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
   {
     id: 'privacy', title: 'Privacy & Security', icon: '🔒',
     settings: [
+      { key: 'httpsOnlyMode', label: 'Always use secure connections', description: 'Upgrade every site to HTTPS before loading it', type: 'boolean', defaultValue: true },
       { key: 'enableCsp', label: 'Content Security Policy', description: 'Enforce CSP headers', type: 'boolean', defaultValue: true },
       { key: 'blockPopups', label: 'Block pop-ups', description: 'Block automatic pop-up windows', type: 'boolean', defaultValue: true },
       { key: 'enableSafeBrowsing', label: 'Safe Browsing', description: 'Warn about dangerous sites', type: 'boolean', defaultValue: true },

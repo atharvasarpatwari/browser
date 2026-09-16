@@ -69,14 +69,16 @@ interface BrowserWindowPageConfig {
   readonly showBookmarkBar: boolean;
   readonly showMenuBar: boolean;
   /**
-   * When true, the page's own toolbar/tab-strip/bookmark-bar DOM is mounted
-   * (so all the existing internal wiring — navigationBridge, syncAll(), tab
-   * events — keeps working exactly as before) but hidden via CSS. Used when
-   * an external native shell (e.g. the Android Compose chrome) is driving
-   * navigation instead — see onChromeState()/createTab()/etc. below. Content
-   * rendering is completely unaffected either way.
+   * When true, mount() always builds the desktop chrome (Toolbar/TabStrip/
+   * AddressBar/BookmarkBar/StatusBar, fully wired) regardless of viewport
+   * width, instead of switching to MobileLayout under 768px. Used when an
+   * external native shell (the Android app) hosts this page full-screen and
+   * wants the exact same chrome desktop uses — see android-native-bridge.ts,
+   * which is also the escape hatch a couple of this chrome's own menu
+   * actions (Downloads, Incognito) use to hand off to native-only
+   * functionality (real file downloads) that has no web equivalent.
    */
-  readonly hideChromeUI: boolean;
+  readonly forceDesktopChrome: boolean;
 }
 
 const DEFAULT_PAGE_CONFIG: BrowserWindowPageConfig = {
@@ -85,7 +87,7 @@ const DEFAULT_PAGE_CONFIG: BrowserWindowPageConfig = {
   showSidebar: false,
   showBookmarkBar: true,
   showMenuBar: true,
-  hideChromeUI: false,
+  forceDesktopChrome: false,
 };
 
 /** Search-URL templates keyed by the `defaultSearchEngine` setting value. */
@@ -187,6 +189,9 @@ interface IBrowserWindowPage extends IDisposable {
   findNextExternal(): { current: number; total: number };
   findPreviousExternal(): { current: number; total: number };
   closeFindExternal(): void;
+  /** Opens this page's own find bar — used by the main menu's "Find in Page"
+   *  entry, since touch devices have no Ctrl+F to fall back on. */
+  showFindBarExternal(): void;
 }
 
 class BrowserWindowPage implements IBrowserWindowPage {
@@ -302,6 +307,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   closeFindExternal(): void {
     this.closeFind();
+  }
+
+  showFindBarExternal(): void {
+    this.showFindBar();
   }
 
   private highlightCurrentMatch(): void {
@@ -455,8 +464,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.container.className = 'browser-window';
     this.container.style.cssText = 'display:flex;flex-direction:column;height:100%;width:100%;overflow:hidden;';
 
-    // Detect mobile viewport: use MobileLayout when width < 768px
-    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+    // Detect mobile viewport: use MobileLayout when width < 768px — unless
+    // forceDesktopChrome (the Android native host) says to always use the
+    // real desktop chrome instead of MobileLayout's unfinished stub.
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768 && !this.config.forceDesktopChrome;
     this.layoutType = isMobile ? 'mobile' : 'desktop';
 
     if (isMobile) {
@@ -529,17 +540,13 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.statusBarView = new StatusBarView(this.statusBar);
         this.statusBarView.attach(areas.statusBar);
       }
-      if (this.config.hideChromeUI) {
-        // Same intent as the desktop branch below: an external native shell
-        // (Android Compose's own AddressBar/TabsBar/BottomAppBar) is driving
-        // navigation, so this layout's own address bar and bottom nav — whose
-        // buttons aren't even wired to anything — would just duplicate it.
-        if (areas.addressBar) areas.addressBar.style.display = 'none';
-        if (areas.bottomNav) areas.bottomNav.style.display = 'none';
-      }
     } else {
       if (areas.toolbar) {
-        this.toolbarView = new ToolbarView(this.toolbar);
+        // Traffic lights are macOS-style window controls (close/minimize/
+        // maximize) — meaningless on a full-screen Android host with no
+        // window to control, so the native host disables them here rather
+        // than showing three inert dots.
+        this.toolbarView = new ToolbarView(this.toolbar, { showTrafficLights: !this.config.forceDesktopChrome });
         this.toolbarView.attach(areas.toolbar);
         this.toolbarView.setEventHandler((e) => {
           switch (e.kind) {
@@ -609,14 +616,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
           }
         });
       }
-      if (this.config.hideChromeUI) {
-        // Keep all internal wiring (navigationBridge, syncAll, tab events)
-        // fully intact — just hide the rendered chrome, since an external
-        // native shell (e.g. Android Compose) is driving navigation instead.
-        if (areas.toolbar) areas.toolbar.style.display = 'none';
-        if (areas.tabBar) areas.tabBar.style.display = 'none';
-        if (areas.bookmarkBar) areas.bookmarkBar.style.display = 'none';
-      }
       if (areas.statusBar) {
         this.statusBarView = new StatusBarView(this.statusBar);
         this.statusBarView.attach(areas.statusBar);
@@ -630,7 +629,18 @@ class BrowserWindowPage implements IBrowserWindowPage {
       }
     }
 
-    this.tabManager.on('tabCreated', () => this.syncAll());
+    // A brand-new tab's content never rendered at all — NavigationBridge
+    // only calls syncFromActiveTab() (address bar text, tab-strip, nav-
+    // history state) on 'tabActivated'/'tabRemoved', which updates chrome
+    // but never reaches handleContentForUrl(); the only thing that actually
+    // paints content is this page's own navigate(), which nothing called on
+    // tab creation. Every "new tab" (the +, Ctrl+T, the menu, or the
+    // startup default) looked right in the address bar and tab strip while
+    // the content area kept showing whatever the previous tab last painted.
+    this.tabManager.on('tabCreated', (event) => {
+      this.syncAll();
+      if (event.kind === 'tabCreated') void this.navigate(event.tab.url);
+    });
     this.tabManager.on('tabRemoved', () => this.syncAll());
     this.tabManager.on('tabActivated', () => this.syncAll());
 
@@ -1089,22 +1099,27 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (!this.contentArea) return;
     this.cleanupContentPanel();
     const container = document.createElement('div');
-    container.style.cssText = 'width:100%;height:100%;overflow-y:auto;font-family:system-ui,-apple-system,sans-serif;';
+    container.style.cssText = 'width:100%;height:100%;overflow-y:auto;font-family:var(--font-ui,system-ui,sans-serif);background:var(--bg-body,#060810);color:var(--text-primary,#fff);';
     this.contentArea.appendChild(container);
     this.activeContentPanel = container;
 
+    // This panel (and Bookmarks below) used to hardcode a light desktop
+    // theme (#fff/#202124/...) regardless of the app's actual dark-glass
+    // theme every other page uses — a leftover from before that theme
+    // existed. Now uses the same CSS custom properties as the toolbar/tab
+    // strip/new-tab page, so it no longer looks like a different app.
     const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:20px 24px 12px;position:sticky;top:0;background:#fff;z-index:1;border-bottom:1px solid #e8eaed;';
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 24px 12px;position:sticky;top:0;background:var(--bg-body,#060810);z-index:1;border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.06));';
 
     const title = document.createElement('h1');
     title.textContent = 'History';
-    title.style.cssText = 'margin:0;font-size:20px;color:#202124;';
+    title.style.cssText = 'margin:0;font-size:20px;color:var(--text-primary,#fff);';
     header.appendChild(title);
 
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
     searchInput.placeholder = 'Search history';
-    searchInput.style.cssText = 'padding:8px 12px;border:1px solid #dfe1e5;border-radius:8px;font-size:14px;width:280px;outline:none;';
+    searchInput.style.cssText = 'padding:8px 12px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-md,6px);font-size:14px;width:280px;max-width:50vw;outline:none;background:var(--bg-elevated,#161d30);color:var(--text-primary,#fff);';
     header.appendChild(searchInput);
 
     container.appendChild(header);
@@ -1126,38 +1141,38 @@ class BrowserWindowPage implements IBrowserWindowPage {
       listContainer.innerHTML = '';
       if (entries.length === 0) {
         const empty = document.createElement('div');
-        empty.style.cssText = 'text-align:center;padding:60px 20px;color:#9aa0a6;';
+        empty.style.cssText = 'text-align:center;padding:60px 20px;color:var(--text-tertiary,#8a87a3);';
         empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px;">🕐</div><p>No history entries yet</p>';
         listContainer.appendChild(empty);
         return;
       }
       for (const entry of entries) {
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid #f1f3f4;cursor:pointer;gap:12px;';
-        row.addEventListener('mouseenter', () => { row.style.background = '#f8f9fa'; });
+        row.style.cssText = 'display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.06));cursor:pointer;gap:12px;border-radius:var(--radius-sm,4px);transition:background .1s;';
+        row.addEventListener('mouseenter', () => { row.style.background = 'var(--bg-hover,rgba(255,255,255,.05))'; });
         row.addEventListener('mouseleave', () => { row.style.background = ''; });
 
         const favicon = document.createElement('div');
-        favicon.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#e8eaed;flex-shrink:0;';
+        favicon.style.cssText = 'width:16px;height:16px;border-radius:50%;background:var(--bg-elevated,#161d30);flex-shrink:0;';
         row.appendChild(favicon);
 
         const info = document.createElement('div');
         info.style.cssText = 'flex:1;min-width:0;';
 
         const titleEl = document.createElement('div');
-        titleEl.style.cssText = 'font-size:14px;color:#202124;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        titleEl.style.cssText = 'font-size:14px;color:var(--text-primary,#fff);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         titleEl.textContent = entry.title || entry.url;
         info.appendChild(titleEl);
 
         const urlEl = document.createElement('div');
-        urlEl.style.cssText = 'font-size:12px;color:#5f6368;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        urlEl.style.cssText = 'font-size:12px;color:var(--text-secondary,#a6a3c4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         urlEl.textContent = entry.url;
         info.appendChild(urlEl);
 
         row.appendChild(info);
 
         const time = document.createElement('div');
-        time.style.cssText = 'font-size:12px;color:#9aa0a6;flex-shrink:0;white-space:nowrap;';
+        time.style.cssText = 'font-size:12px;color:var(--text-tertiary,#8a87a3);flex-shrink:0;white-space:nowrap;';
         time.textContent = new Date(entry.lastVisitTime).toLocaleString();
         row.appendChild(time);
 
@@ -1177,22 +1192,22 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (!this.contentArea) return;
     this.cleanupContentPanel();
     const container = document.createElement('div');
-    container.style.cssText = 'width:100%;height:100%;overflow-y:auto;font-family:system-ui,-apple-system,sans-serif;';
+    container.style.cssText = 'width:100%;height:100%;overflow-y:auto;font-family:var(--font-ui,system-ui,sans-serif);background:var(--bg-body,#060810);color:var(--text-primary,#fff);';
     this.contentArea.appendChild(container);
     this.activeContentPanel = container;
 
     const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:20px 24px 12px;position:sticky;top:0;background:#fff;z-index:1;border-bottom:1px solid #e8eaed;';
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 24px 12px;position:sticky;top:0;background:var(--bg-body,#060810);z-index:1;border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.06));';
 
     const title = document.createElement('h1');
     title.textContent = 'Bookmarks';
-    title.style.cssText = 'margin:0;font-size:20px;color:#202124;';
+    title.style.cssText = 'margin:0;font-size:20px;color:var(--text-primary,#fff);';
     header.appendChild(title);
 
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
     searchInput.placeholder = 'Search bookmarks';
-    searchInput.style.cssText = 'padding:8px 12px;border:1px solid #dfe1e5;border-radius:8px;font-size:14px;width:280px;outline:none;';
+    searchInput.style.cssText = 'padding:8px 12px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-md,6px);font-size:14px;width:280px;max-width:50vw;outline:none;background:var(--bg-elevated,#161d30);color:var(--text-primary,#fff);';
     header.appendChild(searchInput);
 
     container.appendChild(header);
@@ -1213,15 +1228,15 @@ class BrowserWindowPage implements IBrowserWindowPage {
       listContainer.innerHTML = '';
       if (entries.length === 0) {
         const empty = document.createElement('div');
-        empty.style.cssText = 'text-align:center;padding:60px 20px;color:#9aa0a6;';
+        empty.style.cssText = 'text-align:center;padding:60px 20px;color:var(--text-tertiary,#8a87a3);';
         empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px;">⭐</div><p>No bookmarks yet</p><p style="font-size:13px;">Add bookmarks by clicking the star icon in the address bar</p>';
         listContainer.appendChild(empty);
         return;
       }
       for (const entry of entries) {
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid #f1f3f4;cursor:pointer;gap:12px;';
-        row.addEventListener('mouseenter', () => { row.style.background = '#f8f9fa'; });
+        row.style.cssText = 'display:flex;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.06));cursor:pointer;gap:12px;border-radius:var(--radius-sm,4px);transition:background .1s;';
+        row.addEventListener('mouseenter', () => { row.style.background = 'var(--bg-hover,rgba(255,255,255,.05))'; });
         row.addEventListener('mouseleave', () => { row.style.background = ''; });
 
         const icon = document.createElement('div');
@@ -1233,26 +1248,30 @@ class BrowserWindowPage implements IBrowserWindowPage {
         info.style.cssText = 'flex:1;min-width:0;';
 
         const titleEl = document.createElement('div');
-        titleEl.style.cssText = 'font-size:14px;color:#202124;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        titleEl.style.cssText = 'font-size:14px;color:var(--text-primary,#fff);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         titleEl.textContent = entry.title;
         info.appendChild(titleEl);
 
         if (entry.url) {
           const urlEl = document.createElement('div');
-          urlEl.style.cssText = 'font-size:12px;color:#5f6368;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          urlEl.style.cssText = 'font-size:12px;color:var(--text-secondary,#a6a3c4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
           urlEl.textContent = entry.url;
           info.appendChild(urlEl);
         }
 
         row.appendChild(info);
 
+        // Used to be opacity:0 by default, revealed only on mouse hover —
+        // invisible and undiscoverable on a touchscreen, which has no hover
+        // state at all, so there was no way to see or tap this on mobile.
+        // Now always visible at a lower opacity, full opacity on hover/press,
+        // so it works the same way regardless of input method.
         const removeBtn = document.createElement('button');
         removeBtn.textContent = '×';
-        removeBtn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:18px;color:#9aa0a6;padding:4px;opacity:0;transition:opacity 0.15s;';
-        removeBtn.addEventListener('mouseenter', () => { removeBtn.style.opacity = '1'; });
-        removeBtn.addEventListener('mouseleave', () => { removeBtn.style.opacity = '0'; });
-        row.addEventListener('mouseenter', () => { removeBtn.style.opacity = '0.6'; });
-        row.addEventListener('mouseleave', () => { removeBtn.style.opacity = '0'; });
+        removeBtn.setAttribute('aria-label', `Remove ${entry.title || 'bookmark'}`);
+        removeBtn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:20px;line-height:1;color:var(--text-tertiary,#8a87a3);padding:6px 8px;border-radius:var(--radius-sm,4px);opacity:.55;transition:opacity .15s,background .15s,color .15s;';
+        removeBtn.addEventListener('mouseenter', () => { removeBtn.style.opacity = '1'; removeBtn.style.background = 'var(--bg-hover,rgba(255,255,255,.05))'; removeBtn.style.color = 'var(--text-danger,#f87171)'; });
+        removeBtn.addEventListener('mouseleave', () => { removeBtn.style.opacity = '.55'; removeBtn.style.background = ''; removeBtn.style.color = 'var(--text-tertiary,#8a87a3)'; });
         removeBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           if (entry.id) await this.bookmarkService?.removeBookmark(entry.id);
@@ -1322,10 +1341,36 @@ class BrowserWindowPage implements IBrowserWindowPage {
     const items: ContextMenuItem[] = [
       { label: 'New Tab', icon: '＋', action: () => { this.tabManager?.createTab(); this.syncAll(); } },
       { separator: true },
+      { label: 'Find in Page', icon: '🔍', action: () => this.showFindBar() },
       { label: 'Bookmarks', icon: '⭐', action: () => { void this.navigate('nova://bookmarks'); } },
       { label: 'History', icon: '🕘', action: () => { void this.navigate('nova://history'); } },
-      { label: 'Downloads', icon: '⬇️', action: () => { void this.navigate('nova://downloads'); } },
+      {
+        label: 'Downloads', icon: '⬇️', action: () => {
+          // Downloads are natively owned on Android (a real file write via
+          // the OS's own DownloadManager, tracked with pause/resume/share —
+          // see NativeDownloader.kt) — the web-rendered nova://downloads
+          // page has no idea those happened, so hand off to native instead
+          // of navigating there. Desktop has no NovaStateBridge, so this
+          // always falls through to the normal in-page navigation there.
+          if (window.NovaStateBridge?.onDownloadsPageRequested) {
+            window.NovaStateBridge.onDownloadsPageRequested();
+          } else {
+            void this.navigate('nova://downloads');
+          }
+        },
+      },
       { separator: true },
+      {
+        label: this.incognitoManager?.isActive() ? 'Exit Incognito' : 'New Incognito Session',
+        icon: '🕶️',
+        action: () => {
+          if (window.NovaStateBridge?.onIncognitoToggleRequested) {
+            window.NovaStateBridge.onIncognitoToggleRequested();
+          } else {
+            this.setIncognitoExternal(!(this.incognitoManager?.isActive() ?? false));
+          }
+        },
+      },
       { label: 'AI Research', icon: '🔎', action: () => { void this.navigate('nova://research'); } },
       { label: 'Settings', icon: '⚙️', action: () => { void this.navigate('nova://settings'); } },
     ];

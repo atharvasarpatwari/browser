@@ -113,6 +113,27 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         contextMenu.value = null
     }
 
+    // ── Menu actions with no purely-web equivalent on Android ────────────────
+
+    /** Main-menu "Downloads": open the native sheet — see onDownloadRequested's
+     *  doc comment above for why nova://downloads has no idea these happened. */
+    var downloadsRequested = mutableStateOf(false)
+        private set
+
+    fun onDownloadsPageRequested() {
+        downloadsRequested.value = true
+    }
+
+    fun clearDownloadsRequest() {
+        downloadsRequested.value = false
+    }
+
+    /** Main-menu "Incognito": no native UI mirrors this state anymore, so just
+     *  forward the toggle into the engine the same way native chrome used to. */
+    fun onIncognitoToggleRequested() {
+        setIncognito(!incognito.value)
+    }
+
     fun copyToClipboard(label: String, text: String) {
         val cm = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText(label, text))

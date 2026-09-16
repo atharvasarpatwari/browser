@@ -4,16 +4,28 @@
 // When Nova runs inside the Android app's WebView, Kotlin registers a
 // @JavascriptInterface object named `NovaStateBridge` on the WebView BEFORE
 // loading this page (see NovaStateBridge.kt / MainActivity.kt). Its presence
-// is the signal that a native chrome (Compose address bar / tab strip) is in
-// control and this page's own chrome should stay hidden.
+// used to mean "a native Compose chrome is in control, keep mine hidden";
+// this page now renders its own real chrome full-screen on Android too
+// (forceDesktopChrome, see browser-window.ts), same as desktop. What's left
+// for this bridge is the handful of things a web page genuinely cannot do
+// itself on Android: real file downloads through the OS's own
+// DownloadManager, and long-press hit-testing on canvas-rendered page
+// content (a WebView's own HitTestResult never sees it) — plus two menu
+// actions (Downloads, Incognito) that hand off to native for the same
+// reason. onStateChanged/onBookmarksChanged/onHistoryChanged keep pushing
+// (harmless, and available to any future native surface) even though no
+// native UI currently mirrors them the way the old Compose chrome did.
 //
 // Two-way contract:
 //   JS  -> Kotlin: window.NovaStateBridge.onStateChanged(jsonString)
 //                  called on every tab/nav change (ChromeStateSnapshot JSON),
-//                  plus onBookmarksChanged/onHistoryChanged/onDownloadRequested.
+//                  plus onBookmarksChanged/onHistoryChanged/onDownloadRequested/
+//                  onDownloadsPageRequested/onIncognitoToggleRequested.
 //   Kotlin -> JS:  window.novaNative.navigate/back/forward/reload/stop/
-//                  createTab/closeTab/activateTab(...), called via
-//                  webView.evaluateJavascript(...) from BrowserViewModel.
+//                  createTab/closeTab/activateTab(...) — retained for any
+//                  native surface that wants to command the engine directly,
+//                  though nothing currently calls it now that chrome buttons
+//                  dispatch straight against this page instead of through Kotlin.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { IBrowserWindowPage } from '../ui/pages/browser-window';
@@ -24,6 +36,15 @@ interface NovaStateBridgeHost {
   onHistoryChanged(json: string): void;
   onDownloadRequested(json: string): void;
   onContextMenuRequested(json: string): void;
+  /** Main-menu "Downloads" on Android: opens the native downloads sheet
+   *  instead of navigating to nova://downloads, which has no idea a native
+   *  (NativeDownloader-owned) download ever happened. */
+  onDownloadsPageRequested(): void;
+  /** Main-menu "Incognito" on Android: no persistent native UI shows this
+   *  state anymore, but toggling it still needs to reach the engine through
+   *  the same window.novaNative.setIncognito(...) path native chrome used to
+   *  drive — this just asks Kotlin to call that on this page's behalf. */
+  onIncognitoToggleRequested(): void;
 }
 
 declare global {
@@ -178,7 +199,7 @@ export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
     console.error('[AndroidNativeBridge] Failed to push initial state to native host:', err);
   }
 
-  console.log('[AndroidNativeBridge] Native host detected — window.novaNative installed, chrome UI hidden.');
+  console.log('[AndroidNativeBridge] Native host detected — this page\'s own desktop chrome is in control (forceDesktopChrome).');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

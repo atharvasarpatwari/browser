@@ -27,10 +27,13 @@ private const val ENGINE_URL = "https://appassets.androidplatform.net/index.html
  * Hosts the Nova engine in a single WebView for the lifetime of the app.
  * Unlike the old per-tab MiniWeb-era BrowserWebView, this is created exactly
  * once (factory{} only runs on first composition) — the engine owns all tabs
- * internally, so there is no per-tab WebView to switch between. Native
- * Compose chrome (AddressBar/TabSwitcherSheet) drives this WebView purely through
- * viewModel actions -> window.novaNative.* (evaluateJavascript); this
- * composable never calls webView.loadUrl() again after the initial load.
+ * internally, so there is no per-tab WebView to switch between. The page's
+ * own chrome (toolbar/tab-strip/address-bar — same as desktop, see
+ * forceDesktopChrome in browser-window.ts) drives navigation directly; this
+ * composable never calls webView.loadUrl() again after the initial load, and
+ * exists mainly to wire the handful of things a web page can't do itself on
+ * Android — real downloads, permission grants, file chooser — through
+ * viewModel/NovaStateBridge.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -191,7 +194,9 @@ fun EngineWebView(
                         onBookmarks = { json -> viewModel.applyBookmarksSnapshot(json) },
                         onHistory = { json -> viewModel.applyHistorySnapshot(json) },
                         onDownloadRequest = { json -> viewModel.startDownloadFromBridge(json) },
-                        onContextMenu = { json -> viewModel.onContextMenuRequested(json) }
+                        onContextMenu = { json -> viewModel.onContextMenuRequested(json) },
+                        onDownloadsPageRequest = { viewModel.onDownloadsPageRequested() },
+                        onIncognitoToggleRequest = { viewModel.onIncognitoToggleRequested() }
                     ),
                     "NovaStateBridge"
                 )

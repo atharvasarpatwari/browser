@@ -790,6 +790,17 @@ describe('CspPolicyStore', () => {
     expect(policy!.directives.has('script-src')).toBe(true);
   });
 
+  it('should default to enabled and disable/re-enable enforcement', () => {
+    store.store('https://example.com', parseCspHeader("script-src 'self'"));
+    expect(store.isEnabled()).toBe(true);
+
+    store.setEnabled(false);
+    expect(store.getEnforcePolicy('https://example.com')).toBeNull();
+
+    store.setEnabled(true);
+    expect(store.getEnforcePolicy('https://example.com')).not.toBeNull();
+  });
+
   it('should getReportOnlyPolicy', () => {
     const reportOnly = parseCspHeader("script-src 'self' 'unsafe-inline'");
     store.store('https://example.com', parseCspHeader("script-src 'self'"), reportOnly);
