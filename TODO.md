@@ -1,6 +1,6 @@
 # Nova Browser — TODO
 
-Last updated: 2026-09-06
+Last updated: 2026-09-19
 
 ## Priority: High
 
@@ -37,9 +37,10 @@ Last updated: 2026-09-06
 - [ ] Wire native DNS/TLS/HTTP into the JS `RawSocketHttpClient` layer with a JS fallback — or explicitly document this path as experimental/optional and keep the TS networking stack primary. Leaving it half-wired is worse than either committed state.
 - [ ] Activate the commented win/arm64 build jobs in `native-build.yml`.
 
-### 6. Multi-Process / crash isolation (Phase 2, parked)
+### 6. Multi-Process / crash isolation (Phase 2, parked) — re-scoped 2026-09-19
 - Activate the `child_process.fork()` transport in `ProcessManager`; per-tab/domain process models; OS-level crash isolation.
-- [ ] See `doc/crash-isolation-scoping.md` (added 2026-08-27) for a minimal-first scoping pass — the underlying process-model design (`process-model-design-report.md`, 2026-07-21) and a "Crash recovery / isolation" module already exist; this may be closer to *activating* dormant infrastructure than building new isolation from scratch. Confirm that before scoping a bigger effort.
+- [x] `doc/crash-isolation-scoping.md`'s step 2 (write a regression test, run it against real code, don't assume) — **done**: `tests/tab-script-fault-isolation.test.ts` renders a real page whose script throws, then renders an unrelated page through the same shared `PageRenderer`, using real (non-mocked) engine components matching `main.ts`'s actual wiring. **Both pass against current code** — a script fault in one navigation does not corrupt or block a later one, and the error is logged, not swallowed. See that doc's "Result" section for the full writeup.
+- [ ] What remains open is narrower than originally framed: real OS-level per-tab process isolation (`child_process.fork()`, the dormant `ProcessManager` transport, memory/security blast-radius containment) is still a valid, real feature — but it's no longer motivated by "does a bad tab wreck the browser," since that specific fear is now tested and answered (it doesn't, today). Scope this as its own effort on its own merits (real process-level fault tolerance, eventual site isolation) rather than reopening it under the old framing.
 
 ## Priority: Low
 

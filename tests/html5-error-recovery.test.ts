@@ -137,6 +137,20 @@ describe('Error Recovery â€” In Head', () => {
     const r = parse('<head><title>Hello</title><style>.a{}</style></head><body>ok</body>');
     expect(r.document.bodyElement).not.toBeNull();
   });
+
+  it('should ignore whitespace between tags in head without closing it early', () => {
+    // Realistic, pretty-printed HTML always has whitespace (newlines/indentation)
+    // between head-level tags. Without a 'text' case in handleInHead, every
+    // text token — including this insignificant whitespace — fell through to
+    // the "anything else" recovery: pop head, switch to "after head", and
+    // reprocess, which created <body> before the real one arrived and left
+    // <style>/<h1>/<p> nested under a phantom second <head> inside <body>.
+    const r = parse('<html>\n<head>\n<style>h1{color:red}</style>\n</head>\n<body>\n<h1>Hi</h1>\n<p>ok</p>\n</body>\n</html>\n');
+    const headTags = r.document.headElement?.children.filter((c: any) => c.tagName).map((c: any) => c.tagName);
+    const bodyTags = r.document.bodyElement?.children.filter((c: any) => c.tagName).map((c: any) => c.tagName);
+    expect(headTags).toEqual(['style']);
+    expect(bodyTags).toEqual(['h1', 'p']);
+  });
 });
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

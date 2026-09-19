@@ -131,6 +131,8 @@ import type { ISettingsStore } from '../browser/storage/settings-store';
 import { SettingsService } from '../browser/storage/settings-service';
 import type { ISettingsService } from '../browser/storage/settings-service';
 import { BrowserName } from '../browser/config/browser-name';
+import { IncognitoManager } from '../browser/settings/incognito';
+import type { IIncognitoManager } from '../browser/settings/incognito';
 
 // AI Research
 import { ResearchService } from '../browser/research/research-service';
@@ -223,6 +225,7 @@ const Tokens = Object.freeze({
   SettingsService: Symbol('SettingsService'),
   // Browser identity
   BrowserName: Symbol('BrowserName'),
+  IncognitoManager: Symbol('IncognitoManager'),
   // AI Research
   ResearchService: Symbol('ResearchService'),
 } as const);
@@ -542,6 +545,11 @@ class ApplicationBootstrap {
     c.register<IBrowserName>(
       Tokens.BrowserName,
       () => new BrowserName(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<IIncognitoManager>(
+      Tokens.IncognitoManager,
+      () => new IncognitoManager(),
       ServiceLifetime.Singleton,
     );
 
@@ -878,6 +886,8 @@ class ApplicationBootstrap {
     const downloadManager = this.container.resolve<IDownloadManager>(Tokens.DownloadManager);
     const bookmarkService = this.container.resolve<IBookmarkService>(Tokens.BookmarkService);
     const historyServiceInstance = this.container.resolve<IHistoryService>(Tokens.HistoryService);
+    const incognitoManager = this.container.resolve<IIncognitoManager>(Tokens.IncognitoManager);
+    const cookieStoreInstance = this.container.resolve<ICookieStore>(Tokens.CookieStore);
 
     page.setBrowserEngine(engine);
     page.setNavigationController(navController);
@@ -885,6 +895,20 @@ class ApplicationBootstrap {
     page.setDownloadManager(downloadManager);
     page.setBookmarkService(bookmarkService);
     page.setHistoryService(historyServiceInstance);
+    page.setIncognitoManager(incognitoManager);
+
+    // Incognito: pause history recording and isolate the cookie jar for the
+    // session's duration. Rolls back to a snapshot on exit rather than just
+    // clearing, so cookies/history from before incognito started are unaffected.
+    incognitoManager.onEvent((event) => {
+      if (event.kind === 'modeActivated') {
+        historyServiceInstance.setRecordingEnabled(false);
+        cookieStoreInstance.beginEphemeral();
+      } else if (event.kind === 'modeDeactivated') {
+        historyServiceInstance.setRecordingEnabled(true);
+        cookieStoreInstance.endEphemeral();
+      }
+    });
 
     // Wire DI-registered blockers into the page so shield toggle affects engine middleware
     page.setTrackerBlocker(blocker);
@@ -915,6 +939,16 @@ class ApplicationBootstrap {
     const browserName = this.container.resolve<IBrowserName>(Tokens.BrowserName);
     browserName.init(settingsService);
     page.setBrowserName(browserName);
+
+    // Desktop (Electron) launch-URL / second-instance handoff: main.cjs calls
+    // this via executeJavaScript() when the OS hands Nova a URL to open — a
+    // file/protocol association, or a relaunch while an instance is already
+    // running (see requestSingleInstanceLock() in electron/main.cjs). Mirrors
+    // the same globalThis-hook pattern installRendererHealthProbe() already
+    // uses for main-process → renderer calls.
+    (globalThis as unknown as Record<string, unknown>).__novaOpenUrl = (url: string): void => {
+      page.createTab(url);
+    };
   }
 
   // ── Diagnostics ───────────────────────────────────────────────────────────

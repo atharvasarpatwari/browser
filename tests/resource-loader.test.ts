@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ResourceLoader } from '../src/browser/networking/resource-loader';
 import { CacheManager } from '../src/browser/networking/cache-manager';
 import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from '../src/browser/networking/request-manager';
@@ -255,5 +255,61 @@ describe('ResourceLoader — Redirect following', () => {
     expect(result.error).not.toBeNull();
     expect(result.error).toContain('Too many redirects');
     expect(calls).toBe(11);
+  });
+});
+
+describe('ResourceLoader — Network timing (DevTools)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('attaches a DNS/connect/TLS/wait/download breakdown from Resource Timing', async () => {
+    const url = 'https://example.com/timed.css';
+    vi.spyOn(performance, 'getEntriesByType').mockReturnValue([
+      {
+        name: url,
+        startTime: 100,
+        domainLookupStart: 100, domainLookupEnd: 105,
+        connectStart: 105, secureConnectionStart: 108, connectEnd: 112,
+        requestStart: 112, responseStart: 120, responseEnd: 130,
+      } as unknown as PerformanceEntry,
+    ]);
+
+    const loader = new ResourceLoader(mockClient({ [url]: { body: 'a{}' } }));
+    const onLoad = vi.fn();
+    loader.setOnLoad(onLoad);
+    const result = await loader.loadResource(url, 'stylesheet');
+
+    expect(result.timing).toEqual({
+      dnsMs: 5, connectMs: 3, tlsMs: 4, ttfbMs: 8, downloadMs: 10, totalMs: 30,
+    });
+    expect(onLoad).toHaveBeenCalledWith(expect.objectContaining({ timing: result.timing }));
+  });
+
+  it('omits timing when no matching Resource Timing entry exists', async () => {
+    vi.spyOn(performance, 'getEntriesByType').mockReturnValue([]);
+    const url = 'https://example.com/untimed.css';
+    const loader = new ResourceLoader(mockClient({ [url]: { body: 'a{}' } }));
+    const result = await loader.loadResource(url, 'stylesheet');
+    expect(result.timing).toBeUndefined();
+  });
+
+  it('does not attach timing to a cache hit', async () => {
+    const url = 'https://example.com/cached.css';
+    vi.spyOn(performance, 'getEntriesByType').mockReturnValue([
+      {
+        name: url, startTime: 0,
+        domainLookupStart: 0, domainLookupEnd: 1, connectStart: 1, secureConnectionStart: 0,
+        connectEnd: 2, requestStart: 2, responseStart: 3, responseEnd: 4,
+      } as unknown as PerformanceEntry,
+    ]);
+
+    const cache = new CacheManager();
+    const loader = new ResourceLoader(mockClient({ [url]: { body: 'a{}' } }), undefined, undefined, undefined, cache);
+    await loader.loadResource(url, 'stylesheet'); // populates the cache
+
+    const cached = await loader.loadResource(url, 'stylesheet');
+    expect(cached.fromCache).toBe(true);
+    expect(cached.timing).toBeUndefined();
   });
 });

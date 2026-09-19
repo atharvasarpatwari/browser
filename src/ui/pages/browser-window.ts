@@ -154,6 +154,7 @@ interface IBrowserWindowPage extends IDisposable {
   setWindowControls(controls: IWindowControls): void;
   setBrowserName(name: IBrowserName): void;
   setResearchService(service: IResearchService): void;
+  setIncognitoManager(manager: IIncognitoManager): void;
 
   // ── External chrome bridge (native shells driving this page's tabs/nav) ────
   /** Push-based state: fires on every syncAll() (tab created/removed/activated, url changed, etc). */
@@ -1552,6 +1553,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.toolbar?.setCanGoForward(tab.canGoForward());
       }
     }
+    this.toolbar?.setIncognito(this.isIncognito());
     if (this.toolbar && this.toolbarView) {
       this.toolbarView.update(this.toolbar.state);
     }
@@ -1836,6 +1838,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     service.on('bookmarkRemoved', notify);
     service.on('bookmarkUpdated', notify);
     service.on('bookmarkMoved', notify);
+  }
+
+  setIncognitoManager(manager: IIncognitoManager): void {
+    this.incognitoManager = manager;
   }
 
   setHistoryService(service: IHistoryService): void {

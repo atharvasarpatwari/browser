@@ -196,6 +196,49 @@ describe('PersistentCookieStore', () => {
     const noMatch = await store.get('sub.example.com', 'session');
     expect(noMatch).toBeNull();
   });
+
+  describe('ephemeral mode (incognito)', () => {
+    it('should not persist writes made while ephemeral', async () => {
+      await store.set(makeCookie({ domain: 'before.com' }));
+      store.beginEphemeral();
+      await store.set(makeCookie({ domain: 'during.com' }));
+
+      const dump = storage.dump();
+      const persisted = JSON.parse(dump['nova-cookies']);
+      expect(Object.keys(persisted)).toHaveLength(1); // only before.com
+
+      // But in-memory, the site set during the session still works.
+      expect(await store.get('during.com', 'session')).not.toBeNull();
+    });
+
+    it('should discard everything set since beginEphemeral on endEphemeral', async () => {
+      await store.set(makeCookie({ domain: 'before.com' }));
+      store.beginEphemeral();
+      await store.set(makeCookie({ domain: 'during.com' }));
+      await store.delete('before.com', 'session');
+      store.endEphemeral();
+
+      expect(await store.get('before.com', 'session')).not.toBeNull();
+      expect(await store.get('during.com', 'session')).toBeNull();
+    });
+
+    it('should resume persisting after endEphemeral', async () => {
+      store.beginEphemeral();
+      await store.set(makeCookie({ domain: 'during.com' }));
+      store.endEphemeral();
+
+      await store.set(makeCookie({ domain: 'after.com' }));
+      const dump = storage.dump();
+      const persisted = JSON.parse(dump['nova-cookies']);
+      expect(Object.keys(persisted)).toHaveLength(1); // only after.com
+    });
+
+    it('endEphemeral without a matching beginEphemeral is a no-op', async () => {
+      await store.set(makeCookie({ domain: 'example.com' }));
+      store.endEphemeral();
+      expect(await store.get('example.com', 'session')).not.toBeNull();
+    });
+  });
 });
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

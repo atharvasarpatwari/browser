@@ -35,6 +35,7 @@ class ToolbarView implements IToolbarView {
   private shieldBtn: HTMLElement | null = null;
   private bookmarkBtn: HTMLElement | null = null;
   private menuBtn: HTMLElement | null = null;
+  private incognitoBadge: HTMLElement | null = null;
   private eventHandler: ((event: ToolbarEventUnion) => void) | null = null;
 
   constructor(model: IToolbar, config?: Partial<ToolbarViewConfig>) {
@@ -63,6 +64,7 @@ class ToolbarView implements IToolbarView {
     this.shieldBtn = null;
     this.bookmarkBtn = null;
     this.menuBtn = null;
+    this.incognitoBadge = null;
   }
 
   update(state: ToolbarState): void {
@@ -74,6 +76,9 @@ class ToolbarView implements IToolbarView {
     }
     if (this.shieldBtn) {
       this.shieldBtn.style.color = state.shieldEnabled ? 'var(--text-success)' : 'var(--text-tertiary)';
+    }
+    if (this.incognitoBadge) {
+      this.incognitoBadge.style.display = state.incognito ? 'flex' : 'none';
     }
   }
 
@@ -123,6 +128,13 @@ class ToolbarView implements IToolbarView {
     this.homeBtn = this.createNavButton('⌂', 'Home', false);
     this.homeBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'home' }));
     this.container.appendChild(this.homeBtn);
+
+    this.incognitoBadge = document.createElement('div');
+    this.incognitoBadge.className = 'incognito-badge';
+    this.incognitoBadge.title = 'Private browsing — history and cookies from this session won\'t be saved';
+    this.incognitoBadge.style.cssText = 'display:none;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:rgba(124,92,255,0.18);color:var(--text-accent-bright,#a78bfa);font-size:11px;font-weight:600;letter-spacing:.02em;flex-shrink:0;user-select:none;';
+    this.incognitoBadge.textContent = '🕶️ Incognito';
+    this.container.appendChild(this.incognitoBadge);
 
     const addressBarArea = document.createElement('div');
     addressBarArea.className = 'address-bar-slot';

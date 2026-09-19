@@ -1,5 +1,6 @@
 import type { IDisposable } from '../../../app/dependency-container';
 import type { IDomTree, DomNode, DomElement, DomTextNode } from '../../../browser/rendering/dom-tree';
+import type { ResourceLoadTiming } from '../../../browser/networking/resource-loader';
 
 export type DevToolsConsoleLevel = 'log' | 'info' | 'warn' | 'error' | 'debug';
 
@@ -24,7 +25,16 @@ export interface DevToolsNetworkEntry {
   readonly durationMs: number;
   readonly fromCache: boolean;
   readonly error: string | null;
+  readonly timing?: ResourceLoadTiming;
 }
+
+const TIMING_PHASES: ReadonlyArray<{ key: keyof ResourceLoadTiming; label: string; color: string }> = [
+  { key: 'dnsMs', label: 'DNS', color: '#8ab4f8' },
+  { key: 'connectMs', label: 'Connect', color: '#81c995' },
+  { key: 'tlsMs', label: 'TLS', color: '#c58af9' },
+  { key: 'ttfbMs', label: 'Wait (TTFB)', color: '#fdd663' },
+  { key: 'downloadMs', label: 'Download', color: '#f28b82' },
+];
 
 const MAX_ROWS = 1000;
 const MAX_TREE_NODES = 2000;
@@ -244,11 +254,13 @@ class DevToolsPanel implements IDevToolsPanel {
     if (!this.networkPane) return;
 
     const isError = entry.error !== null || entry.statusCode >= 400 || entry.statusCode === 0;
+    const hasTiming = !!entry.timing && Object.values(entry.timing).some((v) => v !== null);
     const row = document.createElement('div');
     row.style.cssText = `
       display:flex; gap:8px; padding:2px 10px; white-space:nowrap;
       overflow:hidden; border-bottom:1px solid #292a2d;
       color:${isError ? LEVEL_COLOR.error : '#e8eaed'};
+      ${hasTiming ? 'cursor:pointer;' : ''}
     `.trim();
 
     const status = document.createElement('span');
@@ -269,15 +281,74 @@ class DevToolsPanel implements IDevToolsPanel {
     duration.style.cssText = 'flex:none; color:#5f6368;';
 
     row.append(status, kind, url, duration);
-    this.networkPane.appendChild(row);
+
+    if (hasTiming) {
+      const timingRow = this.buildTimingRow(entry.timing!);
+      timingRow.dataset.novaTimingRow = 'true';
+      row.addEventListener('click', () => { timingRow.hidden = !timingRow.hidden; });
+      this.networkPane.append(row, timingRow);
+    } else {
+      this.networkPane.appendChild(row);
+    }
 
     this.networkRowCount++;
     if (this.networkRowCount > MAX_NETWORK_ROWS) {
+      // A row may be paired with a hidden timing sub-row right after it —
+      // evict both, or the next entry's timing toggle would land on an
+      // orphaned leftover sub-row instead of its own.
       this.networkPane.firstChild?.remove();
+      if ((this.networkPane.firstChild as HTMLElement | null)?.dataset?.novaTimingRow) {
+        this.networkPane.firstChild?.remove();
+      }
       this.networkRowCount--;
     }
 
     this.networkPane.scrollTop = this.networkPane.scrollHeight;
+  }
+
+  /**
+   * A hidden-by-default sub-row under a network entry: a proportional
+   * DNS/Connect/TLS/Wait/Download bar plus labeled durations — the same
+   * breakdown a real browser's Network panel "Timing" tab shows, sourced
+   * from the Resource Timing API (see resource-loader.ts's
+   * computeResourceTiming). Toggled open by clicking the entry above it.
+   */
+  private buildTimingRow(timing: ResourceLoadTiming): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.hidden = true;
+    wrap.style.cssText = 'padding:6px 10px 10px 46px; border-bottom:1px solid #292a2d; font-size:11px;';
+
+    const total = TIMING_PHASES.reduce((sum, p) => sum + (timing[p.key] ?? 0), 0) || 1;
+
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex; height:6px; border-radius:3px; overflow:hidden; background:#292a2d; margin-bottom:6px;';
+    for (const phase of TIMING_PHASES) {
+      const ms = timing[phase.key];
+      if (!ms) continue;
+      const seg = document.createElement('div');
+      seg.style.cssText = `flex:${ms / total} 0 auto; background:${phase.color};`;
+      seg.title = `${phase.label}: ${ms.toFixed(1)}ms`;
+      bar.appendChild(seg);
+    }
+    wrap.appendChild(bar);
+
+    const labels = document.createElement('div');
+    labels.style.cssText = 'display:flex; gap:14px; flex-wrap:wrap; color:#9aa0a6;';
+    for (const phase of TIMING_PHASES) {
+      const ms = timing[phase.key];
+      const item = document.createElement('span');
+      item.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${phase.color};margin-right:4px;"></span>${phase.label}: ${ms !== null ? ms.toFixed(1) + 'ms' : '—'}`;
+      labels.appendChild(item);
+    }
+    if (timing.totalMs !== null) {
+      const totalItem = document.createElement('span');
+      totalItem.style.cssText = 'color:#e8eaed; font-weight:600;';
+      totalItem.textContent = `Total: ${timing.totalMs.toFixed(1)}ms`;
+      labels.appendChild(totalItem);
+    }
+    wrap.appendChild(labels);
+
+    return wrap;
   }
 
   clear(): void {

@@ -58,6 +58,8 @@ function matchesDomain(cookie: CookieData, domain: string): boolean {
 class PersistentCookieStore implements ICookieStore {
   private readonly storage: Storage | null;
   private data: Map<string, CookieData>;
+  private ephemeral = false;
+  private ephemeralSnapshot: Map<string, CookieData> | null = null;
 
   constructor(storage?: Storage) {
     this.storage = storage ?? null;
@@ -66,7 +68,26 @@ class PersistentCookieStore implements ICookieStore {
   }
 
   private persist(): void {
+    if (this.ephemeral) return;
     saveJson(this.storage, COOKIE_STORAGE_KEY, Object.fromEntries(this.data));
+  }
+
+  /**
+   * Snapshot the jar and stop persisting (private browsing). All reads/writes
+   * still work normally in-memory so sites keep functioning — nothing just
+   * reaches disk until endEphemeral() either restores or commits it.
+   */
+  beginEphemeral(): void {
+    this.ephemeralSnapshot = new Map(this.data);
+    this.ephemeral = true;
+  }
+
+  /** Roll back to the beginEphemeral() snapshot, discarding everything set since. */
+  endEphemeral(): void {
+    if (!this.ephemeral) return;
+    this.data = new Map(this.ephemeralSnapshot ?? []);
+    this.ephemeralSnapshot = null;
+    this.ephemeral = false;
   }
 
   private evictExpired(): void {

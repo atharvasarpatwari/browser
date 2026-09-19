@@ -32,6 +32,10 @@ interface ICookieStore extends IDisposable {
   deleteAll(domain?: string): Promise<number>;
   flush(): Promise<void>;
   readonly count: number;
+  /** Snapshot the current cookie jar and stop persisting further changes (private browsing). */
+  beginEphemeral(): void;
+  /** Roll back to the beginEphemeral() snapshot, discarding everything set since. */
+  endEphemeral(): void;
 }
 
 function cookieKey(domain: string, name: string, path: string): string {
@@ -45,6 +49,7 @@ function matchesDomain(cookie: CookieData, domain: string): boolean {
 
 class InMemoryCookieStore implements ICookieStore {
   private readonly cookies = new Map<string, CookieData>();
+  private ephemeralSnapshot: Map<string, CookieData> | null = null;
 
   async set(raw: Omit<CookieData, 'creationTime' | 'lastAccessTime'>): Promise<void> {
     const key = cookieKey(raw.domain, raw.name, raw.path);
@@ -128,6 +133,17 @@ class InMemoryCookieStore implements ICookieStore {
   get count(): number {
     this.evictExpired();
     return this.cookies.size;
+  }
+
+  beginEphemeral(): void {
+    this.ephemeralSnapshot = new Map(this.cookies);
+  }
+
+  endEphemeral(): void {
+    if (!this.ephemeralSnapshot) return;
+    this.cookies.clear();
+    for (const [key, cookie] of this.ephemeralSnapshot) this.cookies.set(key, cookie);
+    this.ephemeralSnapshot = null;
   }
 
   private evictExpired(): void {

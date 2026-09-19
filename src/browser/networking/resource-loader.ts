@@ -25,6 +25,65 @@ interface ResourceLoadResult {
   readonly durationMs: number;
   readonly fromCache: boolean;
   readonly error: string | null;
+  /** DNS/connect/TLS/wait/download breakdown, when the platform exposed it. */
+  readonly timing?: ResourceLoadTiming;
+}
+
+/** DNS → Connect → TLS → Wait (TTFB) → Download breakdown for one request. */
+interface ResourceLoadTiming {
+  readonly dnsMs: number | null;
+  readonly connectMs: number | null;
+  readonly tlsMs: number | null;
+  readonly ttfbMs: number | null;
+  readonly downloadMs: number | null;
+  readonly totalMs: number | null;
+}
+
+/**
+ * Reads the real DNS/Connect/TLS/Wait/Download split for `url` from the
+ * browser's own Resource Timing API — the same data DevTools' Network panel
+ * "Timing" tab shows, and the only source for it: fetch() itself never
+ * exposes these sub-phases, since the browser (not our JS) owns the socket.
+ * Cross-origin entries omit the fine-grained fields unless the server sends
+ * `Timing-Allow-Origin`, in which case every *Ms below is just null — never
+ * thrown, so a locked-down third-party response still logs a normal entry.
+ */
+// The Resource Timing buffer defaults to 250 entries (Chromium/Firefox alike)
+// and silently stops recording new ones once full — a page that loads more
+// than 250 resources over its lifetime (trivial for an unbundled dev build,
+// or any long-lived tab) would otherwise go quietly blind to every load
+// after the 250th. Raised once, lazily, on first use.
+let resourceTimingBufferRaised = false;
+
+function computeResourceTiming(url: string): ResourceLoadTiming | null {
+  if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') return null;
+
+  if (!resourceTimingBufferRaised) {
+    performance.setResourceTimingBufferSize?.(5000);
+    resourceTimingBufferRaised = true;
+  }
+
+  const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+  let match: PerformanceResourceTiming | undefined;
+  for (const entry of entries) {
+    if (entry.name === url) match = entry; // last one wins — the just-finished request
+  }
+  if (!match) return null;
+
+  const span = (a: number, b: number): number | null => (b > a ? b - a : null);
+  const tlsMs = match.secureConnectionStart > 0 ? span(match.secureConnectionStart, match.connectEnd) : null;
+  const connectMs = tlsMs !== null
+    ? span(match.connectStart, match.secureConnectionStart)
+    : span(match.connectStart, match.connectEnd);
+
+  return {
+    dnsMs: span(match.domainLookupStart, match.domainLookupEnd),
+    connectMs,
+    tlsMs,
+    ttfbMs: span(match.requestStart, match.responseStart),
+    downloadMs: span(match.responseStart, match.responseEnd),
+    totalMs: match.responseEnd > 0 ? match.responseEnd - match.startTime : null,
+  };
 }
 
 interface ResourceBatchResult {
@@ -94,8 +153,10 @@ class ResourceLoader implements IResourceLoader {
 
   async loadResource(url: string, kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
     const result = await this.loadResourceCore(url, kind, options);
-    this.onLoad?.(result);
-    return result;
+    const timing = result.fromCache ? null : computeResourceTiming(url);
+    const withTiming = timing ? { ...result, timing } : result;
+    this.onLoad?.(withTiming);
+    return withTiming;
   }
 
   /** Notified with every resource load's final result (success, error, cached, or blocked) — for a DevTools Network panel. */
@@ -495,4 +556,4 @@ class ResourceLoader implements IResourceLoader {
 }
 
 export { ResourceLoader };
-export type { IResourceLoader, ResourceLoadResult, ResourceBatchResult, ResourceLoadOptions, ResourcePriority };
+export type { IResourceLoader, ResourceLoadResult, ResourceBatchResult, ResourceLoadOptions, ResourcePriority, ResourceLoadTiming };

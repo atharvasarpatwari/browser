@@ -534,6 +534,10 @@ class SecurityLayer implements ISecurityLayer, IDisposable {
       }
       return check.reason ?? 'Blocked by security layer.';
     },
+    upgradeUrl: (request) => {
+      const check = this.checkNavigation(request.url);
+      return check.decision === 'upgrade' ? check.upgradeUrl : null;
+    },
   };
 
   // ── Events / lifecycle ─────────────────────────────────────────────────────

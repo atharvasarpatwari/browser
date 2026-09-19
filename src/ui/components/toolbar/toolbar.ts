@@ -26,6 +26,7 @@ interface ToolbarState {
   readonly canGoForward: boolean;
   readonly loading: boolean;
   readonly shieldEnabled: boolean;
+  readonly incognito: boolean;
 }
 
 interface IToolbar extends IDisposable {
@@ -34,6 +35,7 @@ interface IToolbar extends IDisposable {
   setCanGoForward(can: boolean): void;
   setLoading(loading: boolean): void;
   setShieldEnabled(enabled: boolean): void;
+  setIncognito(enabled: boolean): void;
   toggleShield(): void;
   goHome(): void;
   addBookmark(): void;
@@ -74,6 +76,7 @@ class Toolbar implements IToolbar {
   private _canGoForward = false;
   private _loading = false;
   private _shieldEnabled = true;
+  private _incognito = false;
 
   get state(): ToolbarState {
     return {
@@ -81,6 +84,7 @@ class Toolbar implements IToolbar {
       canGoForward: this._canGoForward,
       loading: this._loading,
       shieldEnabled: this._shieldEnabled,
+      incognito: this._incognito,
     };
   }
 
@@ -88,6 +92,7 @@ class Toolbar implements IToolbar {
   setCanGoForward(can: boolean): void { this._canGoForward = can; }
   setLoading(loading: boolean): void { this._loading = loading; }
   setShieldEnabled(enabled: boolean): void { this._shieldEnabled = enabled; }
+  setIncognito(enabled: boolean): void { this._incognito = enabled; }
 
   goBack(): void { this.bus.emit({ kind: 'back' }); }
   goForward(): void { this.bus.emit({ kind: 'forward' }); }

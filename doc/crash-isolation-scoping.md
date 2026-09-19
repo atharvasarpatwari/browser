@@ -1,7 +1,7 @@
 # Crash Isolation — Minimal-First Scoping
 
-**Status:** Planned — scoping only, no implementation yet
-**Related:** `process-model-design-report.md` (2026-07-21), TODO.md Priority: Medium #4
+**Status:** Step 2 run 2026-09-19 — the regression test already passes against current code. See "Result" below; the "Minimal first step" section's fix is not needed for the concern it was scoped around.
+**Related:** `process-model-design-report.md` (2026-07-21), TODO.md Priority: Medium #4, `tests/tab-script-fault-isolation.test.ts`
 
 ---
 
@@ -78,8 +78,31 @@ renderer, before reaching for OS-level process boundaries:
   does something reasonable (see `electron/main.cjs`); revisit it only if the per-tab fix
   above turns out to be insufficient on its own.
 
+## Result (2026-09-19)
+
+Wrote and ran exactly the test step 2 describes: `tests/tab-script-fault-isolation.test.ts`
+constructs a real (non-mocked) `PageRenderer` — real `HtmlParser`/`DomTree`/`CssParser`/
+`LayoutEngine`/`PaintEngine`/`ResourceLoader`, the same shapes `main.ts` wires for the actual
+app — renders a page whose `<script>` throws (`null.x.y`), then renders a second, unrelated
+page through the *same* renderer instance (Nova's real shared-engine shape, not a hypothetical
+per-tab one). **Both tests pass against the current, unmodified code**: the second page renders
+correctly (its `<h1>` is present in the resulting DOM) and the fault is visibly logged via
+`console.error`, not swallowed silently.
+
+This confirms option (3) in "What to check before scoping anything bigger": a fault in one
+tab's page script does *not* currently corrupt or block a later navigation through the shared
+pipeline. `runJS()`'s own per-call error handling, already wrapped by
+`PageRenderer.executeAllScripts()`, is sufficient containment for this specific concern —
+**the "Minimal first step" per-tab error boundary in this doc is not needed** and should not be
+built speculatively. Real per-tab process isolation (the actual TODO.md #4 ask — OS-level
+memory/security isolation, not just fault-containment) remains a valid, separate, much larger
+question, but this specific "does one bad tab wreck the browser" concern that motivated writing
+this doc is now answered, not just guessed at.
+
 ## Priority
 
-Medium — this matters for daily-use resilience (P1 on the implementation roadmap), but per
-step 2 above, the actual severity is unknown until that regression test is written and run.
-Do that first; it may turn a "big parked feature" into a small, bounded fix.
+Downgraded from the original framing — the "unknown severity, do this first" urgency that
+justified Medium priority is resolved: severity is now known and low for the JS-fault-
+containment concern. Full OS-level multi-process isolation (real `child_process.fork()` per
+tab) remains open for its own reasons (crash blast radius at the process level, one day
+security/site-isolation) but is no longer blocked on or motivated by this specific fear.

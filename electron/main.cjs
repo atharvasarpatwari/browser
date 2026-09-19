@@ -1,6 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, Menu, nativeImage, session } = require('electron')
+const { app, BrowserWindow, Menu, nativeImage, screen } = require('electron')
 const path = require('path')
 const url = require('url')
 const fs = require('fs')
@@ -88,6 +88,78 @@ function resolveIcon() {
     }
   }
   return undefined
+}
+
+// ── Window state persistence ────────────────────────────────────────────────
+// Remembers size/position/maximized state across launches. Falls back to the
+// original 1280x800 default whenever nothing is saved yet, the save is
+// unreadable, or the saved position no longer lands on any connected display
+// (e.g. a monitor was unplugged since the last run — restoring blindly would
+// otherwise put the window somewhere the user can't reach).
+
+function windowStatePath() {
+  try {
+    return path.join(app.getPath('userData'), 'window-state.json')
+  } catch {
+    return path.join(__dirname, '..', 'window-state.json')
+  }
+}
+
+function isOnScreen(x, y, width, height) {
+  const bounds = { x, y, width, height }
+  return screen.getAllDisplays().some((display) => {
+    const wa = display.workArea
+    return x < wa.x + wa.width && x + width > wa.x && y < wa.y + wa.height && y + height > wa.y
+  })
+}
+
+function loadWindowState() {
+  try {
+    const raw = fs.readFileSync(windowStatePath(), 'utf8')
+    const state = JSON.parse(raw)
+    if (typeof state.width !== 'number' || typeof state.height !== 'number') return null
+    if (typeof state.x === 'number' && typeof state.y === 'number' && !isOnScreen(state.x, state.y, state.width, state.height)) {
+      return { width: state.width, height: state.height, isMaximized: !!state.isMaximized }
+    }
+    return state
+  } catch {
+    return null
+  }
+}
+
+function saveWindowState(win) {
+  if (!win || win.isDestroyed()) return
+  try {
+    const isMaximized = win.isMaximized()
+    // getBounds() while maximized reports the maximized size, not the restored
+    // one — save the pre-maximize bounds instead so un-maximizing later
+    // returns to the size the user actually chose.
+    const bounds = isMaximized ? win.getNormalBounds() : win.getBounds()
+    fs.writeFileSync(windowStatePath(), JSON.stringify({ ...bounds, isMaximized }))
+  } catch {
+    /* best-effort — a missing save just falls back to defaults next launch */
+  }
+}
+
+// ── Launch URL (file/protocol association, `nova.exe <url>`) ───────────────
+// In dev, argv[1] is always the electron-loaded "." path, so only a genuine
+// http(s) URL is ever treated as a launch target — never a flag or path.
+
+function extractUrlArg(argv) {
+  for (let i = argv.length - 1; i >= 1; i--) {
+    if (/^https?:\/\//i.test(argv[i])) return argv[i]
+  }
+  return null
+}
+
+function openUrlInWindow(win, targetUrl) {
+  if (!win || win.isDestroyed()) return
+  win.webContents.executeJavaScript(
+    `window.__novaOpenUrl && window.__novaOpenUrl(${JSON.stringify(targetUrl)})`,
+    true
+  ).catch((err) => {
+    writeHealthLog(`OPEN_URL_FAILED error=${err && err.message ? err.message : String(err)}`)
+  })
 }
 
 // ── Security hardening ─────────────────────────────────────────────────────
@@ -179,9 +251,12 @@ const PROBE_TIMEOUT_MS = 2000
 const UNRESPONSIVE_ESCALATION_MS = 15000
 
 function createWindow() {
+  const savedState = loadWindowState()
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: savedState ? savedState.width : 1280,
+    height: savedState ? savedState.height : 800,
+    x: savedState ? savedState.x : undefined,
+    y: savedState ? savedState.y : undefined,
     minWidth: 800,
     minHeight: 600,
     title: APP_TITLE,
@@ -207,6 +282,20 @@ function createWindow() {
   })
 
   installSecurityPolicies(win)
+
+  if (savedState && savedState.isMaximized) win.maximize()
+
+  let saveStateTimer = null
+  const scheduleSaveState = () => {
+    clearTimeout(saveStateTimer)
+    saveStateTimer = setTimeout(() => saveWindowState(win), 500)
+  }
+  win.on('resize', scheduleSaveState)
+  win.on('move', scheduleSaveState)
+  win.on('close', () => {
+    clearTimeout(saveStateTimer)
+    saveWindowState(win)
+  })
 
   if (DEV_SERVER_URL) {
     win.loadURL(DEV_SERVER_URL)
@@ -403,23 +492,50 @@ function installApplicationMenu() {
 
 app.setName(APP_TITLE)
 
-app.whenReady().then(() => {
-  installApplicationMenu()
-  initNovaSocketOwner()
-  writeHealthLog(`SOCKET_OWNER_READY probe=${JSON.stringify(__novaNetProbe())}`)
-  if (REMOTE_DEBUG_PORT) writeHealthLog(`REMOTE_DEBUGGING_ENABLED port=${REMOTE_DEBUG_PORT}`)
-  mainWindow = createWindow()
-  writeHealthLog('APP_READY')
-  startWatchdog()
-  setupAutoUpdater()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWindow()
-      writeHealthLog('WINDOW_CREATED activate')
+// ── Single-instance lock ────────────────────────────────────────────────────
+// A browser is exactly the kind of app users (and Windows itself, via file/
+// URL associations) relaunch constantly — clicking a link in another app
+// while Nova is already open should open a tab in the existing window, not
+// spawn a second, fully-independent instance. Without this lock, that's
+// exactly what happened: every relaunch quietly stacked up another process.
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, argv) => {
+    writeHealthLog('SECOND_INSTANCE_BLOCKED')
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+      const targetUrl = extractUrlArg(argv)
+      if (targetUrl) openUrlInWindow(mainWindow, targetUrl)
     }
   })
-})
+
+  app.whenReady().then(() => {
+    installApplicationMenu()
+    initNovaSocketOwner()
+    writeHealthLog(`SOCKET_OWNER_READY probe=${JSON.stringify(__novaNetProbe())}`)
+    if (REMOTE_DEBUG_PORT) writeHealthLog(`REMOTE_DEBUGGING_ENABLED port=${REMOTE_DEBUG_PORT}`)
+    mainWindow = createWindow()
+    writeHealthLog('APP_READY')
+    startWatchdog()
+    setupAutoUpdater()
+
+    const launchUrl = extractUrlArg(process.argv)
+    if (launchUrl) {
+      mainWindow.webContents.once('did-finish-load', () => openUrlInWindow(mainWindow, launchUrl))
+    }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        mainWindow = createWindow()
+        writeHealthLog('WINDOW_CREATED activate')
+      }
+    })
+  })
+}
 
 app.on('window-all-closed', () => {
   // Keep-alive: recreate the window so the browser stays open. The watchdog
