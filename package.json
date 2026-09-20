@@ -52,6 +52,7 @@
     "native:build:android": "cargo ndk -t arm64-v8a build --release -p nova-bindings --manifest-path native/Cargo.toml",
     "native:build:wasm": "wasm-pack build --target web -p nova-net native/nova-net",
     "native:dist:linux-x64": "npm run native:build:linux-x64 && mkdir -p native/dist/linux-x64-x64 && cp native/target/x86_64-unknown-linux-gnu/release/libnova_bindings.so native/dist/linux-x64-x64/nova_bindings.node",
+    "native:dist:win-x64": "npm run native:build:win-x64 && mkdir -p native/dist/win32-x64-x64 && cp native/target/x86_64-pc-windows-msvc/release/nova_bindings.dll native/dist/win32-x64-x64/nova_bindings.node",
     "native:dist": "npm run native:dist:linux-x64",
     "native:test": "cargo test --workspace --manifest-path native/Cargo.toml",
     "native:bench": "cargo bench --workspace --manifest-path native/Cargo.toml",
