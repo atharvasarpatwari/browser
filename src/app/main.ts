@@ -82,6 +82,8 @@ import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from 
 import { RawSocketHttpClient } from '../browser/networking/raw-socket-http-client';
 import { ProxyAwareHttpClient, createProxyConfigFromEnv } from '../browser/networking/request-manager';
 import type { IHttpClient } from '../browser/networking/request-manager';
+import { CookieJar } from '../browser/networking/cookie-jar';
+import type { ICookieJar } from '../browser/networking/cookie-jar';
 import { TlsHandler } from '../browser/networking/tls-handler';
 import type { ITlsHandler } from '../browser/networking/tls-handler';
 
@@ -184,6 +186,7 @@ const Tokens = Object.freeze({
   DownloadManager: Symbol('DownloadManager'),
   ResourceLoader: Symbol('ResourceLoader'),
   CacheManager: Symbol('CacheManager'),
+  CookieJar: Symbol('CookieJar'),
   CertificateValidator: Symbol('CertificateValidator'),
   TlsHandler: Symbol('TlsHandler'),
   SandboxManager: Symbol('SandboxManager'),
@@ -431,9 +434,19 @@ class ApplicationBootstrap {
     c.register<IResourceLoader>(
       Tokens.ResourceLoader,
       (ctx) => {
+        // A bridged Electron renderer (contextIsolation: true) never exposes a
+        // bare `process` global — see electron/preload.cjs — so `window.nova.ipc`
+        // is the only reliable signal that raw sockets are usable here. Without
+        // this check RawSocketHttpClient (which has a real connect timeout) was
+        // never selected in Electron, silently falling back to FetchHttpClient
+        // (which has none — see ResourceLoader's own timeout enforcement below).
+        const hasNovaIpcBridge =
+          typeof globalThis !== 'undefined' &&
+          typeof (globalThis as { nova?: { ipc?: unknown } }).nova?.ipc !== 'undefined';
         const isNode =
-          typeof process !== 'undefined' &&
-          typeof (process as { versions?: { node?: string } }).versions?.node === 'string';
+          hasNovaIpcBridge ||
+          (typeof process !== 'undefined' &&
+          typeof (process as { versions?: { node?: string } }).versions?.node === 'string');
         const tlsHandler = ctx.resolve<ITlsHandler>(Tokens.TlsHandler);
         const proxyConfig = createProxyConfigFromEnv();
         let client: IHttpClient | undefined;
@@ -450,6 +463,7 @@ class ApplicationBootstrap {
           ctx.resolve<ITrackerBlocker>(Tokens.TrackerBlocker),
         );
         loader.setCache(cache);
+        loader.setCookieJar(ctx.resolve<ICookieJar>(Tokens.CookieJar));
         return loader;
       },
       ServiceLifetime.Singleton,
@@ -457,6 +471,11 @@ class ApplicationBootstrap {
     c.register<ICacheManager>(
       Tokens.CacheManager,
       () => new CacheManager(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<ICookieJar>(
+      Tokens.CookieJar,
+      () => new CookieJar(),
       ServiceLifetime.Singleton,
     );
 

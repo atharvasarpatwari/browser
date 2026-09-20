@@ -305,6 +305,34 @@ describe('TlsHandler', () => {
       expect(status).toBe(CertVerificationStatus.Mismatch);
     });
 
+    it('should return Valid for a hostname matching a single-level wildcard SAN', () => {
+      const now = new Date();
+      const chain = [{
+        subject: '*.githubassets.com', issuer: 'CA',
+        notBefore: now.toISOString(), notAfter: new Date(now.getTime() + 86400000).toISOString(),
+        serialNumber: '01', fingerprint: 'abc', san: ['*.githubassets.com'],
+        publicKeyAlgorithm: 'RSA', signatureAlgorithm: 'SHA256withRSA',
+        keySize: 2048, isCa: false,
+      }];
+      const status = TlsHandler.verifyChain(chain, 'github.githubassets.com', new Set());
+      expect(status).toBe(CertVerificationStatus.Valid);
+    });
+
+    it('should return Mismatch when a wildcard SAN is asked to cover more than one label', () => {
+      const now = new Date();
+      const chain = [{
+        subject: '*.example.com', issuer: 'CA',
+        notBefore: now.toISOString(), notAfter: new Date(now.getTime() + 86400000).toISOString(),
+        serialNumber: '01', fingerprint: 'abc', san: ['*.example.com'],
+        publicKeyAlgorithm: 'RSA', signatureAlgorithm: 'SHA256withRSA',
+        keySize: 2048, isCa: false,
+      }];
+      // *.example.com covers one label (sub.example.com), not two (a.b.example.com)
+      // or the bare apex (example.com) — RFC 6125 §6.4.3.
+      expect(TlsHandler.verifyChain(chain, 'a.b.example.com', new Set())).toBe(CertVerificationStatus.Mismatch);
+      expect(TlsHandler.verifyChain(chain, 'example.com', new Set())).toBe(CertVerificationStatus.Mismatch);
+    });
+
     it('should return Unknown for empty chain', () => {
       const status = TlsHandler.verifyChain([], 'example.com', new Set());
       expect(status).toBe(CertVerificationStatus.Unknown);

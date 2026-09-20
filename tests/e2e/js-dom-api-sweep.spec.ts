@@ -434,6 +434,7 @@ const CASES: Case[] = [
       'malformed URL throws a catchable TypeError',
       'relative URL resolves against a base (path, dot-dot, protocol-relative)',
       'malformed regex literal throws a catchable SyntaxError',
+      'identifier with a \\uXXXX escape (e.g. minified ɵprov-style names) is read as one decoded name',
     ],
     html: harnessHtml(`
       try {
@@ -579,7 +580,18 @@ const CASES: Case[] = [
         try { eval('/[unclosed/'); } catch(e3) { regexThrew = e3 instanceof SyntaxError; }
         mark(22, regexThrew === true);
       } catch(e) { }
-    `, 23),
+
+      try {
+        // Reproduces a real gap found bisecting YouTube's bundle: a lone
+        // backslash isn't a valid identifier char on its own, so a name
+        // written as \\u0275prov (Angular-style minified internal props)
+        // needs the \\uXXXX escape decoded into the property name, not
+        // read as a stray token followed by a separate "u0275prov" ident.
+        var escHolder = {};
+        escHolder.\\u0275prov = 'ok';
+        mark(23, escHolder.\\u0275prov === 'ok');
+      } catch(e) { }
+    `, 24),
   },
   {
     name: 'class-features',

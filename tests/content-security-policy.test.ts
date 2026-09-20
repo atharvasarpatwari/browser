@@ -1248,6 +1248,66 @@ describe('CspNavigationGuard', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CSP Guard Adapter tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { CspGuardAdapter } from '../src/browser/security/csp-guard-adapter';
+import { NavigationType } from '../src/browser/navigation/navigation-controller';
+
+describe('CspGuardAdapter', () => {
+  let store: CspPolicyStore;
+  let guard: CspNavigationGuard;
+  let adapter: CspGuardAdapter;
+
+  beforeEach(() => {
+    store = new CspPolicyStore();
+    guard = new CspNavigationGuard(store);
+    adapter = new CspGuardAdapter(guard);
+  });
+
+  afterEach(() => {
+    store.dispose();
+  });
+
+  it('should allow navigation when no CSP policy', async () => {
+    const allowed = await adapter.canNavigate({
+      url: 'https://example.com/page',
+      type: NavigationType.Push,
+      userInitiated: true,
+    });
+    expect(allowed).toBe(true);
+  });
+
+  it('should block canNavigate and expose the upgraded URL when upgrade-insecure-requests applies', async () => {
+    // CspGuardAdapter doesn't forward documentOrigin, so the policy lookup
+    // resolves against the request URL's own (http:) origin.
+    store.store('http://example.com', parseCspHeader("default-src 'self'; upgrade-insecure-requests"));
+    const request = {
+      url: 'http://example.com/page',
+      type: NavigationType.Push,
+      userInitiated: true,
+    };
+    const allowed = await adapter.canNavigate(request);
+    expect(allowed).toBe(false);
+    expect(adapter.upgradeUrl(request)).toBe('https://example.com/page');
+    expect(adapter.blockedReason(request)).toContain('https://example.com/page');
+  });
+
+  it('should block without an upgrade URL on a genuine CSP violation', async () => {
+    store.store('https://other.com', parseCspHeader("form-action 'none'"));
+    const request = {
+      url: 'https://other.com/submit',
+      type: 'form-submit' as NavigationType,
+      userInitiated: true,
+    };
+    const allowed = await adapter.canNavigate(request);
+    expect(allowed).toBe(false);
+    expect(adapter.upgradeUrl(request)).toBeUndefined();
+    expect(adapter.blockedReason(request)).not.toContain('instead');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CSP Resource Enforcer tests
 // ─────────────────────────────────────────────────────────────────────────────
 

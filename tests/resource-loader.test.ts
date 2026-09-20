@@ -1,6 +1,7 @@
 ﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ResourceLoader } from '../src/browser/networking/resource-loader';
 import { CacheManager } from '../src/browser/networking/cache-manager';
+import { CookieJar } from '../src/browser/networking/cookie-jar';
 import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from '../src/browser/networking/request-manager';
 import type { DiscoveredResource } from '../src/browser/rendering/html5/dom';
 
@@ -255,6 +256,111 @@ describe('ResourceLoader — Redirect following', () => {
     expect(result.error).not.toBeNull();
     expect(result.error).toContain('Too many redirects');
     expect(calls).toBe(11);
+  });
+});
+
+describe('ResourceLoader — Cookie integration', () => {
+  it('stores Set-Cookie from a response and sends it back on the next request', async () => {
+    const cookieJar = new CookieJar();
+    const requestCookieHeaders: (string | undefined)[] = [];
+
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+        requestCookieHeaders.push(spec.headers.get('cookie'));
+        return {
+          url: spec.url, statusCode: 200, statusText: 'OK', body: 'ok', bodyBinary: null,
+          headers: new Map([['set-cookie', 'session=abc123; Path=/']]),
+          redirected: false, redirectChain: [],
+        };
+      },
+    };
+
+    const loader = new ResourceLoader(client);
+    loader.setCookieJar(cookieJar);
+
+    await loader.loadResource('https://example.com/a', 'document');
+    expect(cookieJar.getCookieHeader('https://example.com/')).toBe('session=abc123');
+
+    await loader.loadResource('https://example.com/b', 'document');
+    expect(requestCookieHeaders).toEqual([undefined, 'session=abc123']);
+  });
+
+  it('prefers setCookieHeaders over the collapsed headers Map so multiple cookies survive', async () => {
+    const cookieJar = new CookieJar();
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+        return {
+          url: spec.url, statusCode: 200, statusText: 'OK', body: 'ok', bodyBinary: null,
+          headers: new Map([['set-cookie', 'b=2; Path=/']]), // last-write-wins collapse
+          setCookieHeaders: ['a=1; Path=/', 'b=2; Path=/'],
+          redirected: false, redirectChain: [],
+        };
+      },
+    };
+
+    const loader = new ResourceLoader(client);
+    loader.setCookieJar(cookieJar);
+
+    await loader.loadResource('https://example.com/', 'document');
+    const header = cookieJar.getCookieHeader('https://example.com/');
+    expect(header).toContain('a=1');
+    expect(header).toContain('b=2');
+  });
+
+  it('does not leak a cookie across a cross-host redirect', async () => {
+    const cookieJar = new CookieJar();
+    const requestCookieHeaders: Record<string, string | undefined> = {};
+
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+        requestCookieHeaders[spec.url] = spec.headers.get('cookie');
+        if (spec.url === 'https://a.com/') {
+          return {
+            url: spec.url, statusCode: 302, statusText: 'Found', body: '', bodyBinary: null,
+            headers: new Map([['location', 'https://b.com/']]),
+            redirected: false, redirectChain: [],
+          };
+        }
+        return {
+          url: spec.url, statusCode: 200, statusText: 'OK', body: 'ok', bodyBinary: null,
+          headers: new Map(), redirected: false, redirectChain: [],
+        };
+      },
+    };
+
+    const loader = new ResourceLoader(client);
+    loader.setCookieJar(cookieJar);
+    cookieJar.setFromResponse('https://a.com/', ['aCookie=1; Path=/']);
+
+    await loader.loadResource('https://a.com/', 'document');
+    expect(requestCookieHeaders['https://a.com/']).toBe('aCookie=1');
+    expect(requestCookieHeaders['https://b.com/']).toBeUndefined();
+  });
+});
+
+describe('ResourceLoader — Timeout enforcement', () => {
+  it('fails fast when the underlying IHttpClient hangs and ignores timeoutMs', async () => {
+    vi.useFakeTimers();
+    try {
+      const hangingClient: IHttpClient = {
+        send(_spec: HttpRequestSpec, signal: AbortSignal): Promise<HttpResponseSpec> {
+          // Mirrors real fetch(): the connection itself hangs forever (e.g. a
+          // blackholed TCP connect) and the promise only ever settles via the
+          // AbortSignal — exactly like FetchHttpClient's `fetch(url, { signal })`.
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')));
+          });
+        },
+      };
+      const loader = new ResourceLoader(hangingClient);
+      const pending = loader.loadResource('https://example.com/', 'document', { timeoutMs: 50 });
+      await vi.advanceTimersByTimeAsync(50);
+      const result = await pending;
+      expect(result.error).toContain('timed out after 50ms');
+      expect(result.statusCode).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

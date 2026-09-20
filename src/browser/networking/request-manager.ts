@@ -108,6 +108,12 @@ interface HttpResponseSpec {
   readonly redirected: boolean;
   /** Every URL visited before reaching the final one, in order. */
   readonly redirectChain: readonly string[];
+  /**
+   * Raw Set-Cookie header lines, one per cookie. Optional because `headers`
+   * (a single-value Map) can't carry duplicate keys — only transports with
+   * real header access (e.g. RawSocketHttpClient) populate this.
+   */
+  readonly setCookieHeaders?: readonly string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

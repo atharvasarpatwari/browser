@@ -11,6 +11,7 @@ import { CorsMode, CorsCredentials, CorsBlockedError, CorsViolationError } from 
 import { parseOrigin, isSameOrigin, isSameSite } from '../security/origin-service';
 import { PriorityQueue } from './priority-queue';
 import { BandwidthEstimator } from './bandwidth-estimator';
+import type { ICookieJar } from './cookie-jar';
 
 interface ResourceLoadResult {
   readonly url: string;
@@ -121,6 +122,7 @@ class ResourceLoader implements IResourceLoader {
   private readonly blocker: ITrackerBlocker | null;
   private cache: ICacheManager | null = null;
   private cors: ICorsEngine | null = null;
+  private cookieJar: ICookieJar | null = null;
   private pageOrigin = '';
   private maxConcurrent = 6;
   private activeCount = 0;
@@ -149,6 +151,10 @@ class ResourceLoader implements IResourceLoader {
   setCors(cors: ICorsEngine, pageOrigin: string): void {
     this.cors = cors;
     this.pageOrigin = pageOrigin;
+  }
+
+  setCookieJar(cookieJar: ICookieJar): void {
+    this.cookieJar = cookieJar;
   }
 
   async loadResource(url: string, kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
@@ -211,9 +217,28 @@ class ResourceLoader implements IResourceLoader {
       }
     }
 
+    // Enforces options.timeoutMs regardless of which IHttpClient is behind
+    // `this.client` — FetchHttpClient never reads HttpRequestSpec.timeoutMs on
+    // its own, so without this a slow/blackholed host hangs the whole pipeline
+    // instead of failing fast (some clients, e.g. RawSocketHttpClient, also
+    // enforce it themselves; this is a harmless, defense-in-depth duplicate).
+    let timedOut = false;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutMs = options?.timeoutMs ?? 15_000;
+
     try {
       const headers = new Map<string, string>([['accept', '*/*']]);
-      const signal = options?.signal ?? new AbortController().signal;
+      const timeoutController = new AbortController();
+      timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        timeoutController.abort();
+      }, timeoutMs);
+      const externalSignal = options?.signal;
+      if (externalSignal) {
+        if (externalSignal.aborted) timeoutController.abort();
+        else externalSignal.addEventListener('abort', () => timeoutController.abort(), { once: true });
+      }
+      const signal = timeoutController.signal;
 
       // ── CORS pre-request check ──────────────────────────────────────────
       let corsPreflightDone = false;
@@ -278,7 +303,7 @@ class ResourceLoader implements IResourceLoader {
       const specBase: Omit<HttpRequestSpec, 'url'> = {
         method: 'GET',
         headers,
-        timeoutMs: options?.timeoutMs ?? 15_000,
+        timeoutMs,
       };
 
       // Follow 3xx redirects here — ResourceLoader talks to IHttpClient directly
@@ -290,7 +315,19 @@ class ResourceLoader implements IResourceLoader {
 
       try {
         for (let hops = 0; ; hops++) {
+          if (this.cookieJar) {
+            const cookieHeader = this.cookieJar.getCookieHeader(currentUrl);
+            if (cookieHeader) headers.set('cookie', cookieHeader);
+            else headers.delete('cookie');
+          }
+
           res = await this.client.send({ ...specBase, url: currentUrl }, signal);
+
+          if (this.cookieJar) {
+            const setCookies = res.setCookieHeaders
+              ?? (res.headers.get('set-cookie') ? [res.headers.get('set-cookie')!] : []);
+            if (setCookies.length > 0) this.cookieJar.setFromResponse(currentUrl, setCookies);
+          }
 
           if (!redirectStatusCodes.has(res.statusCode)) {
             break;
@@ -438,7 +475,9 @@ class ResourceLoader implements IResourceLoader {
         error: null,
       };
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorMessage = timedOut
+        ? `Request to "${url}" timed out after ${timeoutMs}ms.`
+        : err instanceof Error ? err.message : String(err);
       return {
         url,
         kind: _kind,
@@ -453,6 +492,7 @@ class ResourceLoader implements IResourceLoader {
         error: errorMessage,
       };
     } finally {
+      clearTimeout(timeoutTimer);
       this.releaseSlot();
     }
   }

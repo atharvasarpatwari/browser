@@ -613,9 +613,11 @@ class TlsHandler implements ITlsHandler {
 
   private static hostnameMatches(hostname: string, pattern: string): boolean {
     if (pattern.startsWith('*.')) {
-      // Wildcard: *.example.com matches sub.example.com but not example.com.
+      // Wildcard: *.example.com matches sub.example.com but not a.b.example.com
+      // or the bare example.com — RFC 6125 §6.4.3, one label only. The
+      // remaining prefix must therefore contain no further dots.
       const suffix = pattern.slice(1); // ".example.com"
-      return hostname.endsWith(suffix) && hostname.slice(0, -suffix.length).indexOf('.') !== -1;
+      return hostname.endsWith(suffix) && hostname.slice(0, -suffix.length).indexOf('.') === -1;
     }
     return hostname === pattern;
   }

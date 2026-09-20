@@ -481,9 +481,9 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   </div>
   <h1 class="sr-only">Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num" id="statDocs">285</span> Documents</span>
+    <span><span class="num" id="statDocs">289</span> Documents</span>
     <span><span class="num" id="statDays">47</span> Days</span>
-    <span><span class="num" id="statTests">9,454</span> Total Suite Tests</span>
+    <span><span class="num" id="statTests">9,464</span> Total Suite Tests</span>
     <span>Generated <span class="num" id="statGenerated">2026-09-20</span></span>
   </p>
 </header>
@@ -516,10 +516,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <div class="kpi-row" id="kpis">
-  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">285</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
-  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,454</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
-  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">594</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
-  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,477</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">289</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,464</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
+  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">599</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,490</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
   <div class="kpi amber glass"><span class="icon">📐</span><div class="value" id="kpiCompliance">~78%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
 </div>
 
@@ -1166,11 +1166,15 @@ const DOCS = [
 {file:"2026-09-16-https-upgrade-was-a-block-not-a-redirect.md",date:"2026-09-16",title:"HTTPS-Only Mode Didn't Upgrade Navigations — It Just Blocked Them",category:"Security",tests:3,status:"Completed",rootCauses:1,filesModified:4,filesCreated:1},
 {file:"2026-09-16-incognito-mode-was-a-menu-label.md",date:"2026-09-16",title:"Incognito Mode Was a Menu Label — No History Pause, No Cookie Isolation, No Indicator",category:"Security",tests:7,status:"Completed",rootCauses:4,filesModified:7,filesCreated:1},
 {file:"2026-09-17-html5-parser-in-head-whitespace-corrupted-every-real-page.md",date:"2026-09-17",title:"The HTML5 Parser Corrupted Every Realistically-Formatted Page — Every Page Rendered Blank",category:"HTML5",tests:1,status:"Completed",rootCauses:1,filesModified:2,filesCreated:1},
+{file:"2026-09-17-cookie-jar-networking-wiring.md",date:"2026-09-17",title:"Cookie Jar Networking Wiring — Two Built Subsystems, Neither Reachable",category:"IPC/Networking",tests:4,status:"Completed",rootCauses:1,filesModified:5,filesCreated:1},
 {file:"2026-09-19-windows-app-single-instance-and-window-state.md",date:"2026-09-19",title:"The Windows App Had No Single-Instance Lock and Forgot Its Window Size Every Launch",category:"Architecture",tests:0,status:"Completed",rootCauses:2,filesModified:2,filesCreated:1},
 {file:"2026-09-19-devtools-network-real-timing-breakdown.md",date:"2026-09-19",title:"DevTools Network Tab Got a Real DNS/Connect/TLS/Wait/Download Breakdown",category:"IPC/Networking",tests:7,status:"Completed",rootCauses:2,filesModified:3,filesCreated:2},
 {file:"2026-09-19-windows-packaged-build-electron-version-pin.md",date:"2026-09-19",title:"The Windows App Couldn't Be Packaged at All — electron Was a Range, Not a Version",category:"Architecture",tests:0,status:"Completed",rootCauses:1,filesModified:1,filesCreated:1},
 {file:"2026-09-19-crash-isolation-baseline-test.md",date:"2026-09-19",title:"A Parked \"Big Feature\" Was Actually Already Working — Confirmed, Not Assumed",category:"Architecture",tests:2,status:"Completed",rootCauses:1,filesModified:2,filesCreated:1},
-{file:"2026-09-20-native-networking-dns-wiring-scoped-and-blocked.md",date:"2026-09-20",title:"Native DNS/TLS/HTTP Wiring — Scoped Per-Subsystem, Blocked on a Missing Toolchain",category:"IPC/Networking",tests:0,status:"Planned",rootCauses:2,filesModified:3,filesCreated:1}
+{file:"2026-09-19-csp-upgrade-insecure-requests-redirect.md",date:"2026-09-19",title:"CSP upgrade-insecure-requests Was Silently Discarded",category:"Security",tests:3,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0},
+{file:"2026-09-19-electron-navigation-timeout-hang.md",date:"2026-09-19",title:"Electron Navigation Hang — Missing Fetch Timeout + Broken Client Detection",category:"IPC/Networking",tests:1,status:"Completed",rootCauses:2,filesModified:3,filesCreated:0},
+{file:"2026-09-20-native-networking-dns-wiring-scoped-and-blocked.md",date:"2026-09-20",title:"Native DNS/TLS/HTTP Wiring — Scoped Per-Subsystem, Blocked on a Missing Toolchain",category:"IPC/Networking",tests:0,status:"Planned",rootCauses:2,filesModified:3,filesCreated:1},
+{file:"2026-09-20-tls-wildcard-hostname-matching-was-inverted.md",date:"2026-09-20",title:"TLS Wildcard Certificate Matching Was Completely Inverted",category:"Security",tests:2,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0}
 ];
 
 const CAT_COLORS={CSS:'#60a5fa',HTML5:'#f472b6',JavaScript:'#fbbf24',Layout:'#34d399',Rendering:'#a855f7',Security:'#f87171','IPC/Networking':'#00f0ff',UI:'#f472b6',Architecture:'#94a3b8',Plan:'#fbbf24'};

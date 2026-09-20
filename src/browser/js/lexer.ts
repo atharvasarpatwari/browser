@@ -110,7 +110,7 @@ export class Lexer {
     }
 
     // Identifiers and keywords
-    if (this.isIdentifierStart(ch)) {
+    if (this.isIdentifierStart(ch) || this.isUnicodeEscapeStart()) {
       return this.readIdentifier(startLine, startCol);
     }
 
@@ -411,15 +411,39 @@ export class Lexer {
     return this.makeToken(TokenType.TemplateTail, cooked, line, col, this.source.slice(start, this.pos));
   }
 
+  /** True when a `\uXXXX` UnicodeEscapeSequence starts at the current
+   *  position — valid inside an IdentifierName per spec (e.g. minified
+   *  Angular-style internal names like `ɵprov`), but not covered by
+   *  isIdentifierStart's plain-ASCII check. */
+  private isUnicodeEscapeStart(): boolean {
+    return this.source[this.pos] === '\\'
+      && this.peek(1) === 'u'
+      && /^[0-9a-fA-F]{4}$/.test(this.source.slice(this.pos + 2, this.pos + 6));
+  }
+
   private readIdentifier(line: number, col: number, isPrivate = false): Token {
-    const start = this.pos;
     if (isPrivate) this.advance(); // '#'
-    while (this.pos < this.source.length && this.isIdentifierPart(this.source[this.pos]!)) {
+    let value = '';
+    let sliceStart = this.pos;
+    let hadEscape = false;
+    while (this.pos < this.source.length) {
+      if (this.isUnicodeEscapeStart()) {
+        hadEscape = true;
+        value += this.source.slice(sliceStart, this.pos);
+        this.advance(); // past the backslash only — decodeEscape reads from 'u'
+        value += this.decodeEscape();
+        sliceStart = this.pos;
+        continue;
+      }
+      if (!this.isIdentifierPart(this.source[this.pos]!)) break;
       this.advance();
     }
-    const value = this.source.slice(start, this.pos);
-    // A private name (#foo) is never a keyword, however it spells.
-    const type = isPrivate ? TokenType.Identifier : lookupKeyword(value);
+    value += this.source.slice(sliceStart, this.pos);
+    // A private name (#foo) is never a keyword, however it spells — same for
+    // any name containing a decoded escape, which never matches a literal
+    // keyword spelling (keywords are never written with a \u escape in
+    // practice, but even if they were, `value` has already been cooked).
+    const type = (isPrivate || hadEscape) ? TokenType.Identifier : lookupKeyword(value);
     return this.makeToken(type, value, line, col);
   }
 
