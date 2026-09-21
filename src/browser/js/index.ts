@@ -26,6 +26,7 @@ import { createCustomElementRegistry, createHTMLElementClass } from './custom-el
 import { createCacheStorage } from './cache-api';
 import { createConsoleObject } from './console-api';
 import { bindStorageAPIs } from './web-storage-bindings';
+import { bindWebSQL } from './web-sql-bindings';
 import {
   bindWebAPIs, createPerformanceObject, createFullscreenAPIMethods,
   createTreeWalkerObject, createNodeIteratorObject, createSelectionObject,
@@ -2396,6 +2397,9 @@ export function createGlobalEnv(
 
   // Storage APIs (localStorage, sessionStorage, indexedDB)
   bindStorageAPIs(env, { origin: pageOrigin ?? 'https://localhost', diskPath: storageDir });
+
+  // Web SQL Database (deprecated, but still used by legacy pages)
+  bindWebSQL(env, eventLoop, { origin: pageOrigin ?? 'https://localhost', diskPath: storageDir });
 
   // Fullscreen API (methods on Element via global)
   const fullscreen = createFullscreenAPIMethods();
