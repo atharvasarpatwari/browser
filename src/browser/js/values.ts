@@ -877,6 +877,13 @@ export function setGlobalCaller(caller: JSFunctionCaller | null): void {
   _globalCaller = caller;
 }
 
+/** Lets a nested run() (e.g. eval()'s own Interpreter) save the enclosing
+ *  caller before overwriting it, and restore that exact value afterward
+ *  instead of unconditionally clearing it — see Interpreter.run(). */
+export function getGlobalCaller(): JSFunctionCaller | null {
+  return _globalCaller;
+}
+
 // Error prototypes, registered by index.ts's Error/TypeError/RangeError/...
 // global-constructor setup, and looked up here so any internally-built
 // error object (an engine-thrown JSError, a wrapped native exception) gets

@@ -435,6 +435,10 @@ const CASES: Case[] = [
       'relative URL resolves against a base (path, dot-dot, protocol-relative)',
       'malformed regex literal throws a catchable SyntaxError',
       'identifier with a \\uXXXX escape (e.g. minified ɵprov-style names) is read as one decoded name',
+      'a plain object property literally named "get" with a non-trivial value (found in real YouTube code) is not misread as a getter accessor',
+      'real getter/setter accessors, a shorthand "get" property, and a method literally named "get" all still work after that fix',
+      'eval() no longer permanently breaks getter/setter access for the rest of the script afterward',
+      'a ternary immediately followed by leading-dot decimals ("cond?.9:.75") is not misread as optional chaining',
     ],
     html: harnessHtml(`
       try {
@@ -591,7 +595,69 @@ const CASES: Case[] = [
         escHolder.\\u0275prov = 'ok';
         mark(23, escHolder.\\u0275prov === 'ok');
       } catch(e) { }
-    `, 24),
+
+      try {
+        // Reproduces a second real gap found bisecting YouTube's bundle:
+        // "get"/"set" only introduce an accessor when a real key follows —
+        // "{ get: expr }" is a plain property literally named "get", not a
+        // getter. The parser used to always consume "get" as the accessor
+        // keyword and hand the next token (even a bare ":") to the property-
+        // key parser, which silently swallowed it and cascaded into garbage
+        // a token at a time — this exact shape appears inside a real
+        // Object.defineProperty() call in YouTube's own minified code.
+        var ajmStub = { has: function() { return false; } };
+        var withGetProp = { set: function(v) { this._v = v; }, get: ajmStub.has('x') ? void 0 : function() { return 42; } };
+        mark(24, typeof withGetProp.get === 'function' && withGetProp.get() === 42);
+      } catch(e) { }
+
+      try {
+        // Same fix must not break the real, common cases: a genuine getter/
+        // setter accessor, a shorthand property literally named "get", and
+        // a method literally named "get" (no accessor at all).
+        var realGetter = { get x() { return 7; } };
+        var setTarget = null;
+        var realSetter = { set x(v) { setTarget = v; } };
+        realSetter.x = 9;
+        var get = 5;
+        var shorthandGet = { get };
+        var methodNamedGet = { get() { return 3; } };
+        mark(25, realGetter.x === 7 && setTarget === 9 && shorthandGet.get === 5 && methodNamedGet.get() === 3);
+      } catch(e) { }
+
+      try {
+        // Reproduces a third real gap found bisecting YouTube's bundle:
+        // Interpreter.run() unconditionally reset the global JS-function
+        // caller to null in its own finally block instead of restoring
+        // whatever caller was registered before it ran. eval() creates a
+        // nested Interpreter and calls run() on it — once that nested
+        // run() finished, the OUTER script's own interpreter registration
+        // was wiped even though the outer script was still executing, so
+        // every getter/setter access (and anything else relying on that
+        // global registration) after the first eval() call anywhere in the
+        // page permanently broke with "No JS interpreter registered".
+        var evalRan = false;
+        try { eval('1+1'); evalRan = true; } catch(e0) { }
+        var afterEval = { get x() { return 11; } };
+        var afterEvalValue = afterEval.x;
+        mark(26, evalRan === true && afterEvalValue === 11);
+      } catch(e) { }
+
+      try {
+        // Reproduces a fourth real gap found bisecting YouTube's bundle:
+        // "?." is only the optional-chaining operator when NOT followed by
+        // a decimal digit (spec: OptionalChainingPunctuator :: ?.
+        // [lookahead ∉ DecimalDigit]) — "cond?.9:.75" is the ternary
+        // "cond ? .9 : .75", not "cond?.9" (an invalid numeric property
+        // access) followed by a stray ":.75". The lexer used to always
+        // treat "?" + "." as "?." regardless of what followed.
+        var flag = false;
+        var ternaryWithLeadingDotLiterals = (flag?.9:.75) * 2;
+        var realOptionalChainOnNull = (null)?.missing;
+        var obj = { prop: 5 };
+        var realOptionalChainOnValue = obj?.prop;
+        mark(27, ternaryWithLeadingDotLiterals === 1.5 && realOptionalChainOnNull === undefined && realOptionalChainOnValue === 5);
+      } catch(e) { }
+    `, 28),
   },
   {
     name: 'class-features',

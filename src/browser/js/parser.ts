@@ -560,13 +560,28 @@ export class Parser {
     return { type: 'ObjectExpression', properties, loc: { line: tok.line, column: tok.column } };
   }
 
+  /**
+   * `get`/`set` only introduce an accessor when a real property-key token
+   * follows — otherwise the word itself IS the property's name, as in
+   * `{ get: expr }` (plain property), `{ get, }` (shorthand), or
+   * `{ get() {} }` (a method literally named "get"). Without this check,
+   * `parseProperty()` always consumed `get`/`set` and handed whatever came
+   * next (even a bare `:`) to parsePropertyKey(), which silently swallowed
+   * it as a garbage key and cascaded into nonsense a token at a time.
+   */
+  private startsAccessorName(): boolean {
+    const next = this.peek(1).type;
+    return next === TokenType.Identifier || next === TokenType.String
+      || next === TokenType.Number || next === TokenType.LBracket;
+  }
+
   private parseProperty(): AST.PropertyDefinition {
     let kind: 'init' | 'get' | 'set' = 'init';
     let isMethod = false;
     let isShorthand = false;
 
-    if (this.is(TokenType.Get)) { this.advance(); kind = 'get'; }
-    else if (this.is(TokenType.Set)) { this.advance(); kind = 'set'; }
+    if (this.is(TokenType.Get) && this.startsAccessorName()) { this.advance(); kind = 'get'; }
+    else if (this.is(TokenType.Set) && this.startsAccessorName()) { this.advance(); kind = 'set'; }
 
     const key = this.parsePropertyKey();
     const computed = this.peek(-1)?.type === TokenType.RBracket;

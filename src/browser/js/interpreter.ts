@@ -6,7 +6,7 @@ import {
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
-  setGlobalCaller, callJSFunction, JSError, isJSObjectWithMeta, makeErrorObject,
+  setGlobalCaller, getGlobalCaller, callJSFunction, JSError, isJSObjectWithMeta, makeErrorObject,
 } from './values';
 import { GarbageCollector, getGC } from './gc';
 import { createPromiseConstructor, wrapAsyncResult, isPromiseObject, isPromiseFulfilled, isPromiseRejected, isPromisePending, getPromiseResult, createPromiseObj, fulfillPromise, rejectPromise } from './promise';
@@ -185,6 +185,14 @@ export class Interpreter {
   run(program: AST.Program): JSValue {
     this.executionStartTime = Date.now();
     this.opCount = 0;
+    // Save whatever caller was registered before this run() (e.g. the outer
+    // script's own interpreter, when this run() belongs to a nested eval())
+    // so it can be restored below instead of always clearing to null —
+    // otherwise eval() permanently breaks every getter/setter and other
+    // callJSFunction-mediated call for the rest of the OUTER script, since
+    // that call path has no direct reference to "this" interpreter and
+    // relies entirely on the global registration staying correct.
+    const previousCaller = getGlobalCaller();
     setGlobalCaller(this);
     try {
       // If VM mode is enabled, try compiling and running through bytecode VM
@@ -212,7 +220,7 @@ export class Interpreter {
       this.eventLoop?.drainMicrotasks();
       return result as JSValue;
     } finally {
-      setGlobalCaller(null);
+      setGlobalCaller(previousCaller);
     }
   }
 

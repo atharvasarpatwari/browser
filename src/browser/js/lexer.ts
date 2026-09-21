@@ -137,7 +137,10 @@ export class Lexer {
 
     // ?. and ?? must be checked before the two-char switch because ? falls through to single-char
     if (ch === '?') {
-      if (this.peek(1) === '.') {
+      // Spec: OptionalChainingPunctuator is `?.` NOT followed by a decimal
+      // digit — `a?.9:.75` is the ternary `a ? .9 : .75`, not `a?.9` (an
+      // invalid numeric property access) followed by a stray `:.75`.
+      if (this.peek(1) === '.' && !this.isDigit(this.peek(2))) {
         this.advance(2);
         return this.makeToken(TokenType.QuestionDot, '?.', startLine, startCol);
       }
