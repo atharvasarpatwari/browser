@@ -97,6 +97,91 @@ describe('WebSQL', () => {
     expect(sorted!.rows.length).toBe(2);
   });
 
+  it('SELECT supports column and table aliases with AS', async () => {
+    const tx = db.createTransaction(false);
+    tx.executeSql('CREATE TABLE t (a)');
+    tx.executeSql('INSERT INTO t (a) VALUES (?)', ['hi']);
+    let result: SQLResultSet | undefined;
+    tx.executeSql('SELECT a AS renamed FROM t', [], (_t, r) => { result = r; });
+    expect(await drain(tx)).toEqual({ ok: true });
+    expect(result!.rows.item(0)).toEqual({ renamed: 'hi' });
+  });
+
+  describe('aggregate functions', () => {
+    beforeEach(async () => {
+      const tx = db.createTransaction(false);
+      tx.executeSql('CREATE TABLE orders (amount)');
+      tx.executeSql('INSERT INTO orders (amount) VALUES (?)', [10]);
+      tx.executeSql('INSERT INTO orders (amount) VALUES (?)', [20]);
+      tx.executeSql('INSERT INTO orders (amount) VALUES (?)', [null]);
+      expect(await drain(tx)).toEqual({ ok: true });
+    });
+
+    it('COUNT(*) counts every row including ones with a null column', async () => {
+      const tx = db.createTransaction(true);
+      let result: SQLResultSet | undefined;
+      tx.executeSql('SELECT COUNT(*) FROM orders', [], (_t, r) => { result = r; });
+      expect(await drain(tx)).toEqual({ ok: true });
+      expect(result!.rows.item(0)).toEqual({ 'COUNT(*)': 3 });
+    });
+
+    it('COUNT(col) only counts non-null values', async () => {
+      const tx = db.createTransaction(true);
+      let result: SQLResultSet | undefined;
+      tx.executeSql('SELECT COUNT(amount) AS n FROM orders', [], (_t, r) => { result = r; });
+      expect(await drain(tx)).toEqual({ ok: true });
+      expect(result!.rows.item(0)).toEqual({ n: 2 });
+    });
+
+    it('SUM and AVG skip nulls and compute over the remaining values', async () => {
+      const tx = db.createTransaction(true);
+      let result: SQLResultSet | undefined;
+      tx.executeSql('SELECT SUM(amount) AS total, AVG(amount) AS mean FROM orders', [], (_t, r) => { result = r; });
+      expect(await drain(tx)).toEqual({ ok: true });
+      expect(result!.rows.item(0)).toEqual({ total: 30, mean: 15 });
+    });
+
+    it('MIN and MAX ignore nulls', async () => {
+      const tx = db.createTransaction(true);
+      let result: SQLResultSet | undefined;
+      tx.executeSql('SELECT MIN(amount) AS lo, MAX(amount) AS hi FROM orders', [], (_t, r) => { result = r; });
+      expect(await drain(tx)).toEqual({ ok: true });
+      expect(result!.rows.item(0)).toEqual({ lo: 10, hi: 20 });
+    });
+
+    it('SUM/AVG/MIN/MAX over zero matching rows are NULL, not 0', async () => {
+      const tx = db.createTransaction(true);
+      let result: SQLResultSet | undefined;
+      tx.executeSql("SELECT SUM(amount) AS s, AVG(amount) AS a, MIN(amount) AS mn, MAX(amount) AS mx FROM orders WHERE amount > ?", [1000], (_t, r) => { result = r; });
+      expect(await drain(tx)).toEqual({ ok: true });
+      expect(result!.rows.item(0)).toEqual({ s: null, a: null, mn: null, mx: null });
+    });
+
+    it('respects WHERE before aggregating', async () => {
+      const tx = db.createTransaction(true);
+      let result: SQLResultSet | undefined;
+      tx.executeSql('SELECT COUNT(*) AS n FROM orders WHERE amount >= ?', [15], (_t, r) => { result = r; });
+      expect(await drain(tx)).toEqual({ ok: true });
+      expect(result!.rows.item(0)).toEqual({ n: 1 });
+    });
+
+    it('rejects mixing an aggregate with a plain column (no GROUP BY support)', async () => {
+      const tx = db.createTransaction(true);
+      tx.executeSql('SELECT amount, COUNT(*) FROM orders');
+      const outcome = await drain(tx);
+      expect(outcome.ok).toBe(false);
+      expect(!outcome.ok && outcome.error.code).toBe(SQLError.SYNTAX_ERR);
+    });
+
+    it('rejects SUM(*)/AVG(*)/MIN(*)/MAX(*) — only COUNT(*) is valid', async () => {
+      const tx = db.createTransaction(true);
+      tx.executeSql('SELECT SUM(*) FROM orders');
+      const outcome = await drain(tx);
+      expect(outcome.ok).toBe(false);
+      expect(!outcome.ok && outcome.error.code).toBe(SQLError.SYNTAX_ERR);
+    });
+  });
+
   it('UPDATE changes matching rows and reports rowsAffected', async () => {
     const tx = db.createTransaction(false);
     tx.executeSql('CREATE TABLE t (a, b)');
@@ -188,6 +273,42 @@ describe('WebSQL', () => {
     const outcome = await drain(tx);
     expect(outcome.ok).toBe(false);
     expect(ran).toEqual(['create']);
+  });
+
+  it('an unhandled error rolls back every earlier statement in the same transaction, not just the failing one', async () => {
+    const tx = db.createTransaction(false);
+    tx.executeSql('CREATE TABLE t (a)');
+    tx.executeSql('INSERT INTO t (a) VALUES (?)', ['should be undone']);
+    tx.executeSql('INSERT INTO nowhere (a) VALUES (?)', [1]); // unhandled — aborts + rolls back
+    const outcome = await drain(tx);
+    expect(outcome.ok).toBe(false);
+
+    // The whole transaction rolled back — "t" never existed, as far as a
+    // later transaction can tell.
+    const tx2 = db.createTransaction(true);
+    tx2.executeSql('SELECT * FROM t');
+    const check = await drain(tx2);
+    expect(check.ok).toBe(false);
+    expect(!check.ok && check.error.code).toBe(SQLError.DATABASE_ERR);
+  });
+
+  it('a rolled-back transaction is not written to the backend either', async () => {
+    const tx = db.createTransaction(false);
+    tx.executeSql('CREATE TABLE t (a)');
+    expect(await drain(tx)).toEqual({ ok: true });
+
+    const tx2 = db.createTransaction(false);
+    tx2.executeSql('INSERT INTO t (a) VALUES (?)', ['committed']);
+    tx2.executeSql('INSERT INTO nowhere (a) VALUES (?)', [1]); // aborts this transaction
+    expect((await drain(tx2)).ok).toBe(false);
+
+    // Reopen from the backend — the aborted INSERT must not have persisted.
+    const reopened = new NovaDatabase(origin, 'testdb', '1.0', backend);
+    let rowCount = -1;
+    const tx3 = reopened.createTransaction(true);
+    tx3.executeSql('SELECT * FROM t', [], (_t, r) => { rowCount = r.rows.length; });
+    expect(await drain(tx3)).toEqual({ ok: true });
+    expect(rowCount).toBe(0);
   });
 
   it('an error callback returning true lets the transaction continue', async () => {

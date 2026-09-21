@@ -11,7 +11,11 @@
  *   CREATE TABLE [IF NOT EXISTS] name (col, col, ...)
  *   DROP TABLE [IF EXISTS] name
  *   INSERT INTO name [(col, ...)] VALUES (val, ...)
- *   SELECT (* | col, ...) FROM name [WHERE cond] [ORDER BY col [ASC|DESC]] [LIMIT n]
+ *   SELECT (* | col[ AS alias], ... | AGG(col|*)[ AS alias], ...) FROM name
+ *     [WHERE cond] [ORDER BY col [ASC|DESC]] [LIMIT n]
+ *   AGG is one of COUNT, SUM, AVG, MIN, MAX — NULLs are skipped the way real
+ *   SQL skips them, and an aggregate SELECT always returns exactly one row
+ *   (no GROUP BY support, so an aggregate can't be mixed with a plain column).
  *   UPDATE name SET col = val [, col = val ...] [WHERE cond]
  *   DELETE FROM name [WHERE cond]
  *
@@ -19,10 +23,16 @@
  * with optional parentheses. Values are `?` positional placeholders, string
  * literals, numeric literals, or NULL.
  *
- * ponytail: no JOINs, no subqueries, no aggregate functions, and no real
- * transactional rollback (each statement's effect persists as it runs) —
- * this covers the CRUD-shaped usage real legacy WebSQL pages actually have.
- * Upgrade to a real embedded engine (e.g. sql.js) if a page needs more.
+ * A whole transaction is atomic: statements apply to an in-memory snapshot
+ * as they run, and only persist to disk in one write when the queue drains
+ * with no unhandled error; an unhandled error rolls the in-memory state back
+ * to how it was before the transaction started, undoing every statement
+ * that already ran in it, not just the one that failed.
+ *
+ * ponytail: no JOINs, no subqueries, no GROUP BY — a page reading from more
+ * than one table at a time, or grouping, needs a real embedded engine (e.g.
+ * sql.js). This still covers the CRUD-plus-a-counter shape real legacy
+ * WebSQL pages actually have.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -212,11 +222,16 @@ type Cond =
   | { kind: 'or'; left: Cond; right: Cond }
   | { kind: 'cmp'; column: string; op: '=' | '!=' | '<' | '>' | '<=' | '>=' | 'LIKE'; value: ValueExpr };
 
+type AggFn = 'COUNT' | 'SUM' | 'AVG' | 'MIN' | 'MAX';
+type SelectColumn =
+  | { kind: 'column'; name: string; alias: string | null }
+  | { kind: 'aggregate'; fn: AggFn; arg: '*' | string; alias: string | null };
+
 type Stmt =
   | { kind: 'createTable'; ifNotExists: boolean; table: string; columns: string[] }
   | { kind: 'dropTable'; ifExists: boolean; table: string }
   | { kind: 'insert'; table: string; columns: string[] | null; values: ValueExpr[] }
-  | { kind: 'select'; table: string; columns: '*' | string[]; where: Cond | null; orderBy: { column: string; dir: 'ASC' | 'DESC' } | null; limit: number | null }
+  | { kind: 'select'; table: string; columns: '*' | SelectColumn[]; where: Cond | null; orderBy: { column: string; dir: 'ASC' | 'DESC' } | null; limit: number | null }
   | { kind: 'update'; table: string; sets: { column: string; value: ValueExpr }[]; where: Cond | null }
   | { kind: 'delete'; table: string; where: Cond | null };
 
@@ -345,17 +360,44 @@ class Parser {
     return { kind: 'insert', table, columns, values };
   }
 
+  private static readonly AGG_FNS = new Set(['COUNT', 'SUM', 'AVG', 'MIN', 'MAX']);
+
+  private parseSelectColumn(): SelectColumn {
+    const name = this.expectIdent();
+    const upper = name.toUpperCase();
+    if (Parser.AGG_FNS.has(upper) && this.peek().type === 'punct' && this.peek().value === '(') {
+      this.advance(); // '('
+      let arg: '*' | string;
+      if (this.peek().type === 'punct' && this.peek().value === '*') {
+        if (upper !== 'COUNT') throw new SQLError(SQLError.SYNTAX_ERR, `${upper}(*) is not valid — only COUNT(*) is`);
+        this.advance();
+        arg = '*';
+      } else {
+        arg = this.expectIdent();
+      }
+      this.expectPunct(')');
+      const alias = this.matchKeyword('AS') ? this.expectIdent() : null;
+      return { kind: 'aggregate', fn: upper as AggFn, arg, alias };
+    }
+    const alias = this.matchKeyword('AS') ? this.expectIdent() : null;
+    return { kind: 'column', name, alias };
+  }
+
   private parseSelect(): Stmt {
-    let columns: '*' | string[];
+    let columns: '*' | SelectColumn[];
     if (this.peek().type === 'punct' && this.peek().value === '*') {
       this.advance();
       columns = '*';
     } else {
-      const cols: string[] = [];
+      const cols: SelectColumn[] = [];
       while (true) {
-        cols.push(this.expectIdent());
+        cols.push(this.parseSelectColumn());
         if (this.peek().type === 'punct' && this.peek().value === ',') { this.advance(); continue; }
         break;
+      }
+      const aggCount = cols.filter(c => c.kind === 'aggregate').length;
+      if (aggCount > 0 && aggCount !== cols.length) {
+        throw new SQLError(SQLError.SYNTAX_ERR, 'cannot mix an aggregate function with a plain column (no GROUP BY support)');
       }
       columns = cols;
     }
@@ -508,6 +550,25 @@ function requireTable(tables: Map<string, SqlTable>, name: string): SqlTable {
   return table;
 }
 
+/** Matches real SQL's null-skipping aggregate semantics: COUNT(*) counts
+ *  every row, COUNT(col)/SUM/AVG/MIN/MAX only consider non-null values, and
+ *  SUM/AVG/MIN/MAX over zero contributing values is NULL (not 0). */
+function computeAggregate(fn: AggFn, arg: '*' | string, rows: Record<string, SqlValue>[]): SqlValue {
+  if (fn === 'COUNT') {
+    if (arg === '*') return rows.length;
+    return rows.filter(r => (r[arg] ?? null) !== null).length;
+  }
+  const values = rows.map(r => r[arg] ?? null).filter((v): v is string | number => v !== null);
+  if (fn === 'MIN' || fn === 'MAX') {
+    if (values.length === 0) return null;
+    return values.reduce((best, v) => (fn === 'MIN' ? v < best : v > best) ? v : best);
+  }
+  const nums = values.filter((v): v is number => typeof v === 'number');
+  if (nums.length === 0) return null;
+  const sum = nums.reduce((a, b) => a + b, 0);
+  return fn === 'SUM' ? sum : sum / nums.length;
+}
+
 function executeStmt(tables: Map<string, SqlTable>, stmt: Stmt, args: readonly SqlValue[]): SQLResultSet {
   switch (stmt.kind) {
     case 'createTable': {
@@ -547,26 +608,47 @@ function executeStmt(tables: Map<string, SqlTable>, stmt: Stmt, args: readonly S
       const table = requireTable(tables, stmt.table);
       if (stmt.columns !== '*') {
         for (const col of stmt.columns) {
-          if (!table.columns.includes(col)) {
-            throw new SQLError(SQLError.SYNTAX_ERR, `no such column: ${col}`);
+          const name = col.kind === 'column' ? col.name : col.arg;
+          if (name !== '*' && !table.columns.includes(name)) {
+            throw new SQLError(SQLError.SYNTAX_ERR, `no such column: ${name}`);
           }
         }
       }
-      let matched = table.rows.filter(r => !stmt.where || evalCond(stmt.where, r, args));
+      const matched = table.rows.filter(r => !stmt.where || evalCond(stmt.where, r, args));
+
+      if (stmt.columns !== '*' && stmt.columns.some(c => c.kind === 'aggregate')) {
+        // No GROUP BY support (see file header) — an aggregate SELECT always
+        // collapses the whole WHERE-filtered set into exactly one row.
+        const out: Record<string, SqlValue> = {};
+        for (const col of stmt.columns) {
+          if (col.kind !== 'aggregate') continue; // unreachable — parser enforces "all or none"
+          const key = col.alias ?? `${col.fn}(${col.arg})`;
+          out[key] = computeAggregate(col.fn, col.arg, matched);
+        }
+        return { insertId: undefined, rowsAffected: 0, rows: wrapRows([out]) };
+      }
+
+      let ordered = matched;
       if (stmt.orderBy) {
         const { column, dir } = stmt.orderBy;
         if (!table.columns.includes(column)) throw new SQLError(SQLError.SYNTAX_ERR, `no such column: ${column}`);
-        matched = [...matched].sort((a, b) => {
+        ordered = [...matched].sort((a, b) => {
           const av = a[column]; const bv = b[column];
           const cmp = av === bv ? 0 : (av === null ? -1 : bv === null ? 1 : av < bv ? -1 : 1);
           return dir === 'ASC' ? cmp : -cmp;
         });
       }
-      if (stmt.limit !== null) matched = matched.slice(0, stmt.limit);
-      const projected = matched.map(r => {
-        const cols = stmt.columns === '*' ? table.columns : stmt.columns;
+      if (stmt.limit !== null) ordered = ordered.slice(0, stmt.limit);
+      const projected = ordered.map(r => {
         const out: Record<string, SqlValue> = {};
-        for (const col of cols) out[col] = r[col] ?? null;
+        if (stmt.columns === '*') {
+          for (const col of table.columns) out[col] = r[col] ?? null;
+        } else {
+          for (const col of stmt.columns) {
+            if (col.kind !== 'column') continue; // unreachable — aggregate path already returned above
+            out[col.alias ?? col.name] = r[col.name] ?? null;
+          }
+        }
         return out;
       });
       return { insertId: undefined, rowsAffected: 0, rows: wrapRows(projected) };
@@ -619,7 +701,7 @@ export class NovaDatabase {
   private readonly origin: string;
   private readonly name: string;
   private readonly backend: IWebSQLBackend;
-  private readonly tables: Map<string, SqlTable>;
+  private tables: Map<string, SqlTable>;
 
   constructor(origin: string, name: string, version: string, backend: IWebSQLBackend) {
     this.origin = origin;
@@ -635,7 +717,7 @@ export class NovaDatabase {
     } else {
       this.version = version;
       this.tables = new Map();
-      this.persist();
+      this.commit();
     }
   }
 
@@ -644,25 +726,45 @@ export class NovaDatabase {
       throw new SQLError(SQLError.VERSION_ERR, `current version of the database and 'oldVersion' argument do not match`);
     }
     this.version = newVersion;
-    this.persist();
+    this.commit();
   }
 
   createTransaction(readOnly: boolean): NovaSqlTransaction {
     return new NovaSqlTransaction(this, readOnly);
   }
 
-  /** @internal used by NovaSqlTransaction */
+  /**
+   * @internal used by NovaSqlTransaction. Statements mutate the live
+   * in-memory tables immediately (so later statements in the same
+   * transaction see earlier ones' effects — real SQL semantics), but
+   * nothing is persisted to the backend until commit(). A transaction that
+   * hits an unhandled error calls rollback(snapshot) instead, discarding
+   * every mutation this transaction made, not just the failing statement.
+   */
   runStatement(sql: string, args: readonly SqlValue[], readOnly: boolean): SQLResultSet {
     const stmt = parseSql(sql);
     if (readOnly && stmt.kind !== 'select') {
       throw new SQLError(SQLError.UNKNOWN_ERR, 'could not prepare statement — read-only transaction');
     }
-    const result = executeStmt(this.tables, stmt, args);
-    if (stmt.kind !== 'select') this.persist();
-    return result;
+    return executeStmt(this.tables, stmt, args);
   }
 
-  private persist(): void {
+  /** @internal used by NovaSqlTransaction — deep snapshot to roll back to. */
+  snapshotTables(): Map<string, SqlTable> {
+    const clone = new Map<string, SqlTable>();
+    for (const [tableName, t] of this.tables) {
+      clone.set(tableName, { columns: [...t.columns], rows: t.rows.map(r => ({ ...r })), nextRowId: t.nextRowId });
+    }
+    return clone;
+  }
+
+  /** @internal used by NovaSqlTransaction — discard this transaction's mutations. */
+  rollback(snapshot: Map<string, SqlTable>): void {
+    this.tables = snapshot;
+  }
+
+  /** @internal used by NovaSqlTransaction — write the current state to disk. */
+  commit(): void {
     const tables: Record<string, SerializedTable> = {};
     for (const [tableName, t] of this.tables) {
       tables[tableName] = { columns: t.columns, rows: t.rows.map(r => ({ ...r })), nextRowId: t.nextRowId };
@@ -702,12 +804,22 @@ export class NovaSqlTransaction {
   /**
    * Drain the queued statements one at a time; a success/error callback may
    * itself call executeSql() again, appending to the same queue (chaining).
-   * Stops on the first unhandled error (onError not returning true).
+   *
+   * Atomic like real WebSQL: a snapshot is taken before the first statement
+   * runs. Reaching the end of the queue with no unhandled error commits the
+   * whole transaction to disk in one write; an unhandled error (onError not
+   * returning true) rolls back to the snapshot, discarding every mutation
+   * this transaction made — not just the statement that failed.
    */
   drain(onComplete: () => void, onTransactionError: (error: SQLError) => void): void {
+    const snapshot = this.readOnly ? null : this.db.snapshotTables();
     const step = (): void => {
       const job = this.queue.shift();
-      if (!job) { onComplete(); return; }
+      if (!job) {
+        if (snapshot) this.db.commit();
+        onComplete();
+        return;
+      }
       try {
         const result = this.db.runStatement(job.sql, job.args, this.readOnly);
         job.onSuccess?.(this, result);
@@ -715,6 +827,7 @@ export class NovaSqlTransaction {
         const sqlError = err instanceof SQLError ? err : new SQLError(SQLError.UNKNOWN_ERR, err instanceof Error ? err.message : String(err));
         const shouldContinue = job.onError?.(this, sqlError);
         if (shouldContinue !== true) {
+          if (snapshot) this.db.rollback(snapshot);
           onTransactionError(sqlError);
           return;
         }
