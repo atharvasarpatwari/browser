@@ -34,6 +34,7 @@ import {
 } from './web-apis';
 import type { CspResourceEnforcer } from '../security/csp-resource-enforcer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
+import type { ICookieJar } from '../networking/cookie-jar';
 
 export { Lexer } from './lexer';
 export { Parser } from './parser';
@@ -226,6 +227,7 @@ export function createGlobalEnv(
   pageOrigin?: string,
   htmlParser?: IHtmlParser,
   storageDir?: string,
+  cookieJar?: ICookieJar,
 ): Environment {
   const env = new Environment(null);
 
@@ -2198,6 +2200,32 @@ export function createGlobalEnv(
   // DOM binding
   const docBinding = createDocumentBinding(doc, domTree);
   env.setLocal('document', docBinding);
+
+  // document.cookie — a real browser always returns a string here (empty if
+  // there are no cookies), never undefined; a huge amount of real-world code
+  // reads it unconditionally (e.g. `document.cookie.match(/.../)`) and
+  // crashes the instant it isn't a string. Backed by the same ICookieJar
+  // used for the real HTTP request/response pipeline when one is wired in
+  // (so a page setting a cookie via JS is visible to its own later requests,
+  // and vice versa); falls back to a page-local in-memory jar otherwise
+  // (unit tests, or a page loaded without a real navigation/network stack)
+  // so reads/writes still round-trip sanely within the same page.
+  const localCookies = new Map<string, string>();
+  docBinding.properties.set('cookie', {
+    value: '',
+    writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get cookie', () => {
+      if (cookieJar && pageOrigin) return cookieJar.getCookieHeader(pageOrigin);
+      return Array.from(localCookies, ([k, v]) => `${k}=${v}`).join('; ');
+    }),
+    setter: createNativeFunction('set cookie', (_t, args) => {
+      const raw = toString(args[0]);
+      if (cookieJar && pageOrigin) { cookieJar.setFromResponse(pageOrigin, [raw]); return; }
+      const eq = raw.indexOf('=');
+      if (eq === -1) return;
+      localCookies.set(raw.slice(0, eq).trim(), raw.slice(eq + 1).split(';')[0]!.trim());
+    }),
+  });
 
   // Event / MouseEvent / CustomEvent constructors — dispatchEvent()/
   // addEventListener() were fully implemented but nothing could ever

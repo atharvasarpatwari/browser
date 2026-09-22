@@ -130,6 +130,7 @@ function createMockResourceLoader(): IResourceLoader {
     on: vi.fn(),
     off: vi.fn(),
     setOnLoad: vi.fn(),
+    getCookieJar: vi.fn(),
     dispose: vi.fn(),
   };
 }

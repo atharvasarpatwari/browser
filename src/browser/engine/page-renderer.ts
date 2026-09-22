@@ -426,6 +426,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       doc, domTree, eventLoop, this.deps.controller, undefined,
       this.deps.resourceEnforcer, this.deps.scriptEnforcer, baseUrl,
       this.deps.htmlParser, this.deps.storageDir,
+      resourceLoader.getCookieJar() ?? undefined,
     );
 
     // Forward every console.log/warn/error/etc the page makes to whoever's

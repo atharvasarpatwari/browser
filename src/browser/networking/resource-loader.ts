@@ -113,6 +113,7 @@ interface IResourceLoader extends IDisposable {
   on(type: RequestEventType, handler: (event: RequestEvent) => void): void;
   off(type: RequestEventType, handler: (event: RequestEvent) => void): void;
   setOnLoad(listener: ((result: ResourceLoadResult) => void) | null): void;
+  getCookieJar(): ICookieJar | null;
 }
 
 class ResourceLoader implements IResourceLoader {
@@ -155,6 +156,11 @@ class ResourceLoader implements IResourceLoader {
 
   setCookieJar(cookieJar: ICookieJar): void {
     this.cookieJar = cookieJar;
+  }
+
+  /** Exposes the same jar used for the HTTP request/response pipeline so `document.cookie` reads/writes the real cookie store instead of a page-local shadow copy. */
+  getCookieJar(): ICookieJar | null {
+    return this.cookieJar;
   }
 
   async loadResource(url: string, kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {

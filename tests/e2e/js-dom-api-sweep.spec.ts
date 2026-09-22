@@ -188,6 +188,7 @@ const CASES: Case[] = [
       'custom event detail payload',
       'dataset reflects data-* attributes',
       'getAttribute/setAttribute/removeAttribute',
+      'document.cookie is always a string (never undefined) and round-trips a value set through it',
     ],
     html: harnessHtml(`
       var lab = document.getElementById('lab');
@@ -324,7 +325,18 @@ const CASES: Case[] = [
         t6.removeAttribute('title');
         mark(14, has1 && t6.getAttribute('title') === null);
       } catch(e) { }
-    `, 15),
+
+      try {
+        // Reproduces a real Wikipedia gap: document.cookie.match(...) — a
+        // real browser always returns a string here, even with no cookies
+        // set, since a huge amount of real-world code reads it unconditionally.
+        var wasString = typeof document.cookie === 'string';
+        var noMatch = document.cookie.match(/(?:^|; )nonexistent=([^;]+)/) === null;
+        document.cookie = 'novaTest=hello';
+        var roundTrip = document.cookie.indexOf('novaTest=hello') !== -1;
+        mark(15, wasString && noMatch && roundTrip);
+      } catch(e) { }
+    `, 16),
   },
   {
     name: 'async-and-collections',
