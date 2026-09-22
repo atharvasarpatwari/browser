@@ -1970,7 +1970,7 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
 // MEDIA QUERY PARSING
 // ─────────────────────────────────────────────────────────────────────────────
 
-function parseMediaQueries(prelude: string): CssMediaQuery[] {
+export function parseMediaQueries(prelude: string): CssMediaQuery[] {
   const queries: CssMediaQuery[] = [];
   const parts = prelude.split(/,\s*/);
 

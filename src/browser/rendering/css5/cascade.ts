@@ -251,7 +251,7 @@ function evaluateMediaQuery(
   return result;
 }
 
-function evaluateMediaQueries(
+export function evaluateMediaQueries(
   queries: readonly CssMediaQuery[],
   viewport: Viewport,
 ): boolean {

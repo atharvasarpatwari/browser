@@ -322,7 +322,16 @@ const KEYWORDS: Record<string, TokenType> = {
   'import': TokenType.Import,
   'export': TokenType.Export,
   'from': TokenType.From,
-  'as': TokenType.As,
+  // 'as' is deliberately NOT a hard keyword here — real JS never reserves
+  // it; it's only meaningful contextually right after an import/export
+  // specifier (`import { x as y }`), syntax this parser doesn't implement
+  // at all (no other reference to TokenType.As exists anywhere in
+  // parser.ts). Treating it as a real keyword broke every real-world use
+  // of `as` as a plain identifier — most commonly a destructuring rename
+  // with a default (`let {as: r = "div"} = props`, from real React/JSX
+  // "polymorphic component" code) — since `TokenType.As` doesn't satisfy
+  // the `TokenType.Identifier` checks destructuring-key/declaration-name
+  // parsing correctly requires.
   'static': TokenType.Static,
   'get': TokenType.Get,
   'set': TokenType.Set,

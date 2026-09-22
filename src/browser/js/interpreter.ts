@@ -51,6 +51,32 @@ function findPropertyDescriptor(obj: JSObject, key: string) {
   return undefined;
 }
 
+/** Every leaf identifier name bound by a (possibly nested) destructuring
+ *  pattern — used to TDZ-predeclare a `let`/`const` declaration's real
+ *  bound names before evaluating its initializer, the same way a bare
+ *  `let x = ...` already did for its one name. */
+function collectPatternNames(
+  pattern: AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern,
+  out: string[] = [],
+): string[] {
+  if (pattern.type === 'Identifier') {
+    out.push(pattern.name);
+  } else if (pattern.type === 'RestElement') {
+    collectPatternNames(pattern.argument, out);
+  } else if (pattern.type === 'AssignmentPattern') {
+    collectPatternNames(pattern.left, out);
+  } else if (pattern.type === 'ArrayPattern') {
+    for (const elem of pattern.elements) {
+      if (elem) collectPatternNames(elem, out);
+    }
+  } else if (pattern.type === 'ObjectPattern') {
+    for (const prop of pattern.properties) {
+      collectPatternNames(prop.type === 'RestElement' ? prop : prop.value, out);
+    }
+  }
+  return out;
+}
+
 function jsError(name: string, message: string): JSError {
   // makeErrorObject links the built error to whatever prototype index.ts
   // registered for `name` (TypeError, RangeError, ...), so `e instanceof
@@ -424,10 +450,17 @@ export class Interpreter {
     for (let i = 0; i < stmt.declarations.length; i++) {
       const decl = stmt.declarations[i];
       if (stmt.kind === 'let' || stmt.kind === 'const') {
-        // TDZ: declare first in TDZ state, then initialize with value
-        if (decl.id.type === 'Identifier') {
-          env.declareTDZ(decl.id.name, stmt.kind);
-        }
+        // TDZ: declare every bound name first in TDZ state, then initialize
+        // with the real value. Only ever walked decl.id itself when it was
+        // a bare Identifier — a destructured `let {a, b} = obj` or
+        // `let [x, y] = arr` left every one of its bound names (a, b, x, y)
+        // completely undeclared here, so destructPattern's leaf case below
+        // called env.initialize(name, value), which silently no-ops when
+        // no TDZ binding exists yet — every let/const destructuring bound
+        // its names to nothing at all (var-based destructuring was
+        // unaffected, since it declares fresh rather than initializing an
+        // existing binding).
+        for (const name of collectPatternNames(decl.id)) env.declareTDZ(name, stmt.kind);
         const value = decl.init ? this.evalExpr(decl.init, env) : undefined;
         this.destructPattern(decl.id, value, env, stmt.kind);
       } else {
@@ -867,15 +900,33 @@ export class Interpreter {
     const iterable = this.evalExpr(stmt.right, env);
     const values = this.forOfValues(iterable);
     const loopEnv = new Environment(env);
-    const varName = stmt.left.type === 'VariableDeclaration'
-      ? (stmt.left.declarations[0]!.id as AST.Identifier).name
-      : (stmt.left as AST.Identifier).name;
-    if (stmt.left.type === 'VariableDeclaration') {
-      loopEnv.declareTDZ(varName, stmt.left.kind as 'let' | 'const');
-      loopEnv.initialize(varName, undefined);
+    // Cast straight to Identifier and read .name unconditionally used to
+    // silently drop every destructured loop variable (`for (let {a,b} of
+    // list)`) — a pattern has no .name, so this bound a variable literally
+    // named `undefined` and left a/b unbound for the whole loop body. Now
+    // walks the real pattern via collectPatternNames/assignPatternValues,
+    // the same helpers execVarDecl and bindParams already use for this.
+    const pattern = stmt.left.type === 'VariableDeclaration' ? stmt.left.declarations[0]!.id : stmt.left;
+    const isVarDecl = stmt.left.type === 'VariableDeclaration' && stmt.left.kind === 'var';
+    if (stmt.left.type === 'VariableDeclaration' && (stmt.left.kind === 'let' || stmt.left.kind === 'const')) {
+      const kind = stmt.left.kind;
+      for (const name of collectPatternNames(pattern)) {
+        loopEnv.declareTDZ(name, kind);
+        loopEnv.initialize(name, undefined);
+      }
     }
     for (const val of values) {
-      loopEnv.set(varName, val);
+      // `var`'s declare() unconditionally overwrites on every call (no TDZ
+      // gate), so destructPattern is safe to call each iteration; `let`/
+      // `const`'s initialize() is one-shot (silently no-ops once TDZ is
+      // already cleared), so those — and a plain, already-existing
+      // identifier target — use real assignment instead, into the binding
+      // TDZ-predeclared once above.
+      if (isVarDecl) {
+        this.destructPattern(pattern, val, loopEnv, 'var');
+      } else {
+        this.assignPatternValues(pattern, val, loopEnv);
+      }
       const result = this.exec(stmt.body, loopEnv);
       if (isBreakSignal(result) && !result.label) return undefined;
       if (isBreakSignal(result) && result.label) return result;
@@ -883,6 +934,58 @@ export class Interpreter {
       if (isReturnSignal(result) || isThrowSignal(result)) return result;
     }
     return undefined;
+  }
+
+  /** Assigns already-computed values into an existing (already-declared)
+   *  pattern's bound names — used by execForOf to update a destructured
+   *  loop variable every iteration. Deliberately separate from
+   *  destructPattern: that one *declares* bindings (initialize()'s TDZ-only
+   *  guard means calling it again after the first iteration would silently
+   *  no-op), this one only ever assigns into bindings that already exist. */
+  private assignPatternValues(pattern: AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern, value: JSValue, env: Environment): void {
+    if (pattern.type === 'Identifier') {
+      env.set(pattern.name, value);
+    } else if (pattern.type === 'AssignmentPattern') {
+      const val = value === undefined || value === null ? this.evalExpr(pattern.right, env) : value;
+      this.assignPatternValues(pattern.left, val, env);
+    } else if (pattern.type === 'ArrayPattern') {
+      const arr = value as JSObject;
+      let idx = 0;
+      for (const elem of pattern.elements) {
+        if (elem === null) { idx++; continue; }
+        if (elem.type === 'RestElement') {
+          const restArr: JSValue[] = [];
+          const len = Number(arr?.properties?.get('length')?.value ?? 0);
+          for (let i = idx; i < len; i++) restArr.push(arr?.properties?.get(String(i))?.value);
+          this.assignPatternValues(elem.argument, createArray(restArr), env);
+        } else {
+          const elemVal = arr?.properties?.get(String(idx))?.value;
+          this.assignPatternValues(elem, elemVal, env);
+          idx++;
+        }
+      }
+    } else if (pattern.type === 'ObjectPattern') {
+      const obj = typeof value === 'object' && value !== null ? value as JSObject : createObject(null);
+      for (const prop of pattern.properties) {
+        if (prop.type === 'RestElement') {
+          const restObj = createObject(null);
+          const seenKeys = new Set<string>();
+          for (const p of pattern.properties) {
+            if (p.type === 'Property' && p.key.type === 'Identifier') seenKeys.add(p.key.name);
+          }
+          if (obj.properties) {
+            for (const [k, desc] of obj.properties) {
+              if (!seenKeys.has(k)) restObj.properties.set(k, desc);
+            }
+          }
+          this.assignPatternValues(prop.argument, restObj, env);
+        } else {
+          const key = prop.key.type === 'Identifier' ? prop.key.name : toPropertyKey(this.evalExpr(prop.key, env));
+          const propVal = obj?.properties?.get(key)?.value;
+          this.assignPatternValues(prop.value as any, propVal, env);
+        }
+      }
+    }
   }
 
   private execSwitch(stmt: AST.SwitchStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {

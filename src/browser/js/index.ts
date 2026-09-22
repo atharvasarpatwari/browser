@@ -12,6 +12,8 @@ import { createPromiseConstructor } from './promise';
 import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, toPropertyKey, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, registerErrorPrototype, makeErrorObject, objectPrototypeToStringTag } from './values';
 import type { JSValue, JSObject, JSObjectWithMeta } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
+import { evaluateMediaQueries, type Viewport } from '../rendering/css5/cascade';
+import { parseMediaQueries } from '../rendering/css5/parser';
 import {
   createHeadersClass, createResponseClass, createRequestClass,
   createAbortControllerClass, createFetchFn,
@@ -2483,6 +2485,34 @@ export function createGlobalEnv(
   // Fullscreen API (methods on Element via global)
   const fullscreen = createFullscreenAPIMethods();
   env.setLocal('fullscreenElement', fullscreen.fullscreenElement);
+
+  // window.matchMedia() — real-world code very commonly reads
+  // `matchMedia('(prefers-color-scheme: dark)').matches` once (dark-mode
+  // detection, responsive JS behavior) without ever registering a change
+  // listener. Reuses the exact same media-query parser/evaluator the CSS
+  // engine already uses for real `@media` rules, so `(prefers-color-scheme:
+  // dark)`, `(min-width: 768px)`, `(prefers-reduced-motion: no-preference)`,
+  // etc. all evaluate consistently with how a real stylesheet would see
+  // them — not a separate, hand-rolled guess. `addEventListener`/
+  // `addListener` are accepted but never fire: Nova has no live
+  // OS-preference-change or viewport-resize event source to drive them
+  // from, and the overwhelmingly common real-world usage only ever reads
+  // `.matches` once anyway.
+  const defaultViewport: Viewport = { width: 1920, height: 1080 };
+  const matchMediaFn = createNativeFunction('matchMedia', (_this, args) => {
+    const mediaText = toString(args[0] ?? '');
+    const queries = parseMediaQueries(mediaText);
+    const mqlObj = createObject(null);
+    mqlObj.properties.set('media', { value: mediaText, writable: false, enumerable: true, configurable: false });
+    mqlObj.properties.set('matches', { value: evaluateMediaQueries(queries, defaultViewport), writable: false, enumerable: true, configurable: false });
+    mqlObj.properties.set('onchange', { value: null, writable: true, enumerable: true, configurable: true });
+    for (const name of ['addEventListener', 'removeEventListener', 'addListener', 'removeListener']) {
+      mqlObj.properties.set(name, { value: createNativeFunction(name, () => undefined), writable: true, enumerable: true, configurable: true });
+    }
+    return mqlObj;
+  });
+  windowObj.properties.set('matchMedia', { value: matchMediaFn, writable: true, enumerable: true, configurable: true });
+  env.setLocal('matchMedia', matchMediaFn);
 
   // Selection API — window.getSelection()
   const selectionObj = createSelectionObject();

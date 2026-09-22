@@ -473,6 +473,10 @@ const CASES: Case[] = [
       'a top-level var/function declaration is immediately visible as a window property, and a window property assignment is visible as a bare identifier (real global-object semantics, not two independent copies)',
       'window.performance.timing exists with real PerformanceTiming fields (legacy API still read by real-world page-load beacons)',
       'a regex literal whose pattern starts with "=" (e.g. matching a query-string assignment) is not misread as the /= divide-assign operator, and real /= still works',
+      '"as" works as a plain identifier/object-key/destructuring-rename everywhere (real React polymorphic-component code), not just as an import/export specifier keyword',
+      'let/const destructuring (object, array, nested, rest, defaults) actually binds its names — a bare let/const {a} or [a] silently bound nothing at all',
+      'for-of with a destructured loop variable (let, const, and var) binds the real pattern each iteration instead of a variable literally named "undefined"',
+      'window.matchMedia() returns a real MediaQueryList-shaped object whose .matches reflects the real CSS engine\'s own media-query evaluation',
     ],
     html: harnessHtml(`
       try {
@@ -780,7 +784,60 @@ const CASES: Case[] = [
         n /= 2;
         mark(34, regexOk && n === 5);
       } catch(e) { }
-    `, 35),
+
+      try {
+        // Reproduces a real gap found bisecting react.dev: 'as' was a hard
+        // keyword token (leftover from unimplemented import/export
+        // specifier renaming — nothing in the parser even reads that
+        // token type), so using it as a plain identifier broke, most
+        // commonly in exactly this real shape: a destructuring rename with
+        // a default value, from a "polymorphic component" prop pattern.
+        var asVar = 5;
+        var asObjKey = { as: 'div' }.as === 'div';
+        var { as: asRenamed = 'div' } = {};
+        mark(35, asVar === 5 && asObjKey && asRenamed === 'div');
+      } catch(e) { }
+
+      try {
+        // Reproduces a real, high-impact gap: let/const destructuring never
+        // TDZ-predeclared its bound names, so destructPattern's leaf case
+        // called env.initialize() on a binding that didn't exist yet — a
+        // silent no-op. Every let {a} = obj / const [x] = arr bound
+        // nothing at all; only var-based destructuring worked.
+        let { a: objA, b: objB = 99 } = { a: 1 };
+        let [arrX, , arrZ] = [10, 20, 30];
+        const { rest0, ...restObj } = { rest0: 1, restA: 2, restB: 3 };
+        let { nested: [nestedX, nestedY] } = { nested: [7, 8] };
+        mark(36, objA === 1 && objB === 99 && arrX === 10 && arrZ === 30
+          && restObj.restA === 2 && restObj.restB === 3
+          && nestedX === 7 && nestedY === 8);
+      } catch(e) { }
+
+      try {
+        // Reproduces a real gap: execForOf cast its loop variable straight
+        // to Identifier and read .name unconditionally — a pattern has no
+        // .name, so every destructured for-of loop variable, e.g.
+        // for (let {a,b} of list), silently bound nothing for the
+        // entire loop body, regardless of var/let/const.
+        var sumLet = 0;
+        for (let { a: fa, b: fb } of [{ a: 1, b: 2 }, { a: 3, b: 4 }]) sumLet += fa + fb;
+        var sumVar = 0;
+        for (var [fx, fy] of [[1, 2], [3, 4]]) sumVar += fx + fy;
+        mark(37, sumLet === 10 && sumVar === 10);
+      } catch(e) { }
+
+      try {
+        // Reproduces a real gap found bisecting react.dev: window.matchMedia
+        // didn't exist at all, so real dark-mode-detection code, e.g.
+        // matchMedia('(prefers-color-scheme: dark)').matches, crashed
+        // with "Cannot read properties of undefined".
+        var mq = window.matchMedia('(prefers-color-scheme: dark)');
+        var lightOk = window.matchMedia('(prefers-color-scheme: light)').matches === true;
+        mq.addEventListener('change', function () {});
+        mark(38, typeof mq === 'object' && mq.media === '(prefers-color-scheme: dark)'
+          && mq.matches === false && lightOk);
+      } catch(e) { }
+    `, 39),
   },
   {
     name: 'class-features',
