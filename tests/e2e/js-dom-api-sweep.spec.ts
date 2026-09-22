@@ -477,6 +477,8 @@ const CASES: Case[] = [
       'let/const destructuring (object, array, nested, rest, defaults) actually binds its names — a bare let/const {a} or [a] silently bound nothing at all',
       'for-of with a destructured loop variable (let, const, and var) binds the real pattern each iteration instead of a variable literally named "undefined"',
       'window.matchMedia() returns a real MediaQueryList-shaped object whose .matches reflects the real CSS engine\'s own media-query evaluation',
+      'a native engine error (a real TDZ violation) is catchable by a guest try/catch, not just a guest-thrown Error',
+      'a try/finally with no catch handler still runs its finally block before a native error propagates',
     ],
     html: harnessHtml(`
       try {
@@ -837,7 +839,32 @@ const CASES: Case[] = [
         mark(38, typeof mq === 'object' && mq.media === '(prefers-color-scheme: dark)'
           && mq.matches === false && lightOk);
       } catch(e) { }
-    `, 39),
+
+      try {
+        // Reproduces a real gap: a native (non-guest-thrown) engine error,
+        // e.g. a real TDZ violation, unwound straight past a guest
+        // try/catch instead of being caught by it — execTry only ever
+        // treated a wrapped guest Error as catchable.
+        var threw = false, isRefErr = false;
+        try { let selfRef = selfRef + 1; } catch(e) { threw = true; isRefErr = e instanceof ReferenceError; }
+        mark(39, threw && isRefErr);
+      } catch(e) { }
+
+      try {
+        // Reproduces a related gap found while fixing the one above: a
+        // native error with no catch handler present skipped the finally
+        // block entirely (a guest-thrown throw statement never hit this,
+        // since it flows through a different, signal-based path — only a
+        // real native error takes the code path that used to throw
+        // straight out of the whole try-statement handler before ever
+        // reaching the finally logic below it).
+        var finallyRan = false, escaped = false;
+        try {
+          try { let selfRef2 = selfRef2 + 1; } finally { finallyRan = true; }
+        } catch(e) { escaped = e instanceof ReferenceError; }
+        mark(40, finallyRan && escaped);
+      } catch(e) { }
+    `, 41),
   },
   {
     name: 'class-features',

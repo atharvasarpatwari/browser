@@ -1016,6 +1016,13 @@ export class Interpreter {
     let pendingBreak: BreakSignal | undefined;
     let pendingContinue: ContinueSignal | undefined;
     let pendingThrow: ThrowSignal | undefined;
+    // A native (TS-level) exception with no handler to catch it — re-thrown
+    // after the finalizer below runs, not immediately from inside the catch
+    // block, which used to skip `finally` entirely (`try { ... } finally
+    // { cleanup() }` with no catch never ran `cleanup()` for a native
+    // throw, only for a guest `throw` statement — those return a ThrowSignal
+    // through the normal path below instead of using this catch block at all).
+    let uncaughtNative: unknown;
 
     try {
       const result = this.execBlock(stmt.block.body, env);
@@ -1041,20 +1048,32 @@ export class Interpreter {
         pendingContinue = result;
       }
     } catch (e) {
-      if (e instanceof JSError && stmt.handler) {
+      // A native TS Error (TDZ violations, internal validation errors from
+      // member access, etc.) reaching here used to always fall to the
+      // `throw e` below regardless of whether this try has a handler,
+      // unwinding straight past a guest `catch(e)` that should have caught
+      // it — e.g. `try { let x = x; } catch(e) {}` never ran its catch
+      // block at all. callJSFunction already wraps a native throw from a
+      // native-function call into a real, catchable Error-shaped value;
+      // this is the same wrap, applied here so it also covers native
+      // throws from the interpreter's own statement/expression evaluation
+      // (TDZ checks, etc.), not just native-function calls.
+      const jsError = e instanceof JSError ? e : (stmt.handler ? new JSError(makeErrorObject(
+        e instanceof Error ? e.name : 'Error',
+        e instanceof Error ? e.message : String(e),
+      )) : null);
+      if (jsError && stmt.handler) {
         const catchEnv = new Environment(env);
         if (stmt.handler.param) {
-          catchEnv.setLocal(stmt.handler.param.name, e.value);
+          catchEnv.setLocal(stmt.handler.param.name, jsError.value);
         }
         const catchResult = this.execBlock(stmt.handler.body.body, catchEnv);
         if (isThrowSignal(catchResult)) pendingThrow = catchResult;
         else if (isReturnSignal(catchResult)) pendingReturn = catchResult;
         else if (isBreakSignal(catchResult)) pendingBreak = catchResult;
         else if (isContinueSignal(catchResult)) pendingContinue = catchResult;
-      } else if (!(e instanceof JSError)) {
-        throw e;
-      } else if (!stmt.handler) {
-        throw e;
+      } else {
+        uncaughtNative = e;
       }
     }
 
@@ -1063,9 +1082,16 @@ export class Interpreter {
       if (isReturnSignal(finResult)) pendingReturn = finResult;
       else if (isBreakSignal(finResult)) pendingBreak = finResult;
       else if (isContinueSignal(finResult)) pendingContinue = finResult;
-      else if (isThrowSignal(finResult)) pendingThrow = finResult;
+      else if (isThrowSignal(finResult)) { pendingThrow = finResult; uncaughtNative = undefined; }
     }
 
+    // A completion from the finalizer (return/break/continue/a new throw)
+    // overrides the original exception per spec — only re-throw the
+    // original native error if the finalizer didn't already produce one of
+    // those.
+    if (uncaughtNative !== undefined && !pendingReturn && !pendingBreak && !pendingContinue && !pendingThrow) {
+      throw uncaughtNative;
+    }
     if (pendingReturn) return pendingReturn;
     if (pendingThrow) return pendingThrow;
     if (pendingBreak) return pendingBreak;
