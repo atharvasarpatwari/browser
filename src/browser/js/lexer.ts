@@ -176,8 +176,16 @@ export class Lexer {
       case '!=': this.advance(2); return this.makeToken(TokenType.BangEqual, '!=', startLine, startCol);
       case '<=': this.advance(2); return this.makeToken(TokenType.LessEqual, '<=', startLine, startCol);
       case '>=': this.advance(2); return this.makeToken(TokenType.GreaterEqual, '>=', startLine, startCol);
-      case '&&': this.advance(2); return this.makeToken(TokenType.AmpersandAmpersand, '&&', startLine, startCol);
-      case '||': this.advance(2); return this.makeToken(TokenType.PipePipe, '||', startLine, startCol);
+      case '&&': {
+        this.advance(2);
+        if (this.peek(0) === '=') { this.advance(); return this.makeToken(TokenType.AmpersandAmpersandAssign, '&&=', startLine, startCol); }
+        return this.makeToken(TokenType.AmpersandAmpersand, '&&', startLine, startCol);
+      }
+      case '||': {
+        this.advance(2);
+        if (this.peek(0) === '=') { this.advance(); return this.makeToken(TokenType.PipePipeAssign, '||=', startLine, startCol); }
+        return this.makeToken(TokenType.PipePipe, '||', startLine, startCol);
+      }
       case '++': this.advance(2); return this.makeToken(TokenType.PlusPlus, '++', startLine, startCol);
       case '--': this.advance(2); return this.makeToken(TokenType.MinusMinus, '--', startLine, startCol);
       case '**': {

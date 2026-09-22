@@ -358,8 +358,19 @@ export class Parser {
       case TokenType.GreaterGreaterAssign:
       case TokenType.GreaterGreaterGreaterAssign:
       case TokenType.QuestionQuestionAssign:
+      case TokenType.AmpersandAmpersandAssign:
+      case TokenType.PipePipeAssign:
         this.advance();
-        const assignRight = this.parseExpression(prec - 1);
+        // Assignment is right-associative, so the right side must accept
+        // another same-precedence assignment (`a = b = c` → `a = (b = c)`)
+        // — but `prec - 1` overshoots: since Comma sits at exactly
+        // `prec - 1`, that also let the right side swallow a following
+        // comma (e.g. `{ k: () => n ||= 5, other: () => 1 }` parsed the
+        // arrow's whole concise body as `n ||= (5, other)`, eating the next
+        // property's key and desyncing everything after it). Recursing at
+        // the SAME precedence gets right-associativity without also
+        // annexing the next-lower-precedence operator.
+        const assignRight = this.parseExpression(prec);
         return { type: 'AssignmentExpression', operator: tok.value, left, right: assignRight, loc: { line: tok.line, column: tok.column } };
 
       // Update operators
@@ -971,8 +982,8 @@ export class Parser {
           continue;
         }
         let accessorKind: 'get' | 'set' | null = null;
-        if (this.is(TokenType.Get)) { this.advance(); accessorKind = 'get'; }
-        else if (this.is(TokenType.Set)) { this.advance(); accessorKind = 'set'; }
+        if (this.is(TokenType.Get) && this.startsAccessorName()) { this.advance(); accessorKind = 'get'; }
+        else if (this.is(TokenType.Set) && this.startsAccessorName()) { this.advance(); accessorKind = 'set'; }
         const key = this.parsePropertyKey();
         // parsePropertyKey() consumes `]` itself for a computed `[expr]`
         // key, so the previous token tells us which form it was — this
@@ -1005,8 +1016,8 @@ export class Parser {
         }
       } else {
         let accessorKind: 'get' | 'set' | null = null;
-        if (this.is(TokenType.Get)) { this.advance(); accessorKind = 'get'; }
-        else if (this.is(TokenType.Set)) { this.advance(); accessorKind = 'set'; }
+        if (this.is(TokenType.Get) && this.startsAccessorName()) { this.advance(); accessorKind = 'get'; }
+        else if (this.is(TokenType.Set) && this.startsAccessorName()) { this.advance(); accessorKind = 'set'; }
         const key = this.parsePropertyKey();
         const computed = this.peek(-1)?.type === TokenType.RBracket;
         if (this.is(TokenType.LParen)) {
@@ -1411,7 +1422,9 @@ export class Parser {
       case TokenType.LessLessAssign:
       case TokenType.GreaterGreaterAssign:
       case TokenType.GreaterGreaterGreaterAssign:
-      case TokenType.QuestionQuestionAssign: return 2;
+      case TokenType.QuestionQuestionAssign:
+      case TokenType.AmpersandAmpersandAssign:
+      case TokenType.PipePipeAssign: return 2;
 
       case TokenType.Question: return 3;
       case TokenType.QuestionQuestion: return 4;

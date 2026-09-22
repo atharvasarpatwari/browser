@@ -61,6 +61,8 @@ export enum TokenType {
   QuestionDot,
   QuestionQuestion,
   QuestionQuestionAssign,
+  AmpersandAmpersandAssign,
+  PipePipeAssign,
   Question,
   Colon,
   Ellipsis,
@@ -211,6 +213,8 @@ export function tokenTypeName(tt: TokenType): string {
     case TokenType.QuestionDot: return '?.';
     case TokenType.QuestionQuestion: return '??';
     case TokenType.QuestionQuestionAssign: return '??=';
+    case TokenType.AmpersandAmpersandAssign: return '&&=';
+    case TokenType.PipePipeAssign: return '||=';
     case TokenType.Question: return '?';
     case TokenType.Colon: return ':';
     case TokenType.Ellipsis: return '...';

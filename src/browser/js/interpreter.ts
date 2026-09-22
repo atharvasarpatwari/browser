@@ -1243,6 +1243,8 @@ export class Interpreter {
         case '>>=': newVal = toNumber(current) >> toNumber(right); break;
         case '>>>=': newVal = toNumber(current) >>> toNumber(right); break;
         case '??=': newVal = (current !== null && current !== undefined) ? current : right; break;
+        case '&&=': newVal = toBoolean(current) ? right : current; break;
+        case '||=': newVal = toBoolean(current) ? current : right; break;
         default: newVal = right;
       }
       env.set(name, newVal);
@@ -1300,6 +1302,8 @@ export class Interpreter {
         case '>>=': newVal = toNumber(current) >> toNumber(right); break;
         case '>>>=': newVal = toNumber(current) >>> toNumber(right); break;
         case '??=': newVal = (current !== null && current !== undefined) ? current : right; break;
+        case '&&=': newVal = toBoolean(current) ? right : current; break;
+        case '||=': newVal = toBoolean(current) ? current : right; break;
         default: newVal = right;
       }
       const compoundSetter = findPropertyDescriptor(obj, key)?.setter;

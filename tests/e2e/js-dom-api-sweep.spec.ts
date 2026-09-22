@@ -785,6 +785,8 @@ const CASES: Case[] = [
       'independent class hierarchies in the same scope do not share super',
       'static super call resolves against the parent class, not its prototype',
       'getter/setter pair inherited two levels down',
+      'a class method literally named "get"/"set" (real GitHub code) is not misread as an accessor, and a real getter with a computed key still works',
+      'a compound-assignment concise arrow body as an object property value does not swallow the following property (real GitHub code), and &&=/||= work correctly',
     ],
     html: harnessHtml(`
       try {
@@ -913,7 +915,45 @@ const CASES: Case[] = [
         gc.val = 77;
         mark(14, gc.val === 77);
       } catch(e) { }
-    `, 15),
+
+      try {
+        // Reproduces a real GitHub gap: parseClassBody() unconditionally
+        // treated get/set as accessor introducers, without the same
+        // startsAccessorName() lookahead already applied to object literals
+        // — so a class method literally named "get" (found in a real LRU
+        // cache implementation) cascaded into nonsense a token at a time.
+        class LRU {
+          #e;
+          constructor() { this.#e = new Map(); }
+          get(k) { return this.#e.get(k); }
+          set(k, v) { this.#e.set(k, v); return this; }
+          get size() { return this.#e.size; }
+          get [Symbol.toStringTag]() { return 'LRU'; }
+        }
+        var lru = new LRU();
+        lru.set('a', 1);
+        mark(15, lru.get('a') === 1 && lru.size === 1 && lru[Symbol.toStringTag] === 'LRU');
+      } catch(e) { }
+
+      try {
+        // Reproduces a real GitHub gap: an assignment's right-hand side
+        // parsed at (precedence - 1) instead of (precedence), which happens
+        // to equal Comma's own precedence — so a compound-assignment
+        // concise arrow body used as an object property value swallowed
+        // the following comma-separated property along with it (real code:
+        // "{ ready: () => n ||= new Promise(...), firstInteraction: ... }").
+        var n = null;
+        var obj = { ready: () => n ||= 5, other: () => 1 };
+        var sameShapeOk = obj.ready() === 5 && obj.other() === 1;
+        var m = 0;
+        m &&= 99;
+        var andAssignOk = m === 0;
+        var p = 0;
+        p ||= 7;
+        var orAssignOk = p === 7;
+        mark(16, sameShapeOk && andAssignOk && orAssignOk);
+      } catch(e) { }
+    `, 17),
   },
   {
     name: 'prototype-and-function-methods',
