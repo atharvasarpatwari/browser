@@ -147,6 +147,13 @@ export interface Token {
    *  `.raw` array. Absent on every other token, where `value` already IS
    *  the raw source text. */
   readonly raw?: string;
+  /** RegExp tokens only: pattern and flags read separately by the lexer
+   *  (which already tracks escapes character-by-character). `value` is
+   *  still `/pattern/flags` for display/debugging, but the parser must read
+   *  the real values from here — re-splitting `value` on '/' breaks the
+   *  moment the pattern contains an escaped slash (`\/`), which is common
+   *  in real-world regexes (e.g. matching a closing HTML tag). */
+  readonly regexParts?: { readonly pattern: string; readonly flags: string };
 }
 
 export function tokenTypeName(tt: TokenType): string {

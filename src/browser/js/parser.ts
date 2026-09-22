@@ -212,7 +212,10 @@ export class Parser {
 
       case TokenType.RegExp:
         this.advance();
-        return { type: 'Literal', value: { type: 'RegExp', pattern: tok.value.split('/')[1] ?? '', flags: tok.value.split('/').pop() ?? '' }, raw: tok.value, loc: { line: tok.line, column: tok.column } };
+        // Read pattern/flags from regexParts, not by re-splitting tok.value
+        // on '/' — that breaks the instant the pattern contains an escaped
+        // slash ("\/"), since split() doesn't know it isn't a delimiter.
+        return { type: 'Literal', value: { type: 'RegExp', pattern: tok.regexParts?.pattern ?? '', flags: tok.regexParts?.flags ?? '' }, raw: tok.value, loc: { line: tok.line, column: tok.column } };
 
       case TokenType.Identifier:
         this.advance();

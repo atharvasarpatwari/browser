@@ -630,7 +630,7 @@ export class Lexer {
     }
 
     const value = `/${pattern}/${flags}`;
-    return this.makeToken(TokenType.RegExp, value, line, col);
+    return { type: TokenType.RegExp, value, line, column: col, regexParts: { pattern, flags } };
   }
 
   private advance(count = 1): void {

@@ -189,9 +189,22 @@ export function isAwaitSignal(v: unknown): v is AwaitSignal { return typeof v ==
 export class Environment {
   private bindings = new Map<string, { value: JSValue; kind: 'var' | 'let' | 'const'; __tdz?: boolean }>();
   readonly parent: Environment | null;
+  /** Set only on the global environment (see `linkWindow`). */
+  private windowLink: JSObject | null = null;
 
   constructor(parent: Environment | null = null) {
     this.parent = parent;
+  }
+
+  /**
+   * Links this (global) environment to the real `window` object, so that
+   * `var`/function declarations at the top level become `window` properties
+   * and `window.foo = ...` is visible to a bare `foo` reference — in a real
+   * browser these are literally the same storage (the global object IS the
+   * global environment record), not two independently-updated copies.
+   */
+  linkWindow(windowObj: JSObject): void {
+    this.windowLink = windowObj;
   }
 
   /** Declare a variable (var/let/const) */
@@ -202,10 +215,11 @@ export class Environment {
       while (scope && !scope.isFunctionScope()) {
         scope = scope.parent;
       }
-      if (scope) {
-        scope.bindings.set(name, { value, kind });
+      const target = scope ?? this;
+      if (target.windowLink) {
+        target.windowLink.properties.set(name, { value, writable: true, enumerable: true, configurable: true });
       } else {
-        this.bindings.set(name, { value, kind });
+        target.bindings.set(name, { value, kind });
       }
     } else {
       // let/const: per ECMAScript § 9.1.1, bindings are created in TDZ state.
@@ -239,6 +253,13 @@ export class Environment {
     if (this.parent) {
       return this.parent.set(name, value);
     }
+    if (this.windowLink) {
+      const desc = this.windowLink.properties.get(name);
+      if (desc) {
+        desc.value = value;
+        return true;
+      }
+    }
     return false;
   }
 
@@ -269,6 +290,10 @@ export class Environment {
     if (this.parent) {
       return this.parent.get(name);
     }
+    if (this.windowLink) {
+      const desc = this.windowLink.properties.get(name);
+      if (desc) return desc.value;
+    }
     return undefined;
   }
 
@@ -276,6 +301,7 @@ export class Environment {
   has(name: string): boolean {
     if (this.bindings.has(name)) return true;
     if (this.parent) return this.parent.has(name);
+    if (this.windowLink && this.windowLink.properties.has(name)) return true;
     return false;
   }
 

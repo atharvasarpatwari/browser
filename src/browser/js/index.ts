@@ -2441,5 +2441,33 @@ export function createGlobalEnv(
   // Bind all Web APIs (crypto, BroadcastChannel, streams, WASM, WebGPU, WebXR, etc.)
   bindWebAPIs(env, docBinding);
 
+  // Mirror every global binding onto `window` by the same reference, and
+  // alias `self`/`globalThis` to it — in a real browser `window`, `self`,
+  // and `globalThis` are the SAME object, and every global (Math, Array,
+  // JSON, fetch, ...) is really just a property of it. Without this,
+  // `window.Math === Math` is false (window was a bare object nothing ever
+  // copied built-ins onto), which breaks the extremely common real-world
+  // "find the true global object" feature-detection pattern countless
+  // libraries use — e.g. `[globalThis, window, self, global].find(c => c
+  // && c.Math === Math) || throw Error('Cannot find global object')`. Runs
+  // last, once every global this function sets up actually exists.
+  for (const [name, binding] of env.getBindings()) {
+    if (!windowObj.properties.has(name)) {
+      windowObj.properties.set(name, { value: binding.value, writable: true, enumerable: true, configurable: true });
+    }
+  }
+  env.setLocal('self', windowObj);
+  env.setLocal('globalThis', windowObj);
+
+  // Link the global scope to `window` itself — in a real browser the global
+  // object IS the global environment record, so a top-level `var`/function
+  // declaration becomes a `window` property, and `window.foo = ...` is
+  // immediately visible to a bare `foo` reference. Without this, Nova's
+  // global `Environment` and `windowObj` are two independently-updated
+  // stores that only agreed at setup time, breaking extremely common
+  // real-world code (e.g. YouTube's `var ytcfg = {...}; window.ytcfg.set(...)`
+  // in the very next statement).
+  env.linkWindow(windowObj);
+
   return env;
 }

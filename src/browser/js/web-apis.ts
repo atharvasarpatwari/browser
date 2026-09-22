@@ -640,6 +640,26 @@ export function createPerformanceObject() {
     writable: true, enumerable: true, configurable: true,
   });
 
+  // Legacy `PerformanceTiming` (window.performance.timing) — deprecated by
+  // the spec in favor of PerformanceNavigationTiming, but still commonly
+  // feature-detected and read by real-world page scripts (e.g. YouTube's
+  // own timing beacon code). Nova has no real per-phase navigation timing
+  // to report here, so every field shares one epoch timestamp — enough for
+  // "does this property exist and is it a number" checks and for duration
+  // math (`x - navigationStart`) to not throw or produce NaN.
+  const navigationStart = Date.now();
+  const timingObj = createObject(null);
+  for (const field of [
+    'navigationStart', 'unloadEventStart', 'unloadEventEnd', 'redirectStart', 'redirectEnd',
+    'fetchStart', 'domainLookupStart', 'domainLookupEnd', 'connectStart', 'connectEnd',
+    'secureConnectionStart', 'requestStart', 'responseStart', 'responseEnd', 'domLoading',
+    'domInteractive', 'domContentLoadedEventStart', 'domContentLoadedEventEnd', 'domComplete',
+    'loadEventStart', 'loadEventEnd',
+  ]) {
+    timingObj.properties.set(field, { value: navigationStart, writable: false, enumerable: true, configurable: false });
+  }
+  perfObj.properties.set('timing', { value: timingObj, writable: false, enumerable: true, configurable: false });
+
   return perfObj;
 }
 

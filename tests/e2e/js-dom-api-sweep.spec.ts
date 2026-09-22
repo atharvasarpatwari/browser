@@ -439,6 +439,12 @@ const CASES: Case[] = [
       'real getter/setter accessors, a shorthand "get" property, and a method literally named "get" all still work after that fix',
       'eval() no longer permanently breaks getter/setter access for the rest of the script afterward',
       'a ternary immediately followed by leading-dot decimals ("cond?.9:.75") is not misread as optional chaining',
+      'the real-world "find the true global object" feature-detection pattern (globalThis/window/self, checking .Math identity) succeeds instead of throwing',
+      'window, self, and globalThis are the same object, and mirror real built-ins beyond just Math',
+      'a regex literal whose pattern contains an escaped slash and a backreference (a real closing-tag matcher) parses and matches correctly',
+      'more escaped-slash regex shapes work, and an ordinary regex with none is unaffected',
+      'a top-level var/function declaration is immediately visible as a window property, and a window property assignment is visible as a bare identifier (real global-object semantics, not two independent copies)',
+      'window.performance.timing exists with real PerformanceTiming fields (legacy API still read by real-world page-load beacons)',
     ],
     html: harnessHtml(`
       try {
@@ -657,7 +663,80 @@ const CASES: Case[] = [
         var realOptionalChainOnValue = obj?.prop;
         mark(27, ternaryWithLeadingDotLiterals === 1.5 && realOptionalChainOnNull === undefined && realOptionalChainOnValue === 5);
       } catch(e) { }
-    `, 28),
+
+      try {
+        // Reproduces a fifth real gap found bisecting YouTube's bundle: the
+        // "Cannot find global object" error wasn't a Nova bug throwing that
+        // text — it's real, hardcoded application-level text FOUR of
+        // YouTube's own real scripts throw as their own fallback when their
+        // "find the true global object" feature-detection fails. That
+        // detection pattern is extremely common across real-world libraries:
+        // check globalThis, then window, then self, then global, accepting
+        // the first one whose .Math === the real global Math (identity, to
+        // rule out a fake/proxy object) — and throw if none qualify. Nova's
+        // window was a bare object nothing ever copied built-ins onto, so
+        // window.Math !== Math, and self/globalThis didn't exist at all, so
+        // every candidate failed and the library's own throw fired for real.
+        var trueGlobal = (function(a){
+          a = [typeof globalThis=="object"&&globalThis, a, typeof window=="object"&&window, typeof self=="object"&&self];
+          for (var b = 0; b < a.length; ++b) { var c = a[b]; if (c && c.Math == Math) return c; }
+          throw Error("Cannot find global object");
+        })(this);
+        mark(28, typeof trueGlobal === 'object' && trueGlobal.Math === Math);
+      } catch(e) { }
+
+      try {
+        // The fix (mirror every global onto window; alias self/globalThis
+        // to it) must hold for window/self/globalThis's OWN identity too,
+        // and for other real built-ins beyond Math, not just satisfy the
+        // one check above by coincidence.
+        mark(29, window.Math === Math && self === window && globalThis === window && window.Array === Array && window.JSON === JSON);
+      } catch(e) { }
+
+      try {
+        // Reproduces a sixth real gap found bisecting YouTube's bundle: a
+        // regex literal's pattern/flags were extracted by naively splitting
+        // the raw "/pattern/flags" text on '/' — which breaks the instant
+        // the pattern itself contains an escaped slash, since split() has
+        // no concept of escaping and cuts there too, leaving a dangling
+        // backslash at the end of the "pattern" half. Real-world regexes
+        // escape slashes constantly (paths, URLs, and here: matching a full
+        // script-or-style element pair with a backreference to the tag
+        // name in the closing tag).
+        var re = /\\x3c(script|style)([\\s\\S]*?)\\x3e([\\s\\S]*?)\\x3c\\/\\1\\x3e/ig;
+        // Escaped slashes here too — a literal closing-script-tag substring
+        // in this HTML page's own inline script would end the tag early,
+        // same real-world gotcha the \\x3c/\\x3e hex escapes in the pattern
+        // above exist to dodge in the first place.
+        var matches = '<script>a<\\/script><style>b<\\/style>'.match(re);
+        mark(30, matches !== null && matches.length === 2);
+      } catch(e) { }
+
+      try {
+        // A few more escaped-slash shapes, to make sure the fix is general
+        // and not just tuned to the one pattern above.
+        var pathRe = /\\/a\\/b\\/c/;
+        var noEscapeRe = /^[a-z]+$/i;
+        mark(31, pathRe.test('/a/b/c') && noEscapeRe.test('Hello'));
+      } catch(e) { }
+
+      try {
+        // Reproduces a real YouTube gap: "var ytcfg = {...}; window.ytcfg.set(...)"
+        // in consecutive statements — a top-level var must be the SAME
+        // storage as the window property, not a one-time copy taken at
+        // setup, and vice versa for a direct window.foo assignment.
+        var ytcfgLike = { set: function(v) { return v; } };
+        var viaWindow = window.ytcfgLike.set(7) === 7;
+        window.viaAssignment = { flag: true };
+        var viaBareRead = viaAssignment.flag === true;
+        mark(32, viaWindow && viaBareRead);
+      } catch(e) { }
+
+      try {
+        var t = window.performance.timing;
+        mark(33, typeof t.navigationStart === 'number' && typeof t.responseStart === 'number' && typeof t.loadEventEnd === 'number');
+      } catch(e) { }
+    `, 34),
   },
   {
     name: 'class-features',
