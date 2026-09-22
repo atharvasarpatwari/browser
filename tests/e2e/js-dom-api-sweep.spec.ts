@@ -189,6 +189,7 @@ const CASES: Case[] = [
       'dataset reflects data-* attributes',
       'getAttribute/setAttribute/removeAttribute',
       'document.cookie is always a string (never undefined) and round-trips a value set through it',
+      'customElements.define() accepts a real class extending HTMLElement (real Cloudflare/Astro code), not just a plain function',
     ],
     html: harnessHtml(`
       var lab = document.getElementById('lab');
@@ -336,7 +337,21 @@ const CASES: Case[] = [
         var roundTrip = document.cookie.indexOf('novaTest=hello') !== -1;
         mark(15, wasString && noMatch && roundTrip);
       } catch(e) { }
-    `, 16),
+
+      try {
+        // Reproduces a real Cloudflare/Astro gap: customElements.define()'s
+        // validity check only accepted objects with type: 'function' —
+        // a real ES6 class (type: 'class', needed because a custom element
+        // must extend HTMLElement, which requires a real super() call)
+        // was rejected as "Custom element constructor must be a function"
+        // even though it's the near-universal real-world way to define one.
+        class NovaTestEl extends HTMLElement {
+          connectedCallback() { this.setAttribute('hydrated', 'true'); }
+        }
+        customElements.define('nova-test-el', NovaTestEl);
+        mark(16, customElements.get('nova-test-el') === NovaTestEl);
+      } catch(e) { }
+    `, 17),
   },
   {
     name: 'async-and-collections',

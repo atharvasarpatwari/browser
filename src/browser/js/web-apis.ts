@@ -287,7 +287,15 @@ export function createCustomElementsObject() {
     value: createNativeFunction('define', (_this, args) => {
       const name = toString(args[0]);
       const ctor = args[1];
-      if (typeof ctor !== 'object' || ctor === null || (ctor as JSObject).type !== 'function') {
+      // Real-world custom elements are almost always defined via `class X
+      // extends HTMLElement` (a class needs a real superclass constructor
+      // call, which plain functions can't express) — a class's own
+      // internal representation has type: 'class', distinct from a plain
+      // function declaration/expression's type: 'closure' or a
+      // native-style callable's type: 'function'. Only accepting
+      // 'function' rejected every real class-based custom element.
+      const ctorType = typeof ctor === 'object' && ctor !== null ? (ctor as JSObject | JSFunction).type : null;
+      if (ctorType !== 'function' && ctorType !== 'class' && ctorType !== 'closure') {
         throw new TypeError('Custom element constructor must be a function');
       }
       registry.set(name, ctor as JSFunction);
