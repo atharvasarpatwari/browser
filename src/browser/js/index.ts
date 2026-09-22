@@ -232,6 +232,17 @@ export function createGlobalEnv(
   cookieJar?: ICookieJar,
 ): Environment {
   const env = new Environment(null);
+  // The global scope is a `var`-hoisting boundary — Environment.declare()
+  // walks up looking for the nearest scope marked this way and falls back
+  // to the immediate calling scope if it never finds one. That fallback
+  // used to be harmless here only because a top-level `var` inside a block
+  // had nowhere else to land anyway (blocks shared their enclosing scope
+  // outright, a separate bug fixed alongside this one) — once blocks get
+  // their own real child scope, an unmarked root would wrongly let a
+  // top-level `var` inside any block stay trapped in that block's scope
+  // instead of hoisting all the way out, same as every other function
+  // scope in this engine already does.
+  env.markFunctionScope();
 
   // Console — see console-api.ts for the structured, externally-readable log
   env.setLocal('console', createConsoleObject());

@@ -373,7 +373,14 @@ export class Interpreter {
   private exec(stmt: AST.Statement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     this.checkTimeout();
     switch (stmt.type) {
-      case 'BlockStatement': return this.execBlock(stmt.body, env);
+      // A block introduces its own lexical scope for let/const/class (and
+      // for the TDZ pre-declarations hoistLetConst does inside execBlock) —
+      // passing the caller's own `env` straight through left every block
+      // (a bare `{ }`, an `if`/`else` body, a `while`/`do-while` body — any
+      // caller that reaches a BlockStatement via plain `exec()`) writing
+      // its let/const bindings directly into the ENCLOSING scope instead,
+      // so they leaked out and stayed visible after the block ended.
+      case 'BlockStatement': return this.execBlock(stmt.body, new Environment(env));
       case 'ExpressionStatement': return this.evalExpr(stmt.expression, env);
       case 'VariableDeclaration': this.execVarDecl(stmt, env); return undefined;
       case 'FunctionDeclaration': this.execFuncDecl(stmt, env); return undefined;

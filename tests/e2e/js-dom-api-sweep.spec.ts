@@ -479,6 +479,7 @@ const CASES: Case[] = [
       'window.matchMedia() returns a real MediaQueryList-shaped object whose .matches reflects the real CSS engine\'s own media-query evaluation',
       'a native engine error (a real TDZ violation) is catchable by a guest try/catch, not just a guest-thrown Error',
       'a try/finally with no catch handler still runs its finally block before a native error propagates',
+      'let/const/class declared in a bare {}, if, while, or do-while block does not leak outside that block, and var still correctly hoists all the way out',
     ],
     html: harnessHtml(`
       try {
@@ -864,7 +865,36 @@ const CASES: Case[] = [
         } catch(e) { escaped = e instanceof ReferenceError; }
         mark(40, finallyRan && escaped);
       } catch(e) { }
-    `, 41),
+
+      try {
+        // Reproduces a real gap: exec()'s BlockStatement case passed the
+        // caller's own env straight through to execBlock() instead of a
+        // fresh child scope — every bare {}, if, while, and do-while body
+        // (anything reaching a block via plain exec()) wrote its let/const
+        // bindings directly into the ENCLOSING scope, so they leaked out
+        // and stayed visible after the block ended.
+        { let blockLet = 'leaked'; }
+        var bareBlockOk = typeof blockLet === 'undefined';
+
+        if (true) { let ifLet = 'leaked'; }
+        var ifBlockOk = typeof ifLet === 'undefined';
+
+        while (true) { let whileLet = 'leaked'; break; }
+        var whileBlockOk = typeof whileLet === 'undefined';
+
+        do { let doLet = 'leaked'; } while (false);
+        var doBlockOk = typeof doLet === 'undefined';
+
+        // A fresh block scope must not break var's real function-scoping —
+        // giving every block its own scope could wrongly trap a var
+        // inside it unless the global scope is correctly recognized as the
+        // var-hoisting boundary to walk up to.
+        { var hoistedVar = 'hoisted'; }
+        var varHoistOk = hoistedVar === 'hoisted';
+
+        mark(41, bareBlockOk && ifBlockOk && whileBlockOk && doBlockOk && varHoistOk);
+      } catch(e) { }
+    `, 42),
   },
   {
     name: 'class-features',
