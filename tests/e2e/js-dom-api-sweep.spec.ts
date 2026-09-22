@@ -480,6 +480,7 @@ const CASES: Case[] = [
       'a native engine error (a real TDZ violation) is catchable by a guest try/catch, not just a guest-thrown Error',
       'a try/finally with no catch handler still runs its finally block before a native error propagates',
       'let/const/class declared in a bare {}, if, while, or do-while block does not leak outside that block, and var still correctly hoists all the way out',
+      'new URL(relative, base) accepts a real URL object or window.location as the base (real SvelteKit bootstrap code), and String(location)/template-literal interpolation of location both yield the real href',
     ],
     html: harnessHtml(`
       try {
@@ -894,7 +895,23 @@ const CASES: Case[] = [
 
         mark(41, bareBlockOk && ifBlockOk && whileBlockOk && doBlockOk && varHoistOk);
       } catch(e) { }
-    `, 42),
+
+      try {
+        // Reproduces a real gap found bisecting svelte.dev: real SvelteKit
+        // bootstrap code does new URL(".", location).pathname, coercing
+        // location to a string as the URL constructor's base argument.
+        // The generic toString() coercion had no case for a Location object
+        // (no __type_override tag at all) or a URL object (tagged 'url' but
+        // unhandled), so both fell through to the generic "[object Object]"
+        // string, which a real URL constructor then rejects as invalid.
+        var baseFromLocation = new URL('.', location).href === location.href.replace(/[^/]*$/, '');
+        var otherUrl = new URL('https://example.com/a/b/');
+        var baseFromUrlObj = new URL('c', otherUrl).href === 'https://example.com/a/b/c';
+        var stringOk = String(location) === location.href;
+        var templateOk = ('' + location) === location.href;
+        mark(42, baseFromLocation && baseFromUrlObj && stringOk && templateOk);
+      } catch(e) { }
+    `, 43),
   },
   {
     name: 'class-features',

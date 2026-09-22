@@ -393,6 +393,19 @@ export function toString(val: JSValue): string {
     if (override === 'weakref') return '[object WeakRef]';
     if (override === 'finalizationregistry') return '[object FinalizationRegistry]';
     if (typeof override === 'string' && override.endsWith('Array')) return `[object ${override}]`;
+    // A real URL/Location object stringifies to its own href — this is the
+    // ToString path used e.g. when `new URL(relative, base)` coerces a
+    // non-string `base` argument (a real URL object, or `window.location`,
+    // both real-world-common — `new URL(".", location)` is real SvelteKit
+    // bootstrap code). Without this, coercing either fell through to the
+    // generic "[object Object]" below, which Node's real URL constructor
+    // then rejects outright as an invalid base URL.
+    if (override === 'url') return obj.nativeURL?.href ?? '[object Object]';
+    if (override === 'location') {
+      const desc = obj.properties.get('href');
+      const href = desc?.getter ? callJSFunction(desc.getter, obj, []) : desc?.value;
+      return typeof href === 'string' ? href : '[object Object]';
+    }
   }
   return '[object Object]';
 }
