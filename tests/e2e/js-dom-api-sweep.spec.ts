@@ -500,6 +500,9 @@ const CASES: Case[] = [
       'for await (x of iterable) parses and awaits each value (a plain value passes through unchanged, a resolved Promise is unwrapped)',
       'a destructured object-pattern property with a non-identifier string key and a default value (e.g. real minified React/Emotion prop-forwarding code) actually parses',
       'a regex literal as the very first statement of an if/while/for/switch body parses correctly instead of being misread as division (division right after those headers is unaffected when something comes between the closing paren and the slash)',
+      'a reserved word (class, get, set, as, await, default, new) works as a destructuring property key (e.g. real minified React/Figma code renaming a "class" prop), not just a plain identifier',
+      'top-level this is the real global object (window/globalThis), not undefined (real Angular.dev dark-mode-detection code reads this.document at the top of an inline script), and a plain non-strict function call falls back to it the same way',
+      '"use strict" is correctly detected both as a function-level directive and a program-level directive that propagates to every function in the file (including ones nested inside it), so a strict function call\'s this correctly stays undefined instead of falling back to the global object',
     ],
     html: harnessHtml(`
       try {
@@ -993,7 +996,52 @@ const CASES: Case[] = [
         if (true) { let a = 10, b = 2; divOk = a / b === 5; }
         mark(46, out === 'if-ok' && out2 === 'onClick' && divOk);
       } catch(e) { }
-    `, 47),
+
+      try {
+        // Reproduces a real gap found bisecting figma.com/tailwindcss.com:
+        // parseObjectPattern's key dispatch only accepted a real Identifier
+        // token as a plain key — a reserved word like "class" is lexed as
+        // its own keyword token type, so {class: r} fell into the general-
+        // expression fallback, which parsed "class" as the start of a
+        // class expression and then choked expecting "{" instead of ":".
+        var srcObj = { class: 'foo', get: 1, as: 2 };
+        var { class: rc, get: rg, as: ra } = srcObj;
+        mark(47, rc === 'foo' && rg === 1 && ra === 2);
+      } catch(e) { }
+
+      try {
+        // Reproduces a real gap found bisecting angular.dev: real bootstrap
+        // code (a dark-mode-detection snippet) reads this.document at the
+        // top of an inline script. The root global environment never had a
+        // "this" binding at all, so top-level "this" evaluated to undefined
+        // instead of the real global object — and every plain (non-strict)
+        // function call's this-fallback, which reads that same binding,
+        // inherited the same undefined instead of window.
+        var thisIsWindow = this === window;
+        function plainCall() { return this; }
+        var plainCallOk = plainCall() === window;
+        mark(48, thisIsWindow && plainCallOk);
+      } catch(e) { }
+
+      try {
+        // Reproduces a real gap: lookaheadStrictDirective() checked the
+        // CURRENT token for a "use strict" string literal, but every call
+        // site invokes it with the function body's opening "{" still
+        // current (right before parseBlock() consumes it) — so it always
+        // saw "{", never a string, and "use strict" was silently ignored
+        // everywhere. A program-level "use strict" (the far more common
+        // real-world shape, e.g. all Babel-transpiled output) was never
+        // even checked at all.
+        function strictFn() { 'use strict'; return this; }
+        var funcLevelOk = strictFn() === undefined;
+        // eval() re-parses its argument as its own independent program, so
+        // this exercises program-level "use strict" detection (parse()'s
+        // own directive check) in isolation, without making the rest of
+        // this shared harness script itself strict.
+        var programLevelOk = eval("'use strict'; function inner(){ return this; } inner() === undefined;");
+        mark(49, funcLevelOk && programLevelOk);
+      } catch(e) { }
+    `, 50),
   },
   {
     name: 'class-features',

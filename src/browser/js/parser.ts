@@ -22,12 +22,30 @@ export class Parser {
   }
 
   parse(): AST.Program {
+    // A leading `'use strict';` directive (extremely common in bundled/
+    // transpiled real-world output) makes every function in the whole
+    // program strict, not just ones that repeat their own directive —
+    // pushed onto the same strictStack the with-statement check already
+    // reads, so every function-parsing call site below inherits it for
+    // free via the strictStack-or-own-directive check in lookaheadStrictDirective's callers.
+    const programStrict = this.is(TokenType.String) && this.peek().value === 'use strict'
+      && (this.peek(1).type === TokenType.Semicolon || this.peek(1).type === TokenType.EOF);
+    if (programStrict) this.strictStack.push(true);
     const body: AST.Statement[] = [];
     while (!this.is(TokenType.EOF)) {
       const stmt = this.parseStatement();
       if (stmt) body.push(stmt);
     }
+    if (programStrict) this.strictStack.pop();
     return { type: 'Program', body };
+  }
+
+  /** Whether the enclosing scope (an already-strict function, or a
+   *  program-level `'use strict'`) is currently strict — used so a nested
+   *  function correctly inherits strictness without repeating its own
+   *  directive, matching real JS's lexical strict-mode propagation. */
+  private inStrictContext(): boolean {
+    return this.strictStack.length > 0 && this.strictStack[this.strictStack.length - 1]!;
   }
 
   // ── Expression parsing (Pratt) ───────────────────────────────────────────
@@ -157,7 +175,7 @@ export class Parser {
     this.advance(); // =>
     let body: AST.BlockStatement | AST.Expression;
     if (this.is(TokenType.LBrace)) {
-      const strict = this.lookaheadStrictDirective();
+      const strict = this.lookaheadStrictDirective() || this.inStrictContext();
       this.strictStack.push(strict);
       body = this.parseBlock();
       this.strictStack.pop();
@@ -669,7 +687,7 @@ export class Parser {
     this.expect(TokenType.LParen);
     const params = this.parseParams();
     this.expect(TokenType.RParen);
-    const strict = this.lookaheadStrictDirective();
+    const strict = this.lookaheadStrictDirective() || this.inStrictContext();
     this.strictStack.push(strict);
     const body = this.parseBlock();
     this.strictStack.pop();
@@ -877,7 +895,12 @@ export class Parser {
         continue;
       }
       const keyTok = this.peek();
-      if (keyTok.type === TokenType.Identifier) {
+      // Any IdentifierName is a valid destructuring key, including reserved
+      // words (`{class: r}`, `{get: g}`, `{as: a}`) — real minified React/
+      // Tailwind CSS code renames a `class` prop this way. Only a genuine
+      // string/number literal key needs the general-expression path below
+      // (it can't be used as a shorthand or plain binding name anyway).
+      if (keyTok.type !== TokenType.String && keyTok.type !== TokenType.Number) {
         this.advance();
         const key: AST.Identifier = { type: 'Identifier', name: keyTok.value, loc: { line: keyTok.line, column: keyTok.column } };
         let value: AST.Identifier | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern | AST.RestElement;
@@ -947,7 +970,7 @@ export class Parser {
     this.expect(TokenType.LParen);
     const params = this.parseParams();
     this.expect(TokenType.RParen);
-    const strict = this.lookaheadStrictDirective();
+    const strict = this.lookaheadStrictDirective() || this.inStrictContext();
     this.strictStack.push(strict);
     const body = this.parseBlock();
     this.strictStack.pop();
@@ -1298,12 +1321,20 @@ export class Parser {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   /** Pre-scan: check if the next tokens are a 'use strict' directive without consuming them. */
+  // Called right before parseBlock(), with the body's opening '{' still the
+  // current token (every call site checks `this.is(TokenType.LBrace)` or has
+  // just consumed the parameter list, both leaving '{' next) — so the
+  // potential directive is one token further ahead, not the current token.
+  // Checking `this.peek()` here meant this always saw '{' itself, never a
+  // string, so a `'use strict'` directive was silently ignored everywhere:
+  // every function's `this` fallback (interpreter.ts) treated it as
+  // non-strict, handing it the global object instead of `undefined`.
   private lookaheadStrictDirective(): boolean {
-    if (this.peek().type !== TokenType.String) return false;
-    const val = this.peek().value;
+    if (this.peek(1).type !== TokenType.String) return false;
+    const val = this.peek(1).value;
     if (val !== 'use strict') return false;
-    const next = this.peek(1);
-    return next.type === TokenType.Semicolon || next.type === TokenType.RBrace || next.type === TokenType.EOF;
+    const after = this.peek(2);
+    return after.type === TokenType.Semicolon || after.type === TokenType.RBrace || after.type === TokenType.EOF;
   }
 
   private parseParams(): (AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern)[] {

@@ -2578,6 +2578,15 @@ export function createGlobalEnv(
   }
   env.setLocal('self', windowObj);
   env.setLocal('globalThis', windowObj);
+  // Top-level `this` in real non-strict script code IS the global object —
+  // real bootstrap code (e.g. Angular's dark-mode-detection snippet) reads
+  // `this.document` at the top of an inline <script>. Without this, the
+  // root environment never had a `this` binding at all, so ThisExpression
+  // evaluated to `undefined` (not even a bare object) at the top level, and
+  // every plain (non-strict) function's own `this`-fallback — which reads
+  // this same root binding — inherited that same `undefined` instead of
+  // the real global object.
+  env.setLocal('this', windowObj);
 
   // Link the global scope to `window` itself — in a real browser the global
   // object IS the global environment record, so a top-level `var`/function
