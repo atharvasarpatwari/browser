@@ -397,6 +397,50 @@ export function toString(val: JSValue): string {
   return '[object Object]';
 }
 
+/**
+ * The real `Object.prototype.toString` algorithm — deliberately separate
+ * from the generic `toString()` coercion above, which calls an object's
+ * OWN toString/valueOf-style formatting (e.g. `Error: message`). This one
+ * never does: per spec it's override-proof, always returning `[object
+ * Tag]`, and checks `Symbol.toStringTag` (own or inherited, invoking a
+ * getter if the tag is defined as one) before falling back to built-in
+ * type detection. `toStringTagKey` is the caller's already-computed
+ * `toPropertyKey()` result for the real `Symbol.toStringTag` object — this
+ * module has no Environment to look that symbol up itself.
+ */
+export function objectPrototypeToStringTag(val: JSValue, toStringTagKey: string | null): string {
+  if (val === undefined) return '[object Undefined]';
+  if (val === null) return '[object Null]';
+  if (typeof val === 'boolean') return '[object Boolean]';
+  if (typeof val === 'number') return '[object Number]';
+  if (typeof val === 'string') return '[object String]';
+  if (typeof val !== 'object') return '[object Object]';
+  if ((val as { type?: string }).type === 'closure') return '[object Function]';
+  const obj = val as JSObjectWithMeta;
+  if (toStringTagKey) {
+    let cur: JSObject | null = obj;
+    while (cur) {
+      const desc = cur.properties?.get(toStringTagKey);
+      if (desc) {
+        const tag = desc.getter ? callJSFunction(desc.getter, obj, []) : desc.value;
+        if (typeof tag === 'string') return `[object ${tag}]`;
+        break;
+      }
+      cur = cur.prototype;
+    }
+  }
+  if (obj.type === 'array') return '[object Array]';
+  if (obj.type === 'function' || obj.type === 'class') return '[object Function]';
+  if (obj.__type_override === 'date') return '[object Date]';
+  if (obj.__type_override === 'regexp') return '[object RegExp]';
+  if (obj.__type_override === 'error') return '[object Error]';
+  // Everything else (ArrayBuffer, DataView, TypedArrays, SharedArrayBuffer,
+  // WeakRef, FinalizationRegistry, plain objects) already has correct
+  // `[object Type]` formatting in the generic coercion helper above —
+  // reuse it instead of re-deriving the same __type_override list twice.
+  return toString(val);
+}
+
 // Computed property keys (`obj[expr]`, `{[expr]: ...}`) were coerced with
 // native TS `String()`, which has no idea how to render this engine's own
 // object values — a symbol (this engine's own JSObject, not a real native

@@ -7,6 +7,7 @@ import {
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
   setGlobalCaller, getGlobalCaller, callJSFunction, JSError, isJSObjectWithMeta, makeErrorObject,
+  objectPrototypeToStringTag,
 } from './values';
 import { GarbageCollector, getGC } from './gc';
 import { createPromiseConstructor, wrapAsyncResult, isPromiseObject, isPromiseFulfilled, isPromiseRejected, isPromisePending, getPromiseResult, createPromiseObj, fulfillPromise, rejectPromise } from './promise';
@@ -1826,7 +1827,11 @@ export class Interpreter {
         return createNativeFunction('propertyIsEnumerable', (t, a) =>
           typeof t === 'object' && t !== null ? !!(t as JSObject).properties?.get(toPropertyKey(a[0]))?.enumerable : false);
       case 'toString':
-        return isFunction ? undefined : createNativeFunction('toString', (t) => toString(t));
+        return isFunction ? undefined : createNativeFunction('toString', (t) => {
+          const symbolGlobal = this.globalEnv.get('Symbol');
+          const tagSym = typeof symbolGlobal === 'object' && symbolGlobal !== null ? (symbolGlobal as JSObject).properties.get('toStringTag')?.value : undefined;
+          return objectPrototypeToStringTag(t, tagSym !== undefined ? toPropertyKey(tagSym) : null);
+        });
       case 'valueOf':
         return isFunction ? undefined : createNativeFunction('valueOf', (t) => t as JSValue);
       case 'toLocaleString':

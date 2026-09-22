@@ -787,6 +787,7 @@ const CASES: Case[] = [
       'getter/setter pair inherited two levels down',
       'a class method literally named "get"/"set" (real GitHub code) is not misread as an accessor, and a real getter with a computed key still works',
       'a compound-assignment concise arrow body as an object property value does not swallow the following property (real GitHub code), and &&=/||= work correctly',
+      'Object.prototype.toString.call(x) returns the real [object Tag] format, respecting a class\'s own computed Symbol.toStringTag getter',
     ],
     html: harnessHtml(`
       try {
@@ -953,7 +954,21 @@ const CASES: Case[] = [
         var orAssignOk = p === 7;
         mark(16, sameShapeOk && andAssignOk && orAssignOk);
       } catch(e) { }
-    `, 17),
+
+      try {
+        // Reproduces a real gap found while verifying the class-body
+        // get/set fix: Object.prototype had no real .prototype object at
+        // all, so the classic type-tag idiom Object.prototype.toString.call(x)
+        // was simply undefined instead of a working method — and even a
+        // direct x.toString() call ignored a class's own Symbol.toStringTag.
+        var plainOk = Object.prototype.toString.call({}) === '[object Object]';
+        var arrOk = Object.prototype.toString.call([1,2]) === '[object Array]';
+        class Tagged { get [Symbol.toStringTag]() { return 'MyTag'; } }
+        var t = new Tagged();
+        var tagOk = Object.prototype.toString.call(t) === '[object MyTag]' && t.toString() === '[object MyTag]';
+        mark(17, plainOk && arrOk && tagOk);
+      } catch(e) { }
+    `, 18),
   },
   {
     name: 'prototype-and-function-methods',

@@ -9,7 +9,7 @@ import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, toPropertyKey, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, registerErrorPrototype, makeErrorObject } from './values';
+import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, toPropertyKey, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, registerErrorPrototype, makeErrorObject, objectPrototypeToStringTag } from './values';
 import type { JSValue, JSObject, JSObjectWithMeta } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
 import {
@@ -631,6 +631,57 @@ export function createGlobalEnv(
       return obj;
     }),
     writable: true, enumerable: false, configurable: true,
+  });
+  // Object.prototype — the real one, not just the per-instance native
+  // fallback in objectPrototypeFallback() (interpreter.ts), which only
+  // covers `x.method()` called directly. Real-world code very commonly
+  // reaches for these through the constructor instead — the classic
+  // `Object.prototype.toString.call(x)` type-tag idiom, or
+  // `Object.prototype.hasOwnProperty.call(x, k)` to dodge a shadowed own
+  // property — and without a real .prototype object here those were
+  // simply `undefined`, not a working method.
+  const objectProtoObj = createObject(null);
+  objectProtoObj.properties.set('toString', {
+    value: createNativeFunction('toString', (t) => {
+      // Looked up lazily (not captured at setup time) since Symbol's
+      // well-known symbols aren't created until later in this same function.
+      const symbolGlobal = env.get('Symbol');
+      const tagSym = typeof symbolGlobal === 'object' && symbolGlobal !== null ? (symbolGlobal as JSObject).properties.get('toStringTag')?.value : undefined;
+      return objectPrototypeToStringTag(t, tagSym !== undefined ? toPropertyKey(tagSym) : null);
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectProtoObj.properties.set('hasOwnProperty', {
+    value: createNativeFunction('hasOwnProperty', (t, a) =>
+      typeof t === 'object' && t !== null ? !!(t as JSObject).properties?.has(toPropertyKey(a[0])) : false),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectProtoObj.properties.set('isPrototypeOf', {
+    value: createNativeFunction('isPrototypeOf', (_t, a) => {
+      let proto = typeof a[0] === 'object' && a[0] !== null ? (a[0] as JSObject).prototype : null;
+      while (proto) {
+        if (proto === objectProtoObj) return true;
+        proto = proto.prototype;
+      }
+      return false;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectProtoObj.properties.set('propertyIsEnumerable', {
+    value: createNativeFunction('propertyIsEnumerable', (t, a) =>
+      typeof t === 'object' && t !== null ? !!(t as JSObject).properties?.get(toPropertyKey(a[0]))?.enumerable : false),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectProtoObj.properties.set('valueOf', {
+    value: createNativeFunction('valueOf', (t) => t as JSValue),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectProtoObj.properties.set('toLocaleString', {
+    value: createNativeFunction('toLocaleString', (t) => toString(t)),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectCtorObj.properties.set('prototype', {
+    value: objectProtoObj, writable: false, enumerable: false, configurable: false,
   });
   env.setLocal('Object', objectCtorObj);
 
