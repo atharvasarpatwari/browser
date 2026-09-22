@@ -443,6 +443,18 @@ export function createDocumentBinding(
     writable: false, enumerable: true, configurable: false,
   });
 
+  // currentScript — the <script> element whose own source is synchronously
+  // executing right now, or null outside of that window. Real self-
+  // configuring embed scripts (analytics tags, widgets) read this to find
+  // their own data-* attributes. Defaults to null here; the page-load
+  // orchestrator (page-renderer.ts) sets/resets this property directly
+  // around each script's runJS() call, since it's the only place that knows
+  // which <script> element is currently executing.
+  docObj.properties.set('currentScript', {
+    value: null,
+    writable: true, enumerable: true, configurable: true,
+  });
+
   // addEventListener (document-level — shared infrastructure)
   docObj.properties.set('addEventListener', {
     value: createNativeFunction('addEventListener', (_this, args) => {

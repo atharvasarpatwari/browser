@@ -867,7 +867,11 @@ export class Parser {
       if (this.is(TokenType.LBracket)) {
         const key = this.parseExpression();
         this.expect(TokenType.Colon);
-        const value = this.parseBindingName();
+        let value: AST.Identifier | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern | AST.RestElement = this.parseBindingName();
+        if (this.is(TokenType.Equal)) {
+          this.advance();
+          value = { type: 'AssignmentPattern', left: value as AST.Identifier, right: this.parseExpression(2) };
+        }
         properties.push({ type: 'Property', key, value: value as any, shorthand: false, computed: true, loc: { line: tok.line, column: tok.column } });
         if (this.is(TokenType.Comma)) this.advance();
         continue;
@@ -893,7 +897,11 @@ export class Parser {
       } else {
         const key = this.parseExpression();
         this.expect(TokenType.Colon);
-        const value = this.parseBindingName();
+        let value: AST.Identifier | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern | AST.RestElement = this.parseBindingName();
+        if (this.is(TokenType.Equal)) {
+          this.advance();
+          value = { type: 'AssignmentPattern', left: value as AST.Identifier, right: this.parseExpression(2) };
+        }
         properties.push({ type: 'Property', key, value: value as any, shorthand: false, computed: false, loc: { line: tok.line, column: tok.column } });
       }
       if (this.is(TokenType.Comma)) this.advance();
@@ -1098,6 +1106,8 @@ export class Parser {
   private parseForStatement(): AST.Statement {
     const tok = this.peek();
     this.advance();
+    const isAwait = this.is(TokenType.Await);
+    if (isAwait) this.advance();
     this.expect(TokenType.LParen);
 
     // for-in / for-of
@@ -1117,7 +1127,7 @@ export class Parser {
         const right = this.parseExpression();
         this.expect(TokenType.RParen);
         const body = this.parseStatement()!;
-        return { type: 'ForOfStatement', left: { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init: null }], kind: kind as 'var' | 'let' | 'const' }, right, body, await: false, loc: { line: tok.line, column: tok.column } };
+        return { type: 'ForOfStatement', left: { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init: null }], kind: kind as 'var' | 'let' | 'const' }, right, body, await: isAwait, loc: { line: tok.line, column: tok.column } };
       }
       // for (var x = ..., y = ...; ...) — one or more comma-separated declarators
       let init: AST.Expression | null = null;
@@ -1163,7 +1173,7 @@ export class Parser {
         const right = this.parseExpression();
         this.expect(TokenType.RParen);
         const body = this.parseStatement()!;
-        return { type: 'ForOfStatement', left: { type: 'Identifier', name }, right, body, await: false, loc: { line: tok.line, column: tok.column } };
+        return { type: 'ForOfStatement', left: { type: 'Identifier', name }, right, body, await: isAwait, loc: { line: tok.line, column: tok.column } };
       }
       this.pos = savedPos;
     }

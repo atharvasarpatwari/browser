@@ -10,6 +10,13 @@ export class Lexer {
   private line = 1;
   private column = 1;
   private lastTokenType: TokenType = TokenType.EOF;
+  // Tracks, per open paren, whether it's a control-header paren (if/while/for/
+  // switch/catch) rather than a grouping/call paren — needed so `)` closing
+  // `if (cond)` etc. knows a *statement* follows (where a leading `/` must be
+  // a regex literal), while `)` closing a grouped expression or call like
+  // `(a + b)` still defaults to division for the `/` right after it.
+  private controlHeaderParenStack: boolean[] = [];
+  private lastRParenClosedControlHeader = false;
 
   constructor(source: string) {
     this.source = source;
@@ -231,8 +238,17 @@ export class Lexer {
       case '=': return this.makeToken(TokenType.Equal, '=', startLine, startCol);
       case '<': return this.makeToken(TokenType.Less, '<', startLine, startCol);
       case '>': return this.makeToken(TokenType.Greater, '>', startLine, startCol);
-      case '(': return this.makeToken(TokenType.LParen, '(', startLine, startCol);
-      case ')': return this.makeToken(TokenType.RParen, ')', startLine, startCol);
+      case '(': {
+        const isControlHeader = this.lastTokenType === TokenType.If || this.lastTokenType === TokenType.While
+          || this.lastTokenType === TokenType.For || this.lastTokenType === TokenType.Switch
+          || this.lastTokenType === TokenType.Catch;
+        this.controlHeaderParenStack.push(isControlHeader);
+        return this.makeToken(TokenType.LParen, '(', startLine, startCol);
+      }
+      case ')': {
+        this.lastRParenClosedControlHeader = this.controlHeaderParenStack.pop() ?? false;
+        return this.makeToken(TokenType.RParen, ')', startLine, startCol);
+      }
       case '{': return this.makeToken(TokenType.LBrace, '{', startLine, startCol);
       case '}': return this.makeToken(TokenType.RBrace, '}', startLine, startCol);
       case '[': return this.makeToken(TokenType.LBracket, '[', startLine, startCol);
@@ -512,6 +528,14 @@ export class Lexer {
   private isRegexContext(): boolean {
     // After these tokens, `/` starts a regex literal
     switch (this.lastTokenType) {
+      // `)` is ambiguous on its own — closing a grouped expression or call
+      // like `(a + b)`/`f(x)` means an expression just ended (so `/` next is
+      // division), but closing a control-header like `if (cond)` means a
+      // *statement* follows (so `/` next can only be a regex literal, since
+      // division has no left operand there). Disambiguated by the paren
+      // stack maintained in scanToken()'s '(' / ')' cases.
+      case TokenType.RParen:
+        return this.lastRParenClosedControlHeader;
       case TokenType.EOF:
       case TokenType.Plus:
       case TokenType.Minus:

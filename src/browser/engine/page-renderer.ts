@@ -52,7 +52,7 @@ import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
 import { runJS, createGlobalEnv, wrapElement, createEventObject, onConsoleMessage, type ConsoleEntry } from '../js/index';
-import { callJSFunction, setGlobalCaller, type JSFunction } from '../js/values';
+import { callJSFunction, setGlobalCaller, type JSFunction, type JSObject } from '../js/values';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
@@ -437,6 +437,14 @@ class PageRenderer implements IPageRenderer, IDisposable {
       onConsoleMessage(consoleObj, (entry) => this.deps.onConsoleMessage?.(entry));
     }
 
+    // document.currentScript must reflect whichever <script> element is
+    // synchronously executing right now (real self-configuring embed
+    // scripts read their own data-* attributes off it), and null otherwise.
+    // Fetched once since createGlobalEnv() only builds the document binding
+    // once for the whole page — only the .value gets mutated per script below.
+    const docBinding = globalEnv.get('document') as JSObject;
+    const currentScriptDesc = docBinding.properties.get('currentScript')!;
+
     const blockingScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
     const deferScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
     const asyncScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
@@ -511,7 +519,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     // 1. Execute blocking scripts in document order
-    for (const { source } of blockingScripts) {
+    for (const { source, el } of blockingScripts) {
       if (signal.aborted) break;
       if (this.deps.scriptEnforcer) {
         const check = this.deps.scriptEnforcer.checkInlineScript(source, baseUrl, baseUrl);
@@ -520,7 +528,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
           continue;
         }
       }
+      currentScriptDesc.value = wrapElement(el, domTree);
       const result2 = runJS(source, { document: doc, domTree, eventLoop, globalEnv });
+      currentScriptDesc.value = null;
       if (result2.error) {
         console.error(
           `[ScriptEngine] Error executing blocking script: ${result2.error.message}`,
@@ -529,7 +539,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     // 2. Execute defer scripts in document order (after DOM is parsed)
-    for (const { source } of deferScripts) {
+    for (const { source, el } of deferScripts) {
       if (signal.aborted) break;
       if (this.deps.scriptEnforcer) {
         const check = this.deps.scriptEnforcer.checkInlineScript(source, baseUrl, baseUrl);
@@ -538,7 +548,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
           continue;
         }
       }
+      currentScriptDesc.value = wrapElement(el, domTree);
       const result2 = runJS(source, { document: doc, domTree, eventLoop, globalEnv });
+      currentScriptDesc.value = null;
       if (result2.error) {
         console.error(
           `[ScriptEngine] Error executing defer script: ${result2.error.message}`,
@@ -552,13 +564,13 @@ class PageRenderer implements IPageRenderer, IDisposable {
         const check = this.deps.scriptEnforcer.checkInlineScript(source, baseUrl, baseUrl);
         if (!check.allowed) {
           console.warn(`[CSP] Blocked async script: ${check.reason}`);
-          void el;
           continue;
         }
       }
       // Fire and forget — async scripts don't block rendering
+      currentScriptDesc.value = wrapElement(el, domTree);
       runJS(source, { document: doc, domTree, eventLoop, globalEnv });
-      void el; // used only for categorization
+      currentScriptDesc.value = null;
     }
 
     this.pageEventLoop = eventLoop;

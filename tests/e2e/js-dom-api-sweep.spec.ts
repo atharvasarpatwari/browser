@@ -190,6 +190,7 @@ const CASES: Case[] = [
       'getAttribute/setAttribute/removeAttribute',
       'document.cookie is always a string (never undefined) and round-trips a value set through it',
       'customElements.define() accepts a real class extending HTMLElement (real Cloudflare/Astro code), not just a plain function',
+      'document.currentScript is the real, currently-executing <script> element (real self-configuring embed-script pattern, e.g. Fathom/Plausible analytics reading their own data-* attributes) and is null once the script finishes',
     ],
     html: harnessHtml(`
       var lab = document.getElementById('lab');
@@ -351,7 +352,21 @@ const CASES: Case[] = [
         customElements.define('nova-test-el', NovaTestEl);
         mark(16, customElements.get('nova-test-el') === NovaTestEl);
       } catch(e) { }
-    `, 17),
+
+      try {
+        // Reproduces a real gap found bisecting vuejs.org: document.currentScript
+        // was never implemented at all, so real self-configuring embed
+        // scripts (Fathom/Plausible/etc. analytics tags reading their own
+        // data-* attributes off their own <script> tag) crashed trying to
+        // read a property off it — "Cannot read properties of null".
+        var duringExec = document.currentScript;
+        var isScriptDuringExec = duringExec !== null && duringExec.tagName === 'SCRIPT';
+        setTimeout(function() {
+          var nullAfterSync = document.currentScript === null;
+          mark(17, isScriptDuringExec && nullAfterSync);
+        }, 0);
+      } catch(e) { }
+    `, 18),
   },
   {
     name: 'async-and-collections',
@@ -481,6 +496,10 @@ const CASES: Case[] = [
       'a try/finally with no catch handler still runs its finally block before a native error propagates',
       'let/const/class declared in a bare {}, if, while, or do-while block does not leak outside that block, and var still correctly hoists all the way out',
       'new URL(relative, base) accepts a real URL object or window.location as the base (real SvelteKit bootstrap code), and String(location)/template-literal interpolation of location both yield the real href',
+      'for (const x of/in ...) no longer throws "Assignment to constant variable" on the first iteration, and for (let x of/in ...) gives each closure its own per-iteration binding instead of the last value',
+      'for await (x of iterable) parses and awaits each value (a plain value passes through unchanged, a resolved Promise is unwrapped)',
+      'a destructured object-pattern property with a non-identifier string key and a default value (e.g. real minified React/Emotion prop-forwarding code) actually parses',
+      'a regex literal as the very first statement of an if/while/for/switch body parses correctly instead of being misread as division (division right after those headers is unaffected when something comes between the closing paren and the slash)',
     ],
     html: harnessHtml(`
       try {
@@ -911,7 +930,70 @@ const CASES: Case[] = [
         var templateOk = ('' + location) === location.href;
         mark(42, baseFromLocation && baseFromUrlObj && stringOk && templateOk);
       } catch(e) { }
-    `, 43),
+
+      try {
+        // Reproduces a real, high-impact gap: execForOf/execForIn reused one
+        // shared binding across every iteration and updated it via a plain
+        // assignment — which always throws "Assignment to constant
+        // variable" for a const binding, so for (const x of arr) and
+        // for (const k in obj), two of the most common for-loop shapes in
+        // real code, threw on their very first iteration. Fixed by giving
+        // let/const a real fresh per-iteration lexical binding, which also
+        // fixes closures capturing the wrong (last) value under let.
+        var constOfOk = false, constInOk = false;
+        for (const x of [1, 2, 3]) { constOfOk = x === 1 || constOfOk; }
+        for (const k in { a: 1 }) { constInOk = k === 'a'; }
+        var closures = [];
+        for (let x of [1, 2, 3]) closures.push(function () { return x; });
+        var closureVals = closures.map(function (f) { return f(); });
+        var closureOk = closureVals[0] === 1 && closureVals[1] === 2 && closureVals[2] === 3;
+        mark(43, constOfOk && constInOk && closureOk);
+      } catch(e) { }
+
+      try {
+        // Reproduces a real gap found bisecting tailwindcss.com: "for
+        // await" failed to parse at all ("Expected LParen, got Await").
+        var awaitPlain = [], awaitPromise = [];
+        async function drainPlain(t) { for await (const x of t) awaitPlain.push(x); }
+        async function drainPromise(t) { for await (const x of t) awaitPromise.push(x); }
+        drainPlain([1, 2, 3]);
+        drainPromise([Promise.resolve('a'), Promise.resolve('b')]);
+        mark(44, JSON.stringify(awaitPlain) === '[1,2,3]' && JSON.stringify(awaitPromise) === '["a","b"]');
+      } catch(e) { }
+
+      try {
+        // Reproduces a real gap found bisecting figma.com: a destructuring
+        // pattern's non-identifier-string-key branch (needed to rename a
+        // property like "aria-hidden" to a valid binding name) never
+        // checked for a trailing default value, so any such property WITH
+        // a default ("aria-hidden":h=!0) failed to parse at all.
+        function pick(t) {
+          let { "aria-hidden": h = true, size: n = 24 } = t;
+          return [h, n];
+        }
+        var picked1 = pick({ size: 10 });
+        var picked2 = pick({ "aria-hidden": false });
+        mark(45, picked1[0] === true && picked1[1] === 10 && picked2[0] === false && picked2[1] === 24);
+      } catch(e) { }
+
+      try {
+        // Reproduces a real gap found bisecting tailwindcss.com/figma.com: a
+        // regex literal as the first statement of an if/while/for/switch
+        // body was always lexed as division (no left operand exists there,
+        // so real division is never actually valid in that exact position),
+        // garbling every token after it until the parser hit unrelated
+        // garbage deep in the file.
+        var out = null;
+        if (true) /^a/.test('abc') && (out = 'if-ok');
+        var out2 = null;
+        for (let e in { onClick: 1 }) /^(on)(?:Click)?$/.test(e) && (out2 = e);
+        // Division right after the header close must remain division when
+        // an operand comes between the ")" and the "/" — unaffected by the fix.
+        var divOk = false;
+        if (true) { let a = 10, b = 2; divOk = a / b === 5; }
+        mark(46, out === 'if-ok' && out2 === 'onClick' && divOk);
+      } catch(e) { }
+    `, 47),
   },
   {
     name: 'class-features',

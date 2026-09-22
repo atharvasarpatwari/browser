@@ -828,16 +828,33 @@ export class Interpreter {
       }
       curObj = curObj.prototype;
     }
-    const loopEnv = new Environment(env);
     const varName = stmt.left.type === 'VariableDeclaration'
       ? (stmt.left.declarations[0]!.id as AST.Identifier).name
       : (stmt.left as AST.Identifier).name;
-    if (stmt.left.type === 'VariableDeclaration') {
-      loopEnv.declareTDZ(varName, stmt.left.kind as 'let' | 'const');
-      loopEnv.initialize(varName, undefined);
-    }
+    const isVarDecl = stmt.left.type === 'VariableDeclaration' && stmt.left.kind === 'var';
+    const isLetConst = stmt.left.type === 'VariableDeclaration' && (stmt.left.kind === 'let' || stmt.left.kind === 'const');
+    const kind = isLetConst ? (stmt.left as AST.VariableDeclaration).kind as 'let' | 'const' : undefined;
+    // `var` and a plain, already-existing identifier target both reuse one
+    // shared environment across every iteration — see execForOf's identical
+    // reasoning.
+    const sharedLoopEnv = isLetConst ? null : new Environment(env);
     for (const key of keys) {
-      loopEnv.set(varName, key);
+      let loopEnv: Environment;
+      if (isLetConst) {
+        // A real per-iteration lexical binding — required for `const`
+        // (env.set() always throws "Assignment to constant variable" on a
+        // const binding, so reusing one binding across iterations made
+        // every `for (const k in obj)` throw on the first iteration) and
+        // for `let` (so a closure captured in the loop body closes over
+        // that iteration's own key).
+        loopEnv = new Environment(env);
+        loopEnv.declareTDZ(varName, kind!);
+        loopEnv.initialize(varName, key);
+      } else {
+        loopEnv = sharedLoopEnv!;
+        if (isVarDecl) loopEnv.declare(varName, key, 'var');
+        else loopEnv.set(varName, key);
+      }
       const result = this.exec(stmt.body, loopEnv);
       if (isBreakSignal(result) && !result.label) return undefined;
       if (isBreakSignal(result) && result.label) return result;
@@ -906,7 +923,6 @@ export class Interpreter {
   private execForOf(stmt: AST.ForOfStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     const iterable = this.evalExpr(stmt.right, env);
     const values = this.forOfValues(iterable);
-    const loopEnv = new Environment(env);
     // Cast straight to Identifier and read .name unconditionally used to
     // silently drop every destructured loop variable (`for (let {a,b} of
     // list)`) — a pattern has no .name, so this bound a variable literally
@@ -915,23 +931,42 @@ export class Interpreter {
     // the same helpers execVarDecl and bindParams already use for this.
     const pattern = stmt.left.type === 'VariableDeclaration' ? stmt.left.declarations[0]!.id : stmt.left;
     const isVarDecl = stmt.left.type === 'VariableDeclaration' && stmt.left.kind === 'var';
-    if (stmt.left.type === 'VariableDeclaration' && (stmt.left.kind === 'let' || stmt.left.kind === 'const')) {
-      const kind = stmt.left.kind;
-      for (const name of collectPatternNames(pattern)) {
-        loopEnv.declareTDZ(name, kind);
-        loopEnv.initialize(name, undefined);
-      }
-    }
-    for (const val of values) {
-      // `var`'s declare() unconditionally overwrites on every call (no TDZ
-      // gate), so destructPattern is safe to call each iteration; `let`/
-      // `const`'s initialize() is one-shot (silently no-ops once TDZ is
-      // already cleared), so those — and a plain, already-existing
-      // identifier target — use real assignment instead, into the binding
-      // TDZ-predeclared once above.
+    const isLetConst = stmt.left.type === 'VariableDeclaration' && (stmt.left.kind === 'let' || stmt.left.kind === 'const');
+    const kind = isLetConst ? (stmt.left as AST.VariableDeclaration).kind as 'let' | 'const' : undefined;
+    // `var` and a plain, already-existing identifier target both reuse one
+    // shared environment across every iteration (var isn't block-scoped;
+    // a bare `for (x of arr)` target already lives outside the loop
+    // entirely, so assignPatternValues just walks up to it via env.set()).
+    const sharedLoopEnv = isLetConst ? null : new Environment(env);
+    for (const rawVal of values) {
+      // `for await (x of iterable)` awaits each value before binding it —
+      // same unwrap `await expr` uses, since this tree-walking interpreter
+      // already drains for-of's values eagerly rather than lazily pulling
+      // them one at a time.
+      const val = stmt.await ? this.awaitValue(rawVal) : rawVal;
+      let loopEnv: Environment;
       if (isVarDecl) {
+        // `var`'s declare() unconditionally overwrites on every call (no
+        // TDZ gate), so destructPattern is safe to call each iteration
+        // against the one shared environment.
+        loopEnv = sharedLoopEnv!;
         this.destructPattern(pattern, val, loopEnv, 'var');
+      } else if (isLetConst) {
+        // A real per-iteration lexical binding — required for `const`
+        // (env.set() always throws "Assignment to constant variable" on a
+        // const binding, so re-using one binding across iterations made
+        // every `for (const x of arr)` — one of the most common for-of
+        // shapes in real code — throw on the very first iteration) and for
+        // `let` (so a closure captured inside the loop body closes over
+        // THAT iteration's own value, not whichever value the last
+        // iteration ended on).
+        loopEnv = new Environment(env);
+        for (const name of collectPatternNames(pattern)) loopEnv.declareTDZ(name, kind!);
+        this.destructPattern(pattern, val, loopEnv, kind!);
       } else {
+        // Plain, already-existing identifier/pattern target: assign into
+        // whichever outer scope it already lives in.
+        loopEnv = sharedLoopEnv!;
         this.assignPatternValues(pattern, val, loopEnv);
       }
       const result = this.exec(stmt.body, loopEnv);
@@ -2186,7 +2221,14 @@ export class Interpreter {
   }
 
   private evalAwait(expr: AST.AwaitExpression, env: Environment): JSValue {
-    const val = this.evalExpr(expr.argument, env);
+    return this.awaitValue(this.evalExpr(expr.argument, env));
+  }
+
+  /** Shared by `await expr` and `for await (x of iterable)` — if the value
+   *  is a Promise, unwrap a fulfilled one, throw a rejected one, or suspend
+   *  via AwaitSignal while pending; otherwise passes the value through
+   *  unchanged (`for await` also accepts plain, non-Promise values). */
+  private awaitValue(val: JSValue): JSValue {
     // If value is a pending Promise, throw AwaitSignal to suspend execution
     if (typeof val === 'object' && val !== null && isPromiseObject(val)) {
       if (isPromiseFulfilled(val)) {
