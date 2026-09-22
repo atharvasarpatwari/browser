@@ -122,14 +122,20 @@ export class Lexer {
       if (this.peek(1) === '*') {
         return this.readBlockComment(startLine, startCol);
       }
+      // Context-aware: after expression-ending tokens, `/` is division.
+      // After operators/keywords/punctuation, `/` starts a regex literal.
+      // This MUST run before the `/=` check below — a regex literal whose
+      // pattern starts with `=` (e.g. `.match(/=[a-z]+/)`, a real pattern
+      // for matching a query-string assignment) is a completely valid,
+      // common regex, not a divide-assign operator, and misreading the `/`
+      // here swallows everything up to the next stray `=`-adjacent `/` in
+      // the file as one corrupted token, cascading into every token after it.
+      if (this.isRegexContext()) {
+        return this.readRegex(startLine, startCol);
+      }
       if (this.peek(1) === '=') {
         this.advance(2);
         return this.makeToken(TokenType.SlashAssign, '/=', startLine, startCol);
-      }
-      // Context-aware: after expression-ending tokens, `/` is division.
-      // After operators/keywords/punctuation, `/` starts a regex literal.
-      if (this.isRegexContext()) {
-        return this.readRegex(startLine, startCol);
       }
       this.advance();
       return this.makeToken(TokenType.Slash, '/', startLine, startCol);

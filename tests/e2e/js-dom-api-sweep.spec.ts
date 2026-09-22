@@ -445,6 +445,7 @@ const CASES: Case[] = [
       'more escaped-slash regex shapes work, and an ordinary regex with none is unaffected',
       'a top-level var/function declaration is immediately visible as a window property, and a window property assignment is visible as a bare identifier (real global-object semantics, not two independent copies)',
       'window.performance.timing exists with real PerformanceTiming fields (legacy API still read by real-world page-load beacons)',
+      'a regex literal whose pattern starts with "=" (e.g. matching a query-string assignment) is not misread as the /= divide-assign operator, and real /= still works',
     ],
     html: harnessHtml(`
       try {
@@ -736,7 +737,23 @@ const CASES: Case[] = [
         var t = window.performance.timing;
         mark(33, typeof t.navigationStart === 'number' && typeof t.responseStart === 'number' && typeof t.loadEventEnd === 'number');
       } catch(e) { }
-    `, 34),
+
+      try {
+        // Reproduces a real YouTube gap: the lexer checked "is the next
+        // char '=' " before checking "are we in a position where / starts
+        // a regex", so any regex whose pattern starts with '=' (a real
+        // query-string-assignment matcher) got misread as the /= operator
+        // and swallowed real code up to some unrelated later '/' as one
+        // corrupted string/regex token — corruption that then cascaded
+        // through the rest of the file.
+        var eqRe = /=[a-z]+/;
+        var m = 'x=foo&y=bar'.match(eqRe);
+        var regexOk = m !== null && m[0] === '=foo';
+        var n = 10;
+        n /= 2;
+        mark(34, regexOk && n === 5);
+      } catch(e) { }
+    `, 35),
   },
   {
     name: 'class-features',
