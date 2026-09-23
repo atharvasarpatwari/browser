@@ -1335,8 +1335,12 @@ export class Interpreter {
       const updateDesc = findPropertyDescriptor(obj, key);
       const old = toNumber(updateDesc?.getter ? callJSFunction(updateDesc.getter, obj, []) : updateDesc?.value);
       const newVal = expr.operator === '++' ? old + 1 : old - 1;
-      if (updateDesc?.setter) callJSFunction(updateDesc.setter, obj, [newVal]);
-      else obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
+      if (updateDesc?.setter) {
+        callJSFunction(updateDesc.setter, obj, [newVal]);
+      } else {
+        obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
+        this.growArrayLengthIfNeeded(obj, key);
+      }
       return expr.prefix ? newVal : old;
     }
     const name = (expr.argument as AST.Identifier)?.name;
@@ -1405,6 +1409,25 @@ export class Interpreter {
     return left;
   }
 
+  // Real arrays auto-grow `.length` when a numeric index at or past the
+  // current length is assigned (`arr[arr.length] = x`, the classic "push
+  // without .push()" idiom — jQuery's own internal `map()` uses exactly
+  // this). Every array method that appends (push, splice, ...) already
+  // maintains this manually; a bare indexed assignment/compound-assignment/
+  // increment never did, so `.length` silently stayed stale — anything
+  // that later reads `.length` (an ordinary for-loop, JSON.stringify,
+  // spread) saw the array as empty even though the values were really
+  // there at their indices. Shared by all three write paths that can
+  // target an array index: plain `=`, compound (`+=` etc.), and `++`/`--`.
+  private growArrayLengthIfNeeded(obj: JSObject, key: string): void {
+    if (obj.type !== 'array' || !/^(0|[1-9]\d*)$/.test(key)) return;
+    const idx = Number(key);
+    const currentLength = Number(obj.properties.get('length')?.value ?? 0);
+    if (idx >= currentLength) {
+      obj.properties.set('length', { value: idx + 1, writable: true, enumerable: false, configurable: false });
+    }
+  }
+
   private evalAssignment(expr: AST.AssignmentExpression, env: Environment): JSValue {
     const right = this.evalExpr(expr.right, env);
 
@@ -1463,6 +1486,7 @@ export class Interpreter {
             }
           }
           obj.properties.set(key, { value: right, writable: true, enumerable: true, configurable: true });
+          this.growArrayLengthIfNeeded(obj, key);
         }
         return right;
       }
@@ -1493,9 +1517,12 @@ export class Interpreter {
         default: newVal = right;
       }
       const compoundSetter = findPropertyDescriptor(obj, key)?.setter;
-      compoundSetter
-        ? callJSFunction(compoundSetter, obj, [newVal])
-        : obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
+      if (compoundSetter) {
+        callJSFunction(compoundSetter, obj, [newVal]);
+      } else {
+        obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
+        this.growArrayLengthIfNeeded(obj, key);
+      }
       return newVal;
     }
 

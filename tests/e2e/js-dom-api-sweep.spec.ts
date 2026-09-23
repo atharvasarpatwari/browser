@@ -192,6 +192,7 @@ const CASES: Case[] = [
       'customElements.define() accepts a real class extending HTMLElement (real Cloudflare/Astro code), not just a plain function',
       'document.currentScript is the real, currently-executing <script> element (real self-configuring embed-script pattern, e.g. Fathom/Plausible analytics reading their own data-* attributes) and is null once the script finishes',
       'a plain element\'s getElementsByTagName (not just document\'s) finds descendants, including the "*" wildcard (real jQuery feature-detection code builds a detached scratch div then calls div.getElementsByTagName), and document.createDocumentFragment() supports appendChild/removeChild/cloneNode (also real jQuery feature-detection code)',
+      'document/element nodeType and nodeName are real values (real jQuery Sizzle selector engine reads documentElement.nodeName to decide HTML vs XML, and silently disabled all its optimized selector matching without this — "$(\'.class\')" matched nothing), element.ownerDocument resolves to the real document (real jQuery buildFragment reads it to call createDocumentFragment()), and appending a real DocumentFragment moves its children in rather than inserting the fragment itself',
     ],
     html: harnessHtml(`
       var lab = document.getElementById('lab');
@@ -394,7 +395,38 @@ const CASES: Case[] = [
 
         mark(18, tagOk && addedOk && removedOk && cloneOk);
       } catch(e) { }
-    `, 19),
+
+      try {
+        // Reproduces the real gap that unblocked real jQuery's entire
+        // Sizzle selector engine: document.nodeType/nodeName and
+        // element.nodeType/nodeName didn't exist at all. Sizzle's own
+        // isXML() check reads documentElement.nodeName !== "HTML" to
+        // decide whether a document is HTML or XML — with nodeName always
+        // undefined, every document looked like XML, so Sizzle
+        // permanently disabled its getElementsByClassName/
+        // getElementsByTagName-based fast paths and "$('.some-class')"
+        // silently matched nothing.
+        var docNodeOk = document.nodeType === 9 && document.nodeName === '#document';
+        var elNodeOk = document.documentElement.nodeType === 1 && document.documentElement.nodeName === 'HTML';
+
+        // Reproduces the real gap in jQuery's own buildFragment(): it
+        // resolves the owning document via el.ownerDocument || el before
+        // calling .createDocumentFragment() on it — with ownerDocument
+        // missing entirely, that call landed on the element itself and
+        // crashed. Also verifies a real DocumentFragment, once appended,
+        // moves its children into the target instead of inserting the
+        // fragment node itself.
+        var ownerDocOk = document.createElement('div').ownerDocument === document;
+        var target = document.createElement('div');
+        var frag = document.createDocumentFragment();
+        frag.appendChild(document.createElement('span'));
+        frag.appendChild(document.createElement('b'));
+        target.appendChild(frag);
+        var fragFlattenOk = target.children.length === 2 && frag.children.length === 0;
+
+        mark(19, docNodeOk && elNodeOk && ownerDocOk && fragFlattenOk);
+      } catch(e) { }
+    `, 20),
   },
   {
     name: 'async-and-collections',
@@ -534,6 +566,7 @@ const CASES: Case[] = [
       'Array.prototype is a real object exposing the same methods a real array instance has (real jQuery code reads Array.prototype.push/.slice directly), and Array.prototype.findLast/findLastIndex both work (real cloudflare.com beacon code)',
       'new a.b.c(args) constructs the full member-expression chain, not (new a.b).c(args) — a real jQuery core-factory pattern (jQuery = function(a,b){return new jQuery.fn.init(a,b);}) misparsed this way recursed into its own constructor forever',
       'an empty statement (a bare ";") as an if/for-in/for-of body no longer crashes the engine — real jQuery 1.8.2 uses "for(d in obj);" (isPlainObject) to leave a variable set to the last enumerable key, relying on exactly this shape',
+      'assigning a numeric array index at or past the current length (arr[arr.length] = x, the "push without .push()" idiom real jQuery.map uses internally) correctly grows .length, for plain assignment, compound assignment, and ++/--',
     ],
     html: harnessHtml(`
       try {
@@ -1147,7 +1180,43 @@ const CASES: Case[] = [
 
         mark(52, forInOk && ifRan && forOk);
       } catch(e) { }
-    `, 53),
+
+      try {
+        // Reproduces a real, foundational gap found completing the jQuery
+        // investigation: assigning a numeric array index never grew
+        // .length at all, only real array methods (push, splice, ...) did.
+        // jQuery's own internal Array.prototype.map alternative uses the
+        // classic "g[g.length] = value" idiom to append without calling
+        // .push() — with .length silently stuck at 0, every caller that
+        // read it back afterward (a plain for-loop, JSON.stringify, a
+        // spread) saw the array as empty even though the values were
+        // really stored at their indices.
+        var a = [];
+        a[a.length] = 'x';
+        a[a.length] = 'y';
+        var pushIdiomOk = a.length === 2 && a[0] === 'x' && a[1] === 'y';
+
+        var b = [];
+        b[3] = 'z';
+        var sparseOk = b.length === 4 && b[3] === 'z';
+
+        var c = [];
+        c[0] = 1;
+        c[0] += 1;
+        var compoundOk = c[0] === 2 && c.length === 1;
+
+        var d = [];
+        d[0] = 0;
+        d[0]++;
+        var incrementOk = d[0] === 1 && d.length === 1;
+
+        var f = [1, 2, 3];
+        f[1] = 'x';
+        var withinBoundsOk = f.length === 3;
+
+        mark(53, pushIdiomOk && sparseOk && compoundOk && incrementOk && withinBoundsOk);
+      } catch(e) { }
+    `, 54),
   },
   {
     name: 'class-features',

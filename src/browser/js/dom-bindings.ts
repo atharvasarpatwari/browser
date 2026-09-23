@@ -342,6 +342,14 @@ export function createDocumentBinding(
   domTree: IDomTree,
 ): JSObject {
   const docObj = createObject(null);
+  documentCache.set(domTree, docObj);
+
+  // nodeType/nodeName — see wrapElement()'s identical addition for why
+  // (Sizzle's XML-vs-HTML document detection reads documentElement's
+  // nodeName, but document.nodeType is read by other real-world code too,
+  // e.g. Sizzle's own contains() feature-detection: `a.nodeType===9`).
+  docObj.properties.set('nodeType', { value: 9, writable: false, enumerable: true, configurable: false });
+  docObj.properties.set('nodeName', { value: '#document', writable: false, enumerable: true, configurable: false });
 
   // getElementById
   docObj.properties.set('getElementById', {
@@ -414,15 +422,16 @@ export function createDocumentBinding(
   });
 
   // createDocumentFragment — a detached container node for batch DOM
-  // building (real code, e.g. jQuery's own feature-detection scratch code,
-  // does createDocumentFragment().appendChild(...)/.cloneNode()/etc.).
+  // building (real code, e.g. jQuery's own .append()/domManip, builds a
+  // fragment, appends nodes to it, then appends the whole fragment once).
   // ponytail: modeled as a plain detached element (tagName
   // "#document-fragment") reusing the existing element machinery, which
   // covers appendChild/removeChild/cloneNode/children/querySelector for
-  // free — not a spec-accurate DocumentFragment (real nodeType 11, and
-  // appending IT into a live element should move its children in rather
-  // than insert the fragment itself). Upgrade if real code depends on
-  // either of those specifically.
+  // free. Its own nodeType stays the generic element value rather than the
+  // real spec's 11 — upgrade if real code depends on that specifically —
+  // but appending it into a live element DOES correctly move its children
+  // in rather than insert the fragment itself (appendChild's own
+  // "#document-fragment" tagName check handles that).
   docObj.properties.set('createDocumentFragment', {
     value: createNativeFunction('createDocumentFragment', () => {
       const el = makeElement('#document-fragment', null);
@@ -544,6 +553,14 @@ export function createDocumentBinding(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const elementCache = new WeakMap<DomElement, JSObject>();
+
+// Lets wrapElement() answer `el.ownerDocument` with the exact same document
+// JSObject the page's own `document` global refers to (real code relies on
+// `el.ownerDocument === document`, and on calling methods like
+// `el.ownerDocument.createDocumentFragment()` — real jQuery's own
+// buildFragment() does exactly that) — populated once by
+// createDocumentBinding() per domTree.
+const documentCache = new WeakMap<IDomTree, JSObject>();
 
 // ── Animation Registry ─────────────────────────────────────────────────────
 // Maps element domId → active Animation[] for getAnimations().
@@ -816,6 +833,29 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     writable: false, enumerable: true, configurable: false,
   });
 
+  // nodeType/nodeName — real code checks these constantly (`node.nodeType
+  // === 1`, `node.nodeName === "HTML"`), and jQuery's Sizzle selector
+  // engine specifically uses `documentElement.nodeName !== "HTML"` to
+  // decide whether a document is XML. Neither existed at all, so Sizzle
+  // always concluded every document was XML and permanently disabled its
+  // getElementsByClassName/getElementsByTagName-based fast paths (and
+  // anything else gated on documentIsHTML) — `$('.some-class')` silently
+  // matched nothing, on top of countless other real-world "if
+  // (node.nodeType === 1)" checks elsewhere breaking the same way.
+  obj.properties.set('nodeType', { value: 1, writable: false, enumerable: true, configurable: false });
+  obj.properties.set('nodeName', { value: el.tagName.toUpperCase(), writable: false, enumerable: true, configurable: false });
+
+  // ownerDocument — was missing entirely, so real code that resolves the
+  // owning document from an arbitrary element (jQuery's own buildFragment:
+  // `c = c.ownerDocument || c` to get from a target element back to
+  // `document` before calling `c.createDocumentFragment()`) silently kept
+  // the element itself instead, then crashed calling a method that only
+  // exists on the real document.
+  obj.properties.set('ownerDocument', {
+    value: documentCache.get(domTree) ?? null,
+    writable: false, enumerable: true, configurable: false,
+  });
+
   // id (getter/setter backed by DOM attributes)
   obj.properties.set('id', {
     value: getAttr(el, 'id') ?? '',
@@ -1013,7 +1053,22 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       const child = args[0] as JSObject;
       if (typeof child === 'object' && child !== null && '__domNode' in child) {
         const domNode = (child as JSObject & { __domNode: DomNode }).__domNode;
-        domTree.appendChild(el, domNode);
+        // A real DocumentFragment moves its children into the target
+        // instead of being inserted itself, then ends up empty — real
+        // jQuery .append()/domManip relies on this (it builds a fragment,
+        // appends it once, then expects the target's own children to
+        // reflect the fragment's former contents directly). See
+        // createDocumentFragment()'s own note: it's a plain detached
+        // element tagged "#document-fragment" reusing this same
+        // appendChild, so this is the one place that needs to know about it.
+        if (domNode.nodeType === 'element' && (domNode as DomElement).tagName === '#document-fragment') {
+          for (const fragChild of [...domNode.children]) {
+            domTree.removeChild(domNode as DomElement, fragChild);
+            domTree.appendChild(el, fragChild);
+          }
+        } else {
+          domTree.appendChild(el, domNode);
+        }
         if (isNodeConnected(el, domTree)) notifyConnectedTree(child);
       }
       return args[0];
@@ -1988,6 +2043,7 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
 function wrapTextNode(node: DomNode): JSObject {
   const obj = createObject(null);
   obj.properties.set('nodeType', { value: 3, writable: false, enumerable: true, configurable: false });
+  obj.properties.set('nodeName', { value: '#text', writable: false, enumerable: true, configurable: false });
   obj.properties.set('textContent', {
     value: (node as DomNode & { text?: string }).text ?? '',
     writable: true, enumerable: true, configurable: true,
