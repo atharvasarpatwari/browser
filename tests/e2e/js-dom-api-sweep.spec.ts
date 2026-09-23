@@ -533,6 +533,7 @@ const CASES: Case[] = [
       '"use strict" is correctly detected both as a function-level directive and a program-level directive that propagates to every function in the file (including ones nested inside it), so a strict function call\'s this correctly stays undefined instead of falling back to the global object',
       'Array.prototype is a real object exposing the same methods a real array instance has (real jQuery code reads Array.prototype.push/.slice directly), and Array.prototype.findLast/findLastIndex both work (real cloudflare.com beacon code)',
       'new a.b.c(args) constructs the full member-expression chain, not (new a.b).c(args) — a real jQuery core-factory pattern (jQuery = function(a,b){return new jQuery.fn.init(a,b);}) misparsed this way recursed into its own constructor forever',
+      'an empty statement (a bare ";") as an if/for-in/for-of body no longer crashes the engine — real jQuery 1.8.2 uses "for(d in obj);" (isPlainObject) to leave a variable set to the last enumerable key, relying on exactly this shape',
     ],
     html: harnessHtml(`
       try {
@@ -1120,7 +1121,33 @@ const CASES: Case[] = [
         var factoryOk = factoryResult.a === 'x' && factoryResult.b === 'y' && factoryResult instanceof jQueryLike;
         mark(51, deepOk && bracketOk && factoryOk);
       } catch(e) { }
-    `, 52),
+
+      try {
+        // Reproduces a real gap found completing the jQuery investigation:
+        // parseStatement() returns null for a bare ";" (empty statement)
+        // rather than a dedicated AST node, and every single-statement
+        // if/loop body reads it via a non-null assertion. exec()'s own
+        // dispatch, and a separate let/const TDZ-hoisting pre-scan that
+        // recurses into an if's branches, both read ".type" straight off
+        // that value — a real "for(d in a);" (jQuery 1.8.2's own
+        // isPlainObject, leaning on an empty for-in body to leave its
+        // variable set to the last enumerable key) crashed the whole
+        // engine on "Cannot read properties of null (reading 'type')".
+        var forInVar;
+        for (forInVar in { a: 1, b: 2, c: 3 });
+        var forInOk = forInVar === 'c';
+
+        var ifRan = false;
+        if (true);
+        if (false); else ifRan = true;
+
+        var i = 0;
+        for (; i < 3; i++);
+        var forOk = i === 3;
+
+        mark(52, forInOk && ifRan && forOk);
+      } catch(e) { }
+    `, 53),
   },
   {
     name: 'class-features',

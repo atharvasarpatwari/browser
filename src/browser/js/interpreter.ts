@@ -370,7 +370,16 @@ export class Interpreter {
 
   // ── Statement execution ──────────────────────────────────────────────────
 
-  private exec(stmt: AST.Statement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
+  private exec(stmt: AST.Statement | null, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
+    // parseStatement() returns null for a bare `;` (empty statement) rather
+    // than a dedicated EmptyStatement AST node, and every single-statement
+    // loop/if body (if/else, for-in, for-of, for(;;), while, do-while) reads
+    // it via a `parseStatement()!` non-null assertion — a real `for(d in
+    // a);` (jQuery 1.8.2's own isPlainObject: an empty for-in body used
+    // purely to leave the loop variable set to the last enumerable key)
+    // made that assertion a lie, and exec() crashed on `null.type` instead
+    // of running the no-op real JS gives an empty statement.
+    if (stmt === null) return undefined;
     this.checkTimeout();
     switch (stmt.type) {
       // A block introduces its own lexical scope for let/const/class (and
@@ -427,8 +436,13 @@ export class Interpreter {
     return lastResult;
   }
 
-  private hoistLetConst(body: AST.Statement[], env: Environment): void {
+  private hoistLetConst(body: (AST.Statement | null)[], env: Environment): void {
     for (const stmt of body) {
+      // An if's consequent/alternate can be null (a bare `;` empty
+      // statement — see exec()'s own identical null guard for the real
+      // trigger), so this recursive-into-if-branches call can hand this
+      // loop a null entry the same way a real statement list never does.
+      if (stmt === null) continue;
       if (stmt.type === 'VariableDeclaration' && (stmt.kind === 'let' || stmt.kind === 'const')) {
         for (const decl of stmt.declarations) {
           if (decl.id.type === 'Identifier') {
