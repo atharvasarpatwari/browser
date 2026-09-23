@@ -543,7 +543,34 @@ export class Parser {
       this.expect(TokenType.Identifier); // "target"
       return { type: 'NewTargetExpression', loc: { line: tok.line, column: tok.column } };
     }
-    const callee = this.parseExpression(18);
+    // `new`'s callee is a MemberExpression: it can chain `.prop`/`[expr]`
+    // accesses (`new a.b.c(...)`, real jQuery-style `new p.fn.init(...)`)
+    // but must NOT swallow a following `(...)` call — that argument list
+    // belongs to `new` itself. The shared Pratt precedence table
+    // (infixPrecedence) groups Dot/LBracket/LParen at the same level, so
+    // parseExpression(18) here couldn't split "consume member access" from
+    // "consume a call": it stopped at the very first token (before even
+    // `.`), returning a bare identifier as the callee. The surrounding
+    // expression parser then picked up `.Init(...)` as an ordinary member
+    // call on the freshly-constructed value — `new p.Init(a,b)` silently
+    // became `(new p()).Init(a,b)`. When a constructor's own body does
+    // exactly this (`p = function(){ return new p.Init(...); }`, jQuery's
+    // real core factory), that misparse recurses into `new p()` forever.
+    let callee: AST.Expression = this.parsePrefix();
+    while (this.is(TokenType.Dot) || this.is(TokenType.LBracket)) {
+      if (this.is(TokenType.Dot)) {
+        this.advance();
+        const propTok = this.peek();
+        this.advance();
+        const prop: AST.Identifier = { type: 'Identifier', name: propTok.value, loc: { line: propTok.line, column: propTok.column } };
+        callee = { type: 'MemberExpression', object: callee, property: prop, computed: false, optional: false, loc: { line: tok.line, column: tok.column } };
+      } else {
+        this.advance();
+        const prop = this.parseExpression();
+        this.expect(TokenType.RBracket);
+        callee = { type: 'MemberExpression', object: callee, property: prop, computed: true, optional: false, loc: { line: tok.line, column: tok.column } };
+      }
+    }
     let args: AST.Expression[] = [];
     if (this.is(TokenType.LParen)) {
       this.advance();

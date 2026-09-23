@@ -504,6 +504,7 @@ const CASES: Case[] = [
       'top-level this is the real global object (window/globalThis), not undefined (real Angular.dev dark-mode-detection code reads this.document at the top of an inline script), and a plain non-strict function call falls back to it the same way',
       '"use strict" is correctly detected both as a function-level directive and a program-level directive that propagates to every function in the file (including ones nested inside it), so a strict function call\'s this correctly stays undefined instead of falling back to the global object',
       'Array.prototype is a real object exposing the same methods a real array instance has (real jQuery code reads Array.prototype.push/.slice directly), and Array.prototype.findLast/findLastIndex both work (real cloudflare.com beacon code)',
+      'new a.b.c(args) constructs the full member-expression chain, not (new a.b).c(args) — a real jQuery core-factory pattern (jQuery = function(a,b){return new jQuery.fn.init(a,b);}) misparsed this way recursed into its own constructor forever',
     ],
     html: harnessHtml(`
       try {
@@ -1066,7 +1067,32 @@ const CASES: Case[] = [
           && [1, 2, 3, 4].findLastIndex(function (x) { return x % 2 === 0; }) === 3;
         mark(50, protoIsObject && protoPushWorks && protoSliceWorks && findLastOk);
       } catch(e) { }
-    `, 51),
+
+      try {
+        // Reproduces a real, high-impact gap found continuing the jQuery
+        // investigation: "new"'s callee is a MemberExpression grammar
+        // production that can chain .prop/[expr] accesses but must NOT
+        // swallow a following (...) call — that argument list belongs to
+        // "new" itself. The shared Pratt precedence table groups Dot/
+        // LBracket/LParen at one level, so the old parseExpression(18)
+        // callee-parse couldn't consume ".Init" at all: "new p.Init(a,b)"
+        // silently became "(new p()).Init(a,b)" — construct bare p with
+        // NO arguments, then call the unrelated .Init as a plain method.
+        // jQuery's own real core factory (p=function(a,b){return new
+        // p.fn.init(a,b);}) hit exactly this shape on every call, and
+        // since the misparse means calling p ends up constructing p AGAIN,
+        // it recursed into itself forever ("Maximum call stack exceeded").
+        var deep = { b: { c: function (x) { this.x = x; } } };
+        var deepOk = new deep.b.c(5).x === 5;
+        var bracketOk = new deep['b'].c(6).x === 6;
+        var jQueryLike = function (a, b) { return new jQueryLike.fn.init(a, b); };
+        jQueryLike.fn = jQueryLike.prototype = { init: function (a, b) { this.a = a; this.b = b; return this; } };
+        jQueryLike.fn.init.prototype = jQueryLike.fn;
+        var factoryResult = jQueryLike('x', 'y');
+        var factoryOk = factoryResult.a === 'x' && factoryResult.b === 'y' && factoryResult instanceof jQueryLike;
+        mark(51, deepOk && bracketOk && factoryOk);
+      } catch(e) { }
+    `, 52),
   },
   {
     name: 'class-features',
