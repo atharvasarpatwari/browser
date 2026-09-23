@@ -1737,7 +1737,19 @@ class Html5Tokenizer {
   }
 
   private commitAttr(): void {
-    this.attrs.set(this.attrName, this.attrValue);
+    // emitTag() unconditionally calls this once more at the very end of
+    // every tag (on top of the per-attribute calls already made while
+    // tokenizing), to flush whatever attribute was still being built when
+    // the tag closed. A real attribute name can never be empty (the
+    // tokenizer only enters the attribute-name state on a real character),
+    // so an empty attrName here means either the tag had zero attributes,
+    // or the last real one was already committed and reset — either way,
+    // nothing new to commit. Without this guard, `attrs.set('', '')`
+    // added a bogus empty-named attribute to every single parsed tag,
+    // regardless of how many real attributes it had.
+    if (this.attrName !== '') {
+      this.attrs.set(this.attrName, this.attrValue);
+    }
     this.attrName = '';
     this.attrValue = '';
   }

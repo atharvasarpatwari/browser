@@ -606,11 +606,15 @@ function arrayIncludes(_this: JSValue, args: JSValue[]): JSValue {
   return elems.some(v => v === search || (typeof v === 'number' && typeof search === 'number' && Number.isNaN(v) && Number.isNaN(search)));
 }
 
+function resolveSliceIndex(value: number, length: number): number {
+  return value < 0 ? Math.max(length + value, 0) : Math.min(value, length);
+}
+
 function arraySlice(_this: JSValue, args: JSValue[]): JSValue {
   if (typeof _this !== 'object' || _this === null) return createArray([]);
   const elems = getArrayElements(_this as JSObject);
-  const start = args[0] !== undefined ? Math.max(0, toNumber(args[0])) : 0;
-  const end = args[1] !== undefined ? Math.min(elems.length, toNumber(args[1])) : elems.length;
+  const start = args[0] !== undefined ? resolveSliceIndex(toNumber(args[0]), elems.length) : 0;
+  const end = args[1] !== undefined ? resolveSliceIndex(toNumber(args[1]), elems.length) : elems.length;
   return createArray(elems.slice(start, end));
 }
 

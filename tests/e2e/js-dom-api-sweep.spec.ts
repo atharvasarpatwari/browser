@@ -568,6 +568,8 @@ const CASES: Case[] = [
       'an empty statement (a bare ";") as an if/for-in/for-of body no longer crashes the engine — real jQuery 1.8.2 uses "for(d in obj);" (isPlainObject) to leave a variable set to the last enumerable key, relying on exactly this shape',
       'assigning a numeric array index at or past the current length (arr[arr.length] = x, the "push without .push()" idiom real jQuery.map uses internally) correctly grows .length, for plain assignment, compound assignment, and ++/--',
       'a ternary whose branches are bare (unparenthesized) assignment expressions parses correctly (cond ? a=x : a=y), not as a ConditionalExpression used as an invalid assignment target — real jQuery\'s own per-element data-cache ID assignment is written exactly this way, and the misparse silently broke .on()/.trigger() and anything else built on jQuery\'s internal data() cache',
+      'Array.prototype.slice resolves a negative start/end index relative to the array\'s length instead of clamping it to 0 — jQuery\'s own .last() is implemented as .slice(-1), and the clamp bug made it silently return the entire, unfiltered collection instead of just the final element',
+      'HTML parsing never adds a bogus empty-string-keyed attribute to a parsed tag (the tokenizer\'s per-tag attribute flush ran unconditionally even when there was nothing left to commit)',
     ],
     html: harnessHtml(`
       try {
@@ -1254,7 +1256,40 @@ const CASES: Case[] = [
 
         mark(54, bothBranchesOk && alternateOk && chainedOk && nestedOk && commaBoundaryOk);
       } catch(e) { }
-    `, 55),
+
+      try {
+        // Array.prototype.slice clamped a negative index straight to 0
+        // instead of resolving it relative to the array's length, so
+        // slice(-1) silently degraded into slice(0, length) — the whole
+        // array. Real jQuery's .last() is written as this.slice(-1), so
+        // every .last() call returned the entire, unfiltered collection.
+        var arr = ['a', 'b', 'c', 'd', 'e'];
+        var lastOne = arr.slice(-1).join(',') === 'e';
+        var lastTwo = arr.slice(-2).join(',') === 'd,e';
+        var negBoth = arr.slice(-3, -1).join(',') === 'c,d';
+        var mixed = arr.slice(1, -1).join(',') === 'b,c,d';
+        var beyondClampsToStart = arr.slice(-100).join(',') === 'a,b,c,d,e';
+        mark(55, lastOne && lastTwo && negBoth && mixed && beyondClampsToStart);
+      } catch(e) { }
+
+      try {
+        // The HTML tokenizer's attribute finalizer ran unconditionally one
+        // extra time whenever a tag closed (on top of the per-attribute
+        // calls made while tokenizing), to flush an attribute still being
+        // built. With attrName already reset to '' by then, that extra
+        // call added a bogus empty-string-keyed attribute to every single
+        // parsed tag, whether or not it had real attributes.
+        var el = document.getElementById('lab');
+        el.innerHTML = '<span>plain</span>';
+        var noBogusOnPlainTag = el.children[0].getAttribute('') === null;
+
+        el.innerHTML = '<span class="a" id="b">attrs</span>';
+        var realAttrsIntact = el.children[0].getAttribute('class') === 'a' && el.children[0].getAttribute('id') === 'b';
+        var stillNoBogusAttr = el.children[0].getAttribute('') === null;
+
+        mark(56, noBogusOnPlainTag && realAttrsIntact && stillNoBogusAttr);
+      } catch(e) { }
+    `, 57),
   },
   {
     name: 'class-features',
