@@ -456,12 +456,24 @@ export class Parser {
         return { type: 'TaggedTemplateExpression', tag: left, quasi, loc: { line: tok.line, column: tok.column } };
       }
 
-      // Ternary
+      // Ternary. Real ECMAScript grammar: `ConditionalExpression: ... "?"
+      // AssignmentExpression ":" AssignmentExpression` — both branches are
+      // AssignmentExpressions (precedence 2: consumes "="/compound-assign,
+      // stops at ","). The alternate used `prec` (this Question token's own
+      // precedence, 3) as its minimum instead, which stops one level too
+      // early — right at a bare identifier, before consuming a trailing
+      // "=" — so `j ? x=5 : x=6` silently mis-parsed as `(j ? (x=5) : x) =
+      // 6`: a ConditionalExpression used as an assignment target, which
+      // isn't even a valid LeftHandSideExpression in real JS. This exact
+      // shape (`l||(j?a[h]=l=X:l=h)`) is how real jQuery's own internal
+      // per-element data-cache ID assignment is written, so every element
+      // silently never got a data-cache entry, breaking `.on()`/`.trigger()`
+      // and anything else built on jQuery's own `data()`/`_data()`.
       case TokenType.Question:
         this.advance();
-        const consequent = this.parseExpression();
+        const consequent = this.parseExpression(2);
         this.expect(TokenType.Colon);
-        const alternate = this.parseExpression(prec);
+        const alternate = this.parseExpression(2);
         return { type: 'ConditionalExpression', test: left, consequent, alternate, loc: { line: tok.line, column: tok.column } };
 
       // Comma (sequence)

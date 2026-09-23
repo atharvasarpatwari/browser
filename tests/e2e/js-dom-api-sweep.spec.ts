@@ -567,6 +567,7 @@ const CASES: Case[] = [
       'new a.b.c(args) constructs the full member-expression chain, not (new a.b).c(args) — a real jQuery core-factory pattern (jQuery = function(a,b){return new jQuery.fn.init(a,b);}) misparsed this way recursed into its own constructor forever',
       'an empty statement (a bare ";") as an if/for-in/for-of body no longer crashes the engine — real jQuery 1.8.2 uses "for(d in obj);" (isPlainObject) to leave a variable set to the last enumerable key, relying on exactly this shape',
       'assigning a numeric array index at or past the current length (arr[arr.length] = x, the "push without .push()" idiom real jQuery.map uses internally) correctly grows .length, for plain assignment, compound assignment, and ++/--',
+      'a ternary whose branches are bare (unparenthesized) assignment expressions parses correctly (cond ? a=x : a=y), not as a ConditionalExpression used as an invalid assignment target — real jQuery\'s own per-element data-cache ID assignment is written exactly this way, and the misparse silently broke .on()/.trigger() and anything else built on jQuery\'s internal data() cache',
     ],
     html: harnessHtml(`
       try {
@@ -1216,7 +1217,44 @@ const CASES: Case[] = [
 
         mark(53, pushIdiomOk && sparseOk && compoundOk && incrementOk && withinBoundsOk);
       } catch(e) { }
-    `, 54),
+
+      try {
+        // Reproduces a real, high-impact parser gap found completing the
+        // jQuery investigation: a ternary's alternate branch was parsed at
+        // the ternary's own precedence instead of AssignmentExpression
+        // precedence (real ECMAScript grammar: both branches of "?:" are
+        // AssignmentExpressions), stopping one level too early right after
+        // a bare identifier. "j ? x=5 : x=6" silently mis-parsed as
+        // "(j ? (x=5) : x) = 6" — a ConditionalExpression used as an
+        // assignment target, not even valid in real JS. Real jQuery's own
+        // per-element data-cache ID assignment is written exactly this way
+        // ("l||(j?a[h]=l=X:l=h)"), so this alone broke .on()/.trigger()
+        // and anything else built on jQuery's internal data() cache.
+        var x1;
+        true ? x1 = 1 : x1 = 2;
+        var bothBranchesOk = x1 === 1;
+
+        var x2;
+        false ? x2 = 1 : x2 = 2;
+        var alternateOk = x2 === 2;
+
+        var a, b;
+        true ? a = b = 5 : a = b = 6;
+        var chainedOk = a === 5 && b === 5;
+
+        // Nested ternary chaining (right-associative) must still work.
+        var classify = function (n) { return n < 0 ? 'neg' : n === 0 ? 'zero' : 'pos'; };
+        var nestedOk = classify(-1) === 'neg' && classify(0) === 'zero' && classify(1) === 'pos';
+
+        // A comma right after a ternary must stay a separate sequence
+        // element, not get swallowed into the alternate branch.
+        var c, d;
+        c = true ? 1 : 2, d = 99;
+        var commaBoundaryOk = c === 1 && d === 99;
+
+        mark(54, bothBranchesOk && alternateOk && chainedOk && nestedOk && commaBoundaryOk);
+      } catch(e) { }
+    `, 55),
   },
   {
     name: 'class-features',
