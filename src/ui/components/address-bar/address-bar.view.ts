@@ -132,7 +132,11 @@ class AddressBarView implements IAddressBarView {
     if (!this.container) return;
 
     this.container.innerHTML = '';
-    this.container.className = 'address-bar';
+    // Add, don't replace: the container may already carry a layout-owned
+    // class (e.g. MobileLayout's "mobile-address-bar") that must survive
+    // attachment — clobbering it here previously left MobileLayout's own
+    // hideChromeUI visibility toggle unable to find the element it just hid.
+    this.container.classList.add('address-bar');
 
     const wrapper = document.createElement('div');
     wrapper.className = 'address-bar-inner';

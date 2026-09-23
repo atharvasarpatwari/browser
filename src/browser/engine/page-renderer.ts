@@ -56,6 +56,9 @@ import { callJSFunction, setGlobalCaller, type JSFunction, type JSObject } from 
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
+import type { CspPolicyStore } from '../security/csp-policy-store';
+import type { ICorsEngine } from '../security/cors';
+import { parseOrigin, OPAQUE_ORIGIN } from '../security/origin-service';
 import type { SecurityLayer } from '../media/security-layer';
 import { ReflowRepaintController } from '../rendering/reflow-repaint-controller';
 import type { LayerCompositor } from '../rendering/compositing/layer-compositor';
@@ -82,6 +85,10 @@ interface PageRendererDependencies {
   readonly scriptEnforcer?: CspScriptEnforcer;
   /** Optional CSP resource enforcer — passed to JS engine for fetch() connect-src checks. */
   readonly resourceEnforcer?: import('../security/csp-resource-enforcer').CspResourceEnforcer;
+  /** Optional CSP policy store — receives Content-Security-Policy headers from fetched documents. */
+  readonly policyStore?: CspPolicyStore;
+  /** Optional CORS engine — attached to fetch()/XHR in the JS engine. */
+  readonly corsEngine?: ICorsEngine;
   /** Optional security layer — enforces mixed-content/CSRF/SRI on sub-resources. */
   readonly securityLayer?: SecurityLayer;
   /** Optional base directory for persistent page web storage (localStorage/IndexedDB). */
@@ -126,6 +133,23 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // 0. Apply response-time security policies (COOP/COEP/CORP, referrer-policy).
     //    Top-level documents are not framed, so clickjacking is skipped here.
     this.deps.securityLayer?.applyResponseHeaders(result.url, result.headers, { framed: false });
+
+    // 0b. CSP policy ingestion — store any Content-Security-Policy /
+    //     Content-Security-Policy-Report-Only headers for this document's
+    //     origin so the script/resource/navigation enforcers actually run.
+    if (this.deps.policyStore) {
+      const origin = parseOrigin(result.url);
+      const csp = result.headers.get('content-security-policy');
+      const cspReportOnly = result.headers.get('content-security-policy-report-only');
+      if (origin && origin !== OPAQUE_ORIGIN && (csp || cspReportOnly)) {
+        this.deps.policyStore.storeFromHeaders(
+          origin,
+          csp ? [csp] : [],
+          cspReportOnly ? [cspReportOnly] : [],
+          result.url,
+        );
+      }
+    }
 
     // 1. Parse HTML
     const parseResult = htmlParser.parse(result.body, result.url);
@@ -415,6 +439,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
     const scripts = domTree.getElementsByTagName('script');
     if (scripts.length === 0) return;
 
+    // Canonical page origin for CSP lookups and CORS checks (scheme://host[:port]).
+    const origin = parseOrigin(baseUrl);
+
     const eventLoop = new JsEventLoop();
     // One shared global environment for every <script> tag on this page —
     // real pages routinely split JS across multiple tags expecting a single
@@ -426,6 +453,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       doc, domTree, eventLoop, this.deps.controller, undefined,
       this.deps.resourceEnforcer, this.deps.scriptEnforcer, baseUrl,
       this.deps.htmlParser, this.deps.storageDir,
+      this.deps.corsEngine,
       resourceLoader.getCookieJar() ?? undefined,
     );
 
@@ -522,7 +550,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     for (const { source, el } of blockingScripts) {
       if (signal.aborted) break;
       if (this.deps.scriptEnforcer) {
-        const check = this.deps.scriptEnforcer.checkInlineScript(source, baseUrl, baseUrl);
+        const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
         if (!check.allowed) {
           console.warn(`[CSP] Blocked inline script: ${check.reason}`);
           continue;
@@ -542,7 +570,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     for (const { source, el } of deferScripts) {
       if (signal.aborted) break;
       if (this.deps.scriptEnforcer) {
-        const check = this.deps.scriptEnforcer.checkInlineScript(source, baseUrl, baseUrl);
+        const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
         if (!check.allowed) {
           console.warn(`[CSP] Blocked defer script: ${check.reason}`);
           continue;
@@ -561,7 +589,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // 3. Fire async scripts (best-effort — they may already be downloaded)
     for (const { source, el } of asyncScripts) {
       if (this.deps.scriptEnforcer) {
-        const check = this.deps.scriptEnforcer.checkInlineScript(source, baseUrl, baseUrl);
+        const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
         if (!check.allowed) {
           console.warn(`[CSP] Blocked async script: ${check.reason}`);
           continue;

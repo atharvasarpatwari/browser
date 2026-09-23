@@ -88,7 +88,11 @@ class StatusBarView implements IStatusBarView {
   private build(): void {
     if (!this.container) return;
     this.container.innerHTML = '';
-    this.container.className = 'status-bar';
+    // Add, don't replace: the container may already carry a layout-owned
+    // class (e.g. MobileLayout's "mobile-status-bar") that must survive
+    // attachment — clobbering it here previously left MobileLayout's own
+    // hideChromeUI visibility toggle unable to find the element it just hid.
+    this.container.classList.add('status-bar');
     this.container.style.cssText = 'height:24px;background:var(--bg-elevated);border-top:1px solid var(--border-subtle);display:flex;align-items:center;padding:0 10px;font-size:10px;color:var(--text-tertiary);flex-shrink:0;gap:14px;';
 
     this.statusTextEl = document.createElement('span');

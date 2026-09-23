@@ -103,6 +103,8 @@ import type { IThirdPartySecurityManager } from '../browser/security/third-party
 import { createCspEnforcement, type CspEnforcement } from '../browser/security/csp-enforcement';
 import { HtmlSanitizer } from '../browser/security/html-sanitizer';
 import { SecurityLayer } from '../browser/media/security-layer';
+import { CorsService } from '../browser/media/cors';
+import type { ICorsService } from '../browser/media/cors';
 
 // Rendering
 import { DomTree } from '../browser/rendering/dom-tree';
@@ -195,6 +197,7 @@ const Tokens = Object.freeze({
   AdBlocker: Symbol('AdBlocker'),
   ThirdPartySecurityManager: Symbol('ThirdPartySecurityManager'),
   SecurityLayer: Symbol('SecurityLayer'),
+  CorsService: Symbol('CorsService'),
   DomTree: Symbol('DomTree'),
   CssParser: Symbol('CssParser'),
   LayoutEngine: Symbol('LayoutEngine'),
@@ -508,6 +511,11 @@ class ApplicationBootstrap {
     c.register<IThirdPartySecurityManager>(
       Tokens.ThirdPartySecurityManager,
       () => new ThirdPartySecurityManager(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<ICorsService>(
+      Tokens.CorsService,
+      () => new CorsService(),
       ServiceLifetime.Singleton,
     );
 
@@ -892,6 +900,8 @@ class ApplicationBootstrap {
       sanitizer: new HtmlSanitizer({ keepScriptElements: true }),
       scriptEnforcer: cspEnforcement.scriptEnforcer,
       resourceEnforcer: cspEnforcement.resourceEnforcer,
+      policyStore: cspEnforcement.policyStore,
+      corsEngine: this.container.resolve<ICorsService>(Tokens.CorsService),
       securityLayer,
       onFrameRendered: () => engine.notifyPageRepainted(),
       onConsoleMessage: (entry) => engine.notifyConsoleMessage(entry),

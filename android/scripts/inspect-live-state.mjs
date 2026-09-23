@@ -232,17 +232,63 @@ async function cdpEvaluate(port, expression) {
 // ── main ─────────────────────────────────────────────────────────────────
 
 const DOM_PROBE_EXPR = `
-JSON.stringify({
-  canvasCount: document.querySelectorAll('canvas').length,
-  canvases: Array.from(document.querySelectorAll('canvas')).map(c => ({
-    attrWidth: c.width, attrHeight: c.height,
-    cssWidth: c.clientWidth, cssHeight: c.clientHeight,
-    display: getComputedStyle(c).display, visibility: getComputedStyle(c).visibility,
-  })),
-  bodyChildCount: document.body.children.length,
-  bodyChildTags: Array.from(document.body.children).map(el => el.tagName),
-  novaGlobals: Object.keys(window).filter(k => /nova/i.test(k)),
-})`;
+(function () {
+  // Walks the live tree from <body> down, capturing computed layout/paint
+  // info at each level. This is what actually distinguishes "nothing was
+  // ever painted" (empty tree, or 0-height ancestor) from "content exists
+  // but is invisible" (opacity 0 / display none / same-color text-on-
+  // background — e.g. Android WebView's automatic dark-mode inversion
+  // fighting the engine's own dark-themed new-tab page) from "wrong layout
+  // branch entirely" (isMobile true/false decides MobileLayout vs
+  // DesktopLayout — see browser-window.ts mount() — which changes the
+  // whole DOM shape).
+  function describe(el, depth) {
+    if (!el) return null;
+    var cs = getComputedStyle(el);
+    var rect = el.getBoundingClientRect();
+    var info = {
+      tag: el.tagName,
+      id: el.id || undefined,
+      cls: (typeof el.className === 'string' && el.className) || undefined,
+      display: cs.display,
+      visibility: cs.visibility,
+      opacity: cs.opacity,
+      bg: cs.backgroundColor,
+      color: cs.color,
+      w: Math.round(rect.width),
+      h: Math.round(rect.height),
+      childCount: el.children.length,
+      textLen: (el.textContent || '').trim().length,
+    };
+    if (depth > 0 && el.children.length > 0) {
+      var kids = Array.from(el.children).slice(0, 6);
+      info.children = kids.map(function (c) { return describe(c, depth - 1); });
+      if (el.children.length > 6) info.childrenTruncated = el.children.length - 6;
+    }
+    return info;
+  }
+  return JSON.stringify({
+    innerWidth: window.innerWidth,
+    innerHeight: window.innerHeight,
+    devicePixelRatio: window.devicePixelRatio,
+    // browser-window.ts mount() picks MobileLayout vs DesktopLayout from
+    // "window.innerWidth < 768" — this line says which one actually ran.
+    layoutBranchWouldBe: window.innerWidth < 768 ? 'mobile' : 'desktop',
+    prefersDarkColorScheme: !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches),
+    htmlBg: getComputedStyle(document.documentElement).backgroundColor,
+    bodyBg: getComputedStyle(document.body).backgroundColor,
+    canvasCount: document.querySelectorAll('canvas').length,
+    canvases: Array.from(document.querySelectorAll('canvas')).map(function (c) {
+      return {
+        attrWidth: c.width, attrHeight: c.height,
+        cssWidth: c.clientWidth, cssHeight: c.clientHeight,
+        display: getComputedStyle(c).display, visibility: getComputedStyle(c).visibility,
+      };
+    }),
+    novaGlobals: Object.keys(window).filter(function (k) { return /nova/i.test(k); }),
+    tree: describe(document.body, 10),
+  });
+})()`;
 
 async function main() {
   console.log('Nova Browser — live state inspector (read-only, no restart)\n');

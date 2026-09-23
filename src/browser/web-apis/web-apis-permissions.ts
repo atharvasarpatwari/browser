@@ -25,6 +25,8 @@
  *   a plain Node/Vitest test environment.
  */
 
+import { isSecureContextRequiredPermission } from '../security/secure-context';
+
 // ─────────────────────────────────────────────────────────────────────────
 // Shared: lightweight event emitter (stand-in for DOM EventTarget)
 // ─────────────────────────────────────────────────────────────────────────
@@ -97,7 +99,10 @@ export class PermissionStore extends MiniEmitter<{
   // origin -> (permission name -> state)
   private grants = new Map<string, Map<PermissionName, PermissionState>>();
 
-  constructor(private readonly promptUser: PermissionPrompt) {
+  constructor(
+    private readonly promptUser: PermissionPrompt,
+    private readonly secureContextFor: (name: PermissionName) => boolean = () => true,
+  ) {
     super();
   }
 
@@ -111,7 +116,10 @@ export class PermissionStore extends MiniEmitter<{
 
   /** Non-prompting lookup. Defaults to 'prompt' if never set. */
   query(origin: string, name: PermissionName): PermissionState {
-    return this.grants.get(origin)?.get(name) ?? 'prompt';
+    if (this.secureContextFor(name)) {
+      return this.grants.get(origin)?.get(name) ?? 'prompt';
+    }
+    return 'denied';
   }
 
   /**
@@ -120,6 +128,9 @@ export class PermissionStore extends MiniEmitter<{
    * immediately without re-prompting.
    */
   async request(origin: string, name: PermissionName): Promise<PermissionState> {
+    if (!this.secureContextFor(name)) {
+      return 'denied';
+    }
     const current = this.query(origin, name);
     if (current !== 'prompt') return current;
 
@@ -502,6 +513,14 @@ export interface WebApisConfig {
   positionSource: PositionSource;
   clipboardBackend: ClipboardBackend;
   vibrationBackend: VibrationBackend;
+  /**
+   * Whether the page is running in a secure context (https / localhost).
+   * When false, secure-context-required permissions (geolocation,
+   * notifications, clipboard) are denied without prompting. Defaults to
+   * true for backwards compatibility; the JS runtime must pass the real
+   * value derived from the document URL (window.isSecureContext).
+   */
+  isSecureContext?: boolean;
 }
 
 export class PermissionGatedWebApis {
@@ -512,7 +531,11 @@ export class PermissionGatedWebApis {
   readonly vibration: VibrationAPI;
 
   constructor(config: WebApisConfig) {
-    this.permissions = new PermissionStore(config.promptUser);
+    const isSecure = config.isSecureContext ?? true;
+    this.permissions = new PermissionStore(
+      config.promptUser,
+      (name) => isSecure || !isSecureContextRequiredPermission(name),
+    );
     this.geolocation = new GeolocationAPI(config.origin, this.permissions, config.positionSource);
     this.notifications = new NotificationsAPI(config.origin, this.permissions);
     this.clipboard = new ClipboardAPI(config.origin, this.permissions, config.clipboardBackend);

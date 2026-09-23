@@ -79,6 +79,13 @@ interface BrowserWindowPageConfig {
    * functionality (real file downloads) that has no web equivalent.
    */
   readonly forceDesktopChrome: boolean;
+  /**
+   * When true, hide every rendered chrome element (titlebar, toolbar, tab
+   * bar, bookmark bar) while leaving all internal wiring (navigationBridge,
+   * syncAll, tab events) fully intact — for an external native shell (e.g.
+   * Android Compose) that drives navigation and renders its own chrome.
+   */
+  readonly hideChromeUI: boolean;
 }
 
 const DEFAULT_PAGE_CONFIG: BrowserWindowPageConfig = {
@@ -88,6 +95,7 @@ const DEFAULT_PAGE_CONFIG: BrowserWindowPageConfig = {
   showBookmarkBar: true,
   showMenuBar: true,
   forceDesktopChrome: false,
+  hideChromeUI: false,
 };
 
 /** Search-URL templates keyed by the `defaultSearchEngine` setting value. */
@@ -541,12 +549,25 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.statusBarView = new StatusBarView(this.statusBar);
         this.statusBarView.attach(areas.statusBar);
       }
+      if (this.config.hideChromeUI) {
+        // Same reasoning as the desktop branch below: when an external
+        // native shell (Android Compose) is driving navigation, this page's
+        // OWN rendered chrome must stay hidden — only `content` should show.
+        // This check previously existed only in the `else` (desktop) branch
+        // below, so it silently never ran on an actual phone: inside the
+        // Android WebView, window.innerWidth is phone-width (< 768), so
+        // `isMobile` is true and this whole block was skipped, leaving
+        // MobileLayout's own status-bar strip / address bar / bottom nav
+        // (see mobile-layout.ts) rendered — on top of, and fighting for
+        // space with, the real native Compose chrome above the WebView.
+        // Keep all internal wiring intact (AddressBarView/StatusBarView
+        // stay attached) — just hide the rendered elements.
+        if (areas.statusBar) areas.statusBar.style.display = 'none';
+        if (areas.addressBar) areas.addressBar.style.display = 'none';
+        if (areas.bottomNav) areas.bottomNav.style.display = 'none';
+      }
     } else {
       if (areas.toolbar) {
-        // Traffic lights are macOS-style window controls (close/minimize/
-        // maximize) — meaningless on a full-screen Android host with no
-        // window to control, so the native host disables them here rather
-        // than showing three inert dots.
         this.toolbarView = new ToolbarView(this.toolbar, { showTrafficLights: !this.config.forceDesktopChrome });
         this.toolbarView.attach(areas.toolbar);
         this.toolbarView.setEventHandler((e) => {
@@ -616,6 +637,15 @@ class BrowserWindowPage implements IBrowserWindowPage {
             if (e.bookmark.url) void this.navigate(e.bookmark.url);
           }
         });
+      }
+      if (this.config.hideChromeUI) {
+        // Keep all internal wiring (navigationBridge, syncAll, tab events)
+        // fully intact — just hide the rendered chrome, since an external
+        // native shell (e.g. Android Compose) is driving navigation instead.
+        if (areas.menuBar) areas.menuBar.style.display = 'none';
+        if (areas.toolbar) areas.toolbar.style.display = 'none';
+        if (areas.tabBar) areas.tabBar.style.display = 'none';
+        if (areas.bookmarkBar) areas.bookmarkBar.style.display = 'none';
       }
       if (areas.statusBar) {
         this.statusBarView = new StatusBarView(this.statusBar);
@@ -1621,9 +1651,16 @@ class BrowserWindowPage implements IBrowserWindowPage {
     };
   }
 
-  /** Reads the `homePage` setting (fallback `about:blank`). */
+  /**
+   * Reads the `homePage` setting. Falls back to the same `about:newtab`
+   * special page `startup-pages.ts` already uses for a fresh session's
+   * initial tab — not `about:blank` — so a user who has never touched the
+   * homePage setting (every first install) gets the real New Tab Page
+   * (branding, search box, shortcuts — see new-tab-page.ts) instead of a
+   * genuinely blank white page for their very first tab.
+   */
   private getHomeUrl(): string {
-    return this.settingsService?.getString('homePage', 'about:blank') || 'about:blank';
+    return this.settingsService?.getString('homePage', 'about:newtab') || 'about:newtab';
   }
 
   /** Resolves the `defaultSearchEngine` setting into a `%s` search URL template. */
