@@ -268,7 +268,7 @@ class DomTree implements IDomTree {
   getElementsByTagName(tagName: string): readonly DomElement[] {
     const lower = tagName.toLowerCase();
     return [...this.nodeIndex.values()].filter(
-      (n): n is DomElement => n.nodeType === 'element' && (n as DomElement).tagName === lower,
+      (n): n is DomElement => n.nodeType === 'element' && (lower === '*' || (n as DomElement).tagName === lower),
     );
   }
 

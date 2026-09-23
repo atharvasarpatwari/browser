@@ -191,6 +191,7 @@ const CASES: Case[] = [
       'document.cookie is always a string (never undefined) and round-trips a value set through it',
       'customElements.define() accepts a real class extending HTMLElement (real Cloudflare/Astro code), not just a plain function',
       'document.currentScript is the real, currently-executing <script> element (real self-configuring embed-script pattern, e.g. Fathom/Plausible analytics reading their own data-* attributes) and is null once the script finishes',
+      'a plain element\'s getElementsByTagName (not just document\'s) finds descendants, including the "*" wildcard (real jQuery feature-detection code builds a detached scratch div then calls div.getElementsByTagName), and document.createDocumentFragment() supports appendChild/removeChild/cloneNode (also real jQuery feature-detection code)',
     ],
     html: harnessHtml(`
       var lab = document.getElementById('lab');
@@ -366,7 +367,34 @@ const CASES: Case[] = [
           mark(17, isScriptDuringExec && nullAfterSync);
         }, 0);
       } catch(e) { }
-    `, 18),
+
+      try {
+        // Reproduces two real gaps found continuing the jQuery bisection:
+        // (1) only document.getElementsByTagName existed — a plain element
+        // (e.g. jQuery's own detached scratch div used for feature
+        // detection) had no getElementsByTagName at all, and even
+        // document's version never matched the "*" wildcard tag. (2)
+        // document.createDocumentFragment() didn't exist at all, so real
+        // feature-detection code building a fragment to test cloning/
+        // checkbox-state-preservation crashed immediately.
+        var scratch = document.createElement('div');
+        scratch.innerHTML = "<a href='/a'>a</a><input type='checkbox'/>";
+        var starCount = scratch.getElementsByTagName('*').length;
+        var anchor = scratch.getElementsByTagName('a')[0];
+        var tagOk = starCount === 2 && anchor && anchor.tagName.toLowerCase() === 'a';
+
+        var frag = document.createDocumentFragment();
+        var fchild = document.createElement('span');
+        frag.appendChild(fchild);
+        var addedOk = frag.children.length === 1;
+        frag.removeChild(fchild);
+        var removedOk = frag.children.length === 0;
+        frag.appendChild(document.createElement('span'));
+        var cloneOk = frag.cloneNode(true).children.length === 1;
+
+        mark(18, tagOk && addedOk && removedOk && cloneOk);
+      } catch(e) { }
+    `, 19),
   },
   {
     name: 'async-and-collections',

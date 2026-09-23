@@ -413,6 +413,24 @@ export function createDocumentBinding(
     writable: true, enumerable: true, configurable: true,
   });
 
+  // createDocumentFragment — a detached container node for batch DOM
+  // building (real code, e.g. jQuery's own feature-detection scratch code,
+  // does createDocumentFragment().appendChild(...)/.cloneNode()/etc.).
+  // ponytail: modeled as a plain detached element (tagName
+  // "#document-fragment") reusing the existing element machinery, which
+  // covers appendChild/removeChild/cloneNode/children/querySelector for
+  // free — not a spec-accurate DocumentFragment (real nodeType 11, and
+  // appending IT into a live element should move its children in rather
+  // than insert the fragment itself). Upgrade if real code depends on
+  // either of those specifically.
+  docObj.properties.set('createDocumentFragment', {
+    value: createNativeFunction('createDocumentFragment', () => {
+      const el = makeElement('#document-fragment', null);
+      return wrapElement(el, domTree);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
   // createEvent — creates an event object for dispatchEvent
   docObj.properties.set('createEvent', {
     value: createNativeFunction('createEvent', (_this, args) => {
@@ -1286,6 +1304,28 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
           const classAttr = childEl.attributes.get('class') ?? '';
           const classSet = new Set(classAttr.split(/\s+/));
           if (tokens.every(t => classSet.has(t))) result.push(childEl);
+        }
+        for (const child of node.children) queue.push(child);
+      }
+      return createArray(result.map(e => wrapElement(e, domTree)));
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // getElementsByTagName (scoped to this element's descendants) — was
+  // missing entirely (only document.getElementsByTagName existed), so any
+  // real code calling it on a plain element — like jQuery's own detached-
+  // div feature-detection scratch node, `div.getElementsByTagName("a")` —
+  // silently called nothing and got `undefined` back.
+  obj.properties.set('getElementsByTagName', {
+    value: createNativeFunction('getElementsByTagName', (_this, args) => {
+      const tag = toString(args[0]).toLowerCase();
+      const result: DomElement[] = [];
+      const queue: DomNode[] = [...el.children];
+      while (queue.length > 0) {
+        const node = queue.shift()!;
+        if (node.nodeType === 'element' && (tag === '*' || (node as DomElement).tagName === tag)) {
+          result.push(node as DomElement);
         }
         for (const child of node.children) queue.push(child);
       }
