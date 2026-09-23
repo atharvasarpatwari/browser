@@ -503,6 +503,7 @@ const CASES: Case[] = [
       'a reserved word (class, get, set, as, await, default, new) works as a destructuring property key (e.g. real minified React/Figma code renaming a "class" prop), not just a plain identifier',
       'top-level this is the real global object (window/globalThis), not undefined (real Angular.dev dark-mode-detection code reads this.document at the top of an inline script), and a plain non-strict function call falls back to it the same way',
       '"use strict" is correctly detected both as a function-level directive and a program-level directive that propagates to every function in the file (including ones nested inside it), so a strict function call\'s this correctly stays undefined instead of falling back to the global object',
+      'Array.prototype is a real object exposing the same methods a real array instance has (real jQuery code reads Array.prototype.push/.slice directly), and Array.prototype.findLast/findLastIndex both work (real cloudflare.com beacon code)',
     ],
     html: harnessHtml(`
       try {
@@ -1041,7 +1042,31 @@ const CASES: Case[] = [
         var programLevelOk = eval("'use strict'; function inner(){ return this; } inner() === undefined;");
         mark(49, funcLevelOk && programLevelOk);
       } catch(e) { }
-    `, 50),
+
+      try {
+        // Reproduces a real gap found bisecting python.org (jQuery) and
+        // cloudflare.com (a beacon script): Array.prototype was never
+        // exposed as a real object at all — real code reads it directly
+        // (jQuery's own "j = Array.prototype.push" top-of-file idiom, and
+        // the common array-like-borrowing pattern
+        // "Array.prototype.slice.call(arguments)"). A separate, dormant,
+        // never-reachable copy of the array methods existed here too, with
+        // its own bug (wrong native-function calling convention) that only
+        // surfaced once Array.prototype actually became reachable — fixed
+        // by reusing the same, already-correct methods real array
+        // instances get instead of maintaining two implementations.
+        var protoIsObject = typeof Array.prototype === 'object' && Array.prototype !== null;
+        var protoPushWorks = (function () {
+          var arr = [1];
+          Array.prototype.push.call(arr, 2, 3);
+          return JSON.stringify(arr) === '[1,2,3]';
+        })();
+        var protoSliceWorks = Array.prototype.slice.call([1, 2, 3], 1).join(',') === '2,3';
+        var findLastOk = [1, 2, 3, 4].findLast(function (x) { return x % 2 === 0; }) === 4
+          && [1, 2, 3, 4].findLastIndex(function (x) { return x % 2 === 0; }) === 3;
+        mark(50, protoIsObject && protoPushWorks && protoSliceWorks && findLastOk);
+      } catch(e) { }
+    `, 51),
   },
   {
     name: 'class-features',

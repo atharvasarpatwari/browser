@@ -719,6 +719,28 @@ function arrayFindIndex(_this: JSValue, args: JSValue[]): JSValue {
   return -1;
 }
 
+function arrayFindLast(_this: JSValue, args: JSValue[]): JSValue {
+  if (typeof _this !== 'object' || _this === null) return undefined;
+  const elems = getArrayElements(_this as JSObject);
+  const fn = args[0];
+  if (typeof fn !== 'object' || fn === null || (fn as JSFunction).type !== 'closure') return undefined;
+  for (let i = elems.length - 1; i >= 0; i--) {
+    if (toBoolean(callJSFunction(fn as JSFunction, undefined, [elems[i], Number(i), _this]))) return elems[i];
+  }
+  return undefined;
+}
+
+function arrayFindLastIndex(_this: JSValue, args: JSValue[]): JSValue {
+  if (typeof _this !== 'object' || _this === null) return -1;
+  const elems = getArrayElements(_this as JSObject);
+  const fn = args[0];
+  if (typeof fn !== 'object' || fn === null || (fn as JSFunction).type !== 'closure') return -1;
+  for (let i = elems.length - 1; i >= 0; i--) {
+    if (toBoolean(callJSFunction(fn as JSFunction, undefined, [elems[i], Number(i), _this]))) return i;
+  }
+  return -1;
+}
+
 function arraySplice(_this: JSValue, args: JSValue[]): JSValue {
   if (typeof _this !== 'object' || _this === null) return createArray([]);
   const arr = _this as JSObject;
@@ -787,6 +809,8 @@ const arrayNativeMethods: Record<string, NativeFunction> = {
   find: arrayFind,
   forEach: arrayForEach,
   findIndex: arrayFindIndex,
+  findLast: arrayFindLast,
+  findLastIndex: arrayFindLastIndex,
   splice: arraySplice,
   unshift: arrayUnshift,
   flat: arrayFlat,
@@ -868,7 +892,7 @@ const arrayNativeMethods: Record<string, NativeFunction> = {
   },
 };
 
-function attachArrayMethods(arr: JSObject): void {
+export function attachArrayMethods(arr: JSObject): void {
   for (const [name, fn] of Object.entries(arrayNativeMethods)) {
     arr.properties.set(name, {
       value: createNativeFunction(name, fn),

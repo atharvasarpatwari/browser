@@ -9,7 +9,7 @@ import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, toPropertyKey, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, registerErrorPrototype, makeErrorObject, objectPrototypeToStringTag } from './values';
+import { createObject, createArray, createNativeFunction, attachArrayMethods, Environment, toNumber, toString, toBoolean, toPropertyKey, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, registerErrorPrototype, makeErrorObject, objectPrototypeToStringTag } from './values';
 import type { JSValue, JSObject, JSObjectWithMeta } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
 import { evaluateMediaQueries, type Viewport } from '../rendering/css5/cascade';
@@ -1824,334 +1824,16 @@ export function createGlobalEnv(
     return arrCtorObj;
   })());
 
-  // Array.prototype methods
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const arrProtoMethods: Record<string, (...args: any[]) => any> = {
-    push: (_this, ...args) => {
-      if (typeof _this !== 'object' || _this === null) return 0;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < args.length; i++) {
-        obj.properties.set(String(len + i), { value: args[i] as JSValue, writable: true, enumerable: true, configurable: true });
-      }
-      obj.properties.set('length', { value: len + args.length, writable: true, enumerable: false, configurable: true });
-      return len + args.length;
-    },
-    pop: (_this) => {
-      if (typeof _this !== 'object' || _this === null) return undefined;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      if (len === 0) { obj.properties.set('length', { value: 0, writable: true, enumerable: false, configurable: true }); return undefined; }
-      const idx = len - 1;
-      const val = obj.properties.get(String(idx))?.value;
-      obj.properties.delete(String(idx));
-      obj.properties.set('length', { value: idx, writable: true, enumerable: false, configurable: true });
-      return val;
-    },
-    shift: (_this) => {
-      if (typeof _this !== 'object' || _this === null) return undefined;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      if (len === 0) return undefined;
-      const val = obj.properties.get('0')?.value;
-      for (let i = 1; i < len; i++) {
-        const next = obj.properties.get(String(i))?.value;
-        obj.properties.set(String(i - 1), { value: next, writable: true, enumerable: true, configurable: true });
-      }
-      obj.properties.delete(String(len - 1));
-      obj.properties.set('length', { value: len - 1, writable: true, enumerable: false, configurable: true });
-      return val;
-    },
-    unshift: (_this, ...args) => {
-      if (typeof _this !== 'object' || _this === null) return 0;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = len - 1; i >= 0; i--) {
-        const val = obj.properties.get(String(i))?.value;
-        obj.properties.set(String(i + args.length), { value: val, writable: true, enumerable: true, configurable: true });
-      }
-      for (let i = 0; i < args.length; i++) {
-        obj.properties.set(String(i), { value: args[i] as JSValue, writable: true, enumerable: true, configurable: true });
-      }
-      obj.properties.set('length', { value: len + args.length, writable: true, enumerable: false, configurable: true });
-      return len + args.length;
-    },
-    indexOf: (_this, searchElement, fromIndex) => {
-      if (typeof _this !== 'object' || _this === null) return -1;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const start = Math.max(0, toNumber(fromIndex ?? 0));
-      for (let i = start; i < len; i++) {
-        if (obj.properties.get(String(i))?.value === searchElement) return i;
-      }
-      return -1;
-    },
-    includes: (_this, searchElement, fromIndex) => {
-      if (typeof _this !== 'object' || _this === null) return false;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const start = Math.max(0, toNumber(fromIndex ?? 0));
-      for (let i = start; i < len; i++) {
-        if (obj.properties.get(String(i))?.value === searchElement) return true;
-      }
-      return false;
-    },
-    join: (_this, separator) => {
-      if (typeof _this !== 'object' || _this === null) return '';
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const sep = separator !== undefined ? toString(separator) : ',';
-      const parts: string[] = [];
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        parts.push(val !== undefined && val !== null ? toString(val) : '');
-      }
-      return parts.join(sep);
-    },
-    slice: (_this, start, end) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      let s = toNumber(start ?? 0);
-      let e = end !== undefined ? toNumber(end) : len;
-      if (s < 0) s = Math.max(0, len + s);
-      if (e < 0) e = Math.max(0, len + e);
-      e = Math.min(e, len);
-      const result: JSValue[] = [];
-      for (let i = s; i < e; i++) {
-        result.push(obj.properties.get(String(i))?.value);
-      }
-      return createArray(result);
-    },
-    splice: (_this, start, deleteCount, ...items) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      let s = toNumber(start ?? 0);
-      if (s < 0) s = Math.max(0, len + s);
-      s = Math.min(s, len);
-      let dc = deleteCount !== undefined ? toNumber(deleteCount) : len - s;
-      dc = Math.max(0, Math.min(dc, len - s));
-      const removed: JSValue[] = [];
-      for (let i = s; i < s + dc; i++) {
-        removed.push(obj.properties.get(String(i))?.value);
-      }
-      const newLen = len - dc + items.length;
-      for (let i = len - 1; i >= s + dc; i--) {
-        obj.properties.set(String(i + items.length - dc), { value: obj.properties.get(String(i))?.value, writable: true, enumerable: true, configurable: true });
-      }
-      for (let i = 0; i < items.length; i++) {
-        obj.properties.set(String(s + i), { value: items[i] as JSValue, writable: true, enumerable: true, configurable: true });
-      }
-      for (let i = s + items.length; i < newLen; i++) {
-        if (!obj.properties.has(String(i))) obj.properties.set(String(i), { value: undefined, writable: true, enumerable: true, configurable: true });
-      }
-      obj.properties.set('length', { value: newLen, writable: true, enumerable: false, configurable: true });
-      return createArray(removed);
-    },
-    concat: (_this, ...args) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      const result: JSValue[] = [];
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) result.push(obj.properties.get(String(i))?.value);
-      for (const arg of args) {
-        if (typeof arg === 'object' && arg !== null && (arg as JSObject).type === 'array') {
-          const argLen = Number((arg as JSObject).properties.get('length')?.value ?? 0);
-          for (let i = 0; i < argLen; i++) result.push((arg as JSObject).properties.get(String(i))?.value);
-        } else {
-          result.push(arg as JSValue);
-        }
-      }
-      return createArray(result);
-    },
-    reverse: (_this) => {
-      if (typeof _this !== 'object' || _this === null) return _this;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < Math.floor(len / 2); i++) {
-        const a = obj.properties.get(String(i))?.value;
-        const b = obj.properties.get(String(len - 1 - i))?.value;
-        obj.properties.set(String(i), { value: b, writable: true, enumerable: true, configurable: true });
-        obj.properties.set(String(len - 1 - i), { value: a, writable: true, enumerable: true, configurable: true });
-      }
-      return _this;
-    },
-    flat: (_this, depth) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      const d = toNumber(depth ?? 1);
-      const result: JSValue[] = [];
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const flatten = (arr: JSObject, currentDepth: number) => {
-        const arrLen = Number(arr.properties.get('length')?.value ?? 0);
-        for (let i = 0; i < arrLen; i++) {
-          const val = arr.properties.get(String(i))?.value;
-          if (typeof val === 'object' && val !== null && (val as JSObject).type === 'array' && currentDepth < d) {
-            flatten(val as JSObject, currentDepth + 1);
-          } else {
-            result.push(val);
-          }
-        }
-      };
-      flatten(obj, 0);
-      return createArray(result);
-    },
-    map: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return createArray([]);
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const result: JSValue[] = [];
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        result.push(callJSFunction(callback as JSFunction, undefined, [val, i, _this]));
-      }
-      return createArray(result);
-    },
-    filter: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return createArray([]);
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const result: JSValue[] = [];
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) result.push(val);
-      }
-      return createArray(result);
-    },
-    reduce: (_this, callback, initialValue) => {
-      if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return undefined;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      let acc: JSValue = initialValue;
-      let startIdx = 0;
-      if (initialValue === undefined) {
-        if (len === 0) throw new TypeError('Reduce of empty array with no initial value');
-        acc = obj.properties.get('0')?.value;
-        startIdx = 1;
-      }
-      for (let i = startIdx; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        acc = callJSFunction(callback as JSFunction, undefined, [acc, val, i, _this]);
-      }
-      return acc;
-    },
-    find: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return undefined;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return val;
-      }
-      return undefined;
-    },
-    findIndex: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return -1;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return -1;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return i;
-      }
-      return -1;
-    },
-    some: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return false;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return false;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return true;
-      }
-      return false;
-    },
-    every: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return true;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return true;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        if (!callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return false;
-      }
-      return true;
-    },
-    forEach: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return undefined;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        callJSFunction(callback as JSFunction, undefined, [val, i, _this]);
-      }
-      return undefined;
-    },
-    fill: (_this, value, start, end) => {
-      if (typeof _this !== 'object' || _this === null) return _this;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      let s = Math.max(0, toNumber(start ?? 0));
-      let e = end !== undefined ? toNumber(end) : len;
-      if (s < 0) s = Math.max(0, len + s);
-      if (e < 0) e = Math.max(0, len + e);
-      e = Math.min(e, len);
-      for (let i = s; i < e; i++) {
-        obj.properties.set(String(i), { value: value as JSValue, writable: true, enumerable: true, configurable: true });
-      }
-      return _this;
-    },
-    sort: (_this, compareFn) => {
-      if (typeof _this !== 'object' || _this === null) return _this;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const items: [number, JSValue][] = [];
-      for (let i = 0; i < len; i++) {
-        items.push([i, obj.properties.get(String(i))?.value]);
-      }
-      items.sort((a, b) => {
-        if (compareFn !== undefined && typeof compareFn === 'object' && compareFn !== null && (compareFn as JSFunction).type === 'closure') {
-          const result = toNumber(callJSFunction(compareFn as JSFunction, undefined, [a[1], b[1]]));
-          return result;
-        }
-        const sa = a[1] !== undefined && a[1] !== null ? toString(a[1]) : '';
-        const sb = b[1] !== undefined && b[1] !== null ? toString(b[1]) : '';
-        return sa < sb ? -1 : sa > sb ? 1 : 0;
-      });
-      for (let i = 0; i < items.length; i++) {
-        obj.properties.set(String(i), { value: items[i][1], writable: true, enumerable: true, configurable: true });
-      }
-      return _this;
-    },
-    toString: (_this: any) => {
-      if (typeof _this !== 'object' || _this === null) return '';
-      const obj = _this as JSObject;
-      if (obj.type === 'array') {
-        const len = Number(obj.properties.get('length')?.value ?? 0);
-        const parts: string[] = [];
-        for (let i = 0; i < len; i++) {
-          const val = obj.properties.get(String(i))?.value;
-          parts.push(val !== undefined && val !== null ? toString(val) : '');
-        }
-        return parts.join(',');
-      }
-      return '';
-    },
-  };
+  // Array.prototype — reuses the exact same, already-tested method
+  // implementations real array instances get (attachArrayMethods in
+  // values.ts), instead of maintaining a second, separate copy. A prior
+  // separate arrProtoMethods table here duplicated every method with a
+  // mismatched calling convention (destructured/rest params instead of
+  // the real NativeFunction (thisArg, args: JSValue[]) signature) — since
+  // Array.prototype was never wired up as a real object at all, that bug
+  // was never actually exercised. Deleted in favor of this reuse.
   const arrayProto = createObject(null);
-  for (const [name, fn] of Object.entries(arrProtoMethods)) {
-    arrayProto.properties.set(name, {
-      value: createNativeFunction(name, fn as NativeFunction),
-      writable: true, enumerable: false, configurable: true,
-    });
-  }
+  attachArrayMethods(arrayProto);
   arrayProto.properties.set('length', { value: 0, writable: true, enumerable: false, configurable: true });
   arrayProto.properties.set(Symbol.for('iterator') as unknown as string, {
     value: createNativeFunction('[Symbol.iterator]', (_this) => {
@@ -2181,9 +1863,13 @@ export function createGlobalEnv(
     writable: true, enumerable: false, configurable: true,
   });
 
-  // Make sure all new array instances get the prototype
-  // The Array constructor already returns createArray which sets type='array' and uses arrayProto
-  // But we need to update createArray to use our new proto — skip for now, the methods are on instances
+  // Array.prototype itself was built above but never exposed — real code
+  // reads it directly (e.g. jQuery's `j = Array.prototype.push`, or the
+  // common array-like-borrowing idiom `Array.prototype.slice.call(args)`),
+  // so `Array.prototype` must be a real object even though individual
+  // array instances get their methods copied directly onto them (via
+  // attachArrayMethods in values.ts) rather than through this prototype.
+  (env.get('Array') as JSObject).properties.set('prototype', { value: arrayProto, writable: false, enumerable: false, configurable: false });
 
   // Function constructor (limited — wraps source code into executable)
   const funcCtor = createNativeFunction('Function', (_this, args) => {
