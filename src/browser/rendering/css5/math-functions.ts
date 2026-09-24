@@ -88,9 +88,14 @@ const UNIT_TO_PX: Record<string, (value: number, ctx: MathResolutionContext) => 
   'dppx': (v) => v * 96,
   'x':  (v) => v * 96,  // alias for dppx
   '%': (v, ctx) => {
-    // Percentage resolution is property-dependent — cannot be resolved generically.
-    // Only used when BOTH operands are % (same-unit shortcut in evaluateNode).
-    return null as unknown as number;
+    // Percentage resolution is property-dependent — the caller must supply
+    // the actual basis (e.g. the containing block's width) via
+    // `percentageBasis`. Without it we genuinely cannot resolve a mixed
+    // unit expression like calc(100% - 20px) generically, so it's left
+    // unresolved (same-unit % - % expressions never reach this converter —
+    // see the same-unit shortcut in evaluateNode).
+    if (ctx.percentageBasis === undefined) return null as unknown as number;
+    return (v / 100) * ctx.percentageBasis;
   },
 };
 
@@ -120,7 +125,13 @@ const DEFAULT_MATH_CTX: MathResolutionContext = {
   rootFontSize: 16,
   viewportWidth: 1920,
   viewportHeight: 1080,
-  percentageBasis: 100,
+  // No default percentageBasis: the true containing-block size is only
+  // known at layout time. A caller without the real value (e.g. the
+  // cascade's early computed-value resolution, which runs long before
+  // layout) must leave a %-based calc() unresolved rather than silently
+  // resolving against a made-up number — that's what caused
+  // calc(100% - 20px) to bake in a wrong value (against an implied 100)
+  // before layout ever got a chance to resolve it against the real width.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -783,7 +794,7 @@ function evaluateFunction(
 /**
  * Splits a CSS function's arguments on top-level commas (respecting parentheses).
  */
-function splitTopLevelCommas(args: string): string[] {
+export function splitTopLevelCommas(args: string): string[] {
   const result: string[] = [];
   let current = '';
   let depth = 0;

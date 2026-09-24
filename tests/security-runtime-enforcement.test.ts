@@ -64,6 +64,8 @@ function createMockDomTree(): IDomTree {
     getParentElement: vi.fn(),
     getOwnerDocument: vi.fn(),
     isConnected: vi.fn().mockReturnValue(true),
+    matches: vi.fn().mockReturnValue(false),
+    parseFragment: vi.fn().mockReturnValue([]),
     dispose: vi.fn(),
   };
 }
@@ -76,6 +78,7 @@ function createMockCssParser(): ICssParser {
     computeStyles: vi.fn().mockReturnValue(new Map()),
     computeStylesForElement: vi.fn().mockReturnValue(new Map()),
     getCss5Parser: vi.fn().mockReturnValue({ parseSelector: vi.fn().mockReturnValue(null) }),
+    extractCss5RulesFromDocument: vi.fn().mockReturnValue([]),
     dispose: vi.fn(),
   } as ICssParser;
 }
@@ -121,6 +124,8 @@ function createMockResourceLoader(): IResourceLoader {
     loadImage: vi.fn(),
     getPriority: vi.fn(),
     setMaxConcurrent: vi.fn(),
+    setOnLoad: vi.fn(),
+    getCookieJar: vi.fn().mockReturnValue(null),
     on: vi.fn(),
     off: vi.fn(),
     dispose: vi.fn(),

@@ -280,6 +280,12 @@ interface INavigationGuard {
   canNavigate(request: NavigationRequest): Promise<boolean>;
   /** Optional human-readable reason surfaced in the error and UI. */
   blockedReason?(request: NavigationRequest): string;
+  /**
+   * When canNavigate() returned false, a guard may implement this to redirect
+   * to a different URL instead of failing the navigation outright (e.g. an
+   * HTTP→HTTPS upgrade). Returning null/undefined falls back to a hard block.
+   */
+  upgradeUrl?(request: NavigationRequest): string | null | undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -603,6 +609,9 @@ class NavigationController implements INavigationController {
     // ── Step 3: Guard chain ──────────────────────────────────────────────────
     const guardOutcome = await this.runGuards(request);
     if (!guardOutcome.allowed) {
+      if (guardOutcome.upgradeUrl) {
+        return this.navigateTo({ ...request, url: guardOutcome.upgradeUrl });
+      }
       return this.fail(
         request,
         new NavigationBlockedError(
@@ -1001,6 +1010,7 @@ class NavigationController implements INavigationController {
     allowed: boolean;
     blockedBy?: string;
     reason?: string;
+    upgradeUrl?: string;
   }> {
     for (const guard of this.guards) {
       let allowed: boolean;
@@ -1016,6 +1026,10 @@ class NavigationController implements INavigationController {
       }
 
       if (!allowed) {
+        const upgradeUrl = guard.upgradeUrl?.(request);
+        if (upgradeUrl) {
+          return { allowed: false, blockedBy: guard.name, upgradeUrl };
+        }
         const reason = guard.blockedReason?.(request) ?? 'Navigation denied.';
         return { allowed: false, blockedBy: guard.name, reason };
       }

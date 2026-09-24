@@ -7,6 +7,19 @@ import type { TreeBuilderContext } from './types';
  */
 export function handleInHead(ctx: TreeBuilderContext, token: Token): void {
   switch (token.kind) {
+    case 'text':
+      // Whitespace between tags (e.g. a newline after `<head>`) is
+      // insignificant and stays in "in head" mode. Anything else falls
+      // through to the "anything else" recovery below, which pops head
+      // and reprocesses in "after head" — matching every sibling mode
+      // handler's text-token pattern (before-head.ts, before-html.ts,
+      // initial.ts). Without this case, ALL text — including ordinary
+      // whitespace between `<head>` and `<style>`/`</head>` — fell through
+      // to that recovery, popping head prematurely and creating `<body>`
+      // before the real one arrived, which corrupted the entire document
+      // for any normally-formatted (i.e. not minified) HTML.
+      if (/^[\t\n\f\r ]*$/.test(token.data ?? '')) return;
+      break;
     case 'comment':
       ctx.insertComment(token);
       return;

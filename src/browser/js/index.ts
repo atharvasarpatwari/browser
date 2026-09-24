@@ -4,14 +4,16 @@ import type { INavigationController } from '../navigation/navigation-controller'
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
-import { createDocumentBinding, wrapElement } from './dom-bindings';
+import { createDocumentBinding, wrapElement, createEventObject } from './dom-bindings';
 import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta } from './values';
+import { createObject, createArray, createNativeFunction, attachArrayMethods, Environment, toNumber, toString, toBoolean, toPropertyKey, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, registerErrorPrototype, makeErrorObject, objectPrototypeToStringTag } from './values';
 import type { JSValue, JSObject, JSObjectWithMeta } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
+import { evaluateMediaQueries, type Viewport } from '../rendering/css5/cascade';
+import { parseMediaQueries } from '../rendering/css5/parser';
 import {
   createHeadersClass, createResponseClass, createRequestClass,
   createAbortControllerClass, createFetchFn,
@@ -21,7 +23,12 @@ import { createWebSocketClass } from './websocket-api';
 import { createRTCPeerConnectionClass, createRTCSessionDescriptionClass, createRTCIceCandidateClass } from './rtc-api';
 import { createWorkerConstructor } from './worker';
 import { createTypedArrayConstructors } from './typed-arrays';
+import { createCryptoObject } from './crypto-api';
+import { createCustomElementRegistry, createHTMLElementClass } from './custom-elements';
+import { createCacheStorage } from './cache-api';
+import { createConsoleObject } from './console-api';
 import { bindStorageAPIs } from './web-storage-bindings';
+import { bindWebSQL } from './web-sql-bindings';
 import {
   bindWebAPIs, createPerformanceObject, createFullscreenAPIMethods,
   createTreeWalkerObject, createNodeIteratorObject, createSelectionObject,
@@ -29,6 +36,7 @@ import {
 } from './web-apis';
 import type { CspResourceEnforcer } from '../security/csp-resource-enforcer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
+import type { ICookieJar } from '../networking/cookie-jar';
 import type { ICorsEngine } from '../security/cors';
 import { isSecureContextUrl } from '../security/secure-context';
 
@@ -36,7 +44,7 @@ export { Lexer } from './lexer';
 export { Parser } from './parser';
 export { Interpreter } from './interpreter';
 export { EventLoop, bindTimers } from './event-loop';
-export { createDocumentBinding, createEventObject } from './dom-bindings';
+export { createDocumentBinding, createEventObject, wrapElement } from './dom-bindings';
 export { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 export {
   type JSValue, type JSObject, type JSFunction,
@@ -52,6 +60,10 @@ export { GarbageCollector, getGC, setGC } from './gc';
 export { Heap, getHeap, setHeap } from './heap';
 export { RootScanner, WeakRefStore } from './roots';
 export { createWebSocketClass, setPlatformWebSocketFactory } from './websocket-api';
+export { createCryptoObject, createSubtleCryptoObject } from './crypto-api';
+export { createCustomElementRegistry, createHTMLElementClass } from './custom-elements';
+export { createCacheStorage } from './cache-api';
+export { createConsoleObject, getConsoleLog, onConsoleMessage, type ConsoleEntry, type ConsoleLevel } from './console-api';
 export { createRTCPeerConnectionClass, createRTCSessionDescriptionClass, createRTCIceCandidateClass } from './rtc-api';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,6 +135,90 @@ export function runJS(source: string, options: RunJSOptions): RunJSResult {
   }
 }
 
+// Array.from only ever handled real array-shaped sources (.type === 'array')
+// — every other spec-mandated source (a plain string, an array-like object
+// like `{length:3, 0:'a', ...}` or `arguments`, a Map/Set, or any custom
+// Symbol.iterator/`.next()`-based iterable) silently produced an empty
+// array instead of throwing OR converting, which is easy to miss since
+// `Array.from('abc')` looking like `[]` doesn't look like an obvious crash.
+// Mirrors the interpreter's own `forOfValues` iterable-draining logic
+// (arrays, Symbol.iterator protocol, Map/Set, generic `.next()`
+// iterators) since that's a private Interpreter method and this native
+// function has no Interpreter instance to call it on — plus one extra
+// fallback `forOfValues` doesn't need: a non-iterable array-like object,
+// which Array.from explicitly supports converting but a real for-of loop
+// would reject.
+/** Own-or-inherited property lookup by plain value (no getter support needed
+ *  for the fixed set of built-in method names this is used for) — Map/Set's
+ *  `entries`/`values` live on a shared prototype object, not each
+ *  instance's own `.properties`, so a bare `obj.properties.get(key)` alone
+ *  would miss them. */
+function lookupMethod(obj: JSObject, key: string): JSValue {
+  let cur: JSObject | null = obj;
+  while (cur) {
+    const desc = cur.properties.get(key);
+    if (desc) return desc.value;
+    cur = cur.prototype;
+  }
+  return undefined;
+}
+
+function iterableToArray(source: JSValue, env: Environment): JSValue[] {
+  if (typeof source === 'string') return [...source];
+  if (typeof source !== 'object' || source === null) return [];
+  const obj = source as JSObject;
+  if (obj.type === 'array') {
+    const length = Number(obj.properties.get('length')?.value ?? 0);
+    const out: JSValue[] = [];
+    for (let i = 0; i < length; i++) out.push(obj.properties.get(String(i))?.value);
+    return out;
+  }
+  const symbolGlobal = env.get('Symbol');
+  const iterSym = typeof symbolGlobal === 'object' && symbolGlobal !== null ? (symbolGlobal as JSObject).properties.get('iterator')?.value : undefined;
+  if (iterSym !== undefined) {
+    const iterFn = lookupMethod(obj, toPropertyKey(iterSym));
+    if (typeof iterFn === 'object' && iterFn !== null && (iterFn as JSFunction).type === 'closure') {
+      const iterator = callJSFunction(iterFn as JSFunction, obj, []);
+      if (typeof iterator === 'object' && iterator !== null && iterator !== obj) return iterableToArray(iterator, env);
+    }
+  }
+  if (isJSObjectWithMeta(obj) && (obj.__mapObj || obj.__mapPrim)) {
+    const entriesFn = lookupMethod(obj, 'entries');
+    if (typeof entriesFn === 'object' && entriesFn !== null && (entriesFn as JSFunction).type === 'closure') {
+      return iterableToArray(callJSFunction(entriesFn as JSFunction, obj, []), env);
+    }
+  }
+  if (isJSObjectWithMeta(obj) && (obj.__setObj || obj.__setPrim)) {
+    const valuesFn = lookupMethod(obj, 'values');
+    if (typeof valuesFn === 'object' && valuesFn !== null && (valuesFn as JSFunction).type === 'closure') {
+      return iterableToArray(callJSFunction(valuesFn as JSFunction, obj, []), env);
+    }
+  }
+  const nextFn = lookupMethod(obj, 'next');
+  if (typeof nextFn === 'object' && nextFn !== null && (nextFn as JSFunction).type === 'closure') {
+    const out: JSValue[] = [];
+    for (let guard = 0; guard < 1_000_000; guard++) {
+      const step = callJSFunction(nextFn as JSFunction, obj, []);
+      if (typeof step !== 'object' || step === null) break;
+      const stepObj = step as JSObject;
+      if (toBoolean(stepObj.properties.get('done')?.value)) break;
+      out.push(stepObj.properties.get('value')?.value);
+    }
+    return out;
+  }
+  // Array-like fallback (has a .length but no iterator protocol) —
+  // Array.from explicitly supports this source shape (e.g. `arguments`
+  // objects, or a plain `{length:3, 0:'a', ...}`).
+  const lengthDesc = obj.properties.get('length');
+  if (lengthDesc) {
+    const length = Number(lengthDesc.value ?? 0);
+    const out: JSValue[] = [];
+    for (let i = 0; i < length; i++) out.push(obj.properties.get(String(i))?.value);
+    return out;
+  }
+  return [];
+}
+
 /**
  * Create a global environment pre-configured with DOM bindings and timers.
  */
@@ -138,56 +234,23 @@ export function createGlobalEnv(
   htmlParser?: IHtmlParser,
   storageDir?: string,
   corsEngine?: ICorsEngine,
+  cookieJar?: ICookieJar,
 ): Environment {
   const env = new Environment(null);
+  // The global scope is a `var`-hoisting boundary — Environment.declare()
+  // walks up looking for the nearest scope marked this way and falls back
+  // to the immediate calling scope if it never finds one. That fallback
+  // used to be harmless here only because a top-level `var` inside a block
+  // had nowhere else to land anyway (blocks shared their enclosing scope
+  // outright, a separate bug fixed alongside this one) — once blocks get
+  // their own real child scope, an unmarked root would wrongly let a
+  // top-level `var` inside any block stay trapped in that block's scope
+  // instead of hoisting all the way out, same as every other function
+  // scope in this engine already does.
+  env.markFunctionScope();
 
-  // Console
-  const consoleObj = createObject(null);
-  const logs: unknown[] = [];
-  consoleObj.properties.set('log', {
-    value: createNativeFunction('log', (_this, args) => {
-      logs.push(...args);
-      return undefined;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  consoleObj.properties.set('error', {
-    value: createNativeFunction('error', (_this, args) => {
-      logs.push(...args);
-      return undefined;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  consoleObj.properties.set('warn', {
-    value: createNativeFunction('warn', (_this, args) => {
-      logs.push(...args);
-      return undefined;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  consoleObj.properties.set('info', {
-    value: createNativeFunction('info', (_this, args) => {
-      logs.push(...args);
-      return undefined;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  consoleObj.properties.set('clear', {
-    value: createNativeFunction('clear', () => { logs.length = 0; return undefined; }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  consoleObj.properties.set('assert', {
-    value: createNativeFunction('assert', (_this, args) => {
-      const condition = args[0];
-      if (!condition) {
-        const msg = args.length > 1 ? toString(args[1]) : 'Assertion failed';
-        logs.push(msg);
-      }
-      return undefined;
-    }),
-    writable: true, enumerable: true, configurable: true,
-  });
-  env.setLocal('console', consoleObj);
+  // Console — see console-api.ts for the structured, externally-readable log
+  env.setLocal('console', createConsoleObject());
 
   // Math
   const mathObj = createObject(null);
@@ -248,7 +311,8 @@ export function createGlobalEnv(
     }
     return undefined;
   };
-  const jsonStrify = (val: JSValue): string | undefined => {
+  const jsonStrify = (val: JSValue, replacerFn?: JSFunction, holder?: JSValue, key = ''): string | undefined => {
+    if (replacerFn) val = callJSFunction(replacerFn, holder, [key, val]);
     if (val === undefined || typeof val === 'function') return undefined;
     if (val === null) return 'null';
     if (typeof val === 'boolean') return val ? 'true' : 'false';
@@ -265,15 +329,15 @@ export function createGlobalEnv(
         const elems: string[] = [];
         for (let i = 0; i < len; i++) {
           const v = obj.properties.get(String(i))?.value;
-          elems.push(jsonStrify(v) ?? 'null');
+          elems.push(jsonStrify(v, replacerFn, obj, String(i)) ?? 'null');
         }
         return `[${elems.join(',')}]`;
       }
       const pairs: string[] = [];
       for (const [k, desc] of obj.properties) {
-        const v = desc.value;
-        if (v === undefined || typeof v === 'function') continue;
-        pairs.push(`"${k}":${jsonStrify(v) ?? 'null'}`);
+        const v = jsonStrify(desc.value, replacerFn, obj, k);
+        if (v === undefined) continue;
+        pairs.push(`"${k}":${v}`);
       }
       return `{${pairs.join(',')}}`;
     }
@@ -294,7 +358,11 @@ export function createGlobalEnv(
   jsonObj.properties.set('stringify', {
     value: createNativeFunction('stringify', (_this, args) => {
       const val = args[0];
-      const result = jsonStrify(val);
+      const replacer = args[1];
+      const replacerFn = typeof replacer === 'object' && replacer !== null && (replacer as JSFunction).type === 'closure' ? replacer as JSFunction : undefined;
+      const wrapper = createObject(null);
+      wrapper.properties.set('', { value: val, writable: true, enumerable: true, configurable: true });
+      const result = jsonStrify(val, replacerFn, wrapper, '');
       return result === undefined ? undefined : result;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -302,8 +370,65 @@ export function createGlobalEnv(
   env.setLocal('JSON', jsonObj);
 
   // Constructors
-  env.setLocal('String', createNativeFunction('String', (_this, args) => args.length > 0 ? toString(args[0]) : ''));
-  env.setLocal('Number', createNativeFunction('Number', (_this, args) => args.length > 0 ? toNumber(args[0]) : 0));
+  env.setLocal('String', (() => {
+    const stringCtor = createNativeFunction('String', (_this, args) => args.length > 0 ? toString(args[0]) : '');
+    // String.fromCharCode/fromCodePoint/raw were entirely absent — a plain
+    // native function had no properties map to hang static methods off of
+    // until this session, so nothing had ever added them. `String.raw` in
+    // particular threw "tag is not a function" for every tagged-template
+    // use (`` String.raw`a\nb` ``), a real, if uncommon, real-world pattern.
+    stringCtor.properties.set('fromCharCode', {
+      value: createNativeFunction('fromCharCode', (_t, args) => String.fromCharCode(...args.map(toNumber))),
+      writable: true, enumerable: false, configurable: true,
+    });
+    stringCtor.properties.set('fromCodePoint', {
+      value: createNativeFunction('fromCodePoint', (_t, args) => String.fromCodePoint(...args.map(toNumber))),
+      writable: true, enumerable: false, configurable: true,
+    });
+    stringCtor.properties.set('raw', {
+      value: createNativeFunction('raw', (_t, args) => {
+        const strings = args[0];
+        if (typeof strings !== 'object' || strings === null) return '';
+        const rawProp = (strings as JSObject).properties.get('raw')?.value;
+        const raw = typeof rawProp === 'object' && rawProp !== null ? rawProp as JSObject : strings as JSObject;
+        const len = Number(raw.properties.get('length')?.value ?? 0);
+        let result = '';
+        for (let i = 0; i < len; i++) {
+          result += toString(raw.properties.get(String(i))?.value);
+          if (i < len - 1) result += toString(args[i + 1]);
+        }
+        return result;
+      }),
+      writable: true, enumerable: false, configurable: true,
+    });
+    return stringCtor;
+  })());
+  env.setLocal('Number', (() => {
+    const numCtorObj = createObject(null);
+    numCtorObj.type = 'function';
+    numCtorObj.callable = true;
+    numCtorObj.nativeFn = (_this: unknown, args: unknown[]) => (args as JSValue[]).length > 0 ? toNumber((args as JSValue[])[0]) : 0;
+    const numStaticFns: Record<string, NativeFunction> = {
+      isInteger: (_t, a) => typeof a[0] === 'number' && Number.isInteger(a[0]),
+      isFinite: (_t, a) => typeof a[0] === 'number' && Number.isFinite(a[0]),
+      isNaN: (_t, a) => typeof a[0] === 'number' && Number.isNaN(a[0]),
+      isSafeInteger: (_t, a) => typeof a[0] === 'number' && Number.isSafeInteger(a[0]),
+      parseFloat: (_t, a) => parseFloat(toString(a[0])),
+      parseInt: (_t, a) => parseInt(toString(a[0]), a[1] !== undefined ? toNumber(a[1]) : 10),
+    };
+    for (const [name, fn] of Object.entries(numStaticFns)) {
+      numCtorObj.properties.set(name, { value: createNativeFunction(name, fn), writable: true, enumerable: false, configurable: true });
+    }
+    const numStaticConsts: Record<string, number> = {
+      EPSILON: Number.EPSILON, MAX_SAFE_INTEGER: Number.MAX_SAFE_INTEGER, MIN_SAFE_INTEGER: Number.MIN_SAFE_INTEGER,
+      MAX_VALUE: Number.MAX_VALUE, MIN_VALUE: Number.MIN_VALUE,
+      POSITIVE_INFINITY: Infinity, NEGATIVE_INFINITY: -Infinity, NaN: NaN,
+    };
+    for (const [name, val] of Object.entries(numStaticConsts)) {
+      numCtorObj.properties.set(name, { value: val, writable: false, enumerable: false, configurable: false });
+    }
+    return numCtorObj;
+  })());
   env.setLocal('Boolean', createNativeFunction('Boolean', (_this, args) => args.length > 0 ? toBoolean(args[0]) : false));
   env.setLocal('Array', createNativeFunction('Array', (_this, args) => createArray(args)));
 
@@ -354,6 +479,51 @@ export function createGlobalEnv(
         if (desc.enumerable) entries.push(createArray([k, desc.value]));
       }
       return createArray(entries);
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectCtorObj.properties.set('fromEntries', {
+    value: createNativeFunction('fromEntries', (_this, args) => {
+      const result = createObject(null);
+      const source = args[0];
+      if (typeof source !== 'object' || source === null) return result;
+      const srcObj = source as JSObject;
+      const len = srcObj.type === 'array' ? Number(srcObj.properties.get('length')?.value ?? 0) : srcObj.properties.size;
+      const pairs: JSValue[] = srcObj.type === 'array'
+        ? Array.from({ length: len }, (_, i) => srcObj.properties.get(String(i))?.value)
+        : [...srcObj.properties.values()].map(d => d.value);
+      for (const pair of pairs) {
+        if (typeof pair !== 'object' || pair === null) continue;
+        const pairObj = pair as JSObject;
+        const key = toString(pairObj.properties.get('0')?.value);
+        const value = pairObj.properties.get('1')?.value;
+        result.properties.set(key, { value, writable: true, enumerable: true, configurable: true });
+      }
+      return result;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectCtorObj.properties.set('groupBy', {
+    value: createNativeFunction('groupBy', (_this, args) => {
+      const result = createObject(null);
+      const source = args[0];
+      const fn = args[1];
+      if (typeof source !== 'object' || source === null || source.type !== 'array') return result;
+      if (typeof fn !== 'object' || fn === null || (fn as JSFunction).type !== 'closure') return result;
+      const len = Number(source.properties.get('length')?.value ?? 0);
+      for (let i = 0; i < len; i++) {
+        const item = source.properties.get(String(i))?.value;
+        const key = toString(callJSFunction(fn as JSFunction, undefined, [item, i]));
+        const existing = result.properties.get(key)?.value as JSObject | undefined;
+        if (existing) {
+          const n = Number(existing.properties.get('length')?.value ?? 0);
+          existing.properties.set(String(n), { value: item, writable: true, enumerable: true, configurable: true });
+          existing.properties.set('length', { value: n + 1, writable: true, enumerable: false, configurable: true });
+        } else {
+          result.properties.set(key, { value: createArray([item]), writable: true, enumerable: true, configurable: true });
+        }
+      }
+      return result;
     }),
     writable: true, enumerable: false, configurable: true,
   });
@@ -462,18 +632,119 @@ export function createGlobalEnv(
     }),
     writable: true, enumerable: false, configurable: true,
   });
+  objectCtorObj.properties.set('getPrototypeOf', {
+    value: createNativeFunction('getPrototypeOf', (_this, args) => {
+      const obj = args[0];
+      return typeof obj === 'object' && obj !== null ? (obj as JSObject).prototype : null;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectCtorObj.properties.set('setPrototypeOf', {
+    value: createNativeFunction('setPrototypeOf', (_this, args) => {
+      const obj = args[0];
+      const proto = args[1];
+      if (typeof obj === 'object' && obj !== null) {
+        (obj as JSObject).prototype = typeof proto === 'object' && proto !== null ? (proto as JSObject) : null;
+      }
+      return obj;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  // Object.prototype — the real one, not just the per-instance native
+  // fallback in objectPrototypeFallback() (interpreter.ts), which only
+  // covers `x.method()` called directly. Real-world code very commonly
+  // reaches for these through the constructor instead — the classic
+  // `Object.prototype.toString.call(x)` type-tag idiom, or
+  // `Object.prototype.hasOwnProperty.call(x, k)` to dodge a shadowed own
+  // property — and without a real .prototype object here those were
+  // simply `undefined`, not a working method.
+  const objectProtoObj = createObject(null);
+  objectProtoObj.properties.set('toString', {
+    value: createNativeFunction('toString', (t) => {
+      // Looked up lazily (not captured at setup time) since Symbol's
+      // well-known symbols aren't created until later in this same function.
+      const symbolGlobal = env.get('Symbol');
+      const tagSym = typeof symbolGlobal === 'object' && symbolGlobal !== null ? (symbolGlobal as JSObject).properties.get('toStringTag')?.value : undefined;
+      return objectPrototypeToStringTag(t, tagSym !== undefined ? toPropertyKey(tagSym) : null);
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectProtoObj.properties.set('hasOwnProperty', {
+    value: createNativeFunction('hasOwnProperty', (t, a) =>
+      typeof t === 'object' && t !== null ? !!(t as JSObject).properties?.has(toPropertyKey(a[0])) : false),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectProtoObj.properties.set('isPrototypeOf', {
+    value: createNativeFunction('isPrototypeOf', (_t, a) => {
+      let proto = typeof a[0] === 'object' && a[0] !== null ? (a[0] as JSObject).prototype : null;
+      while (proto) {
+        if (proto === objectProtoObj) return true;
+        proto = proto.prototype;
+      }
+      return false;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectProtoObj.properties.set('propertyIsEnumerable', {
+    value: createNativeFunction('propertyIsEnumerable', (t, a) =>
+      typeof t === 'object' && t !== null ? !!(t as JSObject).properties?.get(toPropertyKey(a[0]))?.enumerable : false),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectProtoObj.properties.set('valueOf', {
+    value: createNativeFunction('valueOf', (t) => t as JSValue),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectProtoObj.properties.set('toLocaleString', {
+    value: createNativeFunction('toLocaleString', (t) => toString(t)),
+    writable: true, enumerable: false, configurable: true,
+  });
+  objectCtorObj.properties.set('prototype', {
+    value: objectProtoObj, writable: false, enumerable: false, configurable: false,
+  });
   env.setLocal('Object', objectCtorObj);
 
-  // Error constructors
-  for (const name of ['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError']) {
-    env.setLocal(name, createNativeFunction(name, (_this, args) => {
-      const msg = args.length > 0 ? toString(args[0]) : '';
-      const err = createObject(null);
-      err.properties.set('message', { value: msg, writable: true, enumerable: true, configurable: true });
-      err.properties.set('name', { value: name, writable: true, enumerable: true, configurable: true });
-      err.properties.set('stack', { value: '', writable: true, enumerable: true, configurable: true });
-      return err;
-    }));
+  // Error constructors — each subtype's own prototype chains to
+  // Error.prototype (TypeError.prototype.__proto__ === Error.prototype,
+  // matching real JS), and every prototype is registered so any
+  // internally-built error (jsError(), a wrapped native exception —
+  // see makeErrorObject in values.ts) links to the exact same chain a
+  // script's own `new TypeError(...)` would produce. Without this,
+  // `e instanceof TypeError`/`instanceof Error` — a very ordinary
+  // error-handling check — was always false: the previous createNativeFunction-
+  // based constructors had no discoverable .prototype at all (same "no
+  // .properties map" shape as the old Number/Array before this session's
+  // earlier fixes), and every constructed error had prototype: null.
+  const errorProto = createObject(null);
+  errorProto.properties.set('name', { value: 'Error', writable: true, enumerable: false, configurable: true });
+  errorProto.properties.set('message', { value: '', writable: true, enumerable: false, configurable: true });
+  errorProto.properties.set('toString', {
+    value: createNativeFunction('toString', (thisArg) => {
+      const obj = thisArg as JSObject | undefined;
+      const name = toString(obj?.properties?.get('name')?.value ?? 'Error');
+      const msg = toString(obj?.properties?.get('message')?.value ?? '');
+      return msg ? `${name}: ${msg}` : name;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  function makeErrorCtor(name: string, proto: JSObject): JSObject {
+    const ctorObj = createObject(null);
+    ctorObj.type = 'function';
+    ctorObj.callable = true;
+    ctorObj.nativeFn = (_this: unknown, args: unknown[]) => {
+      const msg = (args as JSValue[]).length > 0 ? toString((args as JSValue[])[0]) : '';
+      return makeErrorObject(name, msg);
+    };
+    ctorObj.properties.set('prototype', { value: proto, writable: false, enumerable: false, configurable: false });
+    proto.properties.set('constructor', { value: ctorObj, writable: true, enumerable: false, configurable: true });
+    return ctorObj;
+  }
+  registerErrorPrototype('Error', errorProto);
+  env.setLocal('Error', makeErrorCtor('Error', errorProto));
+  for (const name of ['TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'EvalError', 'URIError']) {
+    const proto = createObject(errorProto);
+    proto.properties.set('name', { value: name, writable: true, enumerable: false, configurable: true });
+    registerErrorPrototype(name, proto);
+    env.setLocal(name, makeErrorCtor(name, proto));
   }
 
   // Promise
@@ -717,6 +988,282 @@ export function createGlobalEnv(
   regExpProto.properties.set('flags', { value: '', writable: false, enumerable: false, configurable: false });
   regExpCtorObj.properties.set('prototype', { value: regExpProto, writable: false, enumerable: false, configurable: false });
   env.setLocal('RegExp', regExpCtorObj);
+
+  // URLSearchParams — wraps a real native URLSearchParams (available as a
+  // global in both Node and the renderer's V8 runtime), the same "wrap a
+  // real native object" pattern already used for RegExp/Date.
+  const uspProto = createObject(null);
+  function wrapURLSearchParams(native: URLSearchParams): JSObject {
+    const obj = createObject(uspProto) as JSObjectWithMeta;
+    obj.__type_override = 'urlsearchparams';
+    obj.nativeURLSearchParams = native;
+    return obj;
+  }
+  function toURLSearchParamsInit(arg: JSValue): ConstructorParameters<typeof URLSearchParams>[0] {
+    if (arg === undefined) return undefined;
+    if (typeof arg === 'string') return arg;
+    if (typeof arg === 'object' && arg !== null) {
+      const o = arg as JSObject;
+      if (isJSObjectWithMeta(o) && o.nativeURLSearchParams) return o.nativeURLSearchParams;
+      if (o.type === 'array') {
+        const len = Number(o.properties.get('length')?.value ?? 0);
+        const pairs: [string, string][] = [];
+        for (let i = 0; i < len; i++) {
+          const p = o.properties.get(String(i))?.value as JSObject | undefined;
+          if (p) pairs.push([toString(p.properties.get('0')?.value), toString(p.properties.get('1')?.value)]);
+        }
+        return pairs;
+      }
+      const result: Record<string, string> = {};
+      for (const [k, desc] of o.properties) {
+        if (desc.enumerable) result[k] = toString(desc.value);
+      }
+      return result;
+    }
+    return toString(arg);
+  }
+  const uspCtor = createNativeFunction('URLSearchParams', (_this, args) => wrapURLSearchParams(new URLSearchParams(toURLSearchParamsInit(args[0]))));
+  const uspCtorObj = createObject(null);
+  uspCtorObj.type = 'function';
+  uspCtorObj.callable = true;
+  uspCtorObj.nativeFn = uspCtor.nativeFn;
+  const uspNativeOf = (v: JSValue): URLSearchParams | undefined =>
+    typeof v === 'object' && v !== null && isJSObjectWithMeta(v) ? v.nativeURLSearchParams : undefined;
+  for (const method of ['get', 'getAll', 'has', 'toString']) {
+    uspProto.properties.set(method, {
+      value: createNativeFunction(method, (thisArg, a) => {
+        const native = uspNativeOf(thisArg);
+        if (!native) return method === 'getAll' ? createArray([]) : method === 'has' ? false : method === 'toString' ? '' : null;
+        if (method === 'get') return native.get(toString(a[0])) ?? null;
+        if (method === 'getAll') return createArray(native.getAll(toString(a[0])));
+        if (method === 'has') return native.has(toString(a[0]));
+        return native.toString();
+      }),
+      writable: true, enumerable: false, configurable: true,
+    });
+  }
+  for (const method of ['set', 'append', 'delete', 'sort']) {
+    uspProto.properties.set(method, {
+      value: createNativeFunction(method, (thisArg, a) => {
+        const native = uspNativeOf(thisArg);
+        if (!native) return undefined;
+        if (method === 'set') native.set(toString(a[0]), toString(a[1]));
+        else if (method === 'append') native.append(toString(a[0]), toString(a[1]));
+        else if (method === 'delete') native.delete(toString(a[0]));
+        else native.sort();
+        return undefined;
+      }),
+      writable: true, enumerable: false, configurable: true,
+    });
+  }
+  uspProto.properties.set('forEach', {
+    value: createNativeFunction('forEach', (thisArg, a) => {
+      const native = uspNativeOf(thisArg);
+      const fn = a[0] as JSFunction;
+      if (!native || typeof fn !== 'object' || fn === null || fn.type !== 'closure') return undefined;
+      for (const [k, v] of native.entries()) callJSFunction(fn, undefined, [v, k, thisArg]);
+      return undefined;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  uspCtorObj.properties.set('prototype', { value: uspProto, writable: false, enumerable: false, configurable: false });
+  env.setLocal('URLSearchParams', uspCtorObj);
+
+  // URL — wraps a real native URL the same way.
+  const urlProto = createObject(null);
+  const urlNativeOf = (v: JSValue): URL | undefined =>
+    typeof v === 'object' && v !== null && isJSObjectWithMeta(v) ? v.nativeURL : undefined;
+  const urlCtor = createNativeFunction('URL', (_this, args) => {
+    const native = new URL(toString(args[0]), args[1] !== undefined ? toString(args[1]) : undefined);
+    const obj = createObject(urlProto) as JSObjectWithMeta;
+    obj.__type_override = 'url';
+    obj.nativeURL = native;
+    return obj;
+  });
+  const urlCtorObj = createObject(null);
+  urlCtorObj.type = 'function';
+  urlCtorObj.callable = true;
+  urlCtorObj.nativeFn = urlCtor.nativeFn;
+  const urlStringProps = ['href', 'protocol', 'username', 'password', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'] as const;
+  for (const prop of urlStringProps) {
+    urlProto.properties.set(prop, {
+      value: undefined, writable: false, enumerable: true, configurable: true,
+      getter: createNativeFunction(prop, (thisArg) => urlNativeOf(thisArg)?.[prop] ?? ''),
+      setter: createNativeFunction(prop, (thisArg, a) => { const n = urlNativeOf(thisArg); if (n) n[prop] = toString(a[0]); }),
+    });
+  }
+  urlProto.properties.set('origin', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('origin', (thisArg) => urlNativeOf(thisArg)?.origin ?? ''),
+  });
+  urlProto.properties.set('searchParams', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('searchParams', (thisArg) => {
+      const n = urlNativeOf(thisArg);
+      return n ? wrapURLSearchParams(n.searchParams) : wrapURLSearchParams(new URLSearchParams());
+    }),
+  });
+  urlProto.properties.set('toString', {
+    value: createNativeFunction('toString', (thisArg) => urlNativeOf(thisArg)?.href ?? ''),
+    writable: true, enumerable: false, configurable: true,
+  });
+  urlCtorObj.properties.set('prototype', { value: urlProto, writable: false, enumerable: false, configurable: false });
+  env.setLocal('URL', urlCtorObj);
+
+  // FormData — string values only (no File support). Constructed from an
+  // optional <form> element by walking its real DOM subtree for named
+  // input/textarea/select controls, reading each control's *current*
+  // value/checked off its JS wrapper (where .value/.checked assignments
+  // actually live — they don't reflect back to DOM attributes, matching
+  // real browsers where the value/checked *property* is independent of
+  // the value/checked *attribute* once the user or script touches it).
+  const formDataProto = createObject(null);
+  function getElementProp(el: DomElement, prop: string): JSValue {
+    const wrapped = wrapElement(el, domTree);
+    const desc = wrapped.properties.get(prop);
+    if (!desc) return undefined;
+    if (desc.getter) return callJSFunction(desc.getter, wrapped, []);
+    return desc.value;
+  }
+  function collectFormEntries(form: DomElement): [string, string][] {
+    const entries: [string, string][] = [];
+    const walk = (node: DomElement): void => {
+      for (const child of node.children) {
+        if (child.nodeType !== 'element') continue;
+        const childEl = child as DomElement;
+        const name = childEl.attributes.get('name');
+        if (name && ['input', 'textarea', 'select'].includes(childEl.tagName) && !childEl.attributes.has('disabled')) {
+          const type = (getElementProp(childEl, 'type') as string | undefined) ?? childEl.attributes.get('type') ?? 'text';
+          if (childEl.tagName === 'input' && (type === 'checkbox' || type === 'radio')) {
+            if (getElementProp(childEl, 'checked')) {
+              entries.push([name, toString(getElementProp(childEl, 'value') ?? childEl.attributes.get('value') ?? 'on')]);
+            }
+          } else {
+            entries.push([name, toString(getElementProp(childEl, 'value') ?? childEl.attributes.get('value') ?? '')]);
+          }
+        }
+        walk(childEl);
+      }
+    };
+    walk(form);
+    return entries;
+  }
+  function wrapFormData(entries: [string, string][]): JSObject {
+    const obj = createObject(formDataProto) as JSObjectWithMeta;
+    obj.__type_override = 'formdata';
+    obj.__formEntries = entries;
+    return obj;
+  }
+  const fdEntriesOf = (v: JSValue): [string, string][] | undefined =>
+    typeof v === 'object' && v !== null && isJSObjectWithMeta(v) ? v.__formEntries : undefined;
+  const fdCtorObj = createObject(null);
+  fdCtorObj.type = 'function';
+  fdCtorObj.callable = true;
+  fdCtorObj.nativeFn = (_this: unknown, args: unknown[]) => {
+    const formArg = (args as JSValue[])[0];
+    const formEl = typeof formArg === 'object' && formArg !== null && '__domNode' in formArg
+      ? (formArg as JSObject & { __domNode: DomElement }).__domNode
+      : undefined;
+    return wrapFormData(formEl ? collectFormEntries(formEl) : []);
+  };
+  fdCtorObj.properties.set('prototype', { value: formDataProto, writable: false, enumerable: false, configurable: false });
+  env.setLocal('FormData', fdCtorObj);
+  formDataProto.properties.set('append', {
+    value: createNativeFunction('append', (thisArg, a) => { fdEntriesOf(thisArg)?.push([toString(a[0]), toString(a[1])]); return undefined; }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('set', {
+    value: createNativeFunction('set', (thisArg, a) => {
+      const entries = fdEntriesOf(thisArg);
+      if (!entries) return undefined;
+      const key = toString(a[0]);
+      const filtered = entries.filter(([k]) => k !== key);
+      filtered.push([key, toString(a[1])]);
+      entries.length = 0;
+      entries.push(...filtered);
+      return undefined;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('get', {
+    value: createNativeFunction('get', (thisArg, a) => fdEntriesOf(thisArg)?.find(([k]) => k === toString(a[0]))?.[1] ?? null),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('getAll', {
+    value: createNativeFunction('getAll', (thisArg, a) => createArray((fdEntriesOf(thisArg) ?? []).filter(([k]) => k === toString(a[0])).map(([, v]) => v))),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('has', {
+    value: createNativeFunction('has', (thisArg, a) => (fdEntriesOf(thisArg) ?? []).some(([k]) => k === toString(a[0]))),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('delete', {
+    value: createNativeFunction('delete', (thisArg, a) => {
+      const entries = fdEntriesOf(thisArg);
+      if (!entries) return undefined;
+      const key = toString(a[0]);
+      const kept = entries.filter(([k]) => k !== key);
+      entries.length = 0;
+      entries.push(...kept);
+      return undefined;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+  formDataProto.properties.set('forEach', {
+    value: createNativeFunction('forEach', (thisArg, a) => {
+      const fn = a[0] as JSFunction;
+      if (typeof fn !== 'object' || fn === null || fn.type !== 'closure') return undefined;
+      for (const [k, v] of fdEntriesOf(thisArg) ?? []) callJSFunction(fn, undefined, [v, k, thisArg]);
+      return undefined;
+    }),
+    writable: true, enumerable: false, configurable: true,
+  });
+
+  // TextEncoder/TextDecoder — wrap real native ones (available in both Node
+  // and the renderer's V8 runtime), bridging through the sandboxed
+  // Uint8Array constructor so encode() returns a real, usable typed array
+  // rather than a plain array of byte values.
+  const teCtorObj = createObject(null);
+  teCtorObj.type = 'function';
+  teCtorObj.callable = true;
+  teCtorObj.nativeFn = () => {
+    const obj = createObject(null);
+    obj.properties.set('encoding', { value: 'utf-8', writable: false, enumerable: true, configurable: false });
+    obj.properties.set('encode', {
+      value: createNativeFunction('encode', (_t, a) => {
+        const bytes = Array.from(new TextEncoder().encode(a[0] !== undefined ? toString(a[0]) : ''));
+        // Looked up lazily (not at setup time): Uint8Array is registered
+        // later in createGlobalEnv, so env.get() here — at call time,
+        // well after setup finishes — is what makes it resolvable at all.
+        const uint8ArrayCtor = env.get('Uint8Array') as JSObject | undefined;
+        return uint8ArrayCtor?.nativeFn ? uint8ArrayCtor.nativeFn(undefined, [createArray(bytes as unknown as JSValue[])]) : createArray(bytes as unknown as JSValue[]);
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    return obj;
+  };
+  env.setLocal('TextEncoder', teCtorObj);
+
+  const tdCtorObj = createObject(null);
+  tdCtorObj.type = 'function';
+  tdCtorObj.callable = true;
+  tdCtorObj.nativeFn = (_this: unknown, args: unknown[]) => {
+    const encoding = (args as JSValue[])[0] !== undefined ? toString((args as JSValue[])[0]) : 'utf-8';
+    const obj = createObject(null);
+    obj.properties.set('encoding', { value: encoding, writable: false, enumerable: true, configurable: false });
+    obj.properties.set('decode', {
+      value: createNativeFunction('decode', (_t, a) => {
+        const input = a[0];
+        const view = typeof input === 'object' && input !== null && isJSObjectWithMeta(input) ? (input as { __nativeView?: unknown }).__nativeView : undefined;
+        if (view instanceof Uint8Array) return new TextDecoder(encoding).decode(view);
+        if (ArrayBuffer.isView(view as ArrayBufferView)) return new TextDecoder(encoding).decode(new Uint8Array((view as ArrayBufferView).buffer));
+        return '';
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    return obj;
+  };
+  env.setLocal('TextDecoder', tdCtorObj);
 
   // Map constructor
   const mapProto = createObject(null);
@@ -1268,355 +1815,30 @@ export function createGlobalEnv(
       value: createNativeFunction('from', (_this, args) => {
         const source = args[0];
         const mapFn = args[1] as JSFunction | undefined;
-        if (typeof source !== 'object' || source === null) return createArray([]);
-        const srcObj = source as JSObject;
-        if (srcObj.type === 'array') {
-          const len = Number(srcObj.properties.get('length')?.value ?? 0);
-          const result: JSValue[] = [];
-          for (let i = 0; i < len; i++) {
-            let val = srcObj.properties.get(String(i))?.value;
-            if (typeof mapFn === 'object' && mapFn !== null && mapFn.type === 'closure') {
-              val = callJSFunction(mapFn, undefined, [val, i]);
-            }
-            result.push(val);
+        const values = iterableToArray(source, env);
+        const result = values.map((val, i) => {
+          if (typeof mapFn === 'object' && mapFn !== null && mapFn.type === 'closure') {
+            return callJSFunction(mapFn, undefined, [val, i]);
           }
-          return createArray(result);
-        }
-        return createArray([]);
+          return val;
+        });
+        return createArray(result);
       }),
       writable: true, enumerable: false, configurable: true,
     });
     return arrCtorObj;
   })());
 
-  // Array.prototype methods
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const arrProtoMethods: Record<string, (...args: any[]) => any> = {
-    push: (_this, ...args) => {
-      if (typeof _this !== 'object' || _this === null) return 0;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < args.length; i++) {
-        obj.properties.set(String(len + i), { value: args[i] as JSValue, writable: true, enumerable: true, configurable: true });
-      }
-      obj.properties.set('length', { value: len + args.length, writable: true, enumerable: false, configurable: true });
-      return len + args.length;
-    },
-    pop: (_this) => {
-      if (typeof _this !== 'object' || _this === null) return undefined;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      if (len === 0) { obj.properties.set('length', { value: 0, writable: true, enumerable: false, configurable: true }); return undefined; }
-      const idx = len - 1;
-      const val = obj.properties.get(String(idx))?.value;
-      obj.properties.delete(String(idx));
-      obj.properties.set('length', { value: idx, writable: true, enumerable: false, configurable: true });
-      return val;
-    },
-    shift: (_this) => {
-      if (typeof _this !== 'object' || _this === null) return undefined;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      if (len === 0) return undefined;
-      const val = obj.properties.get('0')?.value;
-      for (let i = 1; i < len; i++) {
-        const next = obj.properties.get(String(i))?.value;
-        obj.properties.set(String(i - 1), { value: next, writable: true, enumerable: true, configurable: true });
-      }
-      obj.properties.delete(String(len - 1));
-      obj.properties.set('length', { value: len - 1, writable: true, enumerable: false, configurable: true });
-      return val;
-    },
-    unshift: (_this, ...args) => {
-      if (typeof _this !== 'object' || _this === null) return 0;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = len - 1; i >= 0; i--) {
-        const val = obj.properties.get(String(i))?.value;
-        obj.properties.set(String(i + args.length), { value: val, writable: true, enumerable: true, configurable: true });
-      }
-      for (let i = 0; i < args.length; i++) {
-        obj.properties.set(String(i), { value: args[i] as JSValue, writable: true, enumerable: true, configurable: true });
-      }
-      obj.properties.set('length', { value: len + args.length, writable: true, enumerable: false, configurable: true });
-      return len + args.length;
-    },
-    indexOf: (_this, searchElement, fromIndex) => {
-      if (typeof _this !== 'object' || _this === null) return -1;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const start = Math.max(0, toNumber(fromIndex ?? 0));
-      for (let i = start; i < len; i++) {
-        if (obj.properties.get(String(i))?.value === searchElement) return i;
-      }
-      return -1;
-    },
-    includes: (_this, searchElement, fromIndex) => {
-      if (typeof _this !== 'object' || _this === null) return false;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const start = Math.max(0, toNumber(fromIndex ?? 0));
-      for (let i = start; i < len; i++) {
-        if (obj.properties.get(String(i))?.value === searchElement) return true;
-      }
-      return false;
-    },
-    join: (_this, separator) => {
-      if (typeof _this !== 'object' || _this === null) return '';
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const sep = separator !== undefined ? toString(separator) : ',';
-      const parts: string[] = [];
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        parts.push(val !== undefined && val !== null ? toString(val) : '');
-      }
-      return parts.join(sep);
-    },
-    slice: (_this, start, end) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      let s = toNumber(start ?? 0);
-      let e = end !== undefined ? toNumber(end) : len;
-      if (s < 0) s = Math.max(0, len + s);
-      if (e < 0) e = Math.max(0, len + e);
-      e = Math.min(e, len);
-      const result: JSValue[] = [];
-      for (let i = s; i < e; i++) {
-        result.push(obj.properties.get(String(i))?.value);
-      }
-      return createArray(result);
-    },
-    splice: (_this, start, deleteCount, ...items) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      let s = toNumber(start ?? 0);
-      if (s < 0) s = Math.max(0, len + s);
-      s = Math.min(s, len);
-      let dc = deleteCount !== undefined ? toNumber(deleteCount) : len - s;
-      dc = Math.max(0, Math.min(dc, len - s));
-      const removed: JSValue[] = [];
-      for (let i = s; i < s + dc; i++) {
-        removed.push(obj.properties.get(String(i))?.value);
-      }
-      const newLen = len - dc + items.length;
-      for (let i = len - 1; i >= s + dc; i--) {
-        obj.properties.set(String(i + items.length - dc), { value: obj.properties.get(String(i))?.value, writable: true, enumerable: true, configurable: true });
-      }
-      for (let i = 0; i < items.length; i++) {
-        obj.properties.set(String(s + i), { value: items[i] as JSValue, writable: true, enumerable: true, configurable: true });
-      }
-      for (let i = s + items.length; i < newLen; i++) {
-        if (!obj.properties.has(String(i))) obj.properties.set(String(i), { value: undefined, writable: true, enumerable: true, configurable: true });
-      }
-      obj.properties.set('length', { value: newLen, writable: true, enumerable: false, configurable: true });
-      return createArray(removed);
-    },
-    concat: (_this, ...args) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      const result: JSValue[] = [];
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) result.push(obj.properties.get(String(i))?.value);
-      for (const arg of args) {
-        if (typeof arg === 'object' && arg !== null && (arg as JSObject).type === 'array') {
-          const argLen = Number((arg as JSObject).properties.get('length')?.value ?? 0);
-          for (let i = 0; i < argLen; i++) result.push((arg as JSObject).properties.get(String(i))?.value);
-        } else {
-          result.push(arg as JSValue);
-        }
-      }
-      return createArray(result);
-    },
-    reverse: (_this) => {
-      if (typeof _this !== 'object' || _this === null) return _this;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < Math.floor(len / 2); i++) {
-        const a = obj.properties.get(String(i))?.value;
-        const b = obj.properties.get(String(len - 1 - i))?.value;
-        obj.properties.set(String(i), { value: b, writable: true, enumerable: true, configurable: true });
-        obj.properties.set(String(len - 1 - i), { value: a, writable: true, enumerable: true, configurable: true });
-      }
-      return _this;
-    },
-    flat: (_this, depth) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      const d = toNumber(depth ?? 1);
-      const result: JSValue[] = [];
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const flatten = (arr: JSObject, currentDepth: number) => {
-        const arrLen = Number(arr.properties.get('length')?.value ?? 0);
-        for (let i = 0; i < arrLen; i++) {
-          const val = arr.properties.get(String(i))?.value;
-          if (typeof val === 'object' && val !== null && (val as JSObject).type === 'array' && currentDepth < d) {
-            flatten(val as JSObject, currentDepth + 1);
-          } else {
-            result.push(val);
-          }
-        }
-      };
-      flatten(obj, 0);
-      return createArray(result);
-    },
-    map: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return createArray([]);
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const result: JSValue[] = [];
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        result.push(callJSFunction(callback as JSFunction, undefined, [val, i, _this]));
-      }
-      return createArray(result);
-    },
-    filter: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return createArray([]);
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return createArray([]);
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const result: JSValue[] = [];
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) result.push(val);
-      }
-      return createArray(result);
-    },
-    reduce: (_this, callback, initialValue) => {
-      if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return undefined;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      let acc: JSValue = initialValue;
-      let startIdx = 0;
-      if (initialValue === undefined) {
-        if (len === 0) throw new TypeError('Reduce of empty array with no initial value');
-        acc = obj.properties.get('0')?.value;
-        startIdx = 1;
-      }
-      for (let i = startIdx; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        acc = callJSFunction(callback as JSFunction, undefined, [acc, val, i, _this]);
-      }
-      return acc;
-    },
-    find: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return undefined;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return val;
-      }
-      return undefined;
-    },
-    findIndex: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return -1;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return -1;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return i;
-      }
-      return -1;
-    },
-    some: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return false;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return false;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        if (callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return true;
-      }
-      return false;
-    },
-    every: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return true;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return true;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        if (!callJSFunction(callback as JSFunction, undefined, [val, i, _this])) return false;
-      }
-      return true;
-    },
-    forEach: (_this, callback) => {
-      if (typeof _this !== 'object' || _this === null) return undefined;
-      if (typeof callback !== 'object' || callback === null || (callback as JSFunction).type !== 'closure') return undefined;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = obj.properties.get(String(i))?.value;
-        callJSFunction(callback as JSFunction, undefined, [val, i, _this]);
-      }
-      return undefined;
-    },
-    fill: (_this, value, start, end) => {
-      if (typeof _this !== 'object' || _this === null) return _this;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      let s = Math.max(0, toNumber(start ?? 0));
-      let e = end !== undefined ? toNumber(end) : len;
-      if (s < 0) s = Math.max(0, len + s);
-      if (e < 0) e = Math.max(0, len + e);
-      e = Math.min(e, len);
-      for (let i = s; i < e; i++) {
-        obj.properties.set(String(i), { value: value as JSValue, writable: true, enumerable: true, configurable: true });
-      }
-      return _this;
-    },
-    sort: (_this, compareFn) => {
-      if (typeof _this !== 'object' || _this === null) return _this;
-      const obj = _this as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const items: [number, JSValue][] = [];
-      for (let i = 0; i < len; i++) {
-        items.push([i, obj.properties.get(String(i))?.value]);
-      }
-      items.sort((a, b) => {
-        if (compareFn !== undefined && typeof compareFn === 'object' && compareFn !== null && (compareFn as JSFunction).type === 'closure') {
-          const result = toNumber(callJSFunction(compareFn as JSFunction, undefined, [a[1], b[1]]));
-          return result;
-        }
-        const sa = a[1] !== undefined && a[1] !== null ? toString(a[1]) : '';
-        const sb = b[1] !== undefined && b[1] !== null ? toString(b[1]) : '';
-        return sa < sb ? -1 : sa > sb ? 1 : 0;
-      });
-      for (let i = 0; i < items.length; i++) {
-        obj.properties.set(String(i), { value: items[i][1], writable: true, enumerable: true, configurable: true });
-      }
-      return _this;
-    },
-    toString: (_this: any) => {
-      if (typeof _this !== 'object' || _this === null) return '';
-      const obj = _this as JSObject;
-      if (obj.type === 'array') {
-        const len = Number(obj.properties.get('length')?.value ?? 0);
-        const parts: string[] = [];
-        for (let i = 0; i < len; i++) {
-          const val = obj.properties.get(String(i))?.value;
-          parts.push(val !== undefined && val !== null ? toString(val) : '');
-        }
-        return parts.join(',');
-      }
-      return '';
-    },
-  };
+  // Array.prototype — reuses the exact same, already-tested method
+  // implementations real array instances get (attachArrayMethods in
+  // values.ts), instead of maintaining a second, separate copy. A prior
+  // separate arrProtoMethods table here duplicated every method with a
+  // mismatched calling convention (destructured/rest params instead of
+  // the real NativeFunction (thisArg, args: JSValue[]) signature) — since
+  // Array.prototype was never wired up as a real object at all, that bug
+  // was never actually exercised. Deleted in favor of this reuse.
   const arrayProto = createObject(null);
-  for (const [name, fn] of Object.entries(arrProtoMethods)) {
-    arrayProto.properties.set(name, {
-      value: createNativeFunction(name, fn as NativeFunction),
-      writable: true, enumerable: false, configurable: true,
-    });
-  }
+  attachArrayMethods(arrayProto);
   arrayProto.properties.set('length', { value: 0, writable: true, enumerable: false, configurable: true });
   arrayProto.properties.set(Symbol.for('iterator') as unknown as string, {
     value: createNativeFunction('[Symbol.iterator]', (_this) => {
@@ -1646,9 +1868,13 @@ export function createGlobalEnv(
     writable: true, enumerable: false, configurable: true,
   });
 
-  // Make sure all new array instances get the prototype
-  // The Array constructor already returns createArray which sets type='array' and uses arrayProto
-  // But we need to update createArray to use our new proto — skip for now, the methods are on instances
+  // Array.prototype itself was built above but never exposed — real code
+  // reads it directly (e.g. jQuery's `j = Array.prototype.push`, or the
+  // common array-like-borrowing idiom `Array.prototype.slice.call(args)`),
+  // so `Array.prototype` must be a real object even though individual
+  // array instances get their methods copied directly onto them (via
+  // attachArrayMethods in values.ts) rather than through this prototype.
+  (env.get('Array') as JSObject).properties.set('prototype', { value: arrayProto, writable: false, enumerable: false, configurable: false });
 
   // Function constructor (limited — wraps source code into executable)
   const funcCtor = createNativeFunction('Function', (_this, args) => {
@@ -1736,6 +1962,56 @@ export function createGlobalEnv(
   const docBinding = createDocumentBinding(doc, domTree);
   env.setLocal('document', docBinding);
 
+  // document.cookie — a real browser always returns a string here (empty if
+  // there are no cookies), never undefined; a huge amount of real-world code
+  // reads it unconditionally (e.g. `document.cookie.match(/.../)`) and
+  // crashes the instant it isn't a string. Backed by the same ICookieJar
+  // used for the real HTTP request/response pipeline when one is wired in
+  // (so a page setting a cookie via JS is visible to its own later requests,
+  // and vice versa); falls back to a page-local in-memory jar otherwise
+  // (unit tests, or a page loaded without a real navigation/network stack)
+  // so reads/writes still round-trip sanely within the same page.
+  const localCookies = new Map<string, string>();
+  docBinding.properties.set('cookie', {
+    value: '',
+    writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get cookie', () => {
+      if (cookieJar && pageOrigin) return cookieJar.getCookieHeader(pageOrigin);
+      return Array.from(localCookies, ([k, v]) => `${k}=${v}`).join('; ');
+    }),
+    setter: createNativeFunction('set cookie', (_t, args) => {
+      const raw = toString(args[0]);
+      if (cookieJar && pageOrigin) { cookieJar.setFromResponse(pageOrigin, [raw]); return; }
+      const eq = raw.indexOf('=');
+      if (eq === -1) return;
+      localCookies.set(raw.slice(0, eq).trim(), raw.slice(eq + 1).split(';')[0]!.trim());
+    }),
+  });
+
+  // Event / MouseEvent / CustomEvent constructors — dispatchEvent()/
+  // addEventListener() were fully implemented but nothing could ever
+  // construct an event to hand them: `new Event(...)` resolved to no
+  // global at all, so every dispatch silently carried type: undefined
+  // and matched no listener.
+  const eventInit = (options: JSValue): { bubbles?: boolean; cancelable?: boolean; composed?: boolean } => {
+    if (typeof options !== 'object' || options === null) return {};
+    const o = options as JSObject;
+    return {
+      bubbles: toBoolean(o.properties.get('bubbles')?.value ?? false),
+      cancelable: toBoolean(o.properties.get('cancelable')?.value ?? false),
+      composed: toBoolean(o.properties.get('composed')?.value ?? false),
+    };
+  };
+  env.setLocal('Event', createNativeFunction('Event', (_this, args) => createEventObject(toString(args[0]), undefined, eventInit(args[1]))));
+  env.setLocal('MouseEvent', createNativeFunction('MouseEvent', (_this, args) => createEventObject(toString(args[0]), undefined, eventInit(args[1]))));
+  env.setLocal('KeyboardEvent', createNativeFunction('KeyboardEvent', (_this, args) => createEventObject(toString(args[0]), undefined, eventInit(args[1]))));
+  env.setLocal('CustomEvent', createNativeFunction('CustomEvent', (_this, args) => {
+    const evt = createEventObject(toString(args[0]), undefined, eventInit(args[1]));
+    const detail = typeof args[1] === 'object' && args[1] !== null ? (args[1] as JSObject).properties.get('detail')?.value : undefined;
+    evt.properties.set('detail', { value: detail, writable: false, enumerable: true, configurable: false });
+    return evt;
+  }));
+
   // document.write() / document.open() — requires an HtmlParser
   if (htmlParser) {
     docBinding.properties.set('write', {
@@ -1807,6 +2083,17 @@ export function createGlobalEnv(
   env.setLocal('Request', createRequestClass(eventLoop));
   env.setLocal('AbortController', createAbortControllerClass(eventLoop));
   env.setLocal('fetch', createFetchFn(eventLoop, platformFetch, resourceEnforcer, pageOrigin, corsEngine));
+
+  // Web Crypto API — getRandomValues/randomUUID/subtle, delegating to Node's
+  // real webcrypto implementation (see crypto-api.ts)
+  env.setLocal('crypto', createCryptoObject(eventLoop));
+
+  // Custom Elements — window.HTMLElement (extendable) + window.customElements
+  env.setLocal('HTMLElement', createHTMLElementClass());
+  env.setLocal('customElements', createCustomElementRegistry(eventLoop));
+
+  // Cache API — window.caches, backed by the same fetch used for real requests
+  env.setLocal('caches', createCacheStorage(eventLoop, platformFetch));
 
   // XMLHttpRequest
   env.setLocal('XMLHttpRequest', createXMLHttpRequestClass(eventLoop, corsEngine, pageOrigin));
@@ -1903,9 +2190,40 @@ export function createGlobalEnv(
   // Storage APIs (localStorage, sessionStorage, indexedDB)
   bindStorageAPIs(env, { origin: pageOrigin ?? 'https://localhost', diskPath: storageDir });
 
+  // Web SQL Database (deprecated, but still used by legacy pages)
+  bindWebSQL(env, eventLoop, { origin: pageOrigin ?? 'https://localhost', diskPath: storageDir });
+
   // Fullscreen API (methods on Element via global)
   const fullscreen = createFullscreenAPIMethods();
   env.setLocal('fullscreenElement', fullscreen.fullscreenElement);
+
+  // window.matchMedia() — real-world code very commonly reads
+  // `matchMedia('(prefers-color-scheme: dark)').matches` once (dark-mode
+  // detection, responsive JS behavior) without ever registering a change
+  // listener. Reuses the exact same media-query parser/evaluator the CSS
+  // engine already uses for real `@media` rules, so `(prefers-color-scheme:
+  // dark)`, `(min-width: 768px)`, `(prefers-reduced-motion: no-preference)`,
+  // etc. all evaluate consistently with how a real stylesheet would see
+  // them — not a separate, hand-rolled guess. `addEventListener`/
+  // `addListener` are accepted but never fire: Nova has no live
+  // OS-preference-change or viewport-resize event source to drive them
+  // from, and the overwhelmingly common real-world usage only ever reads
+  // `.matches` once anyway.
+  const defaultViewport: Viewport = { width: 1920, height: 1080 };
+  const matchMediaFn = createNativeFunction('matchMedia', (_this, args) => {
+    const mediaText = toString(args[0] ?? '');
+    const queries = parseMediaQueries(mediaText);
+    const mqlObj = createObject(null);
+    mqlObj.properties.set('media', { value: mediaText, writable: false, enumerable: true, configurable: false });
+    mqlObj.properties.set('matches', { value: evaluateMediaQueries(queries, defaultViewport), writable: false, enumerable: true, configurable: false });
+    mqlObj.properties.set('onchange', { value: null, writable: true, enumerable: true, configurable: true });
+    for (const name of ['addEventListener', 'removeEventListener', 'addListener', 'removeListener']) {
+      mqlObj.properties.set(name, { value: createNativeFunction(name, () => undefined), writable: true, enumerable: true, configurable: true });
+    }
+    return mqlObj;
+  });
+  windowObj.properties.set('matchMedia', { value: matchMediaFn, writable: true, enumerable: true, configurable: true });
+  env.setLocal('matchMedia', matchMediaFn);
 
   // Selection API — window.getSelection()
   const selectionObj = createSelectionObject();
@@ -1942,6 +2260,43 @@ export function createGlobalEnv(
 
   // Bind all Web APIs (crypto, BroadcastChannel, streams, WASM, WebGPU, WebXR, etc.)
   bindWebAPIs(env, docBinding);
+
+  // Mirror every global binding onto `window` by the same reference, and
+  // alias `self`/`globalThis` to it — in a real browser `window`, `self`,
+  // and `globalThis` are the SAME object, and every global (Math, Array,
+  // JSON, fetch, ...) is really just a property of it. Without this,
+  // `window.Math === Math` is false (window was a bare object nothing ever
+  // copied built-ins onto), which breaks the extremely common real-world
+  // "find the true global object" feature-detection pattern countless
+  // libraries use — e.g. `[globalThis, window, self, global].find(c => c
+  // && c.Math === Math) || throw Error('Cannot find global object')`. Runs
+  // last, once every global this function sets up actually exists.
+  for (const [name, binding] of env.getBindings()) {
+    if (!windowObj.properties.has(name)) {
+      windowObj.properties.set(name, { value: binding.value, writable: true, enumerable: true, configurable: true });
+    }
+  }
+  env.setLocal('self', windowObj);
+  env.setLocal('globalThis', windowObj);
+  // Top-level `this` in real non-strict script code IS the global object —
+  // real bootstrap code (e.g. Angular's dark-mode-detection snippet) reads
+  // `this.document` at the top of an inline <script>. Without this, the
+  // root environment never had a `this` binding at all, so ThisExpression
+  // evaluated to `undefined` (not even a bare object) at the top level, and
+  // every plain (non-strict) function's own `this`-fallback — which reads
+  // this same root binding — inherited that same `undefined` instead of
+  // the real global object.
+  env.setLocal('this', windowObj);
+
+  // Link the global scope to `window` itself — in a real browser the global
+  // object IS the global environment record, so a top-level `var`/function
+  // declaration becomes a `window` property, and `window.foo = ...` is
+  // immediately visible to a bare `foo` reference. Without this, Nova's
+  // global `Environment` and `windowObj` are two independently-updated
+  // stores that only agreed at setup time, breaking extremely common
+  // real-world code (e.g. YouTube's `var ytcfg = {...}; window.ytcfg.set(...)`
+  // in the very next statement).
+  env.linkWindow(windowObj);
 
   return env;
 }

@@ -252,6 +252,7 @@ export class GarbageCollector {
   ): JSFunction {
     const fn: JSFunction = {
       type: 'closure',
+      properties: new Map(),
       name,
       params,
       body,
@@ -275,6 +276,7 @@ export class GarbageCollector {
   ): JSFunction {
     const nativeFn: JSFunction = {
       type: 'closure',
+      properties: new Map(),
       name,
       params: [],
       body: null,

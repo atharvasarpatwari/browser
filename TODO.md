@@ -1,6 +1,6 @@
 # Nova Browser — TODO
 
-Last updated: 2026-09-10
+Last updated: 2026-09-23
 
 > **2026-09-10 reference note:** a visual mockup of the browser UI (main window + new-tab page) was built on a Claude Design canvas in Cowork session `session_01W6wSGNKHuZ7Mv7nQRXAgXK` — see `doc/2026-09-10-browser-interface-design-mockup.md` for the published link and an open question it surfaced (two parallel, unreconciled CSS/component systems in the source — `themes.ts`'s small scheme vs. the richer `.nova-*` classes actually shipped in `dist/assets/main-DR04VOts.css`). No code changed; not an action item, just a pointer for whoever next touches the UI.
 
@@ -34,14 +34,19 @@ Last updated: 2026-09-10
 
 ## Priority: Medium
 
-### 5. Native Rust Wiring (Phase 3, parallel track)
-- `nova-net` (DNS/TLS/HTTP) + `nova-bindings` (napi-rs) build locally; cross-platform CI matrix mostly commented out in `native-build.yml`.
-- [ ] Wire native DNS/TLS/HTTP into the JS `RawSocketHttpClient` layer with a JS fallback — or explicitly document this path as experimental/optional and keep the TS networking stack primary. Leaving it half-wired is worse than either committed state.
-- [ ] Activate the commented win/arm64 build jobs in `native-build.yml`.
+### 5. Native Rust Wiring (Phase 3, parallel track) — re-scoped 2026-09-20, see `native/README.md`
+- `nova-net` (DNS/TLS/HTTP) + `nova-bindings` (napi-rs) build locally (once a working toolchain is present — see below); cross-platform CI matrix mostly commented out in `native-build.yml`. Linux (`dns,tls,http`) is proven in CI today; nothing else is.
+- [x] **Decided, not left half-wired**: per-subsystem status is now explicit rather than one all-or-nothing bet. DNS (`nova-net/src/dns.rs`, real `hickory-resolver` usage) is solid and being wired next. HTTP (`nova-net/src/http.rs`) and TLS (`nova-net/src/tls.rs`) are **explicitly experimental, not to be wired** until real Rust gaps are fixed: HTTP is HTTPS-only with no chunked/gzip/binary-body support (errors on non-UTF-8 bodies today), TLS's `protocol_version`/`cipher_suite`/`peer_certificates` are hardcoded stubs the real `TlsHandler.buildCertificateChainReal()` cert-chain logic can't use. Full writeup in `native/README.md`.
+- [x] Fixed a real bug found while scoping this: `src/native/index.ts` checked "did the module load" (not "does this specific function exist on it") before calling into native — a feature-gated build (e.g. `--features dns` only, what `native:build:win-x64` uses) would load successfully then throw `TypeError: ... is not a function` on the first `httpFetch`/`tlsConnect` call instead of falling back. Now checks per-function (`nativeFn()` helper) and logs when a partial build silently degrades to JS fallback.
+- [x] Added `native:dist:win-x64` npm script (mirrors the existing `native:dist:linux-x64` pattern) to place a built `.dll` at the path `src/native/index.ts`'s loader expects.
+- [ ] **Blocked, confirmed two ways**: this dev machine has no working native-compile toolchain, for either Rust target. MSVC (`x86_64-pc-windows-msvc`, what `native:build:win-x64` targets): `where cl.exe`/`where nasm` both absent, no real Visual Studio Build Tools install (the VS2019 folder is an empty installer shell), no NASM (`rustls`' `ring` crypto backend needs an assembler to link, even for a DNS-only feature set). GNU (`x86_64-pc-windows-gnu`, this machine's active default `rustup` toolchain): tried directly (`cargo test --workspace --manifest-path native/Cargo.toml`) — fails with `dlltool could not create import library ... Invalid bfd target`; the installed `C:\MinGW\bin\` is a classic mingw.org 32-bit-era install, not mingw-w64, and can't target x86_64. **Don't assume that existing MinGW is a usable fallback — verified it isn't.** Install VS Build Tools (Desktop development with C++ workload) + NASM, or replace the MinGW install with real mingw-w64, then verify with `cargo build -p nova-bindings --manifest-path native/Cargo.toml --features dns` before continuing.
+- [ ] Once unblocked: build+dist native DNS for win-x64, add a native-backed `resolve-dns` kind to `electron/socket-owner.cjs`'s IPC surface (main-process-only, napi addons can't load in the `contextIsolation: true` renderer) with its own JS fallback, feature-flag behind `NOVA_NATIVE_DNS=1`, then use it as a pre-resolution step in `openTcp()` before the existing `net.connect()`/`tls.connect()` — `RawSocketHttpClient`/`TlsHandler` stay untouched.
+- [ ] Activate the commented win/arm64 build jobs in `native-build.yml` — after the toolchain/build is proven locally, not before.
 
-### 6. Multi-Process / crash isolation (Phase 2, parked)
+### 6. Multi-Process / crash isolation (Phase 2, parked) — re-scoped 2026-09-19
 - Activate the `child_process.fork()` transport in `ProcessManager`; per-tab/domain process models; OS-level crash isolation.
-- [ ] See `doc/crash-isolation-scoping.md` (added 2026-08-27) for a minimal-first scoping pass — the underlying process-model design (`process-model-design-report.md`, 2026-07-21) and a "Crash recovery / isolation" module already exist; this may be closer to *activating* dormant infrastructure than building new isolation from scratch. Confirm that before scoping a bigger effort.
+- [x] `doc/crash-isolation-scoping.md`'s step 2 (write a regression test, run it against real code, don't assume) — **done**: `tests/tab-script-fault-isolation.test.ts` renders a real page whose script throws, then renders an unrelated page through the same shared `PageRenderer`, using real (non-mocked) engine components matching `main.ts`'s actual wiring. **Both pass against current code** — a script fault in one navigation does not corrupt or block a later one, and the error is logged, not swallowed. See that doc's "Result" section for the full writeup.
+- [ ] What remains open is narrower than originally framed: real OS-level per-tab process isolation (`child_process.fork()`, the dormant `ProcessManager` transport, memory/security blast-radius containment) is still a valid, real feature — but it's no longer motivated by "does a bad tab wreck the browser," since that specific fear is now tested and answered (it doesn't, today). Scope this as its own effort on its own merits (real process-level fault tolerance, eventual site isolation) rather than reopening it under the old framing.
 
 ## Priority: Low
 

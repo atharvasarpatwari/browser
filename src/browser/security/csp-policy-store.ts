@@ -106,6 +106,7 @@ class CspPolicyStore implements IDisposable {
   private readonly config: CspPolicyStoreConfig;
   private readonly handlers = new Set<CspPolicyStoreEventHandler>();
   private disposed = false;
+  private enabled = true;
 
   constructor(config?: Partial<CspPolicyStoreConfig>) {
     this.config = { ...DEFAULT_STORE_CONFIG, ...config };
@@ -199,10 +200,29 @@ class CspPolicyStore implements IDisposable {
   }
 
   /**
+   * Whether CSP enforcement is turned on (the "Content Security Policy" setting).
+   */
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  /**
+   * Turn CSP enforcement on/off. Disabling makes getEnforcePolicy() return
+   * null for every origin, which every consumer (nav guard, script/resource
+   * enforcers) already treats as "no policy → allow" — so this is the one
+   * place that needs to know about the setting.
+   */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+  }
+
+  /**
    * Get the enforce policy for an origin.
    * Falls back to parent-frame policy if allowInheritance is enabled.
    */
   getEnforcePolicy(origin: string): CspPolicy | null {
+    if (!this.enabled) return null;
+
     const entry = this.get(origin);
     if (entry) return entry.enforcePolicy;
 

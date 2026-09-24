@@ -10,6 +10,13 @@ export class Lexer {
   private line = 1;
   private column = 1;
   private lastTokenType: TokenType = TokenType.EOF;
+  // Tracks, per open paren, whether it's a control-header paren (if/while/for/
+  // switch/catch) rather than a grouping/call paren — needed so `)` closing
+  // `if (cond)` etc. knows a *statement* follows (where a leading `/` must be
+  // a regex literal), while `)` closing a grouped expression or call like
+  // `(a + b)` still defaults to division for the `/` right after it.
+  private controlHeaderParenStack: boolean[] = [];
+  private lastRParenClosedControlHeader = false;
 
   constructor(source: string) {
     this.source = source;
@@ -52,7 +59,24 @@ export class Lexer {
     return tokens;
   }
 
+  /**
+   * Produces the next token, tracking `lastTokenType` for regex-vs-division
+   * disambiguation (isRegexContext()). This must wrap every call site that
+   * advances the token stream — tokenize()'s own loop used to be the only
+   * place updating lastTokenType, which left it permanently stuck at its
+   * TokenType.EOF default (a regex-context trigger) for the Parser's lazy,
+   * pull-based tokenization (`new Parser([], lexer)`, used for every real
+   * page script): every `/` was read as a regex literal, division or not.
+   */
   nextToken(): Token {
+    const tok = this.scanToken();
+    if (tok.type !== TokenType.Whitespace && tok.type !== TokenType.Comment) {
+      this.lastTokenType = tok.type;
+    }
+    return tok;
+  }
+
+  private scanToken(): Token {
     this.skipWhitespace();
     if (this.pos >= this.source.length) {
       return this.makeToken(TokenType.EOF, '', this.line, this.column);
@@ -77,8 +101,23 @@ export class Lexer {
       return this.readTemplate(startLine, startCol);
     }
 
+    // Private class fields/methods (#name) — previously fell through to
+    // Illegal, which parsePropertyKey()'s permissive `tok.value` fallback
+    // then quietly accepted as a property literally named "#", so
+    // `#value;`/`this.#value` silently split into two unrelated garbled
+    // members instead of ever throwing. Lexed as one ordinary identifier
+    // token whose name happens to include the leading '#', so declarations,
+    // reads and writes all go through the same Identifier/property-key
+    // paths as everything else. This does not enforce real member privacy
+    // (obj.#x is still readable from outside its class here, unlike real
+    // JS) — ponytail: add true encapsulation if something depends on
+    // private fields actually being inaccessible from outside the class.
+    if (ch === '#' && this.isIdentifierStart(this.peek(1) ?? '')) {
+      return this.readIdentifier(startLine, startCol, true);
+    }
+
     // Identifiers and keywords
-    if (this.isIdentifierStart(ch)) {
+    if (this.isIdentifierStart(ch) || this.isUnicodeEscapeStart()) {
       return this.readIdentifier(startLine, startCol);
     }
 
@@ -90,14 +129,20 @@ export class Lexer {
       if (this.peek(1) === '*') {
         return this.readBlockComment(startLine, startCol);
       }
+      // Context-aware: after expression-ending tokens, `/` is division.
+      // After operators/keywords/punctuation, `/` starts a regex literal.
+      // This MUST run before the `/=` check below — a regex literal whose
+      // pattern starts with `=` (e.g. `.match(/=[a-z]+/)`, a real pattern
+      // for matching a query-string assignment) is a completely valid,
+      // common regex, not a divide-assign operator, and misreading the `/`
+      // here swallows everything up to the next stray `=`-adjacent `/` in
+      // the file as one corrupted token, cascading into every token after it.
+      if (this.isRegexContext()) {
+        return this.readRegex(startLine, startCol);
+      }
       if (this.peek(1) === '=') {
         this.advance(2);
         return this.makeToken(TokenType.SlashAssign, '/=', startLine, startCol);
-      }
-      // Context-aware: after expression-ending tokens, `/` is division.
-      // After operators/keywords/punctuation, `/` starts a regex literal.
-      if (this.isRegexContext()) {
-        return this.readRegex(startLine, startCol);
       }
       this.advance();
       return this.makeToken(TokenType.Slash, '/', startLine, startCol);
@@ -105,7 +150,10 @@ export class Lexer {
 
     // ?. and ?? must be checked before the two-char switch because ? falls through to single-char
     if (ch === '?') {
-      if (this.peek(1) === '.') {
+      // Spec: OptionalChainingPunctuator is `?.` NOT followed by a decimal
+      // digit — `a?.9:.75` is the ternary `a ? .9 : .75`, not `a?.9` (an
+      // invalid numeric property access) followed by a stray `:.75`.
+      if (this.peek(1) === '.' && !this.isDigit(this.peek(2))) {
         this.advance(2);
         return this.makeToken(TokenType.QuestionDot, '?.', startLine, startCol);
       }
@@ -135,8 +183,16 @@ export class Lexer {
       case '!=': this.advance(2); return this.makeToken(TokenType.BangEqual, '!=', startLine, startCol);
       case '<=': this.advance(2); return this.makeToken(TokenType.LessEqual, '<=', startLine, startCol);
       case '>=': this.advance(2); return this.makeToken(TokenType.GreaterEqual, '>=', startLine, startCol);
-      case '&&': this.advance(2); return this.makeToken(TokenType.AmpersandAmpersand, '&&', startLine, startCol);
-      case '||': this.advance(2); return this.makeToken(TokenType.PipePipe, '||', startLine, startCol);
+      case '&&': {
+        this.advance(2);
+        if (this.peek(0) === '=') { this.advance(); return this.makeToken(TokenType.AmpersandAmpersandAssign, '&&=', startLine, startCol); }
+        return this.makeToken(TokenType.AmpersandAmpersand, '&&', startLine, startCol);
+      }
+      case '||': {
+        this.advance(2);
+        if (this.peek(0) === '=') { this.advance(); return this.makeToken(TokenType.PipePipeAssign, '||=', startLine, startCol); }
+        return this.makeToken(TokenType.PipePipe, '||', startLine, startCol);
+      }
       case '++': this.advance(2); return this.makeToken(TokenType.PlusPlus, '++', startLine, startCol);
       case '--': this.advance(2); return this.makeToken(TokenType.MinusMinus, '--', startLine, startCol);
       case '**': {
@@ -182,8 +238,17 @@ export class Lexer {
       case '=': return this.makeToken(TokenType.Equal, '=', startLine, startCol);
       case '<': return this.makeToken(TokenType.Less, '<', startLine, startCol);
       case '>': return this.makeToken(TokenType.Greater, '>', startLine, startCol);
-      case '(': return this.makeToken(TokenType.LParen, '(', startLine, startCol);
-      case ')': return this.makeToken(TokenType.RParen, ')', startLine, startCol);
+      case '(': {
+        const isControlHeader = this.lastTokenType === TokenType.If || this.lastTokenType === TokenType.While
+          || this.lastTokenType === TokenType.For || this.lastTokenType === TokenType.Switch
+          || this.lastTokenType === TokenType.Catch;
+        this.controlHeaderParenStack.push(isControlHeader);
+        return this.makeToken(TokenType.LParen, '(', startLine, startCol);
+      }
+      case ')': {
+        this.lastRParenClosedControlHeader = this.controlHeaderParenStack.pop() ?? false;
+        return this.makeToken(TokenType.RParen, ')', startLine, startCol);
+      }
       case '{': return this.makeToken(TokenType.LBrace, '{', startLine, startCol);
       case '}': return this.makeToken(TokenType.RBrace, '}', startLine, startCol);
       case '[': return this.makeToken(TokenType.LBracket, '[', startLine, startCol);
@@ -239,6 +304,59 @@ export class Lexer {
     return this.makeToken(TokenType.Number, this.source.slice(start, this.pos), line, col);
   }
 
+  /** Decode the escape sequence starting at `this.pos` (the character right
+   *  after an already-consumed backslash), advancing `pos` past it, and
+   *  return the cooked character(s) it produces (empty for a line-
+   *  continuation escape). Shared by readString and the template scanners
+   *  so plain strings and template literals decode escapes identically —
+   *  template literals used to skip this decoding entirely and kept the
+   *  raw backslash sequences in their "cooked" value. */
+  private decodeEscape(): string {
+    const ch = this.source[this.pos] ?? '';
+    let result: string;
+    switch (ch) {
+      case 'n': result = '\n'; break;
+      case 'r': result = '\r'; break;
+      case 't': result = '\t'; break;
+      case '\\': result = '\\'; break;
+      case "'": result = "'"; break;
+      case '"': result = '"'; break;
+      case '`': result = '`'; break;
+      case '$': result = '$'; break;
+      case '0': result = '\0'; break;
+      case 'b': result = '\b'; break;
+      case 'f': result = '\f'; break;
+      case 'v': result = '\v'; break;
+      case 'u': {
+        const hex = this.source.slice(this.pos + 1, this.pos + 5);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+          result = String.fromCharCode(parseInt(hex, 16));
+          this.advance(4);
+        } else {
+          result = 'u';
+        }
+        break;
+      }
+      case 'x': {
+        const hex = this.source.slice(this.pos + 1, this.pos + 3);
+        if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+          result = String.fromCharCode(parseInt(hex, 16));
+          this.advance(2);
+        } else {
+          result = 'x';
+        }
+        break;
+      }
+      case '\n':
+        this.line++; this.column = 1;
+        result = '';
+        break;
+      default: result = ch; break;
+    }
+    this.advance();
+    return result;
+  }
+
   private readString(line: number, col: number): Token {
     const quote = this.source[this.pos]!;
     this.advance();
@@ -246,45 +364,7 @@ export class Lexer {
     while (this.pos < this.source.length && this.source[this.pos] !== quote) {
       if (this.source[this.pos] === '\\') {
         this.advance();
-        const ch = this.source[this.pos] ?? '';
-        switch (ch) {
-          case 'n': value += '\n'; break;
-          case 'r': value += '\r'; break;
-          case 't': value += '\t'; break;
-          case '\\': value += '\\'; break;
-          case "'": value += "'"; break;
-          case '"': value += '"'; break;
-          case '`': value += '`'; break;
-          case '0': value += '\0'; break;
-          case 'b': value += '\b'; break;
-          case 'f': value += '\f'; break;
-          case 'v': value += '\v'; break;
-          case 'u': {
-            const hex = this.source.slice(this.pos + 1, this.pos + 5);
-            if (/^[0-9a-fA-F]{4}$/.test(hex)) {
-              value += String.fromCharCode(parseInt(hex, 16));
-              this.advance(4);
-            } else {
-              value += 'u';
-            }
-            break;
-          }
-          case 'x': {
-            const hex = this.source.slice(this.pos + 1, this.pos + 3);
-            if (/^[0-9a-fA-F]{2}$/.test(hex)) {
-              value += String.fromCharCode(parseInt(hex, 16));
-              this.advance(2);
-            } else {
-              value += 'x';
-            }
-            break;
-          }
-          case '\n':
-            this.line++; this.column = 1;
-            break;
-          default: value += ch; break;
-        }
-        this.advance();
+        value += this.decodeEscape();
       } else {
         if (this.source[this.pos] === '\n') { this.line++; this.column = 1; }
         value += this.source[this.pos];
@@ -298,69 +378,105 @@ export class Lexer {
   private readTemplate(line: number, col: number): Token {
     this.advance(); // opening backtick
     const start = this.pos;
+    let cooked = '';
     while (this.pos < this.source.length) {
       const ch = this.source[this.pos]!;
       if (ch === '`') {
-        const value = this.source.slice(start, this.pos);
+        const raw = this.source.slice(start, this.pos);
         this.advance(); // closing backtick
-        return this.makeToken(TokenType.TemplateEnd, value, line, col);
+        return this.makeToken(TokenType.TemplateEnd, cooked, line, col, raw);
       }
       if (ch === '$' && this.peek(1) === '{') {
-        const value = this.source.slice(start, this.pos);
+        const raw = this.source.slice(start, this.pos);
         this.advance(); // skip ${
         this.advance();
-        return this.makeToken(TokenType.TemplateHead, value, line, col);
+        return this.makeToken(TokenType.TemplateHead, cooked, line, col, raw);
       }
       if (ch === '\\') {
         this.advance();
-        if (this.pos < this.source.length) {
-          if (this.source[this.pos] === '\n') { this.line++; this.column = 1; }
-          this.advance();
-        }
+        // Cooked value decodes escapes like a normal string (this used to
+        // just skip the escaped char and keep the raw backslash sequence
+        // as the "cooked" text — every `\n`/`\t`/`\${`/... in a template
+        // literal, tagged or not, came through as literal backslash-n
+        // etc. instead of the character it's supposed to represent).
+        cooked += this.decodeEscape();
         continue;
       }
       if (ch === '\n') { this.line++; this.column = 1; }
+      cooked += ch;
       this.advance();
     }
-    return this.makeToken(TokenType.TemplateEnd, this.source.slice(start, this.pos), line, col);
+    return this.makeToken(TokenType.TemplateEnd, cooked, line, col, this.source.slice(start, this.pos));
   }
 
+  /** Wraps scanTemplatePart() to keep lastTokenType current — see nextToken(). */
   readTemplatePart(line: number, col: number): Token {
+    const tok = this.scanTemplatePart(line, col);
+    this.lastTokenType = tok.type;
+    return tok;
+  }
+
+  private scanTemplatePart(line: number, col: number): Token {
     const start = this.pos;
+    let cooked = '';
     while (this.pos < this.source.length) {
       const ch = this.source[this.pos]!;
       if (ch === '`') {
-        const value = this.source.slice(start, this.pos);
+        const raw = this.source.slice(start, this.pos);
         this.advance(); // closing backtick
-        return this.makeToken(TokenType.TemplateTail, value, line, col);
+        return this.makeToken(TokenType.TemplateTail, cooked, line, col, raw);
       }
       if (ch === '$' && this.peek(1) === '{') {
-        const value = this.source.slice(start, this.pos);
+        const raw = this.source.slice(start, this.pos);
         this.advance(); // skip ${
         this.advance();
-        return this.makeToken(TokenType.TemplateMiddle, value, line, col);
+        return this.makeToken(TokenType.TemplateMiddle, cooked, line, col, raw);
       }
       if (ch === '\\') {
         this.advance();
-        if (this.pos < this.source.length) {
-          if (this.source[this.pos] === '\n') { this.line++; this.column = 1; }
-          this.advance();
-        }
+        cooked += this.decodeEscape();
         continue;
       }
       if (ch === '\n') { this.line++; this.column = 1; }
+      cooked += ch;
       this.advance();
     }
-    return this.makeToken(TokenType.TemplateTail, this.source.slice(start, this.pos), line, col);
+    return this.makeToken(TokenType.TemplateTail, cooked, line, col, this.source.slice(start, this.pos));
   }
 
-  private readIdentifier(line: number, col: number): Token {
-    const start = this.pos;
-    while (this.pos < this.source.length && this.isIdentifierPart(this.source[this.pos]!)) {
+  /** True when a `\uXXXX` UnicodeEscapeSequence starts at the current
+   *  position — valid inside an IdentifierName per spec (e.g. minified
+   *  Angular-style internal names like `ɵprov`), but not covered by
+   *  isIdentifierStart's plain-ASCII check. */
+  private isUnicodeEscapeStart(): boolean {
+    return this.source[this.pos] === '\\'
+      && this.peek(1) === 'u'
+      && /^[0-9a-fA-F]{4}$/.test(this.source.slice(this.pos + 2, this.pos + 6));
+  }
+
+  private readIdentifier(line: number, col: number, isPrivate = false): Token {
+    if (isPrivate) this.advance(); // '#'
+    let value = '';
+    let sliceStart = this.pos;
+    let hadEscape = false;
+    while (this.pos < this.source.length) {
+      if (this.isUnicodeEscapeStart()) {
+        hadEscape = true;
+        value += this.source.slice(sliceStart, this.pos);
+        this.advance(); // past the backslash only — decodeEscape reads from 'u'
+        value += this.decodeEscape();
+        sliceStart = this.pos;
+        continue;
+      }
+      if (!this.isIdentifierPart(this.source[this.pos]!)) break;
       this.advance();
     }
-    const value = this.source.slice(start, this.pos);
-    const type = lookupKeyword(value);
+    value += this.source.slice(sliceStart, this.pos);
+    // A private name (#foo) is never a keyword, however it spells — same for
+    // any name containing a decoded escape, which never matches a literal
+    // keyword spelling (keywords are never written with a \u escape in
+    // practice, but even if they were, `value` has already been cooked).
+    const type = (isPrivate || hadEscape) ? TokenType.Identifier : lookupKeyword(value);
     return this.makeToken(type, value, line, col);
   }
 
@@ -412,6 +528,14 @@ export class Lexer {
   private isRegexContext(): boolean {
     // After these tokens, `/` starts a regex literal
     switch (this.lastTokenType) {
+      // `)` is ambiguous on its own — closing a grouped expression or call
+      // like `(a + b)`/`f(x)` means an expression just ended (so `/` next is
+      // division), but closing a control-header like `if (cond)` means a
+      // *statement* follows (so `/` next can only be a regex literal, since
+      // division has no left operand there). Disambiguated by the paren
+      // stack maintained in scanToken()'s '(' / ')' cases.
+      case TokenType.RParen:
+        return this.lastRParenClosedControlHeader;
       case TokenType.EOF:
       case TokenType.Plus:
       case TokenType.Minus:
@@ -544,7 +668,7 @@ export class Lexer {
     }
 
     const value = `/${pattern}/${flags}`;
-    return this.makeToken(TokenType.RegExp, value, line, col);
+    return { type: TokenType.RegExp, value, line, column: col, regexParts: { pattern, flags } };
   }
 
   private advance(count = 1): void {
@@ -558,8 +682,8 @@ export class Lexer {
     return this.source[this.pos + offset] ?? '';
   }
 
-  private makeToken(type: TokenType, value: string, line: number, column: number): Token {
-    return { type, value, line, column };
+  private makeToken(type: TokenType, value: string, line: number, column: number, raw?: string): Token {
+    return raw !== undefined ? { type, value, line, column, raw } : { type, value, line, column };
   }
 
   private isDigit(ch: string): boolean {

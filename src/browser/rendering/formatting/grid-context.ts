@@ -156,6 +156,54 @@ export function parseTrackList(value: string): TrackDef[] {
 }
 
 /**
+ * Expand `repeat(auto-fill, ...)` / `repeat(auto-fit, ...)` track defs into
+ * concrete repeated size strings, based on how many copies fit the
+ * container. parseTrackList() can't do this itself (a pure string parser
+ * with no layout context) — it just captures {type:'auto-fill', sizes}. Before
+ * this existed, callers did `defs.map(d => d.value)`, which for an
+ * auto-fill/auto-fit def is the garbled leading token of the raw
+ * "repeat(auto-fill,...)" text — not a valid track size — collapsing the
+ * whole repeat() into a single ~0px column instead of the intended N columns.
+ */
+export function expandTrackDefs(
+  defs: readonly TrackDef[],
+  gap: number,
+  availableSize: number,
+  fontSize: number,
+): string[] {
+  const result: string[] = [];
+  for (const d of defs) {
+    if (d.type === 'auto-fill' || d.type === 'auto-fit') {
+      const sizes = d.sizes && d.sizes.length > 0 ? d.sizes : ['auto'];
+      const count = resolveRepeatCount(sizes, gap, availableSize, fontSize);
+      for (let r = 0; r < count; r++) {
+        for (const s of sizes) result.push(s);
+      }
+    } else {
+      result.push(d.value);
+    }
+  }
+  return result;
+}
+
+function resolveRepeatCount(sizes: readonly string[], gap: number, availableSize: number, fontSize: number): number {
+  let sum = 0;
+  for (const s of sizes) {
+    // ponytail: minmax() in an auto-fill/auto-fit repeat sizes off its
+    // minimum bound (the common `minmax(200px, 1fr)` "as many 200px+
+    // columns as fit" pattern) rather than the spec's full track-sizing
+    // algorithm — good enough for the overwhelming majority of real usage.
+    const minmaxMatch = /^minmax\(\s*([^,]+)\s*,/.exec(s);
+    const sizeStr = minmaxMatch ? minmaxMatch[1]!.trim() : s;
+    sum += resolveTrackBase(sizeStr, fontSize, availableSize).px;
+  }
+  sum += Math.max(0, sizes.length - 1) * gap;
+  if (sum <= 0) return 1;
+  const count = Math.floor((availableSize + gap) / (sum + gap));
+  return Math.max(1, count);
+}
+
+/**
  * Resolve a single track definition to a base size in pixels.
  * fr units are resolved later during free space distribution.
  */
@@ -747,13 +795,13 @@ function parseGridLine(s: string): number {
 export function parseGridTemplateAreas(value: string): { rows: string[][]; columns: number } {
   if (!value || value === 'none') return { rows: [], columns: 0 };
 
-  const lines = value.match(/"[^"]*"/g);
+  const lines = value.match(/"[^"]*"|'[^']*'/g);
   if (!lines) return { rows: [], columns: 0 };
 
   const rows: string[][] = [];
   let columns = 0;
   for (const line of lines) {
-    const inner = line.replace(/"/g, '').trim();
+    const inner = line.slice(1, -1).trim();
     const cells = inner.split(/\s+/);
     rows.push(cells);
     columns = Math.max(columns, cells.length);

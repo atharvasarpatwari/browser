@@ -1,7 +1,7 @@
 import type { INavigationController } from '../navigation/navigation-controller';
 import type { NavigationEntry } from '../navigation/navigation-controller';
 import {
-  type JSValue, type JSObject, type JSFunction,
+  type JSValue, type JSObject, type JSFunction, type JSObjectWithMeta,
   createObject, createNativeFunction, toNumber, toString, toBoolean,
   callJSFunction,
 } from './values';
@@ -255,7 +255,12 @@ export function createLocationBinding(
   controller: INavigationController,
   _winObj: JSObject,
 ): JSObject {
-  const locationObj = createObject(null);
+  const locationObj = createObject(null) as JSObjectWithMeta;
+  // Tags this object for the generic toString() coercion in values.ts,
+  // which needs to know a bare `location` (or `'' + location`, or `new
+  // URL(x, location)`) should stringify to the real current href instead
+  // of falling through to the generic "[object Object]".
+  locationObj.__type_override = 'location';
 
   const getParsedUrl = () => {
     const entry = controller.getCurrentEntry();

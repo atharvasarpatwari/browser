@@ -146,6 +146,7 @@ function resolvePromise(promise: JSObject, x: JSValue, eventLoop: EventLoop): vo
           }),
           promise,
         };
+        reactionUpstreams.set(reaction, xObj);
         xState.reactions.push(reaction);
       } else if (xState.state === 'fulfilled') {
         resolvePromise(promise, xState.result, eventLoop);

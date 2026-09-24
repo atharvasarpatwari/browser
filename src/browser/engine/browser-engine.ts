@@ -54,7 +54,14 @@ import type {
 import type { IRouter, RouteResult } from '../navigation/router';
 import { RouteType }                  from '../navigation/router';
 import type { ILayoutEngine }         from '../rendering/layout-engine';
+import type { IDomTree } from '../rendering/dom-tree';
 import type { IPageLoader, PageLoadResult } from './engine-types';
+import type { ConsoleEntry } from '../js/index';
+import type { ResourceLoadResult } from '../networking/resource-loader';
+import { createLogger } from '../../common/logger';
+
+const nullRendererLog = createLogger('NullPageRenderer');
+const eventBusLog = createLogger('EngineEventBus');
 
 // Re-export shared types (also imported by networking to avoid circular dep).
 export type { IPageLoader, PageLoadResult } from './engine-types';
@@ -129,6 +136,15 @@ interface IPageRenderer {
   render(result: PageLoadResult, signal: AbortSignal): Promise<void>;
   /** The layout engine backing the most recently rendered page (null before any page / for the null renderer). */
   getLayoutEngine(): ILayoutEngine | null;
+  /**
+   * Hit-tests (x, y) against the rendered page and dispatches a real DOM
+   * event of `type` to whatever element is there, running any page JS
+   * `addEventListener` handlers registered on it. Returns false if there is
+   * no page loaded yet or nothing was hit.
+   */
+  dispatchPointerEvent(type: string, x: number, y: number): boolean;
+  /** The DOM tree of the most recently rendered page (null before any page renders). */
+  getDomTree(): IDomTree | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,7 +158,9 @@ type EngineEventType =
   | 'pageLoadReady'
   | 'pageRepainted'
   | 'pageLoadError'
-  | 'pageLoadAborted';
+  | 'pageLoadAborted'
+  | 'consoleMessage'
+  | 'networkEntry';
 
 interface PageLoadStartedEvent  { kind: 'pageLoadStarted';  session: PageLoadSession }
 interface PageLoadRoutedEvent   { kind: 'pageLoadRouted';   session: PageLoadSession; result: RouteResult }
@@ -151,6 +169,8 @@ interface PageLoadReadyEvent    { kind: 'pageLoadReady';    session: PageLoadSes
 interface PageRepaintedEvent    { kind: 'pageRepainted';    session: PageLoadSession | null }
 interface PageLoadErrorEvent    { kind: 'pageLoadError';    session: PageLoadSession; error: Error }
 interface PageLoadAbortedEvent  { kind: 'pageLoadAborted';  session: PageLoadSession }
+interface ConsoleMessageEvent   { kind: 'consoleMessage';   entry: ConsoleEntry }
+interface NetworkEntryEvent     { kind: 'networkEntry';     entry: ResourceLoadResult }
 
 type EngineEvent =
   | PageLoadStartedEvent
@@ -159,7 +179,9 @@ type EngineEvent =
   | PageLoadReadyEvent
   | PageRepaintedEvent
   | PageLoadErrorEvent
-  | PageLoadAbortedEvent;
+  | PageLoadAbortedEvent
+  | ConsoleMessageEvent
+  | NetworkEntryEvent;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MIDDLEWARE
@@ -199,6 +221,10 @@ interface IBrowserEngine extends ISharedService {
   setPageRenderer(renderer: IPageRenderer): void;
   /** The layout engine of the currently rendered page (null before any page renders). */
   getPageLayoutEngine(): ILayoutEngine | null;
+  /** Dispatch a real DOM pointer event (e.g. 'click') at (x, y) on the current page. */
+  dispatchPointerEvent(type: string, x: number, y: number): boolean;
+  /** The DOM tree of the currently rendered page (null before any page renders). */
+  getPageDomTree(): IDomTree | null;
   /** Add a middleware that runs after routing, before fetching. */
   addMiddleware(mw: EngineMiddleware): void;
 
@@ -207,6 +233,10 @@ interface IBrowserEngine extends ISharedService {
   off(type: EngineEventType, handler: (event: EngineEvent) => void): void;
   /** Notify listeners that the page was repainted (e.g. after async loads). */
   notifyPageRepainted(): void;
+  /** Notify listeners of a console.log/warn/error/etc call made by the current page. */
+  notifyConsoleMessage(entry: ConsoleEntry): void;
+  /** Notify listeners that a resource (document/script/image/stylesheet/etc) finished loading. */
+  notifyNetworkEntry(entry: ResourceLoadResult): void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -258,9 +288,15 @@ class NullPageLoader implements IPageLoader {
  */
 class NullPageRenderer implements IPageRenderer {
   async render(result: PageLoadResult, _signal: AbortSignal): Promise<void> {
-    console.log(`[NullPageRenderer] Would render ${result.url} (${result.contentType})`);
+    nullRendererLog.info(`Would render ${result.url} (${result.contentType})`);
   }
   getLayoutEngine(): ILayoutEngine | null {
+    return null;
+  }
+  dispatchPointerEvent(): boolean {
+    return false;
+  }
+  getDomTree(): IDomTree | null {
     return null;
   }
 }
@@ -290,7 +326,7 @@ class EngineEventBus {
     for (const h of handlers) {
       try { h(event); }
       catch (err) {
-        console.error(`[EngineEventBus] Handler threw on "${event.kind}":`, err);
+        eventBusLog.error(`Handler threw on "${event.kind}":`, err);
       }
     }
   }
@@ -421,6 +457,14 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
     return this.renderer.getLayoutEngine();
   }
 
+  dispatchPointerEvent(type: string, x: number, y: number): boolean {
+    return this.renderer.dispatchPointerEvent(type, x, y);
+  }
+
+  getPageDomTree(): IDomTree | null {
+    return this.renderer.getDomTree();
+  }
+
   addMiddleware(mw: EngineMiddleware): void {
     this.middlewares.push(mw);
   }
@@ -441,6 +485,14 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
    */
   notifyPageRepainted(): void {
     this.bus.emit({ kind: 'pageRepainted', session: this._session });
+  }
+
+  notifyConsoleMessage(entry: ConsoleEntry): void {
+    this.bus.emit({ kind: 'consoleMessage', entry });
+  }
+
+  notifyNetworkEntry(entry: ResourceLoadResult): void {
+    this.bus.emit({ kind: 'networkEntry', entry });
   }
 
   // ── Private: page load pipeline ───────────────────────────────────────────
@@ -562,7 +614,7 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   private log(msg: string): void {
     if (this.config.debug) {
-      console.log(`[BrowserEngine:${this.sessionSeq}] ${msg}`);
+      createLogger(`BrowserEngine:${this.sessionSeq}`).info(msg);
     }
   }
 }

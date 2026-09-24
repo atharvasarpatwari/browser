@@ -1414,6 +1414,31 @@ function flattenCSSNesting(css: string): string {
 // AT-RULE TEXT PARSING
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Nested rule bodies (`@media {...}`, `@supports {...}`, `@layer {...}`,
+ * `@container {...}`) are parsed via a brand-new `CssParser` instance, whose
+ * own `sourceOrder` counter restarts at 0 — so a style rule nested three
+ * rules into the document could carry `sourceOrder: 0`, identical to (or
+ * lower than) a plain top-level rule declared BEFORE it. The cascade uses
+ * `sourceOrder` to break specificity ties ("later wins"), so this let an
+ * earlier top-level rule beat a later, same-specificity rule inside a
+ * matching @container/@supports/@media block. Offsetting every rule inside
+ * a block by the block's own top-level `order` (scaled well above any
+ * realistic rule count per block) keeps relative order correct at every
+ * nesting depth, since a block's own nested at-rules already offset
+ * themselves the same way before this level's offset is layered on top.
+ */
+function offsetSourceOrder(rules: readonly CssRule[], order: number): CssRule[] {
+  const offset = order * 100_000;
+  return rules.map((r) => {
+    if (r.type === 'style') return { ...r, sourceOrder: r.sourceOrder + offset };
+    if (r.type === 'media' || r.type === 'supports' || r.type === 'layer' || r.type === 'container') {
+      return { ...r, rules: offsetSourceOrder(r.rules, order) };
+    }
+    return r;
+  });
+}
+
 function consumeAtRuleFromText(
   css: string, start: number, order: number,
 ): { rule: CssRule | null; end: number } {
@@ -1496,7 +1521,7 @@ function consumeAtRuleFromText(
         const subCss = stripComments(blockBody);
         const subParser = new CssParser();
         const { rules } = subParser.parseStylesheetRobust(subCss);
-        return { rule: { type: 'media', mediaQueries, rules }, end: blockEnd };
+        return { rule: { type: 'media', mediaQueries, rules: offsetSourceOrder(rules, order) }, end: blockEnd };
       }
       case 'font-face': {
         const subParser = new CssParser();
@@ -1511,7 +1536,7 @@ function consumeAtRuleFromText(
       case 'supports': {
         const subParser = new CssParser();
         const { rules } = subParser.parseStylesheetRobust(blockBody);
-        return { rule: { type: 'supports', condition: prelude, rules }, end: blockEnd };
+        return { rule: { type: 'supports', condition: prelude, rules: offsetSourceOrder(rules, order) }, end: blockEnd };
       }
       case 'layer': {
         // @layer name { ... } or anonymous @layer { ... }
@@ -1519,7 +1544,7 @@ function consumeAtRuleFromText(
         const subCss = stripComments(blockBody);
         const subParser = new CssParser();
         const { rules } = subParser.parseStylesheetRobust(subCss);
-        return { rule: { type: 'layer', names, rules }, end: blockEnd };
+        return { rule: { type: 'layer', names, rules: offsetSourceOrder(rules, order) }, end: blockEnd };
       }
       case 'container': {
         // @container [name] (query) { ... }
@@ -1533,7 +1558,7 @@ function consumeAtRuleFromText(
         const subCss = stripComments(blockBody);
         const subParser = new CssParser();
         const { rules } = subParser.parseStylesheetRobust(subCss);
-        return { rule: { type: 'container', name, query, rules }, end: blockEnd };
+        return { rule: { type: 'container', name, query, rules: offsetSourceOrder(rules, order) }, end: blockEnd };
       }
       default:
         return { rule: { type: 'unknown', atKeyword: kw, prelude, body: blockBody }, end: blockEnd };
@@ -1907,13 +1932,21 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
           if (i < end && tokens[i]!.type === 'paren-close') i++; // )
 
           if (pseudoName === 'not' || pseudoName === 'is' || pseudoName === 'any' || pseudoName === 'where' || pseudoName === 'has') {
-            const innerTokens = tokenizeSelector(arg);
-            const innerSelector = buildSelectorFromTokens(innerTokens, 0, innerTokens.length);
-            if (innerSelector) {
-              if (pseudoName === 'not') pseudoClasses.push({ type: 'negation', selectors: [innerSelector] });
-              else if (pseudoName === 'has') pseudoClasses.push({ type: 'has', selectors: [innerSelector] });
-              else if (pseudoName === 'where') pseudoClasses.push({ type: 'where', selectors: [innerSelector] });
-              else pseudoClasses.push({ type: 'is', selectors: [innerSelector] });
+            // The argument is a selector LIST (comma-separated alternatives), not
+            // a single selector — split on top-level commas first, or ":is(a, b)"
+            // gets mis-tokenized as one chain ("a b") joined by the comma's
+            // trailing whitespace, silently turning an OR into a descendant combinator.
+            const innerSelectors: CssSelector[] = [];
+            for (const part of splitSelectorList(arg)) {
+              const innerTokens = tokenizeSelector(part);
+              const innerSelector = buildSelectorFromTokens(innerTokens, 0, innerTokens.length);
+              if (innerSelector) innerSelectors.push(innerSelector);
+            }
+            if (innerSelectors.length > 0) {
+              if (pseudoName === 'not') pseudoClasses.push({ type: 'negation', selectors: innerSelectors });
+              else if (pseudoName === 'has') pseudoClasses.push({ type: 'has', selectors: innerSelectors });
+              else if (pseudoName === 'where') pseudoClasses.push({ type: 'where', selectors: innerSelectors });
+              else pseudoClasses.push({ type: 'is', selectors: innerSelectors });
             }
           } else {
             pseudoClasses.push({ type: 'structural', name: pseudoName, value: arg });
@@ -1937,7 +1970,7 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
 // MEDIA QUERY PARSING
 // ─────────────────────────────────────────────────────────────────────────────
 
-function parseMediaQueries(prelude: string): CssMediaQuery[] {
+export function parseMediaQueries(prelude: string): CssMediaQuery[] {
   const queries: CssMediaQuery[] = [];
   const parts = prelude.split(/,\s*/);
 
@@ -2109,13 +2142,22 @@ function computeCompoundSpecificity(sel: CssCompoundSelector): CssSpecificity {
       continue;
     }
     if (pc.type === 'negation' || pc.type === 'is' || pc.type === 'any' || pc.type === 'has') {
-      // :not() / :is() / :any() specificity = most specific selector in the list
+      // :not() / :is() / :any() specificity = that of its most specific argument,
+      // ADDED to the rest of the compound (e.g. ":is(.a,.b).active" = max(.a,.b) + .active).
+      // A running max merged directly into id/a/b would instead get clamped against
+      // whatever the compound's OTHER simple selectors already contributed, silently
+      // dropping the :is() contribution whenever it doesn't exceed that baseline.
+      let maxSpec: CssSpecificity = { id: 0, a: 0, b: 0 };
       for (const inner of pc.selectors) {
         const innerSpec = computeSelectorSpecificity(inner);
-        if (innerSpec.id > id) id = innerSpec.id;
-        if (innerSpec.a > a) a = innerSpec.a;
-        if (innerSpec.b > b) b = innerSpec.b;
+        const isMoreSpecific = innerSpec.id !== maxSpec.id ? innerSpec.id > maxSpec.id
+          : innerSpec.a !== maxSpec.a ? innerSpec.a > maxSpec.a
+          : innerSpec.b > maxSpec.b;
+        if (isMoreSpecific) maxSpec = innerSpec;
       }
+      id += maxSpec.id;
+      a += maxSpec.a;
+      b += maxSpec.b;
     } else {
       a++;
     }

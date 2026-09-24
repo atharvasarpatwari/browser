@@ -4,16 +4,28 @@
 // When Nova runs inside the Android app's WebView, Kotlin registers a
 // @JavascriptInterface object named `NovaStateBridge` on the WebView BEFORE
 // loading this page (see NovaStateBridge.kt / MainActivity.kt). Its presence
-// is the signal that a native chrome (Compose address bar / tab strip) is in
-// control and this page's own chrome should stay hidden.
+// used to mean "a native Compose chrome is in control, keep mine hidden";
+// this page now renders its own real chrome full-screen on Android too
+// (forceDesktopChrome, see browser-window.ts), same as desktop. What's left
+// for this bridge is the handful of things a web page genuinely cannot do
+// itself on Android: real file downloads through the OS's own
+// DownloadManager, and long-press hit-testing on canvas-rendered page
+// content (a WebView's own HitTestResult never sees it) — plus two menu
+// actions (Downloads, Incognito) that hand off to native for the same
+// reason. onStateChanged/onBookmarksChanged/onHistoryChanged keep pushing
+// (harmless, and available to any future native surface) even though no
+// native UI currently mirrors them the way the old Compose chrome did.
 //
 // Two-way contract:
 //   JS  -> Kotlin: window.NovaStateBridge.onStateChanged(jsonString)
 //                  called on every tab/nav change (ChromeStateSnapshot JSON),
-//                  plus onBookmarksChanged/onHistoryChanged/onDownloadRequested.
+//                  plus onBookmarksChanged/onHistoryChanged/onDownloadRequested/
+//                  onDownloadsPageRequested/onIncognitoToggleRequested.
 //   Kotlin -> JS:  window.novaNative.navigate/back/forward/reload/stop/
-//                  createTab/closeTab/activateTab(...), called via
-//                  webView.evaluateJavascript(...) from BrowserViewModel.
+//                  createTab/closeTab/activateTab(...) — retained for any
+//                  native surface that wants to command the engine directly,
+//                  though nothing currently calls it now that chrome buttons
+//                  dispatch straight against this page instead of through Kotlin.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { IBrowserWindowPage } from '../ui/pages/browser-window';
@@ -24,6 +36,15 @@ interface NovaStateBridgeHost {
   onHistoryChanged(json: string): void;
   onDownloadRequested(json: string): void;
   onContextMenuRequested(json: string): void;
+  /** Main-menu "Downloads" on Android: opens the native downloads sheet
+   *  instead of navigating to nova://downloads, which has no idea a native
+   *  (NativeDownloader-owned) download ever happened. */
+  onDownloadsPageRequested(): void;
+  /** Main-menu "Incognito" on Android: no persistent native UI shows this
+   *  state anymore, but toggling it still needs to reach the engine through
+   *  the same window.novaNative.setIncognito(...) path native chrome used to
+   *  drive — this just asks Kotlin to call that on this page's behalf. */
+  onIncognitoToggleRequested(): void;
 }
 
 declare global {
@@ -51,6 +72,11 @@ declare global {
       openInNewTab: (url: string) => void;
       /** Toggle the engine's incognito (private browsing) session. */
       setIncognito: (enabled: boolean) => void;
+      /** Runs a find-in-page search; returns a JSON {current, total} match-count string. */
+      findInPage: (query: string) => string;
+      findNext: () => string;
+      findPrevious: () => string;
+      closeFind: () => void;
     };
   }
 }
@@ -61,12 +87,34 @@ export function isNativeHostPresent(): boolean {
 }
 
 /**
+ * Android-only workaround: inside a Compose `AndroidView`-hosted WebView,
+ * `<html>`/`<body>` percentage and viewport-unit heights (100%, 100vh, 100dvh)
+ * resolve to 0 even though window.innerHeight/visualViewport report the real
+ * size correctly — the root element's own layout box never picks up the
+ * WebView's actual measured size. Setting the height explicitly in pixels
+ * sidesteps the CSS resolution entirely and is kept in sync on resize (e.g.
+ * rotation, or the on-screen keyboard opening/closing).
+ */
+function pinRootHeightToViewport(): void {
+  const apply = (): void => {
+    const h = `${window.innerHeight}px`;
+    document.documentElement.style.height = h;
+    document.body.style.height = h;
+  };
+  apply();
+  window.addEventListener('resize', apply);
+  window.visualViewport?.addEventListener('resize', apply);
+}
+
+/**
  * Wires window.novaNative to the given page and starts pushing state-change
  * snapshots to the native host. No-ops (and logs once) if no native host is
  * present, so it's always safe to call from mountBrowserUI().
  */
 export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
   if (!isNativeHostPresent()) return;
+
+  pinRootHeightToViewport();
 
   window.novaNative = {
     navigate: (url: string) => { void page.navigate(url); },
@@ -102,6 +150,10 @@ export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
     setIncognito: (enabled: boolean) => {
       page.setIncognitoExternal(enabled);
     },
+    findInPage: (query: string) => JSON.stringify(page.findInPageExternal(query)),
+    findNext: () => JSON.stringify(page.findNextExternal()),
+    findPrevious: () => JSON.stringify(page.findPreviousExternal()),
+    closeFind: () => page.closeFindExternal(),
   };
 
   wireContextMenuDetection(page);
@@ -147,7 +199,7 @@ export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
     console.error('[AndroidNativeBridge] Failed to push initial state to native host:', err);
   }
 
-  console.log('[AndroidNativeBridge] Native host detected — window.novaNative installed, chrome UI hidden.');
+  console.log('[AndroidNativeBridge] Native host detected — this page\'s own desktop chrome is in control (forceDesktopChrome).');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

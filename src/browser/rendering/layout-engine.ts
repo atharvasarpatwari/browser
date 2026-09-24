@@ -5,6 +5,7 @@ import { findContainingBlock as findContainingBlockForScheme, resolveOutOfFlow, 
 import { classifyDisplay, type ClassifiedChild } from './formatting/types';
 import { classifyChildren, collapseMargins, isMarginCollapseBlocked } from './formatting/block-context';
 import { InlineFormattingContext } from './formatting/inline-context';
+import { getTextMeasurer } from './formatting/text-measure';
 import { FloatContext } from './formatting/float-context';
 import {
   FlexFormattingContext,
@@ -16,6 +17,7 @@ import type { FlexDirection, FlexWrap, JustifyContent, AlignItems, AlignContent,
 import {
   GridFormattingContext,
   parseTrackList,
+  expandTrackDefs,
   parseGridPlacement,
   parseGridTemplateAreas,
   findAreaPlacement,
@@ -30,6 +32,7 @@ import {
 import {
   MultiColumnFormattingContext,
 } from './formatting/multi-column-context';
+import { hasMathFunctions, resolveMathFunctions } from './css5/math-functions';
 
 interface LayoutConfig {
   readonly viewportWidth: number;
@@ -67,6 +70,48 @@ const NAMED_FONT_SIZES: Record<string, number> = {
   'smaller': 13,
   'larger': 18,
 };
+
+const REPLACED_TAGS = new Set(['img', 'br', 'iframe', 'video', 'canvas', 'svg', 'embed', 'object', 'input', 'textarea', 'select']);
+
+/**
+ * Whether an inline element's entire descendant subtree is plain inline
+ * content (text and further plain-inline elements) with no replaced or
+ * block-level element anywhere in it. Such a subtree's real rendered width
+ * is just its text — a nested `<span><a>label</a></span>` is exactly as
+ * measurable as a flat `<b>label</b>`, and treating anything with an
+ * element child as unmeasurable was overly conservative for the common
+ * "inline markup nested a few levels deep" case.
+ */
+function isTextOnlyInlineSubtree(node: DomNode, depth = 0): boolean {
+  if (depth > 12) return false;
+  if (node.nodeType === 'text') return true;
+  if (node.nodeType !== 'element') return false;
+  const el = node as DomElement;
+  if (REPLACED_TAGS.has(el.tagName.toLowerCase())) return false;
+  const display = el.computedStyle?.get('display') ?? 'inline';
+  if (display !== 'inline') return false;
+  return el.children.every(c => isTextOnlyInlineSubtree(c, depth + 1));
+}
+
+/** Concatenates all text within a subtree already confirmed text-only by isTextOnlyInlineSubtree. */
+function collectInlineSubtreeText(node: DomNode, depth = 0): string {
+  if (depth > 12) return '';
+  if (node.nodeType === 'text') return (node as DomNode & { text?: string }).text ?? '';
+  if (node.nodeType !== 'element') return '';
+  return (node as DomElement).children.map(c => collectInlineSubtreeText(c, depth + 1)).join('');
+}
+
+/**
+ * Resolves the CSS 2.2 §16.2 logical `text-align` values (`start`/`end`)
+ * against the element's `direction` into a physical alignment. `left`/
+ * `right` are physical and never flip with direction.
+ */
+function resolveTextAlign(value: string, direction: 'ltr' | 'rtl'): 'left' | 'right' | 'center' | 'justify' {
+  if (value === 'start') return direction === 'rtl' ? 'right' : 'left';
+  if (value === 'end') return direction === 'rtl' ? 'left' : 'right';
+  if (value === 'left' || value === 'right' || value === 'center' || value === 'justify') return value;
+  return direction === 'rtl' ? 'right' : 'left';
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LAYOUT ENGINE
@@ -371,6 +416,28 @@ class LayoutEngine implements ILayoutEngine {
     const contentX = box.x + borderLeft + paddingLeft;
     const contentY = box.y + borderTop + paddingTop;
 
+    // Multi-column only applies to block formatting contexts. Its children
+    // must be laid out at the COLUMN width (not the full container width)
+    // from the start — reflowing/wrapping needs to happen at that narrower
+    // width, not at full width followed by a naive shrink-and-translate.
+    const colCountRaw = style.get('column-count');
+    const colWidthRaw = style.get('column-width');
+    const hasColumns = isBlock && ((colCountRaw && colCountRaw !== 'auto') || (colWidthRaw && colWidthRaw !== 'auto'));
+    const colGap = hasColumns ? resolve('column-gap', '0') : 0;
+    let colCount = 1;
+    let colWidthVal = 0;
+    if (hasColumns) {
+      if (colCountRaw && colCountRaw !== 'auto') colCount = parseInt(colCountRaw, 10) || 1;
+      if (colWidthRaw && colWidthRaw !== 'auto') colWidthVal = resolve('column-width', '0');
+      if (colCount <= 0 && colWidthVal <= 0) {
+        colCount = 1;
+      } else if (colCount <= 0) {
+        colCount = Math.max(1, Math.floor((contentWidth + colGap) / (colWidthVal + colGap)));
+      }
+      colWidthVal = Math.max(1, (contentWidth - colGap * (colCount - 1)) / colCount);
+    }
+    const childLayoutWidth = hasColumns ? colWidthVal : contentWidth;
+
     let childY: number;
 
     if (fmtType === 'flex' || fmtType === 'inline-flex') {
@@ -380,22 +447,13 @@ class LayoutEngine implements ILayoutEngine {
     } else if (fmtType === 'table' || fmtType === 'inline-table') {
       childY = this.layoutTableContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
     } else if (isBlock) {
-      childY = this.layoutBlockChildren(node, contentX, contentY, contentWidth, fontSize, domTree);
+      childY = this.layoutBlockChildren(node, contentX, contentY, childLayoutWidth, fontSize, domTree);
     } else {
       childY = this.layoutInlineChildren(node, contentX, contentY, contentWidth, fontSize, domTree);
     }
 
-    // Check for multi-column layout (applies to any block formatting context)
-    const colCountRaw = style.get('column-count');
-    const colWidthRaw = style.get('column-width');
-    const hasColumns = (colCountRaw && colCountRaw !== 'auto') || (colWidthRaw && colWidthRaw !== 'auto');
     if (hasColumns) {
-      const colGap = resolve('column-gap', '0');
       const colRuleW = this.parseBorderWidth(style.get('column-rule-width') ?? 'medium');
-      let colCount = 1;
-      let colWidthVal = 0;
-      if (colCountRaw && colCountRaw !== 'auto') colCount = parseInt(colCountRaw, 10) || 1;
-      if (colWidthRaw && colWidthRaw !== 'auto') colWidthVal = resolve('column-width', '0');
       const mcCtx = new MultiColumnFormattingContext({
         columnCount: colCount,
         columnWidth: colWidthVal,
@@ -410,7 +468,50 @@ class LayoutEngine implements ILayoutEngine {
       const contentH = childY - contentY;
       mcCtx.resolve(contentH);
       this.multiColumnContexts.set(node.domId, mcCtx);
-      box.height = Math.max(box.height, mcCtx.getTotalHeight() + paddingTop + paddingBottom + borderTop + borderBottom);
+
+      // mcCtx only computes column geometry — without actually moving each
+      // direct child into its column box, children stay exactly where
+      // layoutBlockChildren() stacked them (one full-width column) while the
+      // code below shrinks the container to one column's height, corrupting
+      // the position of every element that follows it on the page.
+      const columns = mcCtx.getColumns();
+      if (columns.length > 1) {
+        const targetColHeight = columns[0]!.height;
+        let curCol = 0;
+        let curY = 0;
+        const colHeights = new Array(columns.length).fill(0) as number[];
+        let packedAny = false;
+        for (const child of node.children) {
+          if (child.nodeType !== 'element') continue;
+          const childEl = child as DomElement;
+          const childBox = this.layoutBoxes.get(childEl.domId);
+          if (!childBox) continue;
+          packedAny = true;
+          const outerHeight = childBox.marginTop + childBox.height + childBox.marginBottom;
+          if (curY > 0 && curY + outerHeight > targetColHeight && curCol < columns.length - 1) {
+            curCol++;
+            curY = 0;
+          }
+          const col = columns[curCol]!;
+          const newX = contentX + col.x + childBox.marginLeft;
+          const newY = contentY + curY + childBox.marginTop;
+          const dx = newX - childBox.x;
+          const dy = newY - childBox.y;
+          if (dx !== 0 || dy !== 0) this.translateSubtree(childEl, dx, dy);
+          curY += outerHeight;
+          colHeights[curCol] = Math.max(colHeights[curCol]!, curY);
+        }
+        // Downstream code derives the container's own height from
+        // `childY - contentY` — repoint it at the real packed column
+        // height instead of the pre-packing single-column stack height,
+        // or it would silently overwrite the fix below with the old value.
+        // Content that's plain text/inline rather than discrete element
+        // children (packedAny === false) can't be packed this way — fall
+        // back to mcCtx's own balanced-height estimate instead of 0.
+        childY = packedAny ? contentY + Math.max(...colHeights) : contentY + mcCtx.getTotalHeight();
+      } else {
+        childY = contentY + mcCtx.getTotalHeight();
+      }
     }
 
     // ── Compute content height ────────────────────────────────────────────
@@ -744,11 +845,16 @@ class LayoutEngine implements ILayoutEngine {
     domTree?: IDomTree,
   ): number {
     const exclusionZones = this.floatContext?.getExclusionZones() ?? [];
+    const parentStyle = parent.computedStyle ?? new Map();
+    const direction = (parentStyle.get('direction') ?? 'ltr') as 'ltr' | 'rtl';
+    const textAlign = resolveTextAlign(parentStyle.get('text-align') ?? 'start', direction);
     const ifc = new InlineFormattingContext(availableWidth, startY, {
       exclusionZones,
       defaultFontSize: parentFontSize,
+      startX: contentX,
+      direction,
+      textAlign,
     });
-    const parentStyle = parent.computedStyle ?? new Map();
     const parentLineHeight = this.resolveLineHeight(parentStyle, parentFontSize);
 
     for (const child of children) {
@@ -887,10 +993,10 @@ class LayoutEngine implements ILayoutEngine {
       (value: string, fallback: string) => this.resolveLength(value, fontSize, availableWidth),
     );
 
-    tblCtx.layoutCells(
+    const bottomY = tblCtx.layoutCells(
       contentX,
       contentY,
-      (cellEl: DomElement, x: number, y: number, w: number, h: number) => {
+      (cellEl: DomElement, x: number, y: number, w: number, h: number): number => {
         const cellBox: LayoutBox = {
           x, y,
           width: w, height: h,
@@ -901,11 +1007,12 @@ class LayoutEngine implements ILayoutEngine {
         this.layoutBoxes.set(cellEl.domId, cellBox);
         this.elementPositions.push({ element: cellEl, box: cellBox });
         if (domTree) domTree.setLayoutBox(cellEl, cellBox);
-        this.layoutNode(cellEl, x, y, w, fontSize, domTree);
+        const endY = this.layoutNode(cellEl, x, y, w, fontSize, domTree);
+        return Math.max(h, endY - y);
       },
     );
 
-    return contentY + tblCtx.getTotalHeight();
+    return bottomY;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1184,12 +1291,14 @@ class LayoutEngine implements ILayoutEngine {
     // Parse grid-template-columns — use parseTrackList for repeat/minmax support
     const rawCols = style.get('grid-template-columns');
     const colDefs = rawCols && rawCols !== 'none' ? parseTrackList(rawCols) : [];
-    const columns = colDefs.map(d => d.value);
+    const columns = expandTrackDefs(colDefs, colGap, availableWidth, fontSize);
 
-    // Parse grid-template-rows
+    // Parse grid-template-rows. auto-fill/auto-fit here sizes off availableWidth
+    // too (available height is usually indefinite for a grid whose own height
+    // is auto) — ponytail: good enough since row-axis auto-fill is rare.
     const rawRows = style.get('grid-template-rows');
     const rowDefs = rawRows && rawRows !== 'none' ? parseTrackList(rawRows) : [];
-    const rows = rowDefs.map(d => d.value);
+    const rows = expandTrackDefs(rowDefs, rowGap, availableWidth, fontSize);
 
     // Parse grid-template-areas
     const rawAreas = style.get('grid-template-areas');
@@ -1233,10 +1342,18 @@ class LayoutEngine implements ILayoutEngine {
       const rc = (prop: string, fallback: string): number =>
         this.resolveLength(childStyle.get(prop) ?? fallback, fontSize, availableWidth);
 
-      // Parse grid-column / grid-row / grid-area
+      // Parse grid-column / grid-row / grid-area. The cascade fills every
+      // element's grid-column/grid-row with the 'auto' initial value even
+      // when the author never set them (they're in cascade.ts's ALL_PROPERTIES
+      // fallback list), so a truthy-string check here treated every grid-area-only
+      // item as if it also had an explicit grid-column/grid-row of 'auto' — the
+      // area-placement branch below then never ran and everything silently fell
+      // back to plain auto-placement, ignoring grid-template-areas entirely.
       const rawGridArea = childStyle.get('grid-area');
       const rawGridColumn = childStyle.get('grid-column');
       const rawGridRow = childStyle.get('grid-row');
+      const hasGridColumn = !!rawGridColumn && rawGridColumn !== 'auto';
+      const hasGridRow = !!rawGridRow && rawGridRow !== 'auto';
 
       let colStart = -1, colEnd = -1, rowStart = -1, rowEnd = -1;
 
@@ -1248,12 +1365,12 @@ class LayoutEngine implements ILayoutEngine {
         rowStart = parsedRow.start;
         rowEnd = parsedRow.end;
       } else {
-        if (rawGridColumn) {
+        if (hasGridColumn) {
           const parsed = parseGridPlacement(rawGridColumn, false);
           colStart = parsed.start;
           colEnd = parsed.end;
         }
-        if (rawGridRow) {
+        if (hasGridRow) {
           const parsed = parseGridPlacement(rawGridRow, true);
           rowStart = parsed.start;
           rowEnd = parsed.end;
@@ -1261,7 +1378,7 @@ class LayoutEngine implements ILayoutEngine {
       }
 
       // Try area-based placement
-      if (rawGridArea && !rawGridColumn && !rawGridRow) {
+      if (rawGridArea && !hasGridColumn && !hasGridRow) {
         const areaPlacement = findAreaPlacement(rawGridArea, templateAreas);
         if (areaPlacement) {
           colStart = areaPlacement.colStart;
@@ -1429,9 +1546,15 @@ class LayoutEngine implements ILayoutEngine {
     domTree?: IDomTree,
   ): number {
     const exclusionZones = this.floatContext?.getExclusionZones() ?? [];
+    const parentStyleForDirection = parent.computedStyle ?? new Map();
+    const direction = (parentStyleForDirection.get('direction') ?? 'ltr') as 'ltr' | 'rtl';
+    const textAlign = resolveTextAlign(parentStyleForDirection.get('text-align') ?? 'start', direction);
     const ifc = new InlineFormattingContext(availableWidth, contentY, {
       exclusionZones,
       defaultFontSize: parentFontSize,
+      startX: contentX,
+      direction,
+      textAlign,
     });
 
     for (const child of parent.children) {
@@ -1553,9 +1676,38 @@ class LayoutEngine implements ILayoutEngine {
     // width/height attributes when CSS does not override them.
     const intrinsic = this.resolveIntrinsicSize(el);
 
-    const contentW = intrinsic.width != null
-      ? intrinsic.width
-      : availableWidth - marginL - marginR - padL - padR - borderL - borderR;
+    // A genuinely inline element (no explicit width, not replaced) is sized
+    // to fit its content — CSS "shrink-to-fit" — not to fill the remaining
+    // line like a block box would. Measuring the concatenated text covers
+    // the common case; an inline element wrapping further PLAIN INLINE
+    // elements (e.g. <span><a>1 hour ago</a></span>) is walked recursively
+    // to collect all its text too, rather than only checking direct
+    // children — a real-world page nests inline markup routinely (a link
+    // inside a span inside a span), and treating anything with an element
+    // child as "unmeasurable" was the common case, not the exception.
+    // Only a genuinely complex subtree (a replaced element like <img>, or
+    // a nested block/inline-block) falls back to the old (wide) estimate.
+    // Getting this wrong isn't cosmetic: the outer line-fitting math in
+    // InlineFormattingContext.addBox() uses this width to decide how much
+    // room is left on the line, so a wildly-too-wide box forces every
+    // sibling that follows it onto a new line — on a real page, this
+    // turned one visual line (e.g. "12 points by user | hide | 3 comments")
+    // into three, each subsequent chunk sliding onto its own spurious line
+    // and colliding with whatever the next row painted at that height.
+    const specWidth = elStyle.get('width');
+    let contentW: number;
+    if (intrinsic.width != null) {
+      contentW = intrinsic.width;
+    } else if (specWidth && specWidth !== 'auto') {
+      contentW = resolve('width', '0');
+    } else if (isTextOnlyInlineSubtree(el)) {
+      const text = collectInlineSubtreeText(el);
+      const fontFamily = elStyle.get('font-family') ?? 'sans-serif';
+      const fontWeight = elStyle.get('font-weight');
+      contentW = getTextMeasurer().measure(text, elFontSize, fontFamily, fontWeight).width;
+    } else {
+      contentW = availableWidth - marginL - marginR - padL - padR - borderL - borderR;
+    }
 
     // Register the element with a preliminary box for hit testing
     const box: LayoutBox = {
@@ -1574,7 +1726,7 @@ class LayoutEngine implements ILayoutEngine {
       isAnonymous: false,
     };
 
-    ifc.addBox(inlineBox);
+    const line = ifc.addBox(inlineBox);
 
     // Register element for hit testing
     this.layoutBoxes.set(el.domId, box);
@@ -1585,10 +1737,35 @@ class LayoutEngine implements ILayoutEngine {
       domTree.setLayoutBox(el, box);
     }
 
-    // If the inline element has children, layout them recursively
+    // If the inline element has children, layout them recursively — at this
+    // element's own position on the line (box.x, set by ifc.addBox() just
+    // above, and the line's Y — box.y itself isn't finalized until the
+    // outer ifc.finalize() runs, well after this call). Using contentX/
+    // contentY here unconditionally put every inline element's content back
+    // at the start of the whole inline formatting context, overlapping
+    // whatever plain text preceded it on the line (e.g. "<b>bold</b>" in
+    // "text <b>bold</b> more" rendered "bold" on top of "text", not after it).
     if (el.children.length > 0) {
-      const childHeight = this.layoutInlineChildren(el, contentX, contentY, contentW, elFontSize, domTree);
-      box.height = Math.max(box.height, childHeight);
+      const childStartY = ifc.getCurrentLineY();
+      const childBottomY = this.layoutInlineChildren(el, box.x + marginL + borderL + padL, childStartY, contentW, elFontSize, domTree);
+      // layoutInlineChildren returns an absolute bottom-Y (childStartY + real
+      // height), not a bare height — box.height must stay a small relative
+      // size (paint/hit-testing add it to box.y themselves), so subtract
+      // childStartY back off before using it here.
+      box.height = Math.max(box.height, childBottomY - childStartY);
+      // ifc.addBox() above already recorded this element's PRE-recursion
+      // height (just lineHeight, since box.height wasn't known to be
+      // taller yet) into the outer line's own height. If this element's
+      // own content just wrapped to multiple lines, box.height grew past
+      // that recorded value — push the outer line's height back up to
+      // match, or the outer formatting context finalizes at the too-short
+      // original estimate. That's not cosmetic: the *next* line (or, for
+      // a table row, the next row entirely) is positioned starting right
+      // after this line's height, so an under-reported height here made
+      // unrelated content immediately below (e.g. the next table row's
+      // subtext line) start too early and paint on top of this element's
+      // wrapped second line.
+      line.height = Math.max(line.height, box.height + box.marginTop + box.marginBottom);
     }
   }
 
@@ -1714,6 +1891,27 @@ class LayoutEngine implements ILayoutEngine {
     const named = NAMED_FONT_SIZES[value];
     if (named !== undefined) return named;
 
+    // calc()/min()/max()/clamp() with a %-based operand (e.g. calc(100% -
+    // 20px)) reaches here still unresolved: math-functions.ts deliberately
+    // leaves mixed-unit expressions as-is (it has no idea what the
+    // percentage basis should be), but nothing downstream ever finished the
+    // handoff — resolveLength() has the one thing that was missing, the
+    // actual containingWidth, so resolve it here before falling through to
+    // the plain single-unit checks below (pure-unit calc(), e.g.
+    // calc(50px + 50px), is already resolved to a plain "100px" earlier in
+    // the cascade and never reaches this branch).
+    if (hasMathFunctions(value)) {
+      const resolved = resolveMathFunctions(value, {
+        fontSize,
+        rootFontSize: this.rootFontSize,
+        viewportWidth: this.config.viewportWidth,
+        viewportHeight: this.config.viewportHeight,
+        percentageBasis: containingWidth,
+      });
+      if (resolved !== value) return this.resolveLength(resolved, fontSize, containingWidth);
+      return 0;
+    }
+
     if (value.endsWith('px')) {
       const n = parseFloat(value);
       return isFinite(n) ? n : 0;
@@ -1754,6 +1952,11 @@ class LayoutEngine implements ILayoutEngine {
     if (value.endsWith('vh')) {
       const n = parseFloat(value);
       return isFinite(n) ? (n / 100) * this.config.viewportHeight : 0;
+    }
+
+    if (value.endsWith('pt')) {
+      const n = parseFloat(value);
+      return isFinite(n) ? n * 1.333 : 0;
     }
 
     const n = parseFloat(value);
@@ -1806,6 +2009,11 @@ class LayoutEngine implements ILayoutEngine {
       return isFinite(n) ? n : parentFontSize;
     }
 
+    if (raw.endsWith('pt')) {
+      const n = parseFloat(raw);
+      return isFinite(n) ? n * 1.333 : parentFontSize;
+    }
+
     const n = parseFloat(raw);
     return isFinite(n) ? n : parentFontSize;
   }
@@ -1814,7 +2022,12 @@ class LayoutEngine implements ILayoutEngine {
     const raw = style.get('line-height');
     if (!raw || raw === 'normal' || raw === 'auto') return fontSize * 1.2;
 
-    if (!raw.endsWith('px') && !raw.endsWith('em') && !raw.endsWith('rem') && !raw.endsWith('%')) {
+    // A bare number (no unit suffix) is a multiplier of font-size, per the
+    // CSS spec's unitless line-height. Anything else — including a unit
+    // this function doesn't otherwise special-case, like "pt" — is a length
+    // and must go through resolveLength rather than being misread as a
+    // multiplier (e.g. "12pt" is ~16px, not 12x the font size).
+    if (/^\d+(\.\d+)?$/.test(raw.trim())) {
       const n = parseFloat(raw);
       return isFinite(n) ? n * fontSize : fontSize * 1.2;
     }
@@ -2027,6 +2240,25 @@ class LayoutEngine implements ILayoutEngine {
   /** Get the multi-column context for a given element, if any. */
   getMultiColumnContext(domId: string): MultiColumnFormattingContext | undefined {
     return this.multiColumnContexts.get(domId);
+  }
+
+  /**
+   * Shifts an already-laid-out element and all its descendants by (dx, dy).
+   * Layout boxes hold absolute positions, so moving a child into a column
+   * (or any other post-hoc repositioning) without also moving its subtree
+   * would leave that subtree's own children rendering at their stale,
+   * pre-move position while only the child's own box moved.
+   */
+  private translateSubtree(el: DomElement, dx: number, dy: number): void {
+    if (dx === 0 && dy === 0) return;
+    const box = this.layoutBoxes.get(el.domId);
+    if (box) {
+      box.x += dx;
+      box.y += dy;
+    }
+    for (const child of el.children) {
+      if (child.nodeType === 'element') this.translateSubtree(child as DomElement, dx, dy);
+    }
   }
 }
 

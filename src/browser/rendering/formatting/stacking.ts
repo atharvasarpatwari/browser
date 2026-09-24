@@ -204,10 +204,19 @@ function createContext(el: DomElement, isRoot: boolean, options?: StackingBuildO
   const animatedOpacity = options?.opacityResolver?.(el);
   const opacity = animatedOpacity ?? getOpacity(style);
 
+  // A running CSS animation/transition overlays the computed `transform`
+  // value — prefer it, but a plain static `transform: translate(...)` (the
+  // overwhelming majority of real-world usage: no animation involved at
+  // all) must still render. Falling back to the computed style here is
+  // what makes static transforms do anything at all; previously only an
+  // active animatedTransform ever reached parseTransform().
   const animatedTransform = options?.transformResolver?.(el);
+  const effectiveTransform = (animatedTransform && animatedTransform !== 'none')
+    ? animatedTransform
+    : getTransform(style);
   let translate: { x: number; y: number } | null = null;
-  if (animatedTransform && animatedTransform !== 'none') {
-    const parsed = parseTransform(animatedTransform);
+  if (effectiveTransform && effectiveTransform !== 'none') {
+    const parsed = parseTransform(effectiveTransform);
     if (parsed && isPureTranslation4x4(parsed.matrix)) {
       translate = { x: parsed.matrix.m41, y: parsed.matrix.m42 };
     }
@@ -302,10 +311,21 @@ function classifyElementIntoLayer(
   // Non-positioned elements
   const isFloat = style.get('float') !== 'none' && style.get('float') !== undefined;
 
+  // `classifyDisplay()` splits 'grid'/'flex' out from 'block' because layout
+  // needs a different formatting context for each — but for STACKING order,
+  // a block-level flex/grid container (display: flex/grid, not
+  // inline-flex/inline-grid) is still just a block-level box per CSS 2.2
+  // Appendix E, painted at the same level as any other block. Without this,
+  // a `display:flex`/`display:grid` container fell into the inline bucket
+  // (Level 4), which paints AFTER its own non-positioned children (Level 2)
+  // — so any flex/grid container with its own opaque background painted
+  // over and completely hid every child inside it.
+  const isBlockLevelBox = classified === 'block' || classified === 'grid' || classified === 'flex';
+
   if (isFloat) {
     // Level 3: floats
     ctx.floatEntries.push(el);
-  } else if (classified === 'block') {
+  } else if (isBlockLevelBox) {
     // Level 2: blocks
     ctx.blockEntries.push(el);
   } else {

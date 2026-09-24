@@ -17,6 +17,7 @@ export type Expression =
   | Identifier
   | Literal
   | ThisExpression
+  | NewTargetExpression
   | ArrayExpression
   | ObjectExpression
   | FunctionExpression
@@ -33,6 +34,9 @@ export type Expression =
   | SequenceExpression
   | TemplateLiteral
   | TaggedTemplateExpression
+  // ClassDeclaration doubles as a class *expression* node too (`var x = class {}`,
+  // `new class {}`) — same shape (id is already optional), no separate type needed.
+  | ClassDeclaration
   | SpreadElement
   | RestElement
   | AssignmentPattern
@@ -62,6 +66,12 @@ export interface RegExpLiteral {
 
 export interface ThisExpression {
   type: 'ThisExpression';
+  loc?: SourceLocation;
+}
+
+/** `new.target` — the only meta-property this engine supports. */
+export interface NewTargetExpression {
+  type: 'NewTargetExpression';
   loc?: SourceLocation;
 }
 
@@ -103,6 +113,8 @@ export interface PropertyDefinition {
   computed: boolean;
   shorthand: boolean;
   method: boolean;
+  /** Only meaningful inside a ClassBody (`static x = 1`) — always absent/false for object-literal properties. */
+  static?: boolean;
   loc?: SourceLocation;
 }
 
@@ -214,6 +226,10 @@ export interface TemplateLiteral {
 export interface TemplateElement {
   type: 'TemplateElement';
   value: string;
+  /** Untouched source text for this segment (escapes not decoded) — what
+   *  String.raw / a tagged template's `.raw` array must see instead of the
+   *  cooked `value`. */
+  raw: string;
   tail: boolean;
 }
 
@@ -469,7 +485,7 @@ export interface ClassDeclaration {
 
 export interface ClassBody {
   type: 'ClassBody';
-  body: (PropertyDefinition | MethodDefinition)[];
+  body: (PropertyDefinition | MethodDefinition | StaticBlock)[];
 }
 
 export interface MethodDefinition {
@@ -479,4 +495,11 @@ export interface MethodDefinition {
   kind: 'constructor' | 'method' | 'get' | 'set';
   computed: boolean;
   static: boolean;
+}
+
+/** `static { ... }` — runs once, in declaration order among the class's
+ *  other static elements, with `this` bound to the class itself. */
+export interface StaticBlock {
+  type: 'StaticBlock';
+  body: Statement[];
 }

@@ -15,8 +15,10 @@ import { LayerCompositor } from './compositing/layer-compositor';
 import { LayerTree } from './compositing/layer-tree';
 import { LayerPromoter } from './compositing/layer-promoter';
 import { parseGradient, isGradientValue } from './css-gradients';
+import { splitTopLevelCommas } from './css5/math-functions';
 import { parseBackgrounds } from './enhanced-backgrounds';
 import { parseBorders, parseBorderRadius, renderBorderSide } from './borders-enhanced';
+import type { BorderSide } from './borders-enhanced';
 import { parseBoxShadow, parseTextShadow } from './shadows';
 import { parseFilter } from './css-filters';
 import { parseClipPath, parseMask } from './clip-mask';
@@ -406,38 +408,53 @@ class PaintEngine implements IPaintEngine {
       const bgSize = style.get('background-size') ?? 'auto';
       const bgPos = style.get('background-position') ?? '0% 0%';
 
-      let bgX = bx, bgY = by, bgW = bw, bgH = bh;
-      if (bgSize !== 'auto') {
-        const sizeParts = bgSize.split(/\s+/);
-        if (sizeParts[0] && sizeParts[0] !== 'auto') {
-          if (sizeParts[0].endsWith('%')) bgW = bw * parseFloat(sizeParts[0]) / 100;
-          else bgW = parseFloat(sizeParts[0]) || bw;
+      const paintOneBgLayer = (image: string, size: string, pos: string): void => {
+        let lx = bx, ly = by, lw = bw, lh = bh;
+        if (size !== 'auto') {
+          const sizeParts = size.split(/\s+/);
+          if (sizeParts[0] && sizeParts[0] !== 'auto') {
+            if (sizeParts[0].endsWith('%')) lw = bw * parseFloat(sizeParts[0]) / 100;
+            else lw = parseFloat(sizeParts[0]) || bw;
+          }
+          if (sizeParts[1]) {
+            if (sizeParts[1].endsWith('%')) lh = bh * parseFloat(sizeParts[1]) / 100;
+            else lh = parseFloat(sizeParts[1]) || bh;
+          }
         }
-        if (sizeParts[1]) {
-          if (sizeParts[1].endsWith('%')) bgH = bh * parseFloat(sizeParts[1]) / 100;
-          else bgH = parseFloat(sizeParts[1]) || bh;
+        if (pos !== '0% 0%') {
+          const posParts = pos.split(/\s+/);
+          if (posParts[0] && posParts[0].endsWith('%')) lx = bx + (bw - lw) * parseFloat(posParts[0]) / 100;
+          if (posParts[1] && posParts[1].endsWith('%')) ly = by + (bh - lh) * parseFloat(posParts[1]) / 100;
         }
-      }
-      if (bgPos !== '0% 0%') {
-        const posParts = bgPos.split(/\s+/);
-        if (posParts[0] && posParts[0].endsWith('%')) bgX = bx + (bw - bgW) * parseFloat(posParts[0]) / 100;
-        if (posParts[1] && posParts[1].endsWith('%')) bgY = by + (bh - bgH) * parseFloat(posParts[1]) / 100;
+        if (isGradientValue(image)) {
+          const grad = parseGradient(image);
+          if (grad) commands.push({ type: 'setFillGradient', params: [grad, lx, ly, lw, lh] });
+        } else if (image && image !== 'none' && image.startsWith('url(')) {
+          // No decoded image data available at this layer — nothing to paint.
+        }
+      };
+
+      // `background-color` always paints first (it's the bottom-most layer,
+      // behind every background-image layer, per spec).
+      if (bgColor !== 'transparent') {
+        commands.push({ type: 'setFillStyle', params: [bgColor] });
+        commands.push({ type: 'fillRect', params: [bx, by, bw, bh] });
       }
 
-      if (isGradientValue(bgImage)) {
-        const grad = parseGradient(bgImage);
-        if (grad) {
-          commands.push({ type: 'setFillGradient', params: [grad, bgX, bgY, bgW, bgH] });
-        } else {
-          commands.push({ type: 'setFillStyle', params: [bgColor] });
-          commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
-        }
-      } else if (bgImage && bgImage !== 'none' && bgImage.startsWith('url(')) {
-        commands.push({ type: 'setFillStyle', params: [bgColor] });
-        commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
-      } else if (bgColor !== 'transparent') {
-        commands.push({ type: 'setFillStyle', params: [bgColor] });
-        commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
+      // `background-image` accepts a comma-separated layer list (e.g. two
+      // stacked gradients) — split on TOP-LEVEL commas only, since a single
+      // gradient function's own argument list also contains commas
+      // (`linear-gradient(red, blue)`). The first-listed layer paints closest
+      // to the viewer, so layers are painted back-to-front (reversed).
+      const imageLayers = splitTopLevelCommas(bgImage);
+      const sizeLayers = bgSize === 'auto' ? [] : splitTopLevelCommas(bgSize);
+      const posLayers = bgPos === '0% 0%' ? [] : splitTopLevelCommas(bgPos);
+      for (let i = imageLayers.length - 1; i >= 0; i--) {
+        const image = imageLayers[i]!.trim();
+        if (!image || image === 'none') continue;
+        const size = (sizeLayers[i] ?? sizeLayers[sizeLayers.length - 1] ?? 'auto').trim();
+        const pos = (posLayers[i] ?? posLayers[posLayers.length - 1] ?? '0% 0%').trim();
+        paintOneBgLayer(image, size, pos);
       }
 
       // ── Overflow clip rect (apply before borders/content) ────────────
@@ -467,8 +484,16 @@ class PaintEngine implements IPaintEngine {
 
       // ── Borders (enhanced with radius, per-side colors, dashed/dotted) ─
       const borderInfo = parseBorders(style, layoutBox.width, layoutBox.height);
-      const hasAnyBorder = borderInfo.top.width > 0 || borderInfo.right.width > 0 ||
-        borderInfo.bottom.width > 0 || borderInfo.left.width > 0;
+      // border-width defaults to the CSS initial value "medium" (3px) even
+      // when border-style is (also correctly) "none" — computed values are
+      // independent per spec, and a real browser never paints a side whose
+      // style is none/hidden regardless of its width. Checking width alone
+      // here meant nearly every element on every page painted a phantom
+      // border, since almost nothing sets border-style explicitly.
+      const isVisible = (side: BorderSide): boolean =>
+        side.width > 0 && side.style !== 'none';
+      const hasAnyBorder = isVisible(borderInfo.top) || isVisible(borderInfo.right) ||
+        isVisible(borderInfo.bottom) || isVisible(borderInfo.left);
       if (hasAnyBorder) {
         const borderSides: { w: number; x: number; y: number; rw: number; rh: number; color: string; style: string }[] = [
           { w: borderInfo.top.width, x: layoutBox.x, y: layoutBox.y, rw: layoutBox.width, rh: borderInfo.top.width, color: colorToString(borderInfo.top.color), style: borderInfo.top.style },
@@ -482,7 +507,7 @@ class PaintEngine implements IPaintEngine {
           commands.push({ type: 'setBorderRadius', params: [borderInfo.radius, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
         }
         for (const s of borderSides) {
-          if (s.w <= 0) continue;
+          if (s.w <= 0 || s.style === 'none') continue;
           if (s.style === 'dashed' || s.style === 'dotted') {
             commands.push({ type: 'setFillStyle', params: [s.color] });
             const dashLen = s.style === 'dotted' ? s.w : s.w * 3;
@@ -702,11 +727,15 @@ class PaintEngine implements IPaintEngine {
 
     const animatedOpacity = this._opacityResolver?.(node);
 
-    // Get animated transform for this element
+    // A static `transform` (no animation running) must still render —
+    // see the matching fallback in stacking.ts's createContext() for why.
     let translate: { x: number; y: number } | null = null;
     const animatedTransform = this._transformResolver?.(node);
-    if (animatedTransform && animatedTransform !== 'none') {
-      const parsed = parseTransform(animatedTransform);
+    const effectiveTransform = (animatedTransform && animatedTransform !== 'none')
+      ? animatedTransform
+      : style.get('transform');
+    if (effectiveTransform && effectiveTransform !== 'none') {
+      const parsed = parseTransform(effectiveTransform);
       if (parsed && isPureTranslation4x4(parsed.matrix)) {
         translate = { x: parsed.matrix.m41, y: parsed.matrix.m42 };
       }

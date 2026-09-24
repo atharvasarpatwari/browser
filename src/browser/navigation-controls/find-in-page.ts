@@ -1,14 +1,19 @@
 import type { IDisposable } from '../../app/dependency-container';
+import type { IDomTree, DomNode, DomElement, DomTextNode } from '../rendering/dom-tree';
 
 interface FindMatch {
   readonly index: number;
   readonly text: string;
   readonly context: string;
   readonly position: number;
+  /** For a real-page match (via findInDom): the containing element's domId, for highlight lookup. */
+  readonly elementDomId?: string;
 }
 
 interface IFindInPage extends IDisposable {
   find(query: string, options?: FindOptions): FindResult;
+  /** Searches the real, live page DOM tree instead of the built-in sample text. */
+  findInDom(domTree: IDomTree, query: string, options?: FindOptions): FindResult;
   findNext(): FindMatch | null;
   findPrevious(): FindMatch | null;
   clear(): void;
@@ -63,6 +68,78 @@ class FindInPage implements IFindInPage {
     };
     this.emit({ kind: 'search', result });
     return result;
+  }
+
+  findInDom(domTree: IDomTree, query: string, options?: FindOptions): FindResult {
+    this.clear();
+    if (!query.trim()) {
+      const result: FindResult = { matches: [], activeIndex: -1, total: 0, query: '' };
+      return result;
+    }
+
+    this._query = query;
+    this.matches = this.searchDomText(domTree, query, options ?? {});
+    this.activeIndex = this.matches.length > 0 ? 0 : -1;
+
+    const result: FindResult = {
+      matches: [...this.matches],
+      activeIndex: this.activeIndex,
+      total: this.matches.length,
+      query: this._query,
+    };
+    this.emit({ kind: 'search', result });
+    return result;
+  }
+
+  private searchDomText(domTree: IDomTree, query: string, options: FindOptions): FindMatch[] {
+    const doc = domTree.getDocument();
+    if (!doc) return [];
+
+    const flags = options.caseSensitive ? 'g' : 'gi';
+    const pattern = options.wholeWord ? `\\b${this.escapeRegex(query)}\\b` : this.escapeRegex(query);
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern, flags);
+    } catch {
+      return [];
+    }
+
+    const results: FindMatch[] = [];
+    let index = 0;
+
+    const walk = (node: DomNode, nearestElementId: string | null): void => {
+      if (node.nodeType === 'element') {
+        const el = node as DomElement;
+        for (const child of el.children) walk(child, el.domId);
+        return;
+      }
+      if (node.nodeType !== 'text') return;
+
+      const text = (node as DomTextNode).text;
+      if (!text || !text.trim()) return;
+
+      regex.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(text)) !== null) {
+        const start = Math.max(0, match.index - 40);
+        const end = Math.min(text.length, match.index + match[0].length + 40);
+        let context = (start > 0 ? '...' : '') + text.slice(start, end) + (end < text.length ? '...' : '');
+        context = context.replace(/\s+/g, ' ').trim();
+
+        results.push({
+          index: index++,
+          text: match[0],
+          context,
+          position: match.index,
+          elementDomId: nearestElementId ?? undefined,
+        });
+
+        if (match[0].length === 0) regex.lastIndex++;
+      }
+    };
+
+    for (const child of doc.children) walk(child, null);
+    return results;
   }
 
   findNext(): FindMatch | null {

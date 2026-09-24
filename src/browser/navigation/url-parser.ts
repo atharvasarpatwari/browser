@@ -377,6 +377,7 @@ const SPECIAL_PAGES: ReadonlyMap<string, string> = new Map<string, string>([
   ['nova://history',    'nova://history'],
   ['nova://bookmarks',  'nova://bookmarks'],
   ['nova://extensions', 'nova://extensions'],
+  ['nova://research',   'nova://research'],
 ]);
 
 // ─────────────────────────────────────────────────────────────────────────────

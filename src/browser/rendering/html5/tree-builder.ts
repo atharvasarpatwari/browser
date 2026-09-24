@@ -324,6 +324,10 @@ class TreeBuilder implements TreeBuilderContext {
       this.insertionMode = Im.IN_SELECT_IN_TABLE;
     } else if (tag === 'select') {
       this.insertionMode = Im.IN_SELECT;
+    } else if (tag === 'td' || tag === 'th') {
+      this.insertionMode = Im.IN_CELL;
+    } else if (tag === 'tr') {
+      this.insertionMode = Im.IN_ROW;
     } else if (tag === 'tbody' || tag === 'tfoot' || tag === 'thead') {
       this.insertionMode = Im.IN_TABLE_BODY;
     } else if (tag === 'caption') {
@@ -351,26 +355,46 @@ class TreeBuilder implements TreeBuilderContext {
   // REPROCESSING HELPERS
   // ─────────────────────────────────────────────────────────────────────────
 
+  // "Process the token using the rules for the X insertion mode" (spec
+  // wording used throughout §13.2.6) means borrow X's rules for THIS token
+  // — it is not a blanket permanent mode switch, but it isn't a fully
+  // sandboxed one either. If X's own rules for this token don't say
+  // anything about the mode, it reverts to whatever was active before (a
+  // plain text token inside a table cell shouldn't leave the parser stuck
+  // in "in body" afterward). But if X's rules for this SPECIFIC token
+  // include an explicit "switch the insertion mode to Y" step — e.g. a
+  // <table> start tag reached via "in cell"'s fallback to "in body" is
+  // still supposed to open the table and move to "in table" — that switch
+  // is real and must stick, not get clobbered back to X. The tell is
+  // whether the mode is still X when processToken returns: if X's handler
+  // changed it to something else, that was deliberate, so leave it; only
+  // restore when the delegate left it unmoved.
   reprocessInBody(token: Token): void {
+    const saved = this.insertionMode;
     this.insertionMode = Im.IN_BODY;
     this.processToken(token);
+    if (this.insertionMode === Im.IN_BODY) this.insertionMode = saved;
   }
 
   reprocessInTable(token: Token): void {
+    const saved = this.insertionMode;
     this.insertionMode = Im.IN_TABLE;
     this.processToken(token);
+    if (this.insertionMode === Im.IN_TABLE) this.insertionMode = saved;
   }
 
   processInHeadToken(token: Token): void {
+    const saved = this.insertionMode;
     this.insertionMode = Im.IN_HEAD;
     this.processToken(token);
+    if (this.insertionMode === Im.IN_HEAD) this.insertionMode = saved;
   }
 
   processInBodyToken(token: Token): void {
     const saved = this.insertionMode;
     this.insertionMode = Im.IN_BODY;
     this.processToken(token);
-    this.insertionMode = saved;
+    if (this.insertionMode === Im.IN_BODY) this.insertionMode = saved;
   }
 
   reprocessInForeignContent(token: Token): void {
@@ -414,6 +438,24 @@ class TreeBuilder implements TreeBuilderContext {
     }
     this.activeFormattingClearUpToMarker();
     this.insertionMode = Im.IN_ROW;
+  }
+
+  /**
+   * §13.2.6.2 "clear the stack back to a table body context": pop elements
+   * until the current node is tbody/thead/tfoot/template/html. Required
+   * before "in table body" mode inserts a new <tr> — without it, a <tr>
+   * that was never explicitly closed (e.g. `<tr style="height:10px"/>`;
+   * the trailing `/` on a non-void element is a no-op per the HTML5
+   * tokenizer, so this never actually closes) is still the current node,
+   * and the next <tr> gets inserted as ITS CHILD instead of its sibling —
+   * nesting an entire table body's worth of subsequent rows one level too
+   * deep instead of laying them out as siblings.
+   */
+  clearStackToTableBodyContext(): void {
+    const bodyContextTags = new Set(['tbody', 'thead', 'tfoot', 'template', 'html']);
+    while (this.openElements.length > 0 && !bodyContextTags.has(this.currentNode()!.tagName)) {
+      this.popCurrentNode();
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────

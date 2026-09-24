@@ -51,7 +51,8 @@ import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
-import { runJS } from '../js/index';
+import { runJS, createGlobalEnv, wrapElement, createEventObject, onConsoleMessage, type ConsoleEntry } from '../js/index';
+import { callJSFunction, setGlobalCaller, type JSFunction, type JSObject } from '../js/values';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
@@ -94,6 +95,8 @@ interface PageRendererDependencies {
   readonly storageDir?: string;
   /** Optional callback invoked after each reflow/repaint frame (page repaint). */
   readonly onFrameRendered?: () => void;
+  /** Optional callback invoked for every page console.log/warn/error/etc call (DevTools Console panel). */
+  readonly onConsoleMessage?: (entry: ConsoleEntry) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +108,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
   private disposed = false;
   private reflowController: ReflowRepaintController | null = null;
   private transitionEngine: CssTransitionEngine | null = null;
+  /** The shared script EventLoop for the currently rendered page, if it has any scripts. */
+  private pageEventLoop: JsEventLoop | null = null;
+  /** Real-time pump so setTimeout/setInterval/rAF keep firing after the initial script run. */
+  private eventLoopPumpTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(deps: PageRendererDependencies) {
     this.deps = deps;
@@ -162,7 +169,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     // 4. Extract and compute CSS styles
-    const rules = cssParser.extractStylesFromDocument(htmlDoc);
+    const rules = cssParser.extractCss5RulesFromDocument(htmlDoc);
     this._lastRules = rules;
     this.applyComputedStyles(rules);
 
@@ -171,7 +178,21 @@ class PageRenderer implements IPageRenderer, IDisposable {
     this.applyComputedStyles(rules); // Re-apply after script execution
 
     // 6. Run layout
-    layoutEngine.layout(doc, domTree);
+    // The canvas that ends up on screen is CSS-stretched/shrunk to fill
+    // whatever size the content area actually is, but its pixel buffer
+    // (and everything drawn into it) was sized to whatever viewport the
+    // engine was constructed with — a fixed 1920x1080 default, regardless
+    // of the real content area. Any mismatch forces the browser to rescale
+    // a sharp, non-anti-aliased bitmap font, which blends adjacent glyphs
+    // into each other and made text look like it was overlapping. Render
+    // at the content area's real size instead so no rescaling ever has to
+    // happen. window.innerHeight is the whole app window including the
+    // address bar/tab strip chrome above the content area, so it overshoots;
+    // .content-area is the actual element the canvas fills.
+    const contentAreaEl = typeof document !== 'undefined' ? document.querySelector('.content-area') : null;
+    const viewportWidth = contentAreaEl?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1920);
+    const viewportHeight = contentAreaEl?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 1080);
+    layoutEngine.layout(doc, domTree, { viewportWidth, viewportHeight });
 
     // 7. Lazy load images/iframes via IntersectionObserver
     const lazyLoader = new LazyLoader();
@@ -184,9 +205,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
       this.reflowController?.requestFrame();
     });
     lazyLoader.scanForLazyElements(doc);
-    lazyLoader.setViewport(1920, 1080); // Default viewport
+    lazyLoader.setViewport(viewportWidth, viewportHeight);
 
     // 8. Paint
+    paintEngine.updateConfig({ width: viewportWidth, height: viewportHeight });
     paintEngine.paint(doc);
 
     // 9. Clear mutations recorded during the initial full style pass. They are
@@ -209,7 +231,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 11. Wire the incremental reflow/repaint controller for post-load DOM
     //     mutations (JS-triggered changes, scroll/scroll-triggered relayout).
-    this.initReflowController(doc);
+    this.initReflowController(doc, viewportWidth, viewportHeight);
   }
 
   /**
@@ -217,13 +239,13 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * After the initial full layout+paint, all subsequent DOM mutations flow
    * through this controller so only dirty subtrees are re-laid-out/repainted.
    */
-  private initReflowController(doc: DomDocument): void {
+  private initReflowController(doc: DomDocument, viewportWidth: number, viewportHeight: number): void {
     const { domTree, layoutEngine, paintEngine } = this.deps;
 
     this.reflowController?.dispose();
     const controller = new ReflowRepaintController(layoutEngine, paintEngine, domTree, {
-      viewportWidth: 1920,
-      viewportHeight: 1080,
+      viewportWidth,
+      viewportHeight,
     });
     controller.init(doc);
     // Incremental style recalc resolves _dirtyStyle nodes before layout.
@@ -275,13 +297,12 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Also builds a UsedStyle object for each element with pixel-resolved
    * box-model values for faster layout.
    */
-  private applyComputedStyles(rules: readonly CssRule[]): void {
-    const { domTree, cssParser } = this.deps;
+  private applyComputedStyles(rules: readonly Css5Rule[]): void {
+    const { domTree } = this.deps;
     const doc = domTree.getDocument();
     if (!doc) return;
 
-    // Build a CSS5 stylesheet from legacy CssRule[] (reparse selectors once).
-    const stylesheet = this.buildCss5Stylesheet(cssParser, rules);
+    const stylesheet = this.buildCss5Stylesheet(rules);
     this._lastStylesheet = stylesheet;
 
     // Determine container dimensions for percentage-based used-style resolution.
@@ -301,7 +322,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * recomputes their computed styles and used styles, and clears the flag.
    */
   private recalcStylesIncremental(): void {
-    const { domTree, cssParser } = this.deps;
+    const { domTree } = this.deps;
     const doc = domTree.getDocument();
     if (!doc) return;
 
@@ -313,8 +334,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     if (dirtyNodes.length === 0) return;
 
     // Build a fresh stylesheet (rules may have changed).
-    const legacyParser = cssParser;
-    const stylesheet = this.buildCss5Stylesheet(legacyParser, this._lastRules);
+    const stylesheet = this.buildCss5Stylesheet(this._lastRules);
     this._lastStylesheet = stylesheet;
 
     for (const el of dirtyNodes) {
@@ -338,7 +358,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
   }
 
-  private _lastRules: readonly CssRule[] = [];
+  private _lastRules: readonly Css5Rule[] = [];
   private _lastStylesheet: Css5Stylesheet | null = null;
 
   /**
@@ -411,6 +431,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
     baseUrl: string,
     signal: AbortSignal,
   ): Promise<void> {
+    // A new page is replacing whatever was here — stop pumping the old one's
+    // timers so a stale page's setInterval doesn't keep firing in the background.
+    this.stopEventLoopPump();
+
     const { domTree, resourceLoader } = this.deps;
     const scripts = domTree.getElementsByTagName('script');
     if (scripts.length === 0) return;
@@ -419,6 +443,35 @@ class PageRenderer implements IPageRenderer, IDisposable {
     const origin = parseOrigin(baseUrl);
 
     const eventLoop = new JsEventLoop();
+    // One shared global environment for every <script> tag on this page —
+    // real pages routinely split JS across multiple tags expecting a single
+    // shared `window` (a library script, then a script that uses it). Each
+    // runJS() call below defaults to creating its OWN fresh environment when
+    // none is passed, which would silently isolate every script tag from
+    // every other one; passing this explicitly is what prevents that.
+    const globalEnv = createGlobalEnv(
+      doc, domTree, eventLoop, this.deps.controller, undefined,
+      this.deps.resourceEnforcer, this.deps.scriptEnforcer, baseUrl,
+      this.deps.htmlParser, this.deps.storageDir,
+      this.deps.corsEngine,
+      resourceLoader.getCookieJar() ?? undefined,
+    );
+
+    // Forward every console.log/warn/error/etc the page makes to whoever's
+    // listening (e.g. a DevTools Console panel) — createGlobalEnv binds a
+    // real `console` object into this same env.
+    if (this.deps.onConsoleMessage) {
+      const consoleObj = globalEnv.get('console');
+      onConsoleMessage(consoleObj, (entry) => this.deps.onConsoleMessage?.(entry));
+    }
+
+    // document.currentScript must reflect whichever <script> element is
+    // synchronously executing right now (real self-configuring embed
+    // scripts read their own data-* attributes off it), and null otherwise.
+    // Fetched once since createGlobalEnv() only builds the document binding
+    // once for the whole page — only the .value gets mutated per script below.
+    const docBinding = globalEnv.get('document') as JSObject;
+    const currentScriptDesc = docBinding.properties.get('currentScript')!;
 
     const blockingScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
     const deferScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
@@ -494,7 +547,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     // 1. Execute blocking scripts in document order
-    for (const { source } of blockingScripts) {
+    for (const { source, el } of blockingScripts) {
       if (signal.aborted) break;
       if (this.deps.scriptEnforcer) {
         const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
@@ -503,7 +556,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
           continue;
         }
       }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: origin, corsEngine: this.deps.corsEngine, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
+      currentScriptDesc.value = wrapElement(el, domTree);
+      const result2 = runJS(source, { document: doc, domTree, eventLoop, globalEnv });
+      currentScriptDesc.value = null;
       if (result2.error) {
         console.error(
           `[ScriptEngine] Error executing blocking script: ${result2.error.message}`,
@@ -512,7 +567,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     // 2. Execute defer scripts in document order (after DOM is parsed)
-    for (const { source } of deferScripts) {
+    for (const { source, el } of deferScripts) {
       if (signal.aborted) break;
       if (this.deps.scriptEnforcer) {
         const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
@@ -521,7 +576,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
           continue;
         }
       }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: origin, corsEngine: this.deps.corsEngine, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
+      currentScriptDesc.value = wrapElement(el, domTree);
+      const result2 = runJS(source, { document: doc, domTree, eventLoop, globalEnv });
+      currentScriptDesc.value = null;
       if (result2.error) {
         console.error(
           `[ScriptEngine] Error executing defer script: ${result2.error.message}`,
@@ -535,14 +592,44 @@ class PageRenderer implements IPageRenderer, IDisposable {
         const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
         if (!check.allowed) {
           console.warn(`[CSP] Blocked async script: ${check.reason}`);
-          void el;
           continue;
         }
       }
       // Fire and forget — async scripts don't block rendering
-      runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: origin, corsEngine: this.deps.corsEngine, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
-      void el; // used only for categorization
+      currentScriptDesc.value = wrapElement(el, domTree);
+      runJS(source, { document: doc, domTree, eventLoop, globalEnv });
+      currentScriptDesc.value = null;
     }
+
+    this.pageEventLoop = eventLoop;
+    this.startEventLoopPump(eventLoop);
+  }
+
+  /**
+   * Ticks the page's timer queue on a real ~60fps interval so setTimeout,
+   * setInterval and requestAnimationFrame callbacks registered by page JS
+   * keep firing after the initial synchronous script run finishes — not just
+   * during it.
+   */
+  private startEventLoopPump(eventLoop: JsEventLoop): void {
+    this.eventLoopPumpTimer = setInterval(() => {
+      try {
+        eventLoop.runOnce();
+        // A fired callback may have mutated the DOM — request a frame so
+        // the mutation (already queued via domTree) gets painted.
+        this.reflowController?.requestFrame();
+      } catch {
+        // swallow — a broken timer callback shouldn't kill the pump
+      }
+    }, 16);
+  }
+
+  private stopEventLoopPump(): void {
+    if (this.eventLoopPumpTimer !== null) {
+      clearInterval(this.eventLoopPumpTimer);
+      this.eventLoopPumpTimer = null;
+    }
+    this.pageEventLoop = null;
   }
 
   /**
@@ -560,54 +647,12 @@ class PageRenderer implements IPageRenderer, IDisposable {
   }
 
   /**
-   * Converts legacy CssRule[] (string selectors) into a CssStylesheet
-   * that the CSS5 cascade engine can consume.
+   * Wraps the rules extractCss5RulesFromDocument() already returned in CSS5's
+   * own shape (structured selectors, real sourceOrder, media/layer/container
+   * nesting intact) into the CssStylesheet shape the cascade engine expects.
    */
-  private buildCss5Stylesheet(cssParser: ICssParser, rules: readonly CssRule[]): Css5Stylesheet {
-    const css5Rules: Css5Rule[] = [];
-    const parser = (cssParser as CssParser).getCss5Parser();
-
-    let order = 0;
-    for (const rule of rules) {
-      if (rule.selector === '__external__') continue;
-
-      // @keyframes rules (selector === '') are carried through the legacy
-      // CssRule[] pipe so the animator can resolve them at runtime.
-      if (rule.keyframes) {
-        css5Rules.push({
-          type: 'keyframes',
-          name: rule.keyframes.name,
-          keyframes: rule.keyframes.frames.map((kf) => ({
-            selectors: kf.selectors,
-            declarations: Array.from(kf.declarations.entries()).map(([property, value]) => ({
-              property,
-              value,
-              important: false,
-            })),
-          })),
-        });
-        continue;
-      }
-
-      const selector = parser.parseSelector(rule.selector);
-      if (!selector) continue;
-
-      const styleRule: CssStyleRule = {
-        type: 'style',
-        selectors: [selector],
-        declarations: Array.from(rule.declarations.entries()).map(([prop, value]) => ({
-          property: prop,
-          value,
-          important: false,
-        })),
-        specificity: { id: rule.specificity.id, a: rule.specificity.class, b: rule.specificity.tag },
-        sourceOrder: order++,
-        sourceUrl: rule.sourceUrl,
-      };
-      css5Rules.push(styleRule);
-    }
-
-    return { rules: css5Rules, url: null };
+  private buildCss5Stylesheet(rules: readonly Css5Rule[]): Css5Stylesheet {
+    return { rules: [...rules], url: null };
   }
 
   /**
@@ -756,8 +801,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
       const parseResult = htmlParser.parse(body, url);
       const doc = domTree.buildFromHtml(parseResult.document);
 
-      const rules = cssParser.extractStylesFromDocument(parseResult.document);
-      const stylesheet = this.buildCss5Stylesheet(cssParser, rules);
+      const rules = cssParser.extractCss5RulesFromDocument(parseResult.document);
+      const stylesheet = this.buildCss5Stylesheet(rules);
       const rootStyleables = this.buildStyleableTree(doc.children, null);
       this.applyStylesRecursive(
         doc.children,
@@ -844,6 +889,42 @@ class PageRenderer implements IPageRenderer, IDisposable {
     this.transitionEngine = null;
     this.reflowController?.dispose();
     this.reflowController = null;
+    this.stopEventLoopPump();
+  }
+
+  /**
+   * Hit-tests (x, y) against the live layout tree and, if it lands on an
+   * element, wraps it back into its JS binding and dispatches a real event
+   * of `type` — running any addEventListener handlers page JS registered on
+   * it, exactly like a real browser's click/pointer dispatch.
+   */
+  dispatchPointerEvent(type: string, x: number, y: number): boolean {
+    if (!this.pageEventLoop) return false;
+    const hitElement = this.deps.layoutEngine.getElementAtPoint(x, y);
+    if (!hitElement) return false;
+
+    const wrapped = wrapElement(hitElement, this.deps.domTree);
+    const dispatchFn = wrapped.properties.get('dispatchEvent')?.value as JSFunction | undefined;
+    if (!dispatchFn || dispatchFn.type !== 'closure') return false;
+
+    const eventObj = createEventObject(type, wrapped, { bubbles: true, cancelable: true });
+
+    // dispatchEvent's own body is a native function (runs directly), but the
+    // page's `addEventListener` callbacks it invokes are real closures that
+    // must go through the interpreter tied to this page's environment.
+    const interpreter = this.pageEventLoop.getInterpreter();
+    if (interpreter) setGlobalCaller(interpreter);
+    try {
+      callJSFunction(dispatchFn, wrapped, [eventObj]);
+    } finally {
+      if (interpreter) setGlobalCaller(null);
+    }
+    // Let any promise reactions the handler kicked off settle immediately.
+    this.pageEventLoop.drainMicrotasks();
+    // The handler may have mutated the DOM (e.g. textContent) — those
+    // mutations are only turned into a repaint on the next processed frame.
+    this.reflowController?.requestFrame();
+    return true;
   }
 }
 

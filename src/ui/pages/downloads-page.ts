@@ -48,7 +48,7 @@ class DownloadsPage implements IDownloadsPage {
     this.container = container;
     this.currentItems = items;
     this.container.className = 'downloads-page';
-    this.container.style.cssText = 'padding:24px;font-family:sans-serif;overflow-y:auto;height:100%;';
+    this.container.style.cssText = 'padding:24px;font-family:var(--font-ui,sans-serif);overflow-y:auto;height:100%;background:var(--bg-body,#060810);color:var(--text-primary,#fff);';
     this.build();
     this._mounted = true;
   }
@@ -100,7 +100,7 @@ class DownloadsPage implements IDownloadsPage {
     if (this.currentItems.length > 0) {
       const clearBtn = document.createElement('button');
       clearBtn.textContent = 'Clear all';
-      clearBtn.style.cssText = 'padding:6px 12px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;font-size:13px;';
+      clearBtn.style.cssText = 'padding:6px 12px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);background:var(--bg-elevated,#161d30);color:var(--text-primary,#fff);cursor:pointer;font-size:13px;font-family:inherit;';
       clearBtn.addEventListener('click', () => {
         for (const item of this.currentItems) {
           if (item.state === 'completed' || item.state === 'failed' || item.state === 'cancelled') {
@@ -115,7 +115,7 @@ class DownloadsPage implements IDownloadsPage {
 
     if (this.currentItems.length === 0) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'text-align:center;padding:60px 20px;color:#999;';
+      empty.style.cssText = 'text-align:center;padding:60px 20px;color:var(--text-tertiary,#8a87a3);';
       empty.innerHTML = '<div style="font-size:48px;margin-bottom:16px;">📥</div><p style="font-size:16px;">No downloads yet</p><p style="font-size:13px;">Downloads will appear here when you download files</p>';
       this.container.appendChild(empty);
       return;
@@ -140,7 +140,7 @@ class DownloadsPage implements IDownloadsPage {
       const groups = this.groupByDate(displayItems);
       for (const [dateLabel, items] of groups) {
         const groupHeader = document.createElement('div');
-        groupHeader.style.cssText = 'font-weight:bold;font-size:13px;color:#666;padding:12px 0 6px;border-bottom:1px solid #eee;margin-top:8px;';
+        groupHeader.style.cssText = 'font-weight:bold;font-size:13px;color:var(--text-secondary,#a6a3c4);padding:12px 0 6px;border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.06));margin-top:8px;';
         groupHeader.textContent = dateLabel;
         this.itemsContainer.appendChild(groupHeader);
 
@@ -158,7 +158,7 @@ class DownloadsPage implements IDownloadsPage {
   private createDownloadRow(item: DownloadItem): HTMLElement {
     const row = document.createElement('div');
     row.className = `download-item ${item.state}`;
-    row.style.cssText = 'display:flex;align-items:center;padding:10px 8px;border-bottom:1px solid #f0f0f0;gap:12px;';
+    row.style.cssText = 'display:flex;align-items:center;padding:10px 8px;border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.06));gap:12px;';
 
     const icon = document.createElement('div');
     icon.style.cssText = 'font-size:24px;width:32px;text-align:center;';
@@ -174,17 +174,17 @@ class DownloadsPage implements IDownloadsPage {
     info.appendChild(filename);
 
     const meta = document.createElement('div');
-    meta.style.cssText = 'font-size:11px;color:#888;margin-top:2px;';
+    meta.style.cssText = 'font-size:11px;color:var(--text-tertiary,#8a87a3);margin-top:2px;';
     meta.textContent = this.formatMeta(item);
     info.appendChild(meta);
 
     if (item.state === 'downloading' && item.totalBytes > 0) {
       const progressBar = document.createElement('div');
-      progressBar.style.cssText = 'height:4px;background:#e0e0e0;border-radius:2px;margin-top:4px;overflow:hidden;';
+      progressBar.style.cssText = 'height:4px;background:var(--bg-elevated,#161d30);border-radius:2px;margin-top:4px;overflow:hidden;';
 
       const progress = document.createElement('div');
       const percent = item.totalBytes > 0 ? (item.receivedBytes / item.totalBytes) * 100 : 0;
-      progress.style.cssText = `height:100%;width:${percent}%;background:#1a73e8;border-radius:2px;transition:width 0.3s;`;
+      progress.style.cssText = `height:100%;width:${percent}%;background:var(--accent,#7c9cf5);border-radius:2px;transition:width 0.3s;`;
       progressBar.appendChild(progress);
       info.appendChild(progressBar);
     }
