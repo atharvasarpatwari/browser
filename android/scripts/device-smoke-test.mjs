@@ -33,15 +33,26 @@
  *     - a real functional check of the "tabs" feature: create a tab via
  *       window.novaNative.createTab(), confirm it shows up in the next state
  *       snapshot
+ *   Tier 2b (downloads, the part of the manual checklist's download item that
+ *   doesn't need a human): a local HTTP server + `adb reverse` serves a
+ *   deterministic random payload; window.novaNative.download() triggers a
+ *   real NativeDownloader transfer over the real device; the file is pulled
+ *   back via `adb shell run-as` and compared byte-for-byte. This exercises
+ *   the actual streaming/completion path (NativeDownloader.kt) end-to-end —
+ *   the thing a human tester can't verify by eye beyond "the progress bar
+ *   moved and a file appeared."
  *
  * WHAT THIS DOES NOT AUTOMATE (by design, not oversight)
- *   Long-press context menu, file upload, camera/mic permission prompts,
- *   downloads (pause/resume/cancel/share), incognito visuals, and light/dark
+ *   Pause/resume/cancel/share on a download, long-press context menu, file
+ *   upload, camera/mic permission prompts, incognito visuals, and light/dark
  *   theme rendering all involve real system UI (dialogs, share sheets, the
  *   document picker) or a human visual judgment call. Driving those blindly
  *   via `adb shell input tap <x> <y>` is fragile (coordinates depend on
  *   screen size/density/theme) and would produce a script that looks green
- *   while testing nothing real. Better to leave them to the manual checklist.
+ *   while testing nothing real — also, pause()/resume()/cancel() on
+ *   NativeDownloader are only ever called from the Compose UI, not exposed
+ *   to window.novaNative, so there is no non-UI hook to drive them from here
+ *   even in principle. Better to leave them to the manual checklist.
  *
  * REQUIREMENTS
  *   - `adb` on PATH (or pass --adb <path to adb.exe>)
@@ -407,6 +418,29 @@ async function cdpFetchTargets(port) {
   return res.json();
 }
 
+/** Waits for the CDP response matching `id`, discarding any unsolicited
+ * event notification (Runtime.consoleAPICalled, Runtime.executionContext-
+ * Created, etc.) that arrives first — those have no `id` field at all and,
+ * once anything has caused the Runtime domain to start emitting them, they
+ * interleave with real command responses on the same socket. A client that
+ * treats "next message" as "my response" (the original bug here) grabs the
+ * wrong one: an event with no `.result` silently resolves as `undefined`
+ * instead of throwing, and a real response can be skipped entirely, which
+ * reads as "recv timed out" even though the actual answer arrived on time. */
+async function cdpRecvForId(ws, id, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error(`WebSocket recv timed out waiting for CDP response id=${id}`);
+    const raw = await ws.recv(remaining);
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { continue; }
+    if (parsed.id === id) return parsed;
+    // Anything else (a "method"-bearing event, or a response to some other
+    // id) isn't ours — keep waiting for the real one.
+  }
+}
+
 async function cdpEvaluate(port, expression) {
   const targets = await cdpFetchTargets(port);
   const target = targets.find((t) => t.type === 'page') ?? targets[0];
@@ -414,8 +448,7 @@ async function cdpEvaluate(port, expression) {
   const ws = await wsConnect(target.webSocketDebuggerUrl);
   try {
     ws.send({ id: 1, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: false } });
-    const raw = await ws.recv(5000);
-    const parsed = JSON.parse(raw);
+    const parsed = await cdpRecvForId(ws, 1, 5000);
     if (parsed.error) throw new Error(`CDP error: ${parsed.error.message}`);
     if (parsed.result?.exceptionDetails) {
       throw new Error(`Page threw: ${parsed.result.exceptionDetails.text ?? JSON.stringify(parsed.result.exceptionDetails)}`);
@@ -492,6 +525,88 @@ async function runTier2() {
   }
 }
 
+// ── Tier 2b: real download over adb reverse + window.novaNative.download() ─
+
+function startTestFileServer(bytes) {
+  return new Promise((resolve) => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bytes.length });
+      res.end(bytes);
+    });
+    server.listen(0, '127.0.0.1', () => resolve(server));
+  });
+}
+
+async function runDownloadCheck() {
+  section('Tier 2b — real download via window.novaNative.download()');
+
+  const pidOut = adb(['shell', 'pidof', PACKAGE_NAME]).stdout.trim();
+  const pid = pidOut.split(/\s+/)[0];
+  if (!pid) {
+    skip('download engine end-to-end', 'app process not running (Tier 1 did not complete)');
+    return;
+  }
+
+  // ~200KB: big enough to be a real streamed transfer, not an instant
+  // sub-KB response, small enough to stay well under adb's stdout buffer
+  // when pulled back below for the byte-for-byte comparison.
+  const payload = crypto.randomBytes(200 * 1024);
+  const server = await startTestFileServer(payload);
+  const port = server.address().port;
+  const filename = `smoketest-${Date.now()}.bin`;
+
+  const reverse = adb(['reverse', `tcp:${port}`, `tcp:${port}`]);
+  if (reverse.status !== 0) {
+    fail('adb reverse for test file server', (reverse.stdout + reverse.stderr).trim());
+    server.close();
+    return;
+  }
+
+  const forward = adb(['forward', `tcp:${opts.port}`, `localabstract:webview_devtools_remote_${pid}`]);
+  if (forward.status !== 0) {
+    fail('adb forward to WebView devtools socket', (forward.stdout + forward.stderr).trim());
+    adb(['reverse', '--remove', `tcp:${port}`]);
+    server.close();
+    return;
+  }
+
+  try {
+    const url = `http://127.0.0.1:${port}/${filename}`;
+    await cdpEvaluate(opts.port, `window.novaNative.download(${JSON.stringify(url)}, ${JSON.stringify(JSON.stringify({ filename }))})`);
+    pass('download() call accepted', filename);
+
+    const remotePath = `/sdcard/Android/data/${PACKAGE_NAME}/files/Downloads/${filename}`;
+    const landedSize = await pollUntil(() => {
+      const stat = adb(['shell', 'run-as', PACKAGE_NAME, 'stat', '-c%s', remotePath]);
+      const size = parseInt(stat.stdout.trim(), 10);
+      return Number.isFinite(size) && size === payload.length ? size : null;
+    }, { timeoutMs: 15000, intervalMs: 500 });
+
+    if (!landedSize) {
+      const stat = adb(['shell', 'run-as', PACKAGE_NAME, 'stat', '-c%s', remotePath]);
+      fail('download completes with correct size', `expected ${payload.length} bytes at ${remotePath}, got: ${(stat.stdout + stat.stderr).trim() || 'file not found after 15s'}`);
+      return;
+    }
+    pass('download completes with correct size', `${landedSize} bytes`);
+
+    const pulled = adb(['shell', 'run-as', PACKAGE_NAME, 'cat', remotePath], { encoding: 'buffer', maxBuffer: 8 * 1024 * 1024 });
+    const pulledBuf = Buffer.isBuffer(pulled.stdout) ? pulled.stdout : Buffer.from(pulled.stdout ?? '');
+    if (pulledBuf.equals(payload)) {
+      pass('downloaded bytes match exactly', `${pulledBuf.length} bytes, byte-for-byte`);
+    } else {
+      fail('downloaded bytes match exactly', `pulled ${pulledBuf.length} bytes vs expected ${payload.length} — streaming path may be corrupting data`);
+    }
+
+    adb(['shell', 'run-as', PACKAGE_NAME, 'rm', '-f', remotePath]);
+  } catch (err) {
+    fail('download engine end-to-end', err instanceof Error ? err.message : String(err));
+  } finally {
+    adb(['forward', '--remove', `tcp:${opts.port}`]);
+    adb(['reverse', '--remove', `tcp:${port}`]);
+    server.close();
+  }
+}
+
 // ── main ─────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -499,19 +614,23 @@ async function main() {
   const tier1Ok = await runTier1();
   if (tier1Ok && !opts.skipCdp) {
     await runTier2();
+    await runDownloadCheck();
   } else if (opts.skipCdp) {
     skip('Tier 2 (CDP bridge + tabs check)', '--skip-cdp passed');
+    skip('Tier 2b (downloads)', '--skip-cdp passed');
   } else {
     skip('Tier 2 (CDP bridge + tabs check)', 'Tier 1 did not complete cleanly');
+    skip('Tier 2b (downloads)', 'Tier 1 did not complete cleanly');
   }
 
   section('Summary');
   if (failures.length === 0) {
     console.log(`  All checks passed${skipped.length ? ` (${skipped.length} skipped)` : ''}.`);
-    console.log('  This covers install/launch/boot + the bridge contract + tabs.');
-    console.log('  Still needs a human: bookmarks/history, downloads, long-press menu,');
-    console.log('  file upload, permission prompts, incognito, light/dark theme — see');
-    console.log('  doc/2026-09-06-android-manual-test-checklist.md.');
+    console.log('  This covers install/launch/boot + the bridge contract + tabs + a real');
+    console.log('  streamed download verified byte-for-byte.');
+    console.log('  Still needs a human: download pause/resume/cancel/share, bookmarks/');
+    console.log('  history, long-press menu, file upload, permission prompts, incognito,');
+    console.log('  light/dark theme — see doc/2026-09-06-android-manual-test-checklist.md.');
   } else {
     console.log(`  ${failures.length} check(s) failed:`);
     for (const f of failures) console.log(`    - ${f}`);
