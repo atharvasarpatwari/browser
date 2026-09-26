@@ -917,6 +917,7 @@ class ApplicationBootstrap {
     const historyServiceInstance = this.container.resolve<IHistoryService>(Tokens.HistoryService);
     const incognitoManager = this.container.resolve<IIncognitoManager>(Tokens.IncognitoManager);
     const cookieStoreInstance = this.container.resolve<ICookieStore>(Tokens.CookieStore);
+    const cacheManager = this.container.resolve<ICacheManager>(Tokens.CacheManager);
 
     page.setBrowserEngine(engine);
     page.setNavigationController(navController);
@@ -925,6 +926,7 @@ class ApplicationBootstrap {
     page.setBookmarkService(bookmarkService);
     page.setHistoryService(historyServiceInstance);
     page.setIncognitoManager(incognitoManager);
+    page.setCache(cacheManager);
 
     // Incognito: pause history recording and isolate the cookie jar for the
     // session's duration. Rolls back to a snapshot on exit rather than just

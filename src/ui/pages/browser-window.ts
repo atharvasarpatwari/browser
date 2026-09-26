@@ -19,6 +19,7 @@ import type { IDownloadManager } from '../../browser/downloads/download-manager'
 import type { IBookmarkService } from '../../browser/bookmarks/bookmark-services';
 import type { IHistoryService } from '../../browser/history/history-service';
 import type { IZoomManager } from '../../browser/navigation-controls/zoom';
+import type { ICacheManager } from '../../browser/networking/cache-manager';
 import type { IWindowControls } from '../../platform/shared/window-controls';
 
 import { TabManager } from '../../browser/tabs/tab-manager';
@@ -163,6 +164,7 @@ interface IBrowserWindowPage extends IDisposable {
   setBrowserName(name: IBrowserName): void;
   setResearchService(service: IResearchService): void;
   setIncognitoManager(manager: IIncognitoManager): void;
+  setCache(cache: ICacheManager): void;
 
   // ── External chrome bridge (native shells driving this page's tabs/nav) ────
   /** Push-based state: fires on every syncAll() (tab created/removed/activated, url changed, etc). */
@@ -239,34 +241,132 @@ class BrowserWindowPage implements IBrowserWindowPage {
       (this.layout as IDesktopLayout | null)?.toggleDevtools?.();
     }
   };
-  // Standard browser chrome shortcuts: Ctrl/Cmd+T (new tab), Ctrl/Cmd+W
-  // (close tab), Ctrl+Tab / Ctrl+Shift+Tab (cycle tabs), F11 (fullscreen).
+  // Standard browser chrome shortcuts. Note: F12 / Ctrl+Shift+I are
+  // deliberately NOT bound here — see onDevToolsKeydown above, both are
+  // Electron's own built-in host-DevTools accelerators and never reach this
+  // page-level listener.
   private readonly onBrowserShortcutsKeydown = (e: KeyboardEvent): void => {
     const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.key.toLowerCase() === 't') {
+    if (mod && e.key.toLowerCase() === 't' && e.shiftKey) {
+      e.preventDefault();
+      this.reopenClosedTab();
+    } else if (mod && e.key.toLowerCase() === 't') {
       e.preventDefault();
       this.tabManager?.createTab();
       this.syncAll();
     } else if (mod && e.key.toLowerCase() === 'w') {
       e.preventDefault();
       const activeId = this.tabManager?.activeTabId;
-      if (activeId && this.tabManager) {
-        this.tabManager.removeTab(activeId);
-        if (this.tabManager.count === 0) this.tabManager.createTab();
-        this.navigationBridge?.syncFromActiveTab();
-        this.syncAll();
-      }
+      if (activeId) this.removeTabTracked(activeId);
     } else if (e.ctrlKey && e.key === 'Tab') {
       e.preventDefault();
       this.cycleTab(e.shiftKey ? -1 : 1);
-    } else if (e.key === 'F11') {
+    } else if (mod && /^[1-9]$/.test(e.key)) {
       e.preventDefault();
-      void this.windowControls?.toggleFullscreen();
+      this.activateTabByIndex(Number(e.key));
+    } else if (mod && e.shiftKey && e.key.toLowerCase() === 'n') {
+      e.preventDefault();
+      this.toggleIncognito();
+    } else if (e.altKey && e.key === 'ArrowLeft') {
+      e.preventDefault();
+      this.goBack();
+    } else if (e.altKey && e.key === 'ArrowRight') {
+      e.preventDefault();
+      this.goForward();
+    } else if (mod && e.shiftKey && e.key.toLowerCase() === 'r') {
+      e.preventDefault();
+      void this.hardReload();
+    } else if (mod && e.key.toLowerCase() === 'r') {
+      e.preventDefault();
+      this.reload();
     } else if (mod && e.key.toLowerCase() === 'f') {
       e.preventDefault();
       this.showFindBar();
+    } else if (mod && e.key.toLowerCase() === 'd') {
+      e.preventDefault();
+      this.toolbar?.addBookmark();
+    } else if (mod && e.key.toLowerCase() === 'h') {
+      e.preventDefault();
+      void this.navigate('nova://history');
+    } else if (mod && !e.shiftKey && e.key.toLowerCase() === 'j') {
+      e.preventDefault();
+      this.openDownloads();
+    } else if (mod && e.key.toLowerCase() === 'l') {
+      e.preventDefault();
+      this.addressBarView?.focus();
+    } else if (mod && (e.key === '=' || e.key === '+')) {
+      e.preventDefault();
+      this.zoomManager?.zoomIn();
+    } else if (mod && e.key === '-') {
+      e.preventDefault();
+      this.zoomManager?.zoomOut();
+    } else if (mod && e.key === '0') {
+      e.preventDefault();
+      this.zoomManager?.reset();
+    } else if (mod && e.shiftKey && e.key === ' ') {
+      e.preventDefault();
+      void this.navigate('nova://research');
+    } else if (e.key === 'F11') {
+      e.preventDefault();
+      void this.windowControls?.toggleFullscreen();
     }
   };
+
+  /** Removes a tab, remembering its URL for Ctrl+Shift+T, and keeps at least one tab open. */
+  private removeTabTracked(tabId: string): void {
+    const tab = this.tabManager?.getTab(tabId);
+    if (tab?.url && tab.url !== 'nova://newtab') {
+      this.closedTabUrls.push(tab.url);
+      if (this.closedTabUrls.length > 20) this.closedTabUrls.shift();
+    }
+    this.tabManager?.removeTab(tabId);
+    if (this.tabManager && this.tabManager.count === 0) this.tabManager.createTab();
+    this.navigationBridge?.syncFromActiveTab();
+    this.syncAll();
+  }
+
+  private reopenClosedTab(): void {
+    const url = this.closedTabUrls.pop();
+    if (url) this.tabManager?.createTab(url);
+  }
+
+  private activateTabByIndex(oneBased: number): void {
+    const tabs = this.tabManager?.tabs;
+    if (!tabs || tabs.length === 0) return;
+    const index = oneBased === 9 ? tabs.length - 1 : Math.min(oneBased - 1, tabs.length - 1);
+    const tab = tabs[index];
+    if (!tab || !this.tabManager) return;
+    this.tabManager.activateTab(tab.id);
+    this.navigationBridge?.syncFromActiveTab();
+    this.syncAll();
+  }
+
+  private toggleIncognito(): void {
+    if (window.NovaStateBridge?.onIncognitoToggleRequested) {
+      window.NovaStateBridge.onIncognitoToggleRequested();
+    } else {
+      this.setIncognitoExternal(!(this.incognitoManager?.isActive() ?? false));
+    }
+  }
+
+  private openDownloads(): void {
+    // Downloads are natively owned on Android (a real file write via the
+    // OS's own DownloadManager, tracked with pause/resume/share — see
+    // NativeDownloader.kt) — the web-rendered nova://downloads page has no
+    // idea those happened, so hand off to native instead of navigating
+    // there. Desktop has no NovaStateBridge, so this always falls through
+    // to the normal in-page navigation there.
+    if (window.NovaStateBridge?.onDownloadsPageRequested) {
+      window.NovaStateBridge.onDownloadsPageRequested();
+    } else {
+      void this.navigate('nova://downloads');
+    }
+  }
+
+  private async hardReload(): Promise<void> {
+    await this.cache?.clear();
+    this.reload();
+  }
 
   private showFindBar(): void {
     if (!this.findBar || !this.contentArea) return;
@@ -455,6 +555,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private bookmarkEventHandler: ((event: { kind: string }) => void) | null = null;
   private contextMenu: ContextMenu | null = null;
   private incognitoManager: IIncognitoManager | null = null;
+  private cache: ICacheManager | null = null;
+  private closedTabUrls: string[] = [];
   private tabSessionBridge: TabSessionBridge | null = null;
   private tabPersistence: TabPersistenceManager | null = null;
   private contextManager: TabContextManager | null = null;
@@ -609,8 +711,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
               this.navigationBridge?.syncFromActiveTab();
               break;
             case 'tabClosed':
-              this.tabManager?.removeTab(e.tabId);
-              this.syncAll();
+              this.removeTabTracked(e.tabId);
               break;
             case 'newTabRequested':
               this.tabManager?.createTab();
@@ -1375,32 +1476,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
       { label: 'Find in Page', icon: '🔍', action: () => this.showFindBar() },
       { label: 'Bookmarks', icon: '⭐', action: () => { void this.navigate('nova://bookmarks'); } },
       { label: 'History', icon: '🕘', action: () => { void this.navigate('nova://history'); } },
-      {
-        label: 'Downloads', icon: '⬇️', action: () => {
-          // Downloads are natively owned on Android (a real file write via
-          // the OS's own DownloadManager, tracked with pause/resume/share —
-          // see NativeDownloader.kt) — the web-rendered nova://downloads
-          // page has no idea those happened, so hand off to native instead
-          // of navigating there. Desktop has no NovaStateBridge, so this
-          // always falls through to the normal in-page navigation there.
-          if (window.NovaStateBridge?.onDownloadsPageRequested) {
-            window.NovaStateBridge.onDownloadsPageRequested();
-          } else {
-            void this.navigate('nova://downloads');
-          }
-        },
-      },
+      { label: 'Downloads', icon: '⬇️', action: () => this.openDownloads() },
       { separator: true },
       {
         label: this.incognitoManager?.isActive() ? 'Exit Incognito' : 'New Incognito Session',
         icon: '🕶️',
-        action: () => {
-          if (window.NovaStateBridge?.onIncognitoToggleRequested) {
-            window.NovaStateBridge.onIncognitoToggleRequested();
-          } else {
-            this.setIncognitoExternal(!(this.incognitoManager?.isActive() ?? false));
-          }
-        },
+        action: () => this.toggleIncognito(),
       },
       { label: 'AI Research', icon: '🔎', action: () => { void this.navigate('nova://research'); } },
       { label: 'Settings', icon: '⚙️', action: () => { void this.navigate('nova://settings'); } },
@@ -1430,18 +1511,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
         }
       }},
       { separator: true },
-      { label: 'Close Tab', icon: '✕', action: () => {
-        this.tabManager?.removeTab(tabId);
-        if (this.tabManager && this.tabManager.count === 0) this.tabManager.createTab();
-        this.syncAll();
-      }},
+      { label: 'Close Tab', icon: '✕', action: () => this.removeTabTracked(tabId) },
       { label: 'Close Other Tabs', icon: '', action: () => {
         const tabs = this.tabManager?.tabs ?? [];
         for (const t of tabs) {
-          if (t.id !== tabId) this.tabManager?.removeTab(t.id);
+          if (t.id !== tabId) this.removeTabTracked(t.id);
         }
-        if (this.tabManager && this.tabManager.count === 0) this.tabManager.createTab();
-        this.syncAll();
       }},
     ];
 
@@ -1879,6 +1954,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setIncognitoManager(manager: IIncognitoManager): void {
     this.incognitoManager = manager;
+  }
+
+  setCache(cache: ICacheManager): void {
+    this.cache = cache;
   }
 
   setHistoryService(service: IHistoryService): void {
