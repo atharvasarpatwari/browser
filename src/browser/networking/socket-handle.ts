@@ -56,6 +56,13 @@ export interface ISocketHandle {
    * socket has raised `secureConnect`.
    */
   getPeerCertificate(): Promise<unknown>;
+  /**
+   * Ask the owner for the real TLSSocket's post-handshake trust verdict —
+   * `authorized`/`authorizationError`, which Node computes against the
+   * system trust store regardless of `rejectUnauthorized`. Valid after
+   * `secureConnect`.
+   */
+  getTlsAuthorization(): Promise<{ authorized: boolean; authorizationError: string | null }>;
   /** Ask the owner to upgrade the underlying socket with TLS (SNI = servername). */
   upgradeTls(servername: string): Promise<void>;
   /**

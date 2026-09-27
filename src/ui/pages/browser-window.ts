@@ -20,6 +20,7 @@ import type { IBookmarkService } from '../../browser/bookmarks/bookmark-services
 import type { IHistoryService } from '../../browser/history/history-service';
 import type { IZoomManager } from '../../browser/navigation-controls/zoom';
 import type { ICacheManager } from '../../browser/networking/cache-manager';
+import { TlsHandler, TlsCertificateError } from '../../browser/networking/tls-handler';
 import type { IWindowControls } from '../../platform/shared/window-controls';
 
 import { TabManager } from '../../browser/tabs/tab-manager';
@@ -525,11 +526,16 @@ class BrowserWindowPage implements IBrowserWindowPage {
         break;
       case 'navigationFailed':
         if (activeTabId) {
-          this.tabErrors.set(activeTabId, {
-            code: event.error?.name || 'NavigationError',
-            description: event.error?.message || 'The page could not be loaded.',
-            url: event.url ?? this.currentUrl,
-          });
+          if (event.error instanceof TlsCertificateError) {
+            const { title, message } = TlsHandler.describeCertError(event.error.hostname, event.error.status);
+            this.tabErrors.set(activeTabId, { code: title, description: message, url: event.url ?? this.currentUrl });
+          } else {
+            this.tabErrors.set(activeTabId, {
+              code: event.error?.name || 'NavigationError',
+              description: event.error?.message || 'The page could not be loaded.',
+              url: event.url ?? this.currentUrl,
+            });
+          }
         }
         break;
     }

@@ -339,6 +339,43 @@ describe('TlsHandler', () => {
     });
   });
 
+  describe('applyRealAuthorization', () => {
+    it('leaves a non-Valid status untouched regardless of the real verdict', () => {
+      expect(TlsHandler.applyRealAuthorization(CertVerificationStatus.Expired, false, 'CERT_HAS_EXPIRED'))
+        .toBe(CertVerificationStatus.Expired);
+    });
+
+    it('leaves Valid untouched when the real handshake authorized the chain', () => {
+      expect(TlsHandler.applyRealAuthorization(CertVerificationStatus.Valid, true, null))
+        .toBe(CertVerificationStatus.Valid);
+    });
+
+    it('downgrades an otherwise-Valid status to Untrusted when the real handshake did not authorize it (the actual security fix)', () => {
+      expect(TlsHandler.applyRealAuthorization(CertVerificationStatus.Valid, false, 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'))
+        .toBe(CertVerificationStatus.Untrusted);
+    });
+
+    it('maps well-known Node authorizationError codes to a more specific status', () => {
+      expect(TlsHandler.applyRealAuthorization(CertVerificationStatus.Valid, false, 'CERT_HAS_EXPIRED'))
+        .toBe(CertVerificationStatus.Expired);
+      expect(TlsHandler.applyRealAuthorization(CertVerificationStatus.Valid, false, 'CERT_NOT_YET_VALID'))
+        .toBe(CertVerificationStatus.NotYetValid);
+      expect(TlsHandler.applyRealAuthorization(CertVerificationStatus.Valid, false, 'DEPTH_ZERO_SELF_SIGNED_CERT'))
+        .toBe(CertVerificationStatus.SelfSigned);
+      expect(TlsHandler.applyRealAuthorization(CertVerificationStatus.Valid, false, 'ERR_TLS_CERT_ALTNAME_INVALID'))
+        .toBe(CertVerificationStatus.Mismatch);
+    });
+  });
+
+  describe('describeCertError', () => {
+    it('returns a plain-text title and message naming the host, not raw HTML', () => {
+      const { title, message } = TlsHandler.describeCertError('evil.example', CertVerificationStatus.Untrusted);
+      expect(title).toBe('Certificate Not Trusted');
+      expect(message).toContain('evil.example');
+      expect(message).not.toContain('<');
+    });
+  });
+
   describe('generateInterstitial', () => {
     it('should produce HTML for an expired cert error', () => {
       const html = TlsHandler.generateInterstitial('expired.com', CertVerificationStatus.Expired, 'Cert expired 2024');

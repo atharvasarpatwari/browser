@@ -26,7 +26,7 @@ import type { DgramEventFrame } from './dgram-handle';
 /** Request payloads (renderer → owner). */
 interface OpenTcpMessage { readonly kind: 'open-tcp'; readonly socketId: string; readonly host: string; readonly port: number; readonly tls: boolean; }
 interface WriteMessage { readonly kind: 'write'; readonly socketId: string; readonly bytes: ArrayBuffer; }
-interface SocketMessage { readonly kind: 'destroy' | 'get-peer-certificate'; readonly socketId: string; }
+interface SocketMessage { readonly kind: 'destroy' | 'get-peer-certificate' | 'get-tls-authorization'; readonly socketId: string; }
 interface UpgradeTlsMessage { readonly kind: 'upgrade-tls'; readonly socketId: string; readonly servername: string; }
 interface OpenDgramMessage { readonly kind: 'open-dgram'; readonly socketId: string; }
 interface DgramBindMessage { readonly kind: 'dgram-bind'; readonly socketId: string; readonly port: number; }
@@ -86,6 +86,7 @@ export class SocketOwner {
       case 'write': return this.write(payload as WriteMessage);
       case 'destroy': return this.destroy(payload as SocketMessage);
       case 'get-peer-certificate': return this.getPeerCertificate(payload as SocketMessage);
+      case 'get-tls-authorization': return this.getTlsAuthorization(payload as SocketMessage);
       case 'upgrade-tls': return this.upgradeTls(payload as UpgradeTlsMessage);
       case 'open-dgram': return this.openDgram(payload as OpenDgramMessage);
       case 'dgram-bind': return this.dgramBind(payload as DgramBindMessage);
@@ -193,6 +194,25 @@ export class SocketOwner {
     const chain = encodeCertificateChain(raw);
     const certificate = chain.length > 0 ? { ...chain[0], chain } : null;
     return { certificate };
+  }
+
+  /**
+   * Node computes `authorized`/`authorizationError` against the system trust
+   * store during every TLS handshake, regardless of `rejectUnauthorized` —
+   * this is the real root-of-trust signal `getPeerCertificate` alone can't
+   * provide (it only reports the parsed cert fields, not the trust verdict).
+   */
+  private getTlsAuthorization(msg: SocketMessage): { authorized: boolean; authorizationError: string | null } {
+    const entry = this.require(msg);
+    const socket = entry.socket as Partial<import('node:tls').TLSSocket>;
+    if (typeof socket.authorized !== 'boolean') {
+      // Not a TLS socket (e.g. still plaintext, pre-upgrade) — no verdict yet.
+      return { authorized: false, authorizationError: null };
+    }
+    return {
+      authorized: socket.authorized,
+      authorizationError: socket.authorizationError ? String(socket.authorizationError.message ?? socket.authorizationError) : null,
+    };
   }
 
   private upgradeTls(msg: UpgradeTlsMessage): { ok: true } {
