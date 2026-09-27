@@ -143,6 +143,12 @@ interface IPageRenderer {
    * no page loaded yet or nothing was hit.
    */
   dispatchPointerEvent(type: string, x: number, y: number): boolean;
+  /** Dispatches a real KeyboardEvent-shaped event to the focused element (or <body>). Returns false if there is no page loaded. */
+  dispatchKeyEvent(type: string, key: string, code: string, modifiers?: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; repeat?: boolean }): boolean;
+  /** Hit-tests (x, y) and dispatches a real WheelEvent-shaped event to whatever element is there. */
+  dispatchWheelEvent(x: number, y: number, deltaX: number, deltaY: number): boolean;
+  /** Dispatches a real 'resize' event on the page's `window`. */
+  dispatchResizeEvent(): boolean;
   /** The DOM tree of the most recently rendered page (null before any page renders). */
   getDomTree(): IDomTree | null;
 }
@@ -221,8 +227,14 @@ interface IBrowserEngine extends ISharedService {
   setPageRenderer(renderer: IPageRenderer): void;
   /** The layout engine of the currently rendered page (null before any page renders). */
   getPageLayoutEngine(): ILayoutEngine | null;
-  /** Dispatch a real DOM pointer event (e.g. 'click') at (x, y) on the current page. */
+  /** Dispatch a real DOM pointer event (e.g. 'click', 'dblclick') at (x, y) on the current page. */
   dispatchPointerEvent(type: string, x: number, y: number): boolean;
+  /** Dispatch a real DOM keyboard event to the current page's focused element. */
+  dispatchKeyEvent(type: string, key: string, code: string, modifiers?: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; repeat?: boolean }): boolean;
+  /** Dispatch a real DOM wheel event at (x, y) on the current page. */
+  dispatchWheelEvent(x: number, y: number, deltaX: number, deltaY: number): boolean;
+  /** Dispatch a real 'resize' event on the current page's window. */
+  dispatchResizeEvent(): boolean;
   /** The DOM tree of the currently rendered page (null before any page renders). */
   getPageDomTree(): IDomTree | null;
   /** Add a middleware that runs after routing, before fetching. */
@@ -294,6 +306,15 @@ class NullPageRenderer implements IPageRenderer {
     return null;
   }
   dispatchPointerEvent(): boolean {
+    return false;
+  }
+  dispatchKeyEvent(): boolean {
+    return false;
+  }
+  dispatchWheelEvent(): boolean {
+    return false;
+  }
+  dispatchResizeEvent(): boolean {
     return false;
   }
   getDomTree(): IDomTree | null {
@@ -459,6 +480,18 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   dispatchPointerEvent(type: string, x: number, y: number): boolean {
     return this.renderer.dispatchPointerEvent(type, x, y);
+  }
+
+  dispatchKeyEvent(type: string, key: string, code: string, modifiers?: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; repeat?: boolean }): boolean {
+    return this.renderer.dispatchKeyEvent(type, key, code, modifiers);
+  }
+
+  dispatchWheelEvent(x: number, y: number, deltaX: number, deltaY: number): boolean {
+    return this.renderer.dispatchWheelEvent(x, y, deltaX, deltaY);
+  }
+
+  dispatchResizeEvent(): boolean {
+    return this.renderer.dispatchResizeEvent();
   }
 
   getPageDomTree(): IDomTree | null {

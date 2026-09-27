@@ -51,8 +51,8 @@ import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
-import { runJS, createGlobalEnv, wrapElement, createEventObject, onConsoleMessage, type ConsoleEntry } from '../js/index';
-import { callJSFunction, setGlobalCaller, type JSFunction, type JSObject } from '../js/values';
+import { runJS, createGlobalEnv, wrapElement, createEventObject, createMouseEventObject, createKeyboardEventObject, createWheelEventObject, onConsoleMessage, type ConsoleEntry } from '../js/index';
+import { callJSFunction, setGlobalCaller, type JSFunction, type JSObject, type Environment } from '../js/values';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
@@ -110,6 +110,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
   private transitionEngine: CssTransitionEngine | null = null;
   /** The shared script EventLoop for the currently rendered page, if it has any scripts. */
   private pageEventLoop: JsEventLoop | null = null;
+  /** The shared global JS environment for the currently rendered page — holds `window`, used to dispatch resize events. */
+  private pageGlobalEnv: Environment | null = null;
   /** Real-time pump so setTimeout/setInterval/rAF keep firing after the initial script run. */
   private eventLoopPumpTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -602,6 +604,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     this.pageEventLoop = eventLoop;
+    this.pageGlobalEnv = globalEnv;
     this.startEventLoopPump(eventLoop);
   }
 
@@ -630,6 +633,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       this.eventLoopPumpTimer = null;
     }
     this.pageEventLoop = null;
+    this.pageGlobalEnv = null;
   }
 
   /**
@@ -893,21 +897,16 @@ class PageRenderer implements IPageRenderer, IDisposable {
   }
 
   /**
-   * Hit-tests (x, y) against the live layout tree and, if it lands on an
-   * element, wraps it back into its JS binding and dispatches a real event
-   * of `type` — running any addEventListener handlers page JS registered on
-   * it, exactly like a real browser's click/pointer dispatch.
+   * Runs `eventObj` through `target`'s own dispatchEvent (an element or
+   * `window` — both are JSObjects with a compatible native dispatchEvent),
+   * then drains microtasks and requests a repaint. Shared by every
+   * dispatch*Event method below so the interpreter-caller/microtask/reflow
+   * bookkeeping lives in exactly one place.
    */
-  dispatchPointerEvent(type: string, x: number, y: number): boolean {
+  private runDispatch(target: JSObject, eventObj: JSObject): boolean {
     if (!this.pageEventLoop) return false;
-    const hitElement = this.deps.layoutEngine.getElementAtPoint(x, y);
-    if (!hitElement) return false;
-
-    const wrapped = wrapElement(hitElement, this.deps.domTree);
-    const dispatchFn = wrapped.properties.get('dispatchEvent')?.value as JSFunction | undefined;
+    const dispatchFn = target.properties.get('dispatchEvent')?.value as JSFunction | undefined;
     if (!dispatchFn || dispatchFn.type !== 'closure') return false;
-
-    const eventObj = createEventObject(type, wrapped, { bubbles: true, cancelable: true });
 
     // dispatchEvent's own body is a native function (runs directly), but the
     // page's `addEventListener` callbacks it invokes are real closures that
@@ -915,7 +914,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     const interpreter = this.pageEventLoop.getInterpreter();
     if (interpreter) setGlobalCaller(interpreter);
     try {
-      callJSFunction(dispatchFn, wrapped, [eventObj]);
+      callJSFunction(dispatchFn, target, [eventObj]);
     } finally {
       if (interpreter) setGlobalCaller(null);
     }
@@ -925,6 +924,70 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // mutations are only turned into a repaint on the next processed frame.
     this.reflowController?.requestFrame();
     return true;
+  }
+
+  /**
+   * Hit-tests (x, y) against the live layout tree and, if it lands on an
+   * element, wraps it back into its JS binding and dispatches a real
+   * MouseEvent-shaped event of `type` — running any addEventListener
+   * handlers page JS registered on it, exactly like a real browser's
+   * click/pointer dispatch. Also used for 'dblclick'.
+   */
+  dispatchPointerEvent(type: string, x: number, y: number): boolean {
+    if (!this.pageEventLoop) return false;
+    const hitElement = this.deps.layoutEngine.getElementAtPoint(x, y);
+    if (!hitElement) return false;
+    const wrapped = wrapElement(hitElement, this.deps.domTree);
+    const eventObj = createMouseEventObject(type, wrapped, { clientX: x, clientY: y }, { bubbles: true, cancelable: true });
+    return this.runDispatch(wrapped, eventObj);
+  }
+
+  /**
+   * Dispatches a real KeyboardEvent-shaped event to the currently focused
+   * element (falling back to <body> when nothing is focused, matching real
+   * browser behavior), running any addEventListener handlers page JS
+   * registered on it.
+   */
+  dispatchKeyEvent(
+    type: string,
+    key: string,
+    code: string,
+    modifiers?: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; repeat?: boolean },
+  ): boolean {
+    if (!this.pageEventLoop) return false;
+    const focusedId = this.deps.domTree.getFocusedElementId();
+    const focusedNode = focusedId ? this.deps.domTree.getNodeById(focusedId) : null;
+    const targetElement = (focusedNode && focusedNode.nodeType === 'element' ? focusedNode as DomElement : null)
+      ?? this.deps.domTree.getDocument()?.bodyElement ?? null;
+    if (!targetElement) return false;
+    const wrapped = wrapElement(targetElement, this.deps.domTree);
+    const eventObj = createKeyboardEventObject(type, wrapped, { key, code, ...modifiers }, { bubbles: true, cancelable: true });
+    return this.runDispatch(wrapped, eventObj);
+  }
+
+  /**
+   * Hit-tests (x, y) against the live layout tree and dispatches a real
+   * WheelEvent-shaped event to whatever element is there. Does not itself
+   * scroll anything — page-renderer has no viewport pan/repaint mechanism
+   * yet, so this only delivers the event to page JS `addEventListener`
+   * handlers, same limitation as every other event here already had.
+   */
+  dispatchWheelEvent(x: number, y: number, deltaX: number, deltaY: number): boolean {
+    if (!this.pageEventLoop) return false;
+    const hitElement = this.deps.layoutEngine.getElementAtPoint(x, y);
+    if (!hitElement) return false;
+    const wrapped = wrapElement(hitElement, this.deps.domTree);
+    const eventObj = createWheelEventObject('wheel', wrapped, { deltaX, deltaY }, { bubbles: true, cancelable: true });
+    return this.runDispatch(wrapped, eventObj);
+  }
+
+  /** Dispatches a real 'resize' event on `window`, running any addEventListener handlers page JS registered there. */
+  dispatchResizeEvent(): boolean {
+    if (!this.pageEventLoop || !this.pageGlobalEnv) return false;
+    const windowObj = this.pageGlobalEnv.get('window') as JSObject | undefined;
+    if (!windowObj) return false;
+    const eventObj = createEventObject('resize', windowObj, { bubbles: false, cancelable: false });
+    return this.runDispatch(windowObj, eventObj);
   }
 }
 

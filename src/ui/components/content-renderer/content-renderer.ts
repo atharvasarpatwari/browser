@@ -18,6 +18,14 @@ interface IContentRenderer extends IDisposable {
    * latter for positioning a menu on screen.
    */
   setContextMenuHandler(handler: (bufX: number, bufY: number, viewX: number, viewY: number) => void): void;
+  /** Called with content-buffer-space coordinates whenever the rendered canvas is double-clicked. */
+  setDblClickHandler(handler: (x: number, y: number) => void): void;
+  /** Called on keydown/keyup while the rendered canvas has focus. */
+  setKeyHandler(handler: (type: string, key: string, code: string, modifiers: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean }) => void): void;
+  /** Called with content-buffer-space coordinates and wheel deltas whenever the rendered canvas is scrolled. */
+  setWheelHandler(handler: (x: number, y: number, deltaX: number, deltaY: number) => void): void;
+  /** Called whenever the rendered canvas's container is resized. */
+  setResizeHandler(handler: () => void): void;
   /** Scale factor (1 = 100%) applied to the rendered page content. */
   setZoom(factor: number): void;
   /**
@@ -48,11 +56,19 @@ class ContentRenderer implements IContentRenderer {
   private _linkHoverHandler: ((url: string | null) => void) | null = null;
   private _clickHandler: ((x: number, y: number) => void) | null = null;
   private _contextMenuHandler: ((bufX: number, bufY: number, viewX: number, viewY: number) => void) | null = null;
+  private _dblClickHandler: ((x: number, y: number) => void) | null = null;
+  private _keyHandler: ((type: string, key: string, code: string, modifiers: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean }) => void) | null = null;
+  private _wheelHandler: ((x: number, y: number, deltaX: number, deltaY: number) => void) | null = null;
+  private _resizeHandler: (() => void) | null = null;
+  private _resizeObserver: ResizeObserver | null = null;
   private _clickWiredCanvas: HTMLCanvasElement | null = null;
   private _zoomFactor = 1;
 
   attach(container: HTMLElement): void {
     this.container = container;
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = new ResizeObserver(() => this._resizeHandler?.());
+    this._resizeObserver.observe(container);
   }
 
   setBrandName(name: string): void {
@@ -69,6 +85,22 @@ class ContentRenderer implements IContentRenderer {
 
   setContextMenuHandler(handler: (bufX: number, bufY: number, viewX: number, viewY: number) => void): void {
     this._contextMenuHandler = handler;
+  }
+
+  setDblClickHandler(handler: (x: number, y: number) => void): void {
+    this._dblClickHandler = handler;
+  }
+
+  setKeyHandler(handler: (type: string, key: string, code: string, modifiers: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean }) => void): void {
+    this._keyHandler = handler;
+  }
+
+  setWheelHandler(handler: (x: number, y: number, deltaX: number, deltaY: number) => void): void {
+    this._wheelHandler = handler;
+  }
+
+  setResizeHandler(handler: () => void): void {
+    this._resizeHandler = handler;
   }
 
   setZoom(factor: number): void {
@@ -156,12 +188,28 @@ class ContentRenderer implements IContentRenderer {
     // its own listener; a reused (repainted-in-place) one keeps the existing.
     if (this._clickWiredCanvas !== target) {
       this._clickWiredCanvas = target;
-      target.addEventListener('click', (ev) => {
-        if (!this._clickHandler) return;
+      // A canvas isn't focusable (and so can't receive keydown/keyup at all)
+      // without an explicit tabIndex — without this, keyboard events could
+      // never reach page content no matter what's wired below.
+      target.tabIndex = 0;
+      target.style.outline = 'none';
+      const toBuffer = (ev: MouseEvent): { x: number; y: number } => {
         const rect = target.getBoundingClientRect();
-        const x = (ev.clientX - rect.left) * (target.width / rect.width);
-        const y = (ev.clientY - rect.top) * (target.height / rect.height);
+        return {
+          x: (ev.clientX - rect.left) * (target.width / rect.width),
+          y: (ev.clientY - rect.top) * (target.height / rect.height),
+        };
+      };
+      target.addEventListener('click', (ev) => {
+        target.focus();
+        if (!this._clickHandler) return;
+        const { x, y } = toBuffer(ev);
         this._clickHandler(x, y);
+      });
+      target.addEventListener('dblclick', (ev) => {
+        if (!this._dblClickHandler) return;
+        const { x, y } = toBuffer(ev);
+        this._dblClickHandler(x, y);
       });
       target.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
@@ -171,6 +219,23 @@ class ContentRenderer implements IContentRenderer {
         const bufY = (ev.clientY - rect.top) * (target.height / rect.height);
         this._contextMenuHandler(bufX, bufY, ev.clientX, ev.clientY);
       });
+      target.addEventListener('keydown', (ev) => {
+        if (!this._keyHandler) return;
+        this._keyHandler('keydown', ev.key, ev.code, {
+          altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey, repeat: ev.repeat,
+        });
+      });
+      target.addEventListener('keyup', (ev) => {
+        if (!this._keyHandler) return;
+        this._keyHandler('keyup', ev.key, ev.code, {
+          altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey, repeat: ev.repeat,
+        });
+      });
+      target.addEventListener('wheel', (ev) => {
+        if (!this._wheelHandler) return;
+        const { x, y } = toBuffer(ev);
+        this._wheelHandler(x, y, ev.deltaX, ev.deltaY);
+      }, { passive: true });
     }
   }
 
@@ -334,6 +399,8 @@ class ContentRenderer implements IContentRenderer {
   dispose(): void {
     this.clear();
     this.container = null;
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
   }
 
   private escapeHtml(str: string): string {

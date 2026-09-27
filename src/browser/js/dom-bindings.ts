@@ -464,6 +464,19 @@ export function createDocumentBinding(
     writable: true, enumerable: true, configurable: true,
   });
 
+  // activeElement — the focused element, or document.body when nothing is
+  // focused (matches real DOM behavior). A live getter, since focus changes
+  // after this object is built.
+  docObj.properties.set('activeElement', {
+    value: undefined, writable: false, enumerable: true, configurable: true,
+    getter: createNativeFunction('get activeElement', () => {
+      const focusedId = domTree.getFocusedElementId();
+      const focusedNode = focusedId ? domTree.getNodeById(focusedId) : null;
+      if (focusedNode && focusedNode.nodeType === 'element') return wrapElement(focusedNode as DomElement, domTree);
+      return doc.bodyElement ? wrapElement(doc.bodyElement, domTree) : null;
+    }),
+  });
+
   // readyState
   docObj.properties.set('readyState', {
     value: 'complete',
@@ -894,6 +907,31 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     writable: true, enumerable: true, configurable: true,
     getter: createNativeFunction('get type', () => getAttr(el, 'type') ?? (el.tagName === 'input' ? 'text' : '')),
     setter: createNativeFunction('set type', (_t, args) => domTree.setAttribute(el, 'type', toString(args[0]))),
+  });
+
+  // focus()/blur() — the only way an element becomes document.activeElement
+  // and matches :focus. Real focus/blur don't bubble, so this fires directly
+  // on the target only (unlike focusin/focusout, not implemented here).
+  obj.properties.set('focus', {
+    value: createNativeFunction('focus', () => {
+      if (domTree.getFocusedElementId() === el.domId) return undefined;
+      const previousId = domTree.getFocusedElementId();
+      const previousNode = previousId ? domTree.getNodeById(previousId) : null;
+      domTree.setFocusedElementId(el.domId);
+      if (previousNode) invokeDomListeners(previousNode, 'blur', createEventObject('blur', wrapElement(previousNode as DomElement, domTree)), false);
+      invokeDomListeners(el, 'focus', createEventObject('focus', obj), false);
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  obj.properties.set('blur', {
+    value: createNativeFunction('blur', () => {
+      if (domTree.getFocusedElementId() !== el.domId) return undefined;
+      domTree.setFocusedElementId(null);
+      invokeDomListeners(el, 'blur', createEventObject('blur', obj), false);
+      return undefined;
+    }),
+    writable: true, enumerable: true, configurable: true,
   });
 
   // classList (live DOMTokenList backed by the same class attribute)
@@ -2170,5 +2208,55 @@ export function createEventObject(type: string, target: JSValue, options?: { bub
     }),
     writable: true, enumerable: true, configurable: true,
   });
+  return evt;
+}
+
+/** MouseEvent-shaped event: adds clientX/clientY/button/altKey/ctrlKey/metaKey/shiftKey on top of createEventObject. */
+export function createMouseEventObject(
+  type: string,
+  target: JSValue,
+  detail: { clientX: number; clientY: number; button?: number; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean },
+  options?: { bubbles?: boolean; cancelable?: boolean },
+): JSObject {
+  const evt = createEventObject(type, target, options);
+  evt.properties.set('clientX', { value: detail.clientX, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('clientY', { value: detail.clientY, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('button', { value: detail.button ?? 0, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('altKey', { value: detail.altKey ?? false, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('ctrlKey', { value: detail.ctrlKey ?? false, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('metaKey', { value: detail.metaKey ?? false, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('shiftKey', { value: detail.shiftKey ?? false, writable: false, enumerable: true, configurable: false });
+  return evt;
+}
+
+/** KeyboardEvent-shaped event: adds key/code/altKey/ctrlKey/metaKey/shiftKey/repeat on top of createEventObject. */
+export function createKeyboardEventObject(
+  type: string,
+  target: JSValue,
+  detail: { key: string; code: string; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; repeat?: boolean },
+  options?: { bubbles?: boolean; cancelable?: boolean },
+): JSObject {
+  const evt = createEventObject(type, target, options);
+  evt.properties.set('key', { value: detail.key, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('code', { value: detail.code, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('altKey', { value: detail.altKey ?? false, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('ctrlKey', { value: detail.ctrlKey ?? false, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('metaKey', { value: detail.metaKey ?? false, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('shiftKey', { value: detail.shiftKey ?? false, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('repeat', { value: detail.repeat ?? false, writable: false, enumerable: true, configurable: false });
+  return evt;
+}
+
+/** WheelEvent-shaped event: adds deltaX/deltaY/deltaMode on top of createEventObject. */
+export function createWheelEventObject(
+  type: string,
+  target: JSValue,
+  detail: { deltaX: number; deltaY: number; deltaMode?: number },
+  options?: { bubbles?: boolean; cancelable?: boolean },
+): JSObject {
+  const evt = createEventObject(type, target, options);
+  evt.properties.set('deltaX', { value: detail.deltaX, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('deltaY', { value: detail.deltaY, writable: false, enumerable: true, configurable: false });
+  evt.properties.set('deltaMode', { value: detail.deltaMode ?? 0, writable: false, enumerable: true, configurable: false });
   return evt;
 }

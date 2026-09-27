@@ -176,6 +176,10 @@ interface IDomTree extends IDisposable {
   getOwnerDocument(node: DomNode): DomDocument | null;
   /** WHATWG DOM § 4 — isConnected: whether node is connected to a document */
   isConnected(node: DomNode): boolean;
+  /** The currently focused element's domId, or null if nothing is focused. Backs `document.activeElement` and the `:focus` pseudo-class. */
+  getFocusedElementId(): string | null;
+  /** Set (or clear, with null) the focused element, marking the old and new focused elements' style dirty so `:focus` repaints. */
+  setFocusedElementId(domId: string | null): void;
 }
 
 let _domNodeSeq = 0;
@@ -226,6 +230,10 @@ class SelectableDomNode implements SelectableElement {
     return this._element;
   }
 
+  get focused(): boolean {
+    return this._domTree.getFocusedElementId() === this._element.domId;
+  }
+
   private _resolve(): void {
     this._resolved = true;
     const p = this._element.parent;
@@ -244,6 +252,7 @@ class DomTree implements IDomTree {
   private readonly mutations: DomMutation[] = [];
   private readonly idIndex = new Map<string, DomElement>();
   private selectableCache = new WeakMap<DomElement, SelectableDomNode>();
+  private focusedElementId: string | null = null;
 
   buildFromHtml(htmlDoc: HtmlDocument): DomDocument {
     this.nodeIndex.clear();
@@ -259,6 +268,19 @@ class DomTree implements IDomTree {
 
   getNodeById(domId: string): DomNode | null {
     return this.nodeIndex.get(domId) ?? null;
+  }
+
+  getFocusedElementId(): string | null {
+    return this.focusedElementId;
+  }
+
+  setFocusedElementId(domId: string | null): void {
+    if (domId === this.focusedElementId) return;
+    const previous = this.focusedElementId ? this.nodeIndex.get(this.focusedElementId) : null;
+    this.focusedElementId = domId;
+    const next = domId ? this.nodeIndex.get(domId) : null;
+    if (previous) this.markDirty(previous, 'style');
+    if (next) this.markDirty(next, 'style');
   }
 
   getElementById(id: string): DomElement | null {

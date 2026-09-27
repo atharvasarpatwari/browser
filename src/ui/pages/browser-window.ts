@@ -840,8 +840,20 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.contentRenderer.setClickHandler((x, y) => {
         this.browserEngine?.dispatchPointerEvent?.('click', x, y);
       });
+      this.contentRenderer.setDblClickHandler((x, y) => {
+        this.browserEngine?.dispatchPointerEvent?.('dblclick', x, y);
+      });
       this.contentRenderer.setContextMenuHandler((bufX, bufY, viewX, viewY) => {
         this.showPageContextMenu(bufX, bufY, viewX, viewY);
+      });
+      this.contentRenderer.setKeyHandler((type, key, code, modifiers) => {
+        this.browserEngine?.dispatchKeyEvent?.(type, key, code, modifiers);
+      });
+      this.contentRenderer.setWheelHandler((x, y, deltaX, deltaY) => {
+        this.browserEngine?.dispatchWheelEvent?.(x, y, deltaX, deltaY);
+      });
+      this.contentRenderer.setResizeHandler(() => {
+        this.browserEngine?.dispatchResizeEvent?.();
       });
       this.contentRenderer.renderNewTab();
 
