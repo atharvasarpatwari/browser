@@ -137,6 +137,8 @@ import type { ISettingsService } from '../browser/storage/settings-service';
 import { BrowserName } from '../browser/config/browser-name';
 import { IncognitoManager } from '../browser/settings/incognito';
 import type { IIncognitoManager } from '../browser/settings/incognito';
+import { ProfileManager } from '../browser/settings/profiles';
+import type { IProfileManager } from '../browser/settings/profiles';
 
 // AI Research
 import { ResearchService } from '../browser/research/research-service';
@@ -232,6 +234,7 @@ const Tokens = Object.freeze({
   // Browser identity
   BrowserName: Symbol('BrowserName'),
   IncognitoManager: Symbol('IncognitoManager'),
+  ProfileManager: Symbol('ProfileManager'),
   // AI Research
   ResearchService: Symbol('ResearchService'),
 } as const);
@@ -579,6 +582,11 @@ class ApplicationBootstrap {
       () => new IncognitoManager(),
       ServiceLifetime.Singleton,
     );
+    c.register<IProfileManager>(
+      Tokens.ProfileManager,
+      () => new ProfileManager(),
+      ServiceLifetime.Singleton,
+    );
 
     // 9c. AI Research service
     c.register<IResearchService>(
@@ -917,6 +925,7 @@ class ApplicationBootstrap {
     const bookmarkService = this.container.resolve<IBookmarkService>(Tokens.BookmarkService);
     const historyServiceInstance = this.container.resolve<IHistoryService>(Tokens.HistoryService);
     const incognitoManager = this.container.resolve<IIncognitoManager>(Tokens.IncognitoManager);
+    const profileManager = this.container.resolve<IProfileManager>(Tokens.ProfileManager);
     const cookieStoreInstance = this.container.resolve<ICookieStore>(Tokens.CookieStore);
     const cacheManager = this.container.resolve<ICacheManager>(Tokens.CacheManager);
 
@@ -927,6 +936,7 @@ class ApplicationBootstrap {
     page.setBookmarkService(bookmarkService);
     page.setHistoryService(historyServiceInstance);
     page.setIncognitoManager(incognitoManager);
+    page.setProfileManager(profileManager);
     page.setCache(cacheManager);
 
     // Incognito: pause history recording and isolate the cookie jar for the

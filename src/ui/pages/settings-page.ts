@@ -1,10 +1,11 @@
 import type { IDisposable } from '../../app/dependency-container';
+import type { IProfileManager } from '../../browser/settings/profiles';
 
 interface SettingDefinition {
   readonly key: string;
   readonly label: string;
   readonly description: string;
-  readonly type: 'text' | 'number' | 'boolean' | 'select' | 'range';
+  readonly type: 'text' | 'number' | 'boolean' | 'select' | 'range' | 'list';
   readonly defaultValue: unknown;
   readonly options?: readonly { readonly label: string; readonly value: string }[];
   readonly min?: number;
@@ -42,6 +43,11 @@ interface ISettingsPage extends IDisposable {
 }
 
 type SettingsPageEventHandler = (event: SettingsPageEvent) => void;
+
+const PROFILE_COLOR_HEX: Record<string, string> = {
+  blue: '#3a7afd', red: '#e5484d', green: '#30a46c', yellow: '#f5d90a',
+  purple: '#8e4ec6', orange: '#f76b15', pink: '#d6409f', teal: '#12a594',
+};
 
 const DEFAULT_SECTIONS: readonly SettingsSection[] = [
   {
@@ -88,6 +94,12 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
     ],
   },
   {
+    id: 'profiles', title: 'Profiles', icon: '👤',
+    settings: [
+      { key: 'profileList', label: 'Manage profiles', description: 'Create, switch, and remove browser profiles', type: 'list', defaultValue: [] },
+    ],
+  },
+  {
     id: 'shortcuts', title: 'Shortcuts', icon: '⌨',
     settings: [
       { key: 'enableKeyboardShortcuts', label: 'Enable keyboard shortcuts', description: 'Use keyboard shortcuts for navigation', type: 'boolean', defaultValue: true },
@@ -130,7 +142,7 @@ class SettingsPage implements ISettingsPage {
 
   readonly sections: readonly SettingsSection[];
 
-  constructor(sections?: readonly SettingsSection[]) {
+  constructor(sections?: readonly SettingsSection[], private readonly profileManager?: IProfileManager) {
     this.sections = sections ?? DEFAULT_SECTIONS;
     for (const section of this.sections) {
       for (const setting of section.settings) {
@@ -333,6 +345,13 @@ class SettingsPage implements ISettingsPage {
           row.appendChild(rangeContainer);
           break;
         }
+        case 'list': {
+          // Backed live by the ProfileManager, not this.values — a managed
+          // collection with its own create/switch/remove actions doesn't fit
+          // the flat key->primitive model the other setting types share.
+          row.appendChild(this.buildProfileList());
+          break;
+        }
       }
 
       content.appendChild(row);
@@ -361,6 +380,81 @@ class SettingsPage implements ISettingsPage {
       previewRow.appendChild(previewBtn);
       content.appendChild(previewRow);
     }
+  }
+
+  private buildProfileList(): HTMLElement {
+    const wrap = document.createElement('div');
+    const manager = this.profileManager;
+    const activeId = manager?.getActiveProfile().id;
+
+    for (const profile of manager?.getProfiles() ?? []) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.06));';
+
+      const avatar = document.createElement('div');
+      avatar.style.cssText = `width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;background:${PROFILE_COLOR_HEX[profile.color]};flex-shrink:0;`;
+      avatar.textContent = profile.avatar;
+      row.appendChild(avatar);
+
+      const name = document.createElement('div');
+      name.style.cssText = 'flex:1;font-size:13px;color:var(--text-primary,#e0e0e0);';
+      name.textContent = profile.name;
+      row.appendChild(name);
+
+      if (profile.id === activeId) {
+        const badge = document.createElement('span');
+        badge.style.cssText = 'font-size:11px;color:var(--accent,#7c9cf5);border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:10px;padding:2px 8px;';
+        badge.textContent = 'Active';
+        row.appendChild(badge);
+      } else {
+        const switchBtn = SettingsPage.makeButton('Switch', true);
+        switchBtn.addEventListener('click', () => {
+          manager?.switchProfile(profile.id);
+          this.render();
+        });
+        row.appendChild(switchBtn);
+      }
+
+      const removeBtn = SettingsPage.makeButton('Remove', false);
+      removeBtn.addEventListener('click', () => {
+        manager?.removeProfile(profile.id);
+        this.render();
+      });
+      row.appendChild(removeBtn);
+
+      wrap.appendChild(row);
+    }
+
+    const addRow = document.createElement('div');
+    addRow.style.cssText = 'display:flex;gap:8px;margin-top:10px;';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'New profile name';
+    nameInput.style.cssText = 'flex:1;padding:7px 10px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);outline:none;';
+    const createBtn = SettingsPage.makeButton('Create', true);
+    const createProfile = (): void => {
+      const name = nameInput.value.trim();
+      if (!name) return;
+      manager?.createProfile(name);
+      nameInput.value = '';
+      this.render();
+    };
+    createBtn.addEventListener('click', createProfile);
+    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') createProfile(); });
+    addRow.appendChild(nameInput);
+    addRow.appendChild(createBtn);
+    wrap.appendChild(addRow);
+
+    return wrap;
+  }
+
+  private static makeButton(text: string, primary: boolean): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.textContent = text;
+    btn.style.cssText = primary
+      ? 'padding:5px 12px;border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:var(--radius-sm,4px);background:var(--accent,#7c9cf5);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;'
+      : 'padding:5px 12px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);background:transparent;color:var(--text-secondary,#a0a098);font-size:12px;cursor:pointer;font-family:inherit;';
+    return btn;
   }
 
   dispose(): void {

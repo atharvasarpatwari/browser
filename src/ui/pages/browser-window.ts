@@ -53,6 +53,7 @@ import { FindInPage } from '../../browser/navigation-controls/find-in-page';
 import { FindBar } from '../components/find-bar/find-bar';
 import { PermissionBar } from '../components/permission-bar/permission-bar';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
+import type { IProfileManager } from '../../browser/settings/profiles';
 import type { DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
 import { SettingsPage } from './settings-page';
@@ -166,6 +167,7 @@ interface IBrowserWindowPage extends IDisposable {
   setBrowserName(name: IBrowserName): void;
   setResearchService(service: IResearchService): void;
   setIncognitoManager(manager: IIncognitoManager): void;
+  setProfileManager(manager: IProfileManager): void;
   setCache(cache: ICacheManager): void;
 
   // ── External chrome bridge (native shells driving this page's tabs/nav) ────
@@ -563,6 +565,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private bookmarkEventHandler: ((event: { kind: string }) => void) | null = null;
   private contextMenu: ContextMenu | null = null;
   private incognitoManager: IIncognitoManager | null = null;
+  private profileManager: IProfileManager | null = null;
   private cache: ICacheManager | null = null;
   private closedTabUrls: string[] = [];
   private tabSessionBridge: TabSessionBridge | null = null;
@@ -1086,7 +1089,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     container.style.cssText = 'width:100%;height:100%;';
     this.contentArea.appendChild(container);
     this.activeContentPanel = container;
-    this.activeSettingsPage = new SettingsPage();
+    this.activeSettingsPage = new SettingsPage(undefined, this.profileManager ?? undefined);
     this.activeSettingsPage.mount(container);
     if (this.settingsService) {
       this.settingsService.init(this.activeSettingsPage);
@@ -1978,6 +1981,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setIncognitoManager(manager: IIncognitoManager): void {
     this.incognitoManager = manager;
+  }
+
+  setProfileManager(manager: IProfileManager): void {
+    this.profileManager = manager;
   }
 
   setCache(cache: ICacheManager): void {
