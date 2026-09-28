@@ -589,6 +589,45 @@ class PaintEngine implements IPaintEngine {
         commands.push({ type: 'fillRect', params: [iconX, iconY, iconW, iconH] });
       }
 
+      // ── Form controls (checkbox/radio glyph, input/textarea/select value) ─
+      // input/textarea/select were blank, unsized boxes before this — no
+      // paint step existed for any of them at all. Reuses the same
+      // content-box geometry and fillText/setFillStyle/setFont primitives
+      // the image and text-run blocks above already use.
+      {
+        const tag = node.tagName.toLowerCase();
+        const contentX = layoutBox.x + layoutBox.borderLeft + layoutBox.paddingLeft;
+        const contentY = layoutBox.y + layoutBox.borderTop + layoutBox.paddingTop;
+        const contentW = layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight - layoutBox.paddingLeft - layoutBox.paddingRight;
+        const contentH = layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom - layoutBox.paddingTop - layoutBox.paddingBottom;
+        const inputType = (node.attributes.get('type') ?? '').toLowerCase();
+
+        if (tag === 'input' && (inputType === 'checkbox' || inputType === 'radio')) {
+          const boxSize = Math.min(contentW, contentH);
+          commands.push({ type: 'setFillStyle', params: ['#ffffff'] });
+          commands.push({ type: 'fillRect', params: [contentX, contentY, boxSize, boxSize] });
+          commands.push({ type: 'setStrokeStyle', params: ['#767676'] });
+          commands.push({ type: 'strokeRect', params: [contentX, contentY, boxSize, boxSize] });
+          if (node.checked ?? (node.attributes.get('checked') != null)) {
+            const inset = boxSize * 0.25;
+            commands.push({ type: 'setFillStyle', params: ['#1a73e8'] });
+            commands.push({ type: 'fillRect', params: [contentX + inset, contentY + inset, boxSize - inset * 2, boxSize - inset * 2] });
+          }
+        } else if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+          const text = tag === 'select'
+            ? selectDisplayText(node)
+            // A <textarea>'s initial content is its text content, not a
+            // value="" attribute (mirrors dom-bindings.ts's value getter).
+            : (node.value ?? (tag === 'textarea' ? textContentOf(node) : node.attributes.get('value')) ?? '');
+          if (text) {
+            const fontSize = 14;
+            commands.push({ type: 'setFillStyle', params: ['#1a1a1a'] });
+            commands.push({ type: 'setFont', params: [`${fontSize}px sans-serif`] });
+            commands.push({ type: 'fillText', params: [text, contentX + 2, contentY + fontSize] });
+          }
+        }
+      }
+
       // ── Text runs (actual text content from inline formatting context) ───
       const textRuns = layoutBox.textRuns;
       if (textRuns && textRuns.length > 0) {
@@ -864,6 +903,29 @@ function getZIndex(element: DomElement): number {
 /** Convert RGBA object to CSS rgba() string */
 function colorToString(c: { r: number; g: number; b: number; a: number }): string {
   return `rgba(${c.r | 0},${c.g | 0},${c.b | 0},${c.a})`;
+}
+
+/** Minimal text-content walk for a raw DomElement — mirrors dom-bindings.ts's module-private getTextContent(), duplicated since that one isn't exported. */
+function textContentOf(el: DomElement): string {
+  let text = '';
+  for (const child of el.children) {
+    if (child.nodeType === 'text') text += (child as unknown as { text?: string }).text ?? '';
+    else if (child.nodeType === 'element') text += textContentOf(child as DomElement);
+  }
+  return text;
+}
+
+/** The text a <select> shows in its closed box: the selected <option>'s value or text — mirrors dom-bindings.ts's <select> value getter, duplicated since that logic is a closure private to wrapElement(). */
+function selectDisplayText(node: DomElement): string {
+  const options = node.children.filter((c): c is DomElement => c.nodeType === 'element' && (c as DomElement).tagName === 'option');
+  if (options.length === 0) return '';
+  let index = node.selectedIndex ?? -1;
+  if (index < 0 || index >= options.length) {
+    const preSelected = options.findIndex(o => o.attributes.has('selected'));
+    index = preSelected >= 0 ? preSelected : 0;
+  }
+  const opt = options[index]!;
+  return opt.attributes.get('value') ?? textContentOf(opt);
 }
 
 export { PaintEngine, DEFAULT_PAINT_CONFIG };

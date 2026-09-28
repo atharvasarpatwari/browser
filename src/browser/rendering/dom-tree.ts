@@ -32,6 +32,14 @@ interface DomElement extends DomNode {
   loadingState: 'none' | 'lazy' | 'loading' | 'loaded' | 'error';
   /** Cached will-change computed value (populated by CSS cascade). */
   willChange: string | null;
+  /** Live value for input/textarea/select — unset until first touched, then diverges from the `value`/`selected` content attribute (which represents defaultValue), matching real DOM semantics. Optional (not initialized at every DomElement construction site) so existing object literals across the codebase don't all need updating. */
+  value?: string | null;
+  /** Live checked state for input[type=checkbox|radio] — unset until first touched, then diverges from the `checked` content attribute (defaultChecked). */
+  checked?: boolean | null;
+  /** Live selected-option index for select — unset until first touched. */
+  selectedIndex?: number | null;
+  /** Caret offset into `value`, for input/textarea editing. Unset until the element is focused/edited. */
+  caretOffset?: number | null;
 }
 
 interface DomTextNode extends DomNode {

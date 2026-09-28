@@ -1970,9 +1970,10 @@ class LayoutEngine implements ILayoutEngine {
    */
   private resolveIntrinsicSize(node: DomElement): { width: number | null; height: number | null } {
     const tag = node.tagName.toLowerCase();
+    const isFormControl = tag === 'input' || tag === 'textarea' || tag === 'select';
     const isReplaced =
       tag === 'img' || tag === 'iframe' || tag === 'video' || tag === 'canvas' ||
-      tag === 'embed' || tag === 'object' || tag === 'svg';
+      tag === 'embed' || tag === 'object' || tag === 'svg' || isFormControl;
     if (!isReplaced) return { width: null, height: null };
 
     const parseAttr = (name: string): number | null => {
@@ -1983,6 +1984,22 @@ class LayoutEngine implements ILayoutEngine {
       const n = parseFloat(trimmed);
       return isFinite(n) ? n : null;
     };
+
+    if (isFormControl) {
+      // input/textarea/select have no real width=""/height="" attributes in
+      // HTML (unlike img/iframe) — there's nothing to measure, so they get a
+      // fixed UA-default box, same as every real browser's form-control
+      // stylesheet. A checkbox/radio is a small square; everything else is
+      // a single-line box (textarea a bit taller for its multiple rows).
+      const inputType = (node.attributes.get('type') ?? '').toLowerCase();
+      if (tag === 'input' && (inputType === 'checkbox' || inputType === 'radio')) {
+        return { width: parseAttr('width') ?? 16, height: parseAttr('height') ?? 16 };
+      }
+      if (tag === 'textarea') {
+        return { width: parseAttr('width') ?? 150, height: parseAttr('height') ?? 50 };
+      }
+      return { width: parseAttr('width') ?? 150, height: parseAttr('height') ?? 24 };
+    }
 
     return { width: parseAttr('width'), height: parseAttr('height') };
   }

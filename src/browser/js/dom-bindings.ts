@@ -909,6 +909,61 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     setter: createNativeFunction('set type', (_t, args) => domTree.setAttribute(el, 'type', toString(args[0]))),
   });
 
+  // value/checked/selectedIndex — real IDL properties, NOT content-attribute-
+  // backed like id/className/name/type above: the value=""/checked attributes
+  // represent defaultValue/defaultChecked and stay fixed at parse time, while
+  // .value/.checked diverge from them the moment a user or script touches the
+  // element. Each is seeded from its attribute only the first time it's read,
+  // then lives purely on the DomElement's own value/checked fields.
+  if (el.tagName === 'select') {
+    const selectedOptionIndex = (): number => {
+      if (el.selectedIndex != null) return el.selectedIndex;
+      const options = el.children.filter((c): c is DomElement => c.nodeType === 'element' && (c as DomElement).tagName === 'option');
+      const preSelected = options.findIndex(o => getAttr(o, 'selected') != null);
+      return preSelected >= 0 ? preSelected : 0;
+    };
+    obj.properties.set('selectedIndex', {
+      value: selectedOptionIndex(), writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction('get selectedIndex', () => selectedOptionIndex()),
+      setter: createNativeFunction('set selectedIndex', (_t, args) => { el.selectedIndex = Math.trunc(toNumber(args[0])); }),
+    });
+    obj.properties.set('value', {
+      value: '', writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction('get value', () => {
+        const options = el.children.filter((c): c is DomElement => c.nodeType === 'element' && (c as DomElement).tagName === 'option');
+        const opt = options[selectedOptionIndex()];
+        if (!opt) return '';
+        return getAttr(opt, 'value') ?? getTextContent(opt);
+      }),
+      setter: createNativeFunction('set value', (_t, args) => {
+        const target = toString(args[0]);
+        const options = el.children.filter((c): c is DomElement => c.nodeType === 'element' && (c as DomElement).tagName === 'option');
+        const idx = options.findIndex(o => (getAttr(o, 'value') ?? getTextContent(o)) === target);
+        if (idx >= 0) el.selectedIndex = idx;
+      }),
+    });
+  } else {
+    // A <textarea>'s initial content is its text content, not a value=""
+    // attribute (which doesn't exist for textarea) — <input> is the other
+    // way around (value="" attribute, no meaningful text-node children).
+    // A checkbox/radio with no value="" attribute defaults to "on" (real
+    // HTML default, not "" — matches js/index.ts's collectFormEntries).
+    const inputType = (getAttr(el, 'type') ?? '').toLowerCase();
+    const isCheckable = el.tagName === 'input' && (inputType === 'checkbox' || inputType === 'radio');
+    const initialValue = () => el.value ?? (el.tagName === 'textarea' ? getTextContent(el) : getAttr(el, 'value')) ?? (isCheckable ? 'on' : '');
+    obj.properties.set('value', {
+      value: initialValue(),
+      writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction('get value', initialValue),
+      setter: createNativeFunction('set value', (_t, args) => { el.value = toString(args[0]); }),
+    });
+  }
+  obj.properties.set('checked', {
+    value: el.checked ?? (getAttr(el, 'checked') != null), writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get checked', () => el.checked ?? (getAttr(el, 'checked') != null)),
+    setter: createNativeFunction('set checked', (_t, args) => { el.checked = toBoolean(args[0]); }),
+  });
+
   // focus()/blur() — the only way an element becomes document.activeElement
   // and matches :focus. Real focus/blur don't bubble, so this fires directly
   // on the target only (unlike focusin/focusout, not implemented here).

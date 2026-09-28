@@ -15,6 +15,12 @@ function readGetter(obj: JSObject, prop: string): unknown {
   return getter?.nativeFn ? getter.nativeFn(obj, []) : desc.value;
 }
 
+function writeSetter(obj: JSObject, prop: string, value: unknown): void {
+  const desc = obj.properties.get(prop)!;
+  const setter = desc.setter as { nativeFn?: NativeFunction } | undefined;
+  setter?.nativeFn?.(obj, [value] as never[]);
+}
+
 function makeTree() {
   const parser = new HtmlParser();
   const tree = new DomTree();
@@ -115,5 +121,68 @@ describe('typed event object constructors', () => {
     expect(evt.properties.get('deltaX')!.value).toBe(0);
     expect(evt.properties.get('deltaY')!.value).toBe(100);
     expect(evt.properties.get('deltaMode')!.value).toBe(0);
+  });
+});
+
+describe('value/checked — real IDL properties, not content-attribute-backed', () => {
+  function makeFormTree() {
+    const parser = new HtmlParser();
+    const tree = new DomTree();
+    const parsed = parser.parse(`<html><body>
+      <input id="txt" value="initial">
+      <input id="cb" type="checkbox" checked>
+      <textarea id="ta">hello</textarea>
+      <select id="sel"><option value="a">A</option><option value="b" selected>B</option></select>
+    </body></html>`);
+    const doc = tree.buildFromHtml(parsed.document);
+    return { tree };
+  }
+
+  it('.value reads the value="" attribute until touched, then diverges from it', () => {
+    const { tree } = makeFormTree();
+    const el = tree.getElementById('txt')!;
+    const wrapped = wrapElement(el, tree);
+
+    expect(readGetter(wrapped, 'value')).toBe('initial');
+
+    writeSetter(wrapped, 'value', 'changed');
+
+    expect(readGetter(wrapped, 'value')).toBe('changed');
+    expect(el.attributes.get('value')).toBe('initial'); // the attribute itself never changes — it's defaultValue
+  });
+
+  it('a <textarea>\'s initial .value is its text content, not a (nonexistent) value="" attribute', () => {
+    const { tree } = makeFormTree();
+    const el = tree.getElementById('ta')!;
+    const wrapped = wrapElement(el, tree);
+
+    expect(readGetter(wrapped, 'value')).toBe('hello');
+  });
+
+  it('.checked reads the checked attribute\'s presence until touched, then diverges from it', () => {
+    const { tree } = makeFormTree();
+    const el = tree.getElementById('cb')!;
+    const wrapped = wrapElement(el, tree);
+
+    expect(readGetter(wrapped, 'checked')).toBe(true);
+
+    writeSetter(wrapped, 'checked', false);
+
+    expect(readGetter(wrapped, 'checked')).toBe(false);
+    expect(el.attributes.has('checked')).toBe(true); // the attribute itself never changes — it's defaultChecked
+  });
+
+  it('<select> .value/.selectedIndex resolve from the pre-selected <option>, and setting .value moves .selectedIndex', () => {
+    const { tree } = makeFormTree();
+    const el = tree.getElementById('sel')!;
+    const wrapped = wrapElement(el, tree);
+
+    expect(readGetter(wrapped, 'selectedIndex')).toBe(1);
+    expect(readGetter(wrapped, 'value')).toBe('b');
+
+    writeSetter(wrapped, 'value', 'a');
+
+    expect(readGetter(wrapped, 'selectedIndex')).toBe(0);
+    expect(readGetter(wrapped, 'value')).toBe('a');
   });
 });

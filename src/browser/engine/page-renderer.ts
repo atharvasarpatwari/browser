@@ -114,6 +114,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
   private pageGlobalEnv: Environment | null = null;
   /** Real-time pump so setTimeout/setInterval/rAF keep firing after the initial script run. */
   private eventLoopPumpTimer: ReturnType<typeof setInterval> | null = null;
+  /** URL of the currently rendered page — needed to resolve relative link hrefs/form actions from dispatchPointerEvent, called long after render() returns. */
+  private currentPageUrl: string | null = null;
 
   constructor(deps: PageRendererDependencies) {
     this.deps = deps;
@@ -131,6 +133,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     const { htmlParser, domTree, cssParser, layoutEngine, paintEngine, resourceLoader, prioritizer } = this.deps;
+    this.currentPageUrl = result.url;
 
     // 0. Apply response-time security policies (COOP/COEP/CORP, referrer-policy).
     //    Top-level documents are not framed, so clickjacking is skipped here.
@@ -650,6 +653,102 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
   }
 
+  // ── Form/link default-action helpers ────────────────────────────────
+  // No tabindex concept exists anywhere in the engine yet — this is a
+  // minimal tag-based stand-in.
+  // ponytail: no tabindex support; add if a real page relies on it.
+
+  private static isFocusable(el: DomElement): boolean {
+    const tag = el.tagName.toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button' || (tag === 'a' && el.attributes.has('href'));
+  }
+
+  private static isSubmitControl(tag: string, inputType: string): boolean {
+    if (tag === 'input') return inputType === 'submit';
+    if (tag === 'button') return inputType === '' || inputType === 'submit';
+    return false;
+  }
+
+  /** Walks up .parent looking for a match — the internal-engine equivalent of the JS-exposed Element.prototype.closest(), operating on raw DomElements during dispatch rather than JS wrappers. */
+  private static closestRaw(el: DomElement, predicate: (el: DomElement) => boolean): DomElement | null {
+    let node: DomNode | null = el;
+    while (node) {
+      if (node.nodeType === 'element' && predicate(node as DomElement)) return node as DomElement;
+      node = node.parent;
+    }
+    return null;
+  }
+
+  /** Every named form-control descendant of `form` — input/textarea/select, mirroring what collectFormEntries (js/index.ts) already walks for FormData. */
+  private static collectFormFields(form: DomElement): DomElement[] {
+    const fields: DomElement[] = [];
+    const walk = (node: DomNode): void => {
+      if (node.nodeType === 'element') {
+        const el = node as DomElement;
+        const tag = el.tagName.toLowerCase();
+        if ((tag === 'input' || tag === 'textarea' || tag === 'select') && el.attributes.has('name')) {
+          fields.push(el);
+        }
+      }
+      for (const child of node.children) walk(child);
+    };
+    for (const child of form.children) walk(child);
+    return fields;
+  }
+
+  /** required/pattern/min/max/minlength/maxlength — checked only at submit time. Returns a reason string if invalid, null if valid. Deliberately not exposed as .checkValidity()/.reportValidity() this phase. */
+  private static validateField(el: DomElement): string | null {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.attributes.get('type') ?? '').toLowerCase();
+    const value = tag === 'select' ? PageRenderer.selectValue(el) : (el.value ?? el.attributes.get('value') ?? '');
+
+    if (el.attributes.has('required')) {
+      if (type === 'checkbox' && !(el.checked ?? el.attributes.has('checked'))) return 'required';
+      if (type !== 'checkbox' && value === '') return 'required';
+    }
+    if (value === '') return null; // an optional, empty field skips the rest of the checks
+
+    const pattern = el.attributes.get('pattern');
+    if (pattern) {
+      try { if (!new RegExp(`^(?:${pattern})$`).test(value)) return 'pattern'; } catch { /* invalid author-supplied pattern — ignore */ }
+    }
+    const minLength = el.attributes.get('minlength');
+    if (minLength && value.length < Number(minLength)) return 'minlength';
+    const maxLength = el.attributes.get('maxlength');
+    if (maxLength && value.length > Number(maxLength)) return 'maxlength';
+    if (type === 'number' || type === 'range') {
+      const num = Number(value);
+      const min = el.attributes.get('min');
+      const max = el.attributes.get('max');
+      if (min !== undefined && !Number.isNaN(num) && num < Number(min)) return 'min';
+      if (max !== undefined && !Number.isNaN(num) && num > Number(max)) return 'max';
+    }
+    return null;
+  }
+
+  /** Mirrors dom-bindings.ts's <select> value getter — the value of the selected <option> (its value attribute, or its text content), duplicated rather than shared since that logic is a closure private to wrapElement(). */
+  private static selectValue(el: DomElement): string {
+    const options = el.children.filter((c): c is DomElement => c.nodeType === 'element' && (c as DomElement).tagName === 'option');
+    if (options.length === 0) return '';
+    let index = el.selectedIndex ?? -1;
+    if (index < 0 || index >= options.length) {
+      const preSelected = options.findIndex(o => o.attributes.has('selected'));
+      index = preSelected >= 0 ? preSelected : 0;
+    }
+    const opt = options[index]!;
+    return opt.attributes.get('value') ?? PageRenderer.textContentOf(opt);
+  }
+
+  /** Minimal text-content walk for a raw DomElement — mirrors dom-bindings.ts's module-private getTextContent(), duplicated since that one isn't exported. */
+  private static textContentOf(el: DomElement): string {
+    let text = '';
+    for (const child of el.children) {
+      if (child.nodeType === 'text') text += (child as DomNode & { text?: string }).text ?? '';
+      else if (child.nodeType === 'element') text += PageRenderer.textContentOf(child as DomElement);
+    }
+    return text;
+  }
+
   /**
    * Wraps the rules extractCss5RulesFromDocument() already returned in CSS5's
    * own shape (structured selectors, real sourceOrder, media/layer/container
@@ -934,12 +1033,143 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * click/pointer dispatch. Also used for 'dblclick'.
    */
   dispatchPointerEvent(type: string, x: number, y: number): boolean {
-    if (!this.pageEventLoop) return false;
     const hitElement = this.deps.layoutEngine.getElementAtPoint(x, y);
     if (!hitElement) return false;
     const wrapped = wrapElement(hitElement, this.deps.domTree);
     const eventObj = createMouseEventObject(type, wrapped, { clientX: x, clientY: y }, { bubbles: true, cancelable: true });
-    return this.runDispatch(wrapped, eventObj);
+    // Building the event object and running default actions needs no JS
+    // environment — runDispatch (below) is the only part that requires one,
+    // and it already no-ops safely without one. A page with zero <script>
+    // tags must still support clicking a link or submitting a form; gating
+    // ALL of this behind pageEventLoop (as a single early return used to)
+    // would silently break every default action on any script-free page.
+    const handled = this.runDispatch(wrapped, eventObj);
+
+    if (type === 'click' && !eventObj.properties.get('defaultPrevented')?.value) {
+      this.runClickDefaultAction(hitElement, wrapped);
+    }
+    return handled;
+  }
+
+  /**
+   * Real-browser "default actions" a click on page content triggers once
+   * page JS's own addEventListener handlers have run and not called
+   * preventDefault() — none of this existed before: a checkbox never
+   * toggled itself, a link never navigated, clicking never even focused
+   * anything. Runs in this fixed priority order per click, matching real
+   * browser behavior (a submit button inside an <a> would be unusual
+   * authoring, but real browsers still only fire one default action).
+   */
+  private runClickDefaultAction(hitElement: DomElement, wrapped: JSObject): void {
+    if (PageRenderer.isFocusable(hitElement)) this.deps.domTree.setFocusedElementId(hitElement.domId);
+
+    const tag = hitElement.tagName.toLowerCase();
+    const inputType = (hitElement.attributes.get('type') ?? '').toLowerCase();
+
+    if (tag === 'input' && (inputType === 'checkbox' || inputType === 'radio')) {
+      this.toggleCheckable(hitElement);
+      this.runDispatch(wrapped, createEventObject('input', wrapped, { bubbles: true }));
+      this.runDispatch(wrapped, createEventObject('change', wrapped, { bubbles: true }));
+      return;
+    }
+
+    if (PageRenderer.isSubmitControl(tag, inputType)) {
+      const form = PageRenderer.closestRaw(hitElement, (el) => el.tagName.toLowerCase() === 'form');
+      if (form) this.submitForm(form);
+      return;
+    }
+
+    const anchor = PageRenderer.closestRaw(hitElement, (el) => el.tagName.toLowerCase() === 'a' && el.attributes.has('href'));
+    if (anchor && this.deps.controller) {
+      const href = anchor.attributes.get('href')!;
+      const url = this.currentPageUrl ? PageRenderer.resolveUrl(href, this.currentPageUrl) : href;
+      void this.deps.controller.navigate(url);
+    }
+  }
+
+  /**
+   * Checkbox: flips .checked. Radio: sets .checked and un-checks every other
+   * input[type=radio] sharing the same `name` — document-wide, since no
+   * <form>-association exists yet to scope this by. Explicitly invalidates
+   * paint for every element touched: these are raw DomElement field writes,
+   * not domTree.setAttribute()-style mutations the reflow controller
+   * observes on its own (the same reason the lazy-image-load path above
+   * calls invalidatePaint()+requestFrame() by hand after an out-of-band
+   * mutation) — without this, the checked glyph would only ever repaint as
+   * an accidental side effect of some *other* dirty-marking (e.g. the
+   * focus-change call just above), not reliably on every toggle.
+   */
+  private toggleCheckable(el: DomElement): void {
+    const inputType = (el.attributes.get('type') ?? '').toLowerCase();
+    if (inputType === 'radio') {
+      const name = el.attributes.get('name');
+      el.checked = true;
+      this.reflowController?.invalidatePaint(el);
+      if (name) {
+        // ponytail: document-wide by name, not form-scoped — two unrelated
+        // same-named radio groups on one page would incorrectly clear each
+        // other. Upgrade path: scope by closest('form') once forms are
+        // form-associated (tracked as a Phase 2d/roadmap follow-up).
+        for (const other of this.deps.domTree.querySelectorAll('input[type="radio"]')) {
+          if (other !== el && other.attributes.get('name') === name) {
+            other.checked = false;
+            this.reflowController?.invalidatePaint(other);
+          }
+        }
+      }
+    } else {
+      el.checked = !(el.checked ?? el.attributes.has('checked'));
+      this.reflowController?.invalidatePaint(el);
+    }
+    this.reflowController?.requestFrame();
+  }
+
+  /**
+   * GET-only form submission: reads every named field's current value
+   * (checkbox/radio only when checked), builds a query string with the
+   * real URLSearchParams binding's encoding, and navigates to the form's
+   * action (or the current page) with it appended. required/pattern/
+   * min/max/minlength/maxlength are checked first; the first invalid
+   * field blocks submission and gets focus, matching real form behavior.
+   * POST/method/body is a deliberate, documented follow-up — see the plan.
+   */
+  private submitForm(form: DomElement): void {
+    if (!this.deps.controller) return;
+    const fields = PageRenderer.collectFormFields(form);
+
+    for (const field of fields) {
+      const invalidReason = PageRenderer.validateField(field);
+      if (invalidReason) {
+        this.deps.domTree.setFocusedElementId(field.domId);
+        return;
+      }
+    }
+
+    const params = new URLSearchParams();
+    for (const field of fields) {
+      const name = field.attributes.get('name');
+      if (!name) continue;
+      const type = (field.attributes.get('type') ?? '').toLowerCase();
+      const isChecked = field.checked ?? field.attributes.has('checked');
+      if ((type === 'checkbox' || type === 'radio') && !isChecked) continue;
+      const tag = field.tagName.toLowerCase();
+      // Real HTML default: a checked checkbox/radio with no value="" attribute
+      // submits as "on" (matches the already-correct logic in js/index.ts's
+      // FormData-oriented collectFormEntries), not "".
+      const checkableDefault = (type === 'checkbox' || type === 'radio') ? 'on' : '';
+      const value = tag === 'select'
+        ? PageRenderer.selectValue(field)
+        : (field.value ?? field.attributes.get('value') ?? checkableDefault);
+      params.append(name, value);
+    }
+
+    const action = form.attributes.get('action');
+    const base = this.currentPageUrl ?? '';
+    const targetUrl = action ? PageRenderer.resolveUrl(action, base) : base;
+    if (!targetUrl) return;
+    const query = params.toString();
+    const url = query ? `${targetUrl.split('#')[0]}${targetUrl.includes('?') ? '&' : '?'}${query}` : targetUrl;
+    void this.deps.controller.navigate(url);
   }
 
   /**
@@ -954,7 +1184,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
     code: string,
     modifiers?: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; repeat?: boolean },
   ): boolean {
-    if (!this.pageEventLoop) return false;
+    // See dispatchPointerEvent's comment: no early pageEventLoop return here
+    // either, so text-editing/submit default actions still work on a
+    // script-free page.
     const focusedId = this.deps.domTree.getFocusedElementId();
     const focusedNode = focusedId ? this.deps.domTree.getNodeById(focusedId) : null;
     const targetElement = (focusedNode && focusedNode.nodeType === 'element' ? focusedNode as DomElement : null)
@@ -962,7 +1194,88 @@ class PageRenderer implements IPageRenderer, IDisposable {
     if (!targetElement) return false;
     const wrapped = wrapElement(targetElement, this.deps.domTree);
     const eventObj = createKeyboardEventObject(type, wrapped, { key, code, ...modifiers }, { bubbles: true, cancelable: true });
-    return this.runDispatch(wrapped, eventObj);
+    const handled = this.runDispatch(wrapped, eventObj);
+
+    if (type === 'keydown' && !eventObj.properties.get('defaultPrevented')?.value) {
+      this.runKeyDefaultAction(targetElement, wrapped, key);
+    }
+    return handled;
+  }
+
+  /**
+   * Real-browser text-editing default action: typing into a focused input/
+   * textarea previously did nothing but fire the event — nothing edited
+   * .value or moved a caret. textarea's Enter always inserts a newline;
+   * a plain input's Enter submits its form instead (never inserts \n),
+   * disambiguated by tag alone — no shared flag needed since a value can
+   * only be one tag at a time.
+   */
+  private runKeyDefaultAction(targetElement: DomElement, wrapped: JSObject, key: string): void {
+    const tag = targetElement.tagName.toLowerCase();
+    const inputType = (targetElement.attributes.get('type') ?? '').toLowerCase();
+    const isTextArea = tag === 'textarea';
+    const isTextInput = tag === 'input' && ['', 'text', 'search', 'url', 'tel', 'password', 'email', 'number'].includes(inputType);
+    if (!isTextArea && !isTextInput) return;
+
+    if (key === 'Enter' && isTextInput) {
+      const form = PageRenderer.closestRaw(targetElement, (el) => el.tagName.toLowerCase() === 'form');
+      if (form) this.submitForm(form);
+      return; // a real <input> never inserts a newline, form or no form
+    }
+
+    if (PageRenderer.editValueAtCaret(targetElement, key)) {
+      // Explicit invalidatePaint()+requestFrame(), same reasoning as
+      // toggleCheckable() above — .value is a raw DomElement field write,
+      // not a domTree-observed mutation, so nothing else would reliably
+      // schedule a repaint of the newly-typed text.
+      this.reflowController?.invalidatePaint(targetElement);
+      this.reflowController?.requestFrame();
+      this.runDispatch(wrapped, createEventObject('input', wrapped, { bubbles: true }));
+    }
+  }
+
+  /**
+   * Splices `key` into targetElement.value at .caretOffset (Backspace/Delete
+   * remove instead), and moves the caret for Left/Right/Home/End. Returns
+   * true only when .value actually changed (so the caller knows whether to
+   * fire 'input' — pure caret movement doesn't). No selection/range concept
+   * (shift+arrow, drag-select) this phase — see the plan's deferred list.
+   */
+  private static editValueAtCaret(el: DomElement, key: string): boolean {
+    // A <textarea>'s initial content is its text content, not a value=""
+    // attribute (mirrors the identical seeding logic in dom-bindings.ts's
+    // value getter).
+    const value = el.value ?? (el.tagName.toLowerCase() === 'textarea' ? PageRenderer.textContentOf(el) : el.attributes.get('value')) ?? '';
+    let caret = el.caretOffset ?? value.length;
+    caret = Math.max(0, Math.min(caret, value.length));
+
+    if (key === 'ArrowLeft') { el.caretOffset = Math.max(0, caret - 1); return false; }
+    if (key === 'ArrowRight') { el.caretOffset = Math.min(value.length, caret + 1); return false; }
+    if (key === 'Home') { el.caretOffset = 0; return false; }
+    if (key === 'End') { el.caretOffset = value.length; return false; }
+
+    if (key === 'Backspace') {
+      if (caret === 0) return false;
+      el.value = value.slice(0, caret - 1) + value.slice(caret);
+      el.caretOffset = caret - 1;
+      return true;
+    }
+    if (key === 'Delete') {
+      if (caret >= value.length) return false;
+      el.value = value.slice(0, caret) + value.slice(caret + 1);
+      el.caretOffset = caret;
+      return true;
+    }
+    // By this point (a plain <input>'s Enter is intercepted earlier in
+    // runKeyDefaultAction, before it ever reaches here), Enter can only mean
+    // a <textarea> newline.
+    const insert = key === 'Enter' ? '\n' : (key.length === 1 ? key : null); // every other named special key ("Shift", "ArrowLeft", ...) is longer than 1 char
+    if (insert !== null) {
+      el.value = value.slice(0, caret) + insert + value.slice(caret);
+      el.caretOffset = caret + insert.length;
+      return true;
+    }
+    return false;
   }
 
   /**
