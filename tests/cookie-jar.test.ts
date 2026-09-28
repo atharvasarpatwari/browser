@@ -152,6 +152,28 @@ describe('CookieJar', () => {
     });
   });
 
+  describe('getCookieHeaderForScript', () => {
+    it('excludes HttpOnly cookies while getCookieHeader still includes them (real HTTP requests must still send them)', () => {
+      jar.setFromResponse('https://example.com', [
+        'session=secret; Path=/; HttpOnly',
+        'theme=dark; Path=/',
+      ]);
+
+      const scriptHeader = jar.getCookieHeaderForScript('https://example.com');
+      expect(scriptHeader).toContain('theme=dark');
+      expect(scriptHeader).not.toContain('session=secret');
+
+      const requestHeader = jar.getCookieHeader('https://example.com');
+      expect(requestHeader).toContain('theme=dark');
+      expect(requestHeader).toContain('session=secret');
+    });
+
+    it('returns empty string when only an HttpOnly cookie is set', () => {
+      jar.setFromResponse('https://example.com', ['session=secret; Path=/; HttpOnly']);
+      expect(jar.getCookieHeaderForScript('https://example.com')).toBe('');
+    });
+  });
+
   describe('get', () => {
     it('should get a specific cookie by name', () => {
       jar.setFromResponse('https://example.com', [

@@ -1988,7 +1988,10 @@ export function createGlobalEnv(
     value: '',
     writable: true, enumerable: true, configurable: true,
     getter: createNativeFunction('get cookie', () => {
-      if (cookieJar && pageOrigin) return cookieJar.getCookieHeader(pageOrigin);
+      // HttpOnly cookies must never be exposed to script — getCookieHeader()
+      // (used for real outgoing HTTP requests) intentionally still includes
+      // them; this is the one call site page JS reads cookies through.
+      if (cookieJar && pageOrigin) return cookieJar.getCookieHeaderForScript(pageOrigin);
       return Array.from(localCookies, ([k, v]) => `${k}=${v}`).join('; ');
     }),
     setter: createNativeFunction('set cookie', (_t, args) => {
