@@ -621,7 +621,7 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
       routeResult.type === RouteType.Gateway
     ) {
       this.throwIfAborted(signal, session);
-      raw = await this.loader.load(session.entry.url, signal);
+      raw = await this.loader.load(session.entry.url, signal, { method: session.entry.method, body: session.entry.body });
       this.bus.emit({ kind: 'pageLoadFetched', session, raw });
 
       // A 3xx redirect changed the committed URL — surface the final URL so

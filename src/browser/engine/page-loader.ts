@@ -27,6 +27,7 @@
 
 import type { IDisposable } from '../../app/dependency-container';
 import type { IResourceLoader, ResourceLoadResult } from '../networking/resource-loader';
+import type { HttpMethod } from '../networking/request-manager';
 import type { IPageLoader, PageLoadResult } from './browser-engine';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,13 +49,13 @@ class PageLoader implements IPageLoader, IDisposable {
    * @param signal AbortSignal for cancellation.
    * @returns      The loaded page content.
    */
-  async load(url: string, signal: AbortSignal): Promise<PageLoadResult> {
+  async load(url: string, signal: AbortSignal, init?: { method?: string; body?: string }): Promise<PageLoadResult> {
     if (this.disposed) {
       throw new Error('PageLoader has been disposed');
     }
 
     try {
-      const result = await this.resourceLoader.loadResource(url, 'document', { signal });
+      const result = await this.resourceLoader.loadResource(url, 'document', { signal, method: init?.method as HttpMethod | undefined, body: init?.body });
       return this.mapResult(result);
     } catch (err) {
       // Re-throw abort errors as-is.

@@ -16,13 +16,22 @@ import { ResourceLoader } from '../src/browser/networking/resource-loader';
 import { ResourcePrioritizer } from '../src/browser/networking/resource-prioritizer';
 import type { INavigationController, NavigationResult } from '../src/browser/navigation/navigation-controller';
 
-function makeFakeController(): { controller: INavigationController; navigatedUrls: string[] } {
+function makeFakeController(): {
+  controller: INavigationController;
+  navigatedUrls: string[];
+  navigatedInits: Array<{ method?: string; body?: string } | undefined>;
+} {
   const navigatedUrls: string[] = [];
+  const navigatedInits: Array<{ method?: string; body?: string } | undefined> = [];
   const result: NavigationResult = { success: true } as NavigationResult;
   const controller = {
-    navigate: async (url: string) => { navigatedUrls.push(url); return result; },
+    navigate: async (url: string, _referrer?: string, _state?: unknown, init?: { method?: string; body?: string }) => {
+      navigatedUrls.push(url);
+      navigatedInits.push(init);
+      return result;
+    },
   } as unknown as INavigationController;
-  return { controller, navigatedUrls };
+  return { controller, navigatedUrls, navigatedInits };
 }
 
 function makeRenderer(controller?: INavigationController) {
@@ -199,6 +208,30 @@ describe('PageRenderer — form default actions (real pipeline, no mocks)', () =
     expect(url.pathname).toBe('/search');
     expect(url.searchParams.get('q')).toBe('cats');
     expect(url.searchParams.get('opt')).toBe('1');
+  });
+
+  it('a form with method="post" sends the encoded fields as the request body, not a query string', async () => {
+    const { controller, navigatedUrls, navigatedInits } = makeFakeController();
+    const renderer = makeRenderer(controller);
+    await render(renderer, `
+      <html><body>
+        <form action="/search" method="post">
+          <input type="text" name="q" value="cats">
+          <input type="checkbox" name="opt" value="1" checked>
+          <button type="submit" id="go">Go</button>
+        </form>
+      </body></html>
+    `);
+
+    // Same layout/coordinates as the GET submit-button test above.
+    renderer.dispatchPointerEvent('click', 190, 15);
+
+    expect(navigatedUrls).toEqual(['https://example.test/search']);
+    expect(navigatedInits.length).toBe(1);
+    expect(navigatedInits[0]?.method).toBe('POST');
+    const body = new URLSearchParams(navigatedInits[0]?.body);
+    expect(body.get('q')).toBe('cats');
+    expect(body.get('opt')).toBe('1');
   });
 
   it('a checked checkbox with no value="" attribute submits as "on" (real HTML default, not "")', async () => {

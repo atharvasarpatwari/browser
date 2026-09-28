@@ -100,6 +100,10 @@ interface ResourceLoadOptions {
   readonly priority?: ResourcePriority;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
+  /** HTTP method — defaults to GET when absent (only form submission sets this). */
+  readonly method?: HttpMethod;
+  /** Request body for a POST-method load (application/x-www-form-urlencoded string). */
+  readonly body?: string;
 }
 
 interface IResourceLoader extends IDisposable {
@@ -232,6 +236,7 @@ class ResourceLoader implements IResourceLoader {
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     const timeoutMs = options?.timeoutMs ?? 15_000;
 
+    const method = options?.method ?? 'GET';
     try {
       const headers = new Map<string, string>([['accept', '*/*']]);
       const timeoutController = new AbortController();
@@ -252,7 +257,7 @@ class ResourceLoader implements IResourceLoader {
         const corsReq: CorsRequest = {
           url,
           origin:      this.pageOrigin,
-          method:      'GET',
+          method,
           headers,
           mode:        CorsMode.Cors,
           credentials: CorsCredentials.Omit,
@@ -307,13 +312,19 @@ class ResourceLoader implements IResourceLoader {
       }
 
       const specBase: Omit<HttpRequestSpec, 'url'> = {
-        method: 'GET',
+        method,
         headers,
         timeoutMs,
+        body: options?.body,
       };
 
       // Follow 3xx redirects here — ResourceLoader talks to IHttpClient directly
       // (bypassing RequestManager), so redirect policy lives in this loop.
+      // ponytail: real browsers demote a 301/302/303 POST redirect to GET
+      // (dropping the body) while 307/308 preserve method+body; this loop
+      // resends specBase unchanged for every hop regardless of status code.
+      // Add per-status demotion if a POST form redirecting via 301/302 ever
+      // needs it — rare in practice for form submission.
       const redirectStatusCodes = new Set([301, 302, 303, 307, 308]);
       const maxRedirects = 10;
       let currentUrl = url;
@@ -370,7 +381,7 @@ class ResourceLoader implements IResourceLoader {
         const corsReq: CorsRequest = {
           url,
           origin:      this.pageOrigin,
-          method:      'GET',
+          method,
           headers,
           mode:        CorsMode.Cors,
           credentials: CorsCredentials.Omit,

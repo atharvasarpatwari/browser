@@ -1129,13 +1129,14 @@ class PageRenderer implements IPageRenderer, IDisposable {
   }
 
   /**
-   * GET-only form submission: reads every named field's current value
-   * (checkbox/radio only when checked), builds a query string with the
-   * real URLSearchParams binding's encoding, and navigates to the form's
-   * action (or the current page) with it appended. required/pattern/
-   * min/max/minlength/maxlength are checked first; the first invalid
-   * field blocks submission and gets focus, matching real form behavior.
-   * POST/method/body is a deliberate, documented follow-up — see the plan.
+   * Form submission: reads every named field's current value (checkbox/
+   * radio only when checked) into a real URLSearchParams binding.
+   * required/pattern/min/max/minlength/maxlength are checked first; the
+   * first invalid field blocks submission and gets focus, matching real
+   * form behavior. GET (the default) appends the encoded fields to the
+   * form's action URL; method="post" sends them as the request body
+   * instead (application/x-www-form-urlencoded only — see the method
+   * branch below for why multipart/form-data isn't here yet).
    */
   private submitForm(form: DomElement): void {
     if (!this.deps.controller) return;
@@ -1171,6 +1172,23 @@ class PageRenderer implements IPageRenderer, IDisposable {
     const base = this.currentPageUrl ?? '';
     const targetUrl = action ? PageRenderer.resolveUrl(action, base) : base;
     if (!targetUrl) return;
+
+    // GET (the default, and the only case when method is absent/anything
+    // other than "post") appends the encoded fields as a query string.
+    // POST sends the exact same URLSearchParams as the request body instead
+    // — application/x-www-form-urlencoded only; multipart/form-data is a
+    // separate, deliberate follow-up (MultipartBuilder exists and is ready,
+    // but HttpRequestSpec.body is typed string, not the Uint8Array a real
+    // multipart body needs — a genuine, independent type-plumbing task).
+    const method = (form.attributes.get('method') ?? '').toLowerCase();
+    if (method === 'post') {
+      void this.deps.controller.navigate(targetUrl.split('#')[0], undefined, undefined, {
+        method: 'POST',
+        body: params.toString(),
+      });
+      return;
+    }
+
     const query = params.toString();
     const url = query ? `${targetUrl.split('#')[0]}${targetUrl.includes('?') ? '&' : '?'}${query}` : targetUrl;
     void this.deps.controller.navigate(url);

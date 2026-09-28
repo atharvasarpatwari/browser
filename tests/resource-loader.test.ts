@@ -419,3 +419,33 @@ describe('ResourceLoader — Network timing (DevTools)', () => {
     expect(cached.timing).toBeUndefined();
   });
 });
+
+describe('ResourceLoader — method/body pass-through (POST form submission)', () => {
+  it('defaults to GET with no body when options are omitted', async () => {
+    const seen: HttpRequestSpec[] = [];
+    const client: IHttpClient = {
+      async send(spec) {
+        seen.push(spec);
+        return { url: spec.url, statusCode: 200, statusText: 'OK', body: 'ok', bodyBinary: null, headers: new Map(), redirected: false, redirectChain: [] };
+      },
+    };
+    const loader = new ResourceLoader(client);
+    await loader.loadResource('https://example.com/', 'document');
+    expect(seen[0]?.method).toBe('GET');
+    expect(seen[0]?.body).toBeUndefined();
+  });
+
+  it('sends the given method and body through to the HTTP client', async () => {
+    const seen: HttpRequestSpec[] = [];
+    const client: IHttpClient = {
+      async send(spec) {
+        seen.push(spec);
+        return { url: spec.url, statusCode: 200, statusText: 'OK', body: 'ok', bodyBinary: null, headers: new Map(), redirected: false, redirectChain: [] };
+      },
+    };
+    const loader = new ResourceLoader(client);
+    await loader.loadResource('https://example.com/search', 'document', { method: 'POST', body: 'q=cats&opt=1' });
+    expect(seen[0]?.method).toBe('POST');
+    expect(seen[0]?.body).toBe('q=cats&opt=1');
+  });
+});

@@ -129,6 +129,10 @@ interface NavigationEntry {
    * null when no state has been associated with this entry.
    */
   readonly state: unknown;
+  /** HTTP method for this load — defaults to GET when absent (only form submission sets this). */
+  readonly method?: string;
+  /** Request body for a POST-method entry (application/x-www-form-urlencoded string). */
+  readonly body?: string;
 }
 
 /**
@@ -149,6 +153,10 @@ interface NavigationRequest {
    * When provided, it is stored on the resulting NavigationEntry.
    */
   readonly state?: unknown;
+  /** HTTP method for this load — defaults to GET when absent (only form submission sets this). */
+  readonly method?: string;
+  /** Request body for a POST-method request (application/x-www-form-urlencoded string). */
+  readonly body?: string;
 }
 
 /** The outcome of a navigation call. */
@@ -295,7 +303,7 @@ interface INavigationGuard {
 interface INavigationController {
   // ── Navigation actions ────────────────────────────────────────────────────
   /** Navigate to a URL, creating a new history entry. */
-  navigate(url: string, referrer?: string, state?: unknown): Promise<NavigationResult>;
+  navigate(url: string, referrer?: string, state?: unknown, init?: { method?: string; body?: string }): Promise<NavigationResult>;
   /** Full control — pass a NavigationRequest directly. */
   navigateTo(request: NavigationRequest): Promise<NavigationResult>;
   /** Move one step backwards in history. Synchronous. */
@@ -579,13 +587,15 @@ class NavigationController implements INavigationController {
 
   // ── navigate / navigateTo ──────────────────────────────────────────────────
 
-  navigate(url: string, referrer?: string, state?: unknown): Promise<NavigationResult> {
+  navigate(url: string, referrer?: string, state?: unknown, init?: { method?: string; body?: string }): Promise<NavigationResult> {
     return this.navigateTo({
       url,
       type: NavigationType.Push,
       referrer,
       userInitiated: true,
       state,
+      method: init?.method,
+      body: init?.body,
     });
   }
 
@@ -653,6 +663,8 @@ class NavigationController implements INavigationController {
       scrollY:   0,
       parsedUrl,
       state:     request.state ?? null,
+      method:    request.method,
+      body:      request.body,
     };
 
     if (request.type === NavigationType.Replace ||
