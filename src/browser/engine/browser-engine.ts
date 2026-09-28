@@ -58,6 +58,7 @@ import type { IDomTree } from '../rendering/dom-tree';
 import type { IPageLoader, PageLoadResult } from './engine-types';
 import type { ConsoleEntry } from '../js/index';
 import type { ResourceLoadResult } from '../networking/resource-loader';
+import type { PermissionName } from '../web-apis/web-apis-permissions';
 import { createLogger } from '../../common/logger';
 
 const nullRendererLog = createLogger('NullPageRenderer');
@@ -239,6 +240,10 @@ interface IBrowserEngine extends ISharedService {
   getPageDomTree(): IDomTree | null;
   /** Add a middleware that runs after routing, before fetching. */
   addMiddleware(mw: EngineMiddleware): void;
+  /** Plug in the real UI that shows a permission prompt and returns the user's decision (browser-window.ts owns the actual dialog). */
+  setPermissionPromptHandler(handler: (origin: string, name: PermissionName) => Promise<'granted' | 'denied'>): void;
+  /** Shows a permission prompt via whatever handler is wired, or denies by default if none is (matches the safe default used when no UI has attached yet). */
+  requestPermissionPrompt(origin: string, name: PermissionName): Promise<'granted' | 'denied'>;
 
   // ── Events ────────────────────────────────────────────────────────────────
   on(type: EngineEventType, handler: (event: EngineEvent) => void): void;
@@ -371,6 +376,7 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   private loader:   IPageLoader   = new NullPageLoader();
   private renderer: IPageRenderer = new NullPageRenderer();
+  private permissionPromptHandler: ((origin: string, name: PermissionName) => Promise<'granted' | 'denied'>) | null = null;
 
   private _session:         PageLoadSession | null = null;
   private sessionSeq        = 0;
@@ -500,6 +506,15 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   addMiddleware(mw: EngineMiddleware): void {
     this.middlewares.push(mw);
+  }
+
+  setPermissionPromptHandler(handler: (origin: string, name: PermissionName) => Promise<'granted' | 'denied'>): void {
+    this.permissionPromptHandler = handler;
+  }
+
+  async requestPermissionPrompt(origin: string, name: PermissionName): Promise<'granted' | 'denied'> {
+    if (!this.permissionPromptHandler) return 'denied';
+    return this.permissionPromptHandler(origin, name);
   }
 
   // ── IBrowserEngine: events ─────────────────────────────────────────────────

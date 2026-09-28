@@ -51,6 +51,7 @@ import { ContextMenu, type ContextMenuItem } from '../components/context-menu/co
 import { ZoomManager } from '../../browser/navigation-controls/zoom';
 import { FindInPage } from '../../browser/navigation-controls/find-in-page';
 import { FindBar } from '../components/find-bar/find-bar';
+import { PermissionBar } from '../components/permission-bar/permission-bar';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
 import type { DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
@@ -218,6 +219,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private zoomManager: IZoomManager | null = null;
   private findInPage: FindInPage | null = null;
   private findBar: FindBar | null = null;
+  private permissionBar: PermissionBar | null = null;
   private findHighlightEl: HTMLElement | null = null;
   private toolbar: IToolbar | null = null;
   private trackerBlocker: ITrackerBlocker | null = null;
@@ -635,6 +637,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.findInPage = new FindInPage();
     this.findBar = new FindBar();
     this.findBar.attach(this.container);
+    this.permissionBar = new PermissionBar();
+    this.permissionBar.attach(this.container);
     this.findBar.onQueryChange((query) => this.runFind(query));
     this.findBar.onNext(() => this.advanceFind('next'));
     this.findBar.onPrevious(() => this.advanceFind('previous'));
@@ -899,6 +903,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.contentRenderer?.dispose();
     this.devToolsPanel?.dispose();
     this.findBar?.dispose();
+    this.permissionBar?.dispose();
     this.findInPage?.dispose();
     this.findHighlightEl?.remove();
     window.removeEventListener('keydown', this.onDevToolsKeydown);
@@ -1870,6 +1875,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     engine.on?.('pageLoadStarted', this.engineLoadStartedHandler);
     engine.on?.('consoleMessage', this.engineConsoleMessageHandler);
     engine.on?.('networkEntry', this.engineNetworkEntryHandler);
+    engine.setPermissionPromptHandler?.((origin, name) => this.permissionBar?.request(origin, name) ?? Promise.resolve('denied'));
     this.syncNavigationPipeline();
   }
 

@@ -905,6 +905,7 @@ class ApplicationBootstrap {
       securityLayer,
       onFrameRendered: () => engine.notifyPageRepainted(),
       onConsoleMessage: (entry) => engine.notifyConsoleMessage(entry),
+      onPermissionRequest: (origin, name) => engine.requestPermissionPrompt(origin, name),
     });
     engine.setPageRenderer(pageRenderer);
 

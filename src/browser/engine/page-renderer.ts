@@ -64,6 +64,7 @@ import { ReflowRepaintController } from '../rendering/reflow-repaint-controller'
 import type { LayerCompositor } from '../rendering/compositing/layer-compositor';
 import { CssAnimationAnimator } from '../rendering/css-animations';
 import { setAnimationRuntime, dispatchAnimationEventToElement } from '../js/dom-bindings';
+import type { PermissionName } from '../web-apis/web-apis-permissions';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTRUCTOR PARAMETERS
@@ -97,6 +98,8 @@ interface PageRendererDependencies {
   readonly onFrameRendered?: () => void;
   /** Optional callback invoked for every page console.log/warn/error/etc call (DevTools Console panel). */
   readonly onConsoleMessage?: (entry: ConsoleEntry) => void;
+  /** Optional callback that shows a real permission prompt to the user and resolves with their choice. */
+  readonly onPermissionRequest?: (origin: string, name: PermissionName) => Promise<'granted' | 'denied'>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -460,6 +463,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       this.deps.htmlParser, this.deps.storageDir,
       this.deps.corsEngine,
       resourceLoader.getCookieJar() ?? undefined,
+      this.deps.onPermissionRequest,
     );
 
     // Forward every console.log/warn/error/etc the page makes to whoever's
