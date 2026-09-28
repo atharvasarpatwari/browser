@@ -68,6 +68,14 @@ const ipcBridge = Object.freeze({
 /*  process — frozen diagnostics snapshot, no event-surface                   */
 /* -------------------------------------------------------------------------- */
 
+// Reads a `--flag=value` passed via BrowserWindow's webPreferences.additionalArguments
+// (see electron/main.cjs) — the renderer can't call main-only `app.getPath(...)`
+// itself, so main resolves the real path and hands it down this way.
+function parseArg(prefix) {
+  const arg = process.argv.find((a) => a.startsWith(prefix))
+  return arg ? arg.slice(prefix.length) : null
+}
+
 const processSnapshot = Object.freeze({
   platform: process.platform,
   arch: process.arch,
@@ -79,6 +87,7 @@ const processSnapshot = Object.freeze({
     electron: process.versions.electron,
   }),
   env: Object.freeze(Object.assign({}, process.env)),
+  downloadsDir: parseArg('--nova-downloads-dir='),
 })
 
 /* -------------------------------------------------------------------------- */

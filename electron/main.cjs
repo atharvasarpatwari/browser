@@ -275,9 +275,13 @@ function createWindow() {
       sandbox: false,
       preload: path.join(__dirname, 'preload.cjs'),
       spellcheck: false,
-      // The renderer resolves its persistent web-storage directory from argv
-      // (see main.ts), avoiding main-only `app` APIs inside the renderer.
-      additionalArguments: [`--nova-storage-dir=${path.join(app.getPath('userData'), 'web-storage')}`],
+      // The renderer resolves its persistent web-storage directory and the
+      // real OS downloads folder from argv (see preload.cjs/main.ts),
+      // avoiding main-only `app` APIs inside the renderer.
+      additionalArguments: [
+        `--nova-storage-dir=${path.join(app.getPath('userData'), 'web-storage')}`,
+        `--nova-downloads-dir=${app.getPath('downloads')}`,
+      ],
     },
   })
 

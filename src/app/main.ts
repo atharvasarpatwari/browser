@@ -427,7 +427,15 @@ class ApplicationBootstrap {
     );
     c.register<IDownloadManager>(
       Tokens.DownloadManager,
-      () => new DownloadManager(),
+      () => {
+        // The real OS downloads folder is main-process-only (app.getPath);
+        // electron/main.cjs hands it down via additionalArguments, parsed
+        // by preload.cjs into window.nova.process.downloadsDir. Falls back
+        // to DownloadManager's own relative default outside Electron (tests).
+        const downloadsDir = (globalThis as { nova?: { process?: { downloadsDir?: string | null } } })
+          .nova?.process?.downloadsDir;
+        return downloadsDir ? new DownloadManager(downloadsDir) : new DownloadManager();
+      },
       ServiceLifetime.Singleton,
     );
 
