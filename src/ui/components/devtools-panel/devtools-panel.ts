@@ -1,6 +1,8 @@
 import type { IDisposable } from '../../../app/dependency-container';
 import type { IDomTree, DomNode, DomElement, DomTextNode } from '../../../browser/rendering/dom-tree';
 import type { ResourceLoadTiming } from '../../../browser/networking/resource-loader';
+import { AccessibilityPanel, type A11yAuditIssue } from '../../../browser/devtools/accessibility-panel';
+import type { A11yDomNode } from '../../../browser/accessibility/screen-reader';
 
 export type DevToolsConsoleLevel = 'log' | 'info' | 'warn' | 'error' | 'debug';
 
@@ -40,7 +42,7 @@ const MAX_ROWS = 1000;
 const MAX_TREE_NODES = 2000;
 const MAX_NETWORK_ROWS = 500;
 
-type DevToolsTab = 'console' | 'elements' | 'network';
+type DevToolsTab = 'console' | 'elements' | 'network' | 'accessibility';
 
 /**
  * Renders live page console output, a snapshot of the live DOM tree, and a
@@ -69,6 +71,8 @@ class DevToolsPanel implements IDevToolsPanel {
   private consoleTabBtn: HTMLButtonElement | null = null;
   private elementsTabBtn: HTMLButtonElement | null = null;
   private networkTabBtn: HTMLButtonElement | null = null;
+  private accessibilityPane: HTMLElement | null = null;
+  private accessibilityTabBtn: HTMLButtonElement | null = null;
   private domTreeProvider: (() => IDomTree | null) | null = null;
 
   attach(container: HTMLElement): void {
@@ -93,9 +97,11 @@ class DevToolsPanel implements IDevToolsPanel {
     this.consoleTabBtn = DevToolsPanel.tabButton('Console');
     this.elementsTabBtn = DevToolsPanel.tabButton('Elements');
     this.networkTabBtn = DevToolsPanel.tabButton('Network');
+    this.accessibilityTabBtn = DevToolsPanel.tabButton('Accessibility');
     this.consoleTabBtn.addEventListener('click', () => this.selectTab('console'));
     this.elementsTabBtn.addEventListener('click', () => this.selectTab('elements'));
     this.networkTabBtn.addEventListener('click', () => this.selectTab('network'));
+    this.accessibilityTabBtn.addEventListener('click', () => this.selectTab('accessibility'));
 
     const spacer = document.createElement('span');
     spacer.style.flex = '1';
@@ -108,9 +114,12 @@ class DevToolsPanel implements IDevToolsPanel {
     const refreshBtn = document.createElement('button');
     refreshBtn.textContent = 'Refresh';
     refreshBtn.style.cssText = DevToolsPanel.actionButtonStyle();
-    refreshBtn.addEventListener('click', () => this.renderElementsTree());
+    refreshBtn.addEventListener('click', () => {
+      if (this.activeTab === 'accessibility') this.renderAccessibilityTab();
+      else this.renderElementsTree();
+    });
 
-    header.append(this.consoleTabBtn, this.elementsTabBtn, this.networkTabBtn, spacer, refreshBtn, clearBtn);
+    header.append(this.consoleTabBtn, this.elementsTabBtn, this.networkTabBtn, this.accessibilityTabBtn, spacer, refreshBtn, clearBtn);
 
     this.consolePane = document.createElement('div');
     this.consolePane.style.cssText = 'flex:1; overflow-y:auto; padding:4px 0;';
@@ -122,7 +131,10 @@ class DevToolsPanel implements IDevToolsPanel {
     this.networkPane = document.createElement('div');
     this.networkPane.style.cssText = 'flex:1; overflow-y:auto; padding:4px 0; display:none;';
 
-    this.container.append(header, this.consolePane, this.elementsPane, this.networkPane);
+    this.accessibilityPane = document.createElement('div');
+    this.accessibilityPane.style.cssText = 'flex:1; overflow:auto; padding:6px 10px; display:none;';
+
+    this.container.append(header, this.consolePane, this.elementsPane, this.networkPane, this.accessibilityPane);
     this.updateTabStyles();
   }
 
@@ -141,19 +153,22 @@ class DevToolsPanel implements IDevToolsPanel {
     this.activeTab = tab;
     this.updateTabStyles();
     if (tab === 'elements') this.renderElementsTree();
+    if (tab === 'accessibility') this.renderAccessibilityTab();
   }
 
   private updateTabStyles(): void {
-    if (!this.consoleTabBtn || !this.elementsTabBtn || !this.networkTabBtn
-      || !this.consolePane || !this.elementsPane || !this.networkPane) return;
+    if (!this.consoleTabBtn || !this.elementsTabBtn || !this.networkTabBtn || !this.accessibilityTabBtn
+      || !this.consolePane || !this.elementsPane || !this.networkPane || !this.accessibilityPane) return;
     const active = 'color:#8ab4f8; border-bottom-color:#8ab4f8;';
     const inactive = 'color:#9aa0a6; border-bottom-color:transparent;';
     this.consoleTabBtn.style.cssText = DevToolsPanel.tabButtonBase() + (this.activeTab === 'console' ? active : inactive);
     this.elementsTabBtn.style.cssText = DevToolsPanel.tabButtonBase() + (this.activeTab === 'elements' ? active : inactive);
     this.networkTabBtn.style.cssText = DevToolsPanel.tabButtonBase() + (this.activeTab === 'network' ? active : inactive);
+    this.accessibilityTabBtn.style.cssText = DevToolsPanel.tabButtonBase() + (this.activeTab === 'accessibility' ? active : inactive);
     this.consolePane.style.display = this.activeTab === 'console' ? 'block' : 'none';
     this.elementsPane.style.display = this.activeTab === 'elements' ? 'block' : 'none';
     this.networkPane.style.display = this.activeTab === 'network' ? 'block' : 'none';
+    this.accessibilityPane.style.display = this.activeTab === 'accessibility' ? 'block' : 'none';
   }
 
   private static tabButtonBase(): string {
@@ -178,6 +193,44 @@ class DevToolsPanel implements IDevToolsPanel {
       truncated.textContent = `… truncated at ${MAX_TREE_NODES} nodes`;
       truncated.style.color = '#5f6368';
       this.elementsPane.appendChild(truncated);
+    }
+  }
+
+  private renderAccessibilityTab(): void {
+    if (!this.accessibilityPane) return;
+    const doc = this.domTreeProvider?.()?.getDocument() ?? null;
+    if (!doc) {
+      this.accessibilityPane.textContent = '(no page loaded)';
+      return;
+    }
+    // runAudit() requires an *element* root (isA11yElement() checks
+    // nodeType === 'element') — doc itself is nodeType 'document' and would
+    // silently audit to zero issues every time if passed directly, exactly
+    // like renderElementsTree() has to iterate doc.children rather than
+    // rendering doc itself.
+    const issues = doc.children.flatMap((child) =>
+      new AccessibilityPanel().runAudit(child as A11yDomNode),
+    );
+    this.accessibilityPane.innerHTML = '';
+    if (issues.length === 0) {
+      const ok = document.createElement('div');
+      ok.textContent = 'No accessibility issues found.';
+      ok.style.color = '#81c995';
+      this.accessibilityPane.appendChild(ok);
+      return;
+    }
+    const COLOR: Record<A11yAuditIssue['type'], string> = { error: '#f28b82', warning: '#fdd663', info: '#8ab4f8' };
+    for (const issue of issues) {
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:4px 0; border-bottom:1px solid #292a2d;';
+      const head = document.createElement('div');
+      head.style.cssText = `color:${COLOR[issue.type]}; font-weight:600;`;
+      head.textContent = `[${issue.type.toUpperCase()}] <${issue.tagName}> — ${issue.message}`;
+      const sub = document.createElement('div');
+      sub.style.cssText = 'color:#9aa0a6; padding-left:12px;';
+      sub.textContent = issue.suggestion;
+      row.append(head, sub);
+      this.accessibilityPane.appendChild(row);
     }
   }
 
@@ -358,8 +411,10 @@ class DevToolsPanel implements IDevToolsPanel {
     } else if (this.activeTab === 'network') {
       if (this.networkPane) this.networkPane.innerHTML = '';
       this.networkRowCount = 0;
-    } else {
+    } else if (this.activeTab === 'elements') {
       this.renderElementsTree();
+    } else {
+      this.renderAccessibilityTab();
     }
   }
 
@@ -369,10 +424,12 @@ class DevToolsPanel implements IDevToolsPanel {
     this.consolePane = null;
     this.elementsPane = null;
     this.networkPane = null;
+    this.accessibilityPane = null;
     this.listEl = null;
     this.consoleTabBtn = null;
     this.elementsTabBtn = null;
     this.networkTabBtn = null;
+    this.accessibilityTabBtn = null;
   }
 }
 
