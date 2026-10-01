@@ -5,7 +5,7 @@ import type { IResponseParser } from './response-parser';
 import { ResponseParser } from './response-parser';
 import type { DiscoveredResource, DiscoveredResourceKind } from '../rendering/html-parser';
 import type { ITrackerBlocker } from '../security/tracker-blocker';
-import type { ICacheManager } from './cache-manager';
+import type { ICacheManager, CacheEntry } from './cache-manager';
 import type { ICorsEngine, CorsRequest } from '../security/cors';
 import { CorsMode, CorsCredentials, CorsBlockedError, CorsViolationError } from '../security/cors';
 import { parseOrigin, isSameOrigin, isSameSite } from '../security/origin-service';
@@ -182,7 +182,12 @@ class ResourceLoader implements IResourceLoader {
 
   private async loadResourceCore(url: string, _kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
     // ── Cache check ─────────────────────────────────────────────────────────
+    // staleEntry is snapshotted via getStale() BEFORE calling get(), since
+    // get() deletes an expired entry as a side effect before returning null —
+    // capturing it later would already find revalidation candidates gone.
+    let staleEntry: CacheEntry | null = null;
     if (this.cache) {
+      staleEntry = await this.cache.getStale(url);
       const cached = await this.cache.get(url);
       if (cached) {
         return {
@@ -191,7 +196,7 @@ class ResourceLoader implements IResourceLoader {
           statusCode: cached.statusCode,
           contentType: cached.contentType,
           body: cached.body,
-          bodyBinary: null,
+          bodyBinary: cached.bodyBinary,
           headers: cached.headers,
           loadedAt: Date.now(),
           durationMs: 0,
@@ -239,6 +244,10 @@ class ResourceLoader implements IResourceLoader {
     const method = options?.method ?? 'GET';
     try {
       const headers = new Map<string, string>([['accept', '*/*']]);
+      if (staleEntry) {
+        if (staleEntry.etag) headers.set('if-none-match', staleEntry.etag);
+        else if (staleEntry.lastModified) headers.set('if-modified-since', staleEntry.lastModified);
+      }
       const timeoutController = new AbortController();
       timeoutTimer = setTimeout(() => {
         timedOut = true;
@@ -453,28 +462,52 @@ class ResourceLoader implements IResourceLoader {
         }
       }
 
+      // ── Conditional revalidation (304) ────────────────────────────────────
+      // Not an early-return releaseSlot() site — the surrounding finally
+      // already releases the slot once on every path out of this try block.
+      if (res.statusCode === 304 && staleEntry && this.cache) {
+        const ttlMs = parsed.cache.maxAge !== null ? parsed.cache.maxAge * 1000 : undefined;
+        const expiresAt = ttlMs === 0 ? Date.now() - 1 : (ttlMs !== undefined ? Date.now() + ttlMs : null);
+        await this.cache.set(url, { ...staleEntry, expiresAt });
+        return {
+          url: currentUrl,
+          kind: _kind,
+          statusCode: 200,
+          contentType: staleEntry.contentType,
+          body: staleEntry.body,
+          bodyBinary: staleEntry.bodyBinary,
+          headers: staleEntry.headers,
+          loadedAt: Date.now(),
+          durationMs,
+          fromCache: true,
+          error: null,
+        };
+      }
+
       // ── Record bandwidth ──────────────────────────────────────────────────
       this.bandwidth.record(res.body.length, durationMs);
 
       // ── Populate cache ────────────────────────────────────────────────────
-      if (this.cache && res.statusCode >= 200 && res.statusCode < 400) {
-        const etag = res.headers.get('etag') ?? null;
-        const lastModified = res.headers.get('last-modified') ?? null;
-        const cacheControl = res.headers.get('cache-control') ?? '';
-        const immutable = cacheControl.includes('immutable');
-        const maxAgeMatch = /max-age=(\d+)/.exec(cacheControl);
-        const ttlMs = maxAgeMatch ? parseInt(maxAgeMatch[1]!) * 1000 : undefined;
+      if (this.cache && res.statusCode >= 200 && res.statusCode < 400 && res.statusCode !== 304 && !parsed.cache.noStore) {
+        const ttlMs = parsed.cache.maxAge !== null ? parsed.cache.maxAge * 1000 : undefined;
+        // no-cache means "may be stored but must be revalidated before every
+        // use" — forced immediate staleness reuses the existing expiresAt
+        // mechanism instead of adding a new mustRevalidate field.
+        const expiresAt = parsed.cache.noCache || ttlMs === 0
+          ? Date.now() - 1
+          : (ttlMs !== undefined ? Date.now() + ttlMs : null);
 
         await this.cache.set(url, {
           url,
           body: res.body,
+          bodyBinary: res.bodyBinary,
           contentType: parsed.mimeType.full || 'application/octet-stream',
           statusCode: res.statusCode,
           headers: res.headers,
-          etag,
-          lastModified,
-          immutable,
-          expiresAt: ttlMs ? Date.now() + ttlMs : null,
+          etag: parsed.cache.etag,
+          lastModified: parsed.cache.lastModified,
+          immutable: parsed.cache.immutable,
+          expiresAt,
         });
       }
 

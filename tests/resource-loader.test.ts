@@ -52,7 +52,7 @@ describe('ResourceLoader â€” Cache integration', () => {
     await cache.set('https://example.com/a.css', {
       url: 'https://example.com/a.css',
       body: 'cached', contentType: 'text/css', statusCode: 200,
-      headers: new Map(), etag: null, lastModified: null, immutable: false, expiresAt: null,
+      headers: new Map(), etag: null, lastModified: null, immutable: false, bodyBinary: null, expiresAt: null,
     });
     const result = await loader.loadResource('https://example.com/a.css', 'stylesheet');
     expect(result.fromCache).toBe(true);
@@ -84,6 +84,108 @@ describe('ResourceLoader â€” Cache integration', () => {
     await loader.loadResource('https://example.com/a.css', 'stylesheet');
     const entry = await cache.get('https://example.com/a.css');
     expect(entry!.immutable).toBe(true);
+  });
+
+  it('no-store response is never cached', async () => {
+    const client = mockClient({
+      'https://example.com/a.css': { body: 'secret', headers: { 'cache-control': 'no-store' } },
+    });
+    loader = new ResourceLoader(client, undefined, undefined, undefined, cache);
+    const result = await loader.loadResource('https://example.com/a.css', 'stylesheet');
+    expect(result.error).toBeNull();
+    expect(result.body).toBe('secret');
+    expect(await cache.get('https://example.com/a.css')).toBeNull();
+  });
+
+  it('no-cache response is cached but revalidated via ETag on the next request', async () => {
+    let calls = 0;
+    let sawIfNoneMatch: string | undefined;
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+        calls++;
+        if (calls === 1) {
+          return {
+            url: spec.url, statusCode: 200, statusText: 'OK',
+            body: 'fresh-body', bodyBinary: null,
+            headers: new Map([['cache-control', 'no-cache'], ['etag', '"v1"']]),
+            redirected: false, redirectChain: [],
+          };
+        }
+        sawIfNoneMatch = spec.headers.get('if-none-match');
+        return {
+          url: spec.url, statusCode: 304, statusText: 'Not Modified',
+          body: '', bodyBinary: null, headers: new Map(),
+          redirected: false, redirectChain: [],
+        };
+      },
+    };
+    loader = new ResourceLoader(client, undefined, undefined, undefined, cache);
+
+    const first = await loader.loadResource('https://example.com/a.css', 'stylesheet');
+    expect(first.body).toBe('fresh-body');
+    expect(first.fromCache).toBe(false);
+
+    const second = await loader.loadResource('https://example.com/a.css', 'stylesheet');
+    expect(sawIfNoneMatch).toBe('"v1"');
+    expect(second.statusCode).toBe(200);
+    expect(second.body).toBe('fresh-body');
+    expect(second.fromCache).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  it('ETag-validated response (max-age=0) revalidates via If-None-Match and reuses the cached body on 304', async () => {
+    let calls = 0;
+    let sawIfNoneMatch: string | undefined;
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+        calls++;
+        if (calls === 1) {
+          return {
+            url: spec.url, statusCode: 200, statusText: 'OK',
+            body: 'etag-body', bodyBinary: null,
+            headers: new Map([['cache-control', 'max-age=0'], ['etag', '"abc"']]),
+            redirected: false, redirectChain: [],
+          };
+        }
+        sawIfNoneMatch = spec.headers.get('if-none-match');
+        return {
+          url: spec.url, statusCode: 304, statusText: 'Not Modified',
+          body: 'SHOULD-NOT-BE-USED', bodyBinary: null, headers: new Map(),
+          redirected: false, redirectChain: [],
+        };
+      },
+    };
+    loader = new ResourceLoader(client, undefined, undefined, undefined, cache);
+
+    await loader.loadResource('https://example.com/a.css', 'stylesheet');
+    const second = await loader.loadResource('https://example.com/a.css', 'stylesheet');
+
+    expect(sawIfNoneMatch).toBe('"abc"');
+    expect(second.body).toBe('etag-body');
+    expect(second.fromCache).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  it('binary response body survives a cache hit', async () => {
+    const bytes = new Uint8Array([137, 80, 78, 71]);
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec, _signal: AbortSignal): Promise<HttpResponseSpec> {
+        return {
+          url: spec.url, statusCode: 200, statusText: 'OK',
+          body: '', bodyBinary: bytes,
+          headers: new Map([['content-type', 'image/png']]),
+          redirected: false, redirectChain: [],
+        };
+      },
+    };
+    loader = new ResourceLoader(client, undefined, undefined, undefined, cache);
+
+    const first = await loader.loadResource('https://example.com/pic.png', 'image');
+    expect(first.bodyBinary).toEqual(bytes);
+
+    const second = await loader.loadResource('https://example.com/pic.png', 'image');
+    expect(second.fromCache).toBe(true);
+    expect(second.bodyBinary).toEqual(bytes);
   });
 });
 
