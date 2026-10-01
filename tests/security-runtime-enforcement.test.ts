@@ -128,6 +128,7 @@ function createMockResourceLoader(): IResourceLoader {
     setMaxConcurrent: vi.fn(),
     setOnLoad: vi.fn(),
     getCookieJar: vi.fn().mockReturnValue(null),
+    setCors: vi.fn(),
     on: vi.fn(),
     off: vi.fn(),
     dispose: vi.fn(),

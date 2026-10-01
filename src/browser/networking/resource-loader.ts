@@ -118,6 +118,7 @@ interface IResourceLoader extends IDisposable {
   off(type: RequestEventType, handler: (event: RequestEvent) => void): void;
   setOnLoad(listener: ((result: ResourceLoadResult) => void) | null): void;
   getCookieJar(): ICookieJar | null;
+  setCors(cors: ICorsEngine, pageOrigin: string): void;
 }
 
 class ResourceLoader implements IResourceLoader {
@@ -261,6 +262,11 @@ class ResourceLoader implements IResourceLoader {
       const signal = timeoutController.signal;
 
       // ── CORS pre-request check ──────────────────────────────────────────
+      // NoCors, not Cors: ResourceLoader only ever handles HTML-parser-
+      // discovered passive subresources (images/stylesheets/scripts/sub-
+      // documents), which real browsers load in no-cors mode by default —
+      // fetch()/XHR are the real-CORS-mode traffic, and they already go
+      // through a separate, correct path (fetch-api.ts/xhr.ts).
       let corsPreflightDone = false;
       if (this.cors && this.pageOrigin) {
         const corsReq: CorsRequest = {
@@ -268,7 +274,7 @@ class ResourceLoader implements IResourceLoader {
           origin:      this.pageOrigin,
           method,
           headers,
-          mode:        CorsMode.Cors,
+          mode:        CorsMode.NoCors,
           credentials: CorsCredentials.Omit,
         };
         const preCheck = this.cors.checkRequest(corsReq);
@@ -386,13 +392,17 @@ class ResourceLoader implements IResourceLoader {
       const durationMs = Date.now() - start;
 
       // ── CORS post-response check ────────────────────────────────────────
+      // NoCors here too (see the pre-request check above) — checkResponse()
+      // treats a NoCors response as opaque with no ACAO requirement, which
+      // is both correct per spec and what lets ordinary cross-origin
+      // subresources keep loading once this check actually starts running.
       if (this.cors && this.pageOrigin && !corsPreflightDone) {
         const corsReq: CorsRequest = {
           url,
           origin:      this.pageOrigin,
           method,
           headers,
-          mode:        CorsMode.Cors,
+          mode:        CorsMode.NoCors,
           credentials: CorsCredentials.Omit,
         };
         try {

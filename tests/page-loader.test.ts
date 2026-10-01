@@ -25,6 +25,7 @@ function createMockResourceLoader(): IResourceLoader {
     off: vi.fn(),
     setOnLoad: vi.fn(),
     getCookieJar: vi.fn(),
+    setCors: vi.fn(),
     dispose: vi.fn(),
   };
 }

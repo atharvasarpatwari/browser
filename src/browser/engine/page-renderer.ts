@@ -162,6 +162,15 @@ class PageRenderer implements IPageRenderer, IDisposable {
       }
     }
 
+    // 0c. Feed the CORS engine this page's real origin — ResourceLoader's
+    //     CORS/CORP subresource enforcement was previously permanently
+    //     inert (pageOrigin defaulted to '' and nothing ever called
+    //     setCors()). Must re-fire on every navigation since resourceLoader
+    //     is a long-lived singleton shared across the whole app.
+    if (this.deps.corsEngine) {
+      resourceLoader.setCors(this.deps.corsEngine, parseOrigin(result.url));
+    }
+
     // 1. Parse HTML
     const parseResult = htmlParser.parse(result.body, result.url);
     const htmlDoc = parseResult.document;

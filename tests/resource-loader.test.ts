@@ -2,6 +2,7 @@
 import { ResourceLoader } from '../src/browser/networking/resource-loader';
 import { CacheManager } from '../src/browser/networking/cache-manager';
 import { CookieJar } from '../src/browser/networking/cookie-jar';
+import { CorsEngine } from '../src/browser/security/cors';
 import type { IHttpClient, HttpRequestSpec, HttpResponseSpec } from '../src/browser/networking/request-manager';
 import type { DiscoveredResource } from '../src/browser/rendering/html5/dom';
 
@@ -549,5 +550,67 @@ describe('ResourceLoader — method/body pass-through (POST form submission)', (
     await loader.loadResource('https://example.com/search', 'document', { method: 'POST', body: 'q=cats&opt=1' });
     expect(seen[0]?.method).toBe('POST');
     expect(seen[0]?.body).toBe('q=cats&opt=1');
+  });
+});
+
+describe('ResourceLoader — CORS/CORP enforcement (previously dead: setCors() had zero callers)', () => {
+  it('an ordinary cross-origin resource with no special headers still loads (NoCors mode, no ACAO required)', async () => {
+    const client = mockClient({ 'https://cdn.example/style.css': { body: 'body{color:red}', headers: { 'content-type': 'text/css' } } });
+    const loader = new ResourceLoader(client);
+    loader.setCors(new CorsEngine(), 'https://app.example');
+    const result = await loader.loadResource('https://cdn.example/style.css', 'stylesheet');
+    expect(result.error).toBeNull();
+    expect(result.body).toBe('body{color:red}');
+  });
+
+  it('a same-origin resource is unaffected regardless of setCors() state', async () => {
+    const client = mockClient({ 'https://app.example/style.css': { body: 'body{color:blue}' } });
+    const loader = new ResourceLoader(client);
+    loader.setCors(new CorsEngine(), 'https://app.example');
+    const result = await loader.loadResource('https://app.example/style.css', 'stylesheet');
+    expect(result.error).toBeNull();
+    expect(result.body).toBe('body{color:blue}');
+  });
+
+  it('CORP same-origin blocks a cross-origin resource once setCors() has been called', async () => {
+    const client = mockClient({
+      'https://cdn.example/secret.js': { body: 'secret', headers: { 'cross-origin-resource-policy': 'same-origin' } },
+    });
+    const loader = new ResourceLoader(client);
+    loader.setCors(new CorsEngine(), 'https://app.example');
+    const result = await loader.loadResource('https://cdn.example/secret.js', 'script');
+    expect(result.error).toContain('CORP violation');
+    expect(result.body).toBe('');
+  });
+
+  it('CORP same-site blocks a cross-site (different registrable domain) resource', async () => {
+    const client = mockClient({
+      'https://evil.test/payload.js': { body: 'payload', headers: { 'cross-origin-resource-policy': 'same-site' } },
+    });
+    const loader = new ResourceLoader(client);
+    loader.setCors(new CorsEngine(), 'https://app.example');
+    const result = await loader.loadResource('https://evil.test/payload.js', 'script');
+    expect(result.error).toContain('CORP violation');
+  });
+
+  it('CORP same-site allows a www.-prefix variant of the same host (this codebase\'s isSameSite only strips www., not a full eTLD+1 compare)', async () => {
+    const client = mockClient({
+      'https://www.app.example/widget.js': { body: 'widget', headers: { 'cross-origin-resource-policy': 'same-site' } },
+    });
+    const loader = new ResourceLoader(client);
+    loader.setCors(new CorsEngine(), 'https://app.example');
+    const result = await loader.loadResource('https://www.app.example/widget.js', 'script');
+    expect(result.error).toBeNull();
+    expect(result.body).toBe('widget');
+  });
+
+  it('without setCors(), CORP headers are ignored entirely (pre-fix behavior preserved when uncalled)', async () => {
+    const client = mockClient({
+      'https://cdn.example/secret.js': { body: 'secret', headers: { 'cross-origin-resource-policy': 'same-origin' } },
+    });
+    const loader = new ResourceLoader(client);
+    const result = await loader.loadResource('https://cdn.example/secret.js', 'script');
+    expect(result.error).toBeNull();
+    expect(result.body).toBe('secret');
   });
 });
