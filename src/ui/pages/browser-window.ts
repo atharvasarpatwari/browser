@@ -65,6 +65,8 @@ import type { IResearchPage } from './research-page';
 import type { ISettingsService } from '../../browser/storage/settings-service';
 import type { IBrowserName } from '../../browser/config/browser-name';
 import type { IResearchService } from '../../browser/research/research-types';
+import { generateNetscapeBookmarks, parseNetscapeBookmarks, buildTreeFromService, importIntoService } from '../../browser/bookmarks/bookmark-html-format';
+import { loadNodeBuiltin } from '../../browser/networking/node-builtins';
 
 interface BrowserWindowPageConfig {
   readonly containerId: string;
@@ -1376,6 +1378,49 @@ class BrowserWindowPage implements IBrowserWindowPage {
     searchInput.placeholder = 'Search bookmarks';
     searchInput.style.cssText = 'padding:8px 12px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-md,6px);font-size:14px;width:280px;max-width:50vw;outline:none;background:var(--bg-elevated,#161d30);color:var(--text-primary,#fff);';
     header.appendChild(searchInput);
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:8px;flex-shrink:0;';
+    header.appendChild(actions);
+
+    const btnStyle = 'padding:8px 12px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-md,6px);font-size:13px;cursor:pointer;background:var(--bg-elevated,#161d30);color:var(--text-primary,#fff);';
+
+    const exportBtn = document.createElement('button');
+    exportBtn.textContent = 'Export';
+    exportBtn.style.cssText = btnStyle;
+    exportBtn.addEventListener('click', async () => {
+      if (!this.bookmarkService) return;
+      const html = generateNetscapeBookmarks(await buildTreeFromService(this.bookmarkService));
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      const pathMod = loadNodeBuiltin<typeof import('node:path')>('node:path');
+      const downloadsDir = (globalThis as { nova?: { process?: { downloadsDir?: string | null } } }).nova?.process?.downloadsDir;
+      if (!fs || !pathMod || !downloadsDir) return;
+      const filename = `bookmarks-${new Date().toISOString().slice(0, 10)}.html`;
+      fs.writeFileSync(pathMod.join(downloadsDir, filename), html);
+    });
+    actions.appendChild(exportBtn);
+
+    const importInput = document.createElement('input');
+    importInput.type = 'file';
+    importInput.accept = '.html,text/html';
+    importInput.style.display = 'none';
+    importInput.addEventListener('change', async () => {
+      const file = importInput.files?.[0];
+      if (!file || !this.bookmarkService) return;
+      const html = await file.text();
+      const nodes = parseNetscapeBookmarks(html);
+      const folder = await this.bookmarkService.addFolder(`Imported ${new Date().toLocaleDateString()}`);
+      await importIntoService(this.bookmarkService, nodes, folder.id);
+      importInput.value = '';
+      void renderList();
+    });
+    actions.appendChild(importInput);
+
+    const importBtn = document.createElement('button');
+    importBtn.textContent = 'Import';
+    importBtn.style.cssText = btnStyle;
+    importBtn.addEventListener('click', () => importInput.click());
+    actions.appendChild(importBtn);
 
     container.appendChild(header);
 
