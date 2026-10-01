@@ -104,6 +104,8 @@ interface IDownloadManager extends ISharedService {
   remove(id: string): Promise<boolean>;
   getItem(id: string): DownloadItem | null;
   clearCompleted(): Promise<number>;
+  /** Restarts a failed download from scratch (not a partial resume — bytes buffered before a failure aren't trustworthy to blindly append to). */
+  retry(id: string): Promise<boolean>;
   on(type: DownloadEventType, handler: (event: DownloadEvent) => void): void;
   off(type: DownloadEventType, handler: (event: DownloadEvent) => void): void;
   /** Pause all active downloads */
@@ -467,6 +469,19 @@ class DownloadManager implements IDownloadManager {
     if (!item || item.state !== 'paused') return false;
     (item as { state: DownloadState }).state = 'queued';
     (item as { error: string | null }).error = null;
+    this.bus.emit({ kind: 'downloadResumed', id });
+    this.startDownload(id).catch(() => {});
+    return true;
+  }
+
+  async retry(id: string): Promise<boolean> {
+    const item = this._items.get(id);
+    if (!item || item.state !== 'failed') return false;
+    (item as { state: DownloadState }).state = 'queued';
+    (item as { error: string | null }).error = null;
+    (item as { receivedBytes: number }).receivedBytes = 0;
+    (item as { supportsResume: boolean }).supportsResume = false;
+    this.chunksById.delete(id); // start clean — bytes buffered before a failure aren't trustworthy
     this.bus.emit({ kind: 'downloadResumed', id });
     this.startDownload(id).catch(() => {});
     return true;

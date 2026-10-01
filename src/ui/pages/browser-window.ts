@@ -1219,8 +1219,17 @@ class BrowserWindowPage implements IBrowserWindowPage {
         case 'resume': await this.downloadManager.resume(event.downloadId); break;
         case 'cancel': await this.downloadManager.cancel(event.downloadId); break;
         case 'remove': await this.downloadManager.remove(event.downloadId); break;
-        case 'openFile': break;
-        case 'showInFolder': break;
+        case 'retry': await this.downloadManager.retry(event.downloadId); break;
+        case 'openFile': {
+          const item = this.downloadManager.getItem(event.downloadId);
+          if (item) void window.nova?.shell?.openPath(item.path);
+          break;
+        }
+        case 'showInFolder': {
+          const item = this.downloadManager.getItem(event.downloadId);
+          if (item) void window.nova?.shell?.showItemInFolder(item.path);
+          break;
+        }
       }
     });
   }

@@ -81,4 +81,38 @@ describe('DownloadManager — real disk writes (real pipeline, no mocks)', () =>
     expect(dm.getItem(item.id)?.state).toBe('failed');
     expect(fs.existsSync(item.path)).toBe(false);
   });
+
+  it('retry() restarts cleanly after a real failure and can succeed once the problem is fixed', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-dl-'));
+    const blocker = path.join(tmpDir, 'blocker');
+    fs.writeFileSync(blocker, 'not a directory');
+    const dm = new DownloadManager(tmpDir);
+    const failed = waitFor(dm, 'downloadFailed');
+
+    const item = await dm.download(`${baseUrl}/file.bin`, { path: path.join(blocker, 'nested', 'file.bin') });
+    await failed;
+    expect(dm.getItem(item.id)?.state).toBe('failed');
+
+    // Fix the real problem the first attempt hit, then retry the same item.
+    fs.rmSync(blocker);
+    const completed = waitFor(dm, 'downloadCompleted');
+    const ok = await dm.retry(item.id);
+    await completed;
+
+    expect(ok).toBe(true);
+    expect(dm.getItem(item.id)?.state).toBe('completed');
+    expect(dm.getItem(item.id)?.error).toBeNull();
+    expect(fs.existsSync(item.path)).toBe(true);
+    expect(fs.readFileSync(item.path, 'utf-8')).toBe(BODY);
+  });
+
+  it('retry() only acts on a failed download', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-dl-'));
+    const dm = new DownloadManager(tmpDir);
+    const done = waitFor(dm, 'downloadCompleted');
+    const item = await dm.download(`${baseUrl}/file.bin`);
+    await done;
+
+    expect(await dm.retry(item.id)).toBe(false);
+  });
 });

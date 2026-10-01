@@ -6,6 +6,10 @@ declare module 'electron' {
 
 /** Preload bridge — exposed via contextBridge in electron/preload.cjs */
 interface NovaPreloadBridge {
+  shell: {
+    openPath(path: string): Promise<string>;
+    showItemInFolder(path: string): Promise<void>;
+  };
   require(name: string): unknown;
   process: {
     readonly platform: string;

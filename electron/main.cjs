@@ -1,6 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, Menu, nativeImage, screen } = require('electron')
+const { app, BrowserWindow, Menu, nativeImage, screen, ipcMain, shell } = require('electron')
 const path = require('path')
 const url = require('url')
 const fs = require('fs')
@@ -520,6 +520,12 @@ if (!gotSingleInstanceLock) {
   app.whenReady().then(() => {
     installApplicationMenu()
     initNovaSocketOwner()
+    // Real electron.shell calls for the downloads panel's Open file / Show
+    // in folder actions — the renderer (contextIsolation: true) has no
+    // direct access to electron.shell, so this is the one safe IPC seam.
+    ipcMain.handle('nova:shell', (_event, { action, path: filePath }) =>
+      action === 'openPath' ? shell.openPath(filePath) : shell.showItemInFolder(filePath)
+    )
     writeHealthLog(`SOCKET_OWNER_READY probe=${JSON.stringify(__novaNetProbe())}`)
     if (REMOTE_DEBUG_PORT) writeHealthLog(`REMOTE_DEBUGGING_ENABLED port=${REMOTE_DEBUG_PORT}`)
     mainWindow = createWindow()

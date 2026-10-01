@@ -15,7 +15,7 @@ type DownloadsPageEventType = 'downloadAction';
 
 interface DownloadsPageEvent {
   readonly kind: DownloadsPageEventType;
-  readonly action?: 'pause' | 'resume' | 'cancel' | 'remove' | 'openFile' | 'showInFolder';
+  readonly action?: 'pause' | 'resume' | 'cancel' | 'remove' | 'openFile' | 'showInFolder' | 'retry';
   readonly downloadId?: string;
 }
 
@@ -203,6 +203,9 @@ class DownloadsPage implements IDownloadsPage {
     }
     if (item.state === 'paused') {
       this.addActionBtn(actions, '▶', 'resume', item.id, 'Resume');
+    }
+    if (item.state === 'failed') {
+      this.addActionBtn(actions, '🔄', 'retry', item.id, 'Retry');
     }
     if (item.state === 'queued' || item.state === 'downloading') {
       this.addActionBtn(actions, '✕', 'cancel', item.id, 'Cancel');
