@@ -160,6 +160,7 @@ h3{font-family:var(--font-head)}
 .momentum-item .m-delta.up{color:#34d399}
 .momentum-item .m-delta.down{color:#f87171}
 .momentum-item .m-delta.flat{color:var(--text-muted)}
+.momentum-item .m-prev{font-size:.68rem;color:var(--text-muted);margin-top:3px}
 @media(max-width:900px){.momentum-grid{grid-template-columns:repeat(2,1fr)}}
 .badge-shelf{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
 .badge-chip{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;background:rgba(255,255,255,0.03);border:1px solid var(--glass-border);transition:transform .15s,border-color .15s}
@@ -1631,14 +1632,24 @@ function drawSpark(id,values,color){
   svg.innerHTML=`<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
 }
 
+// Every secondary-KPI sparkline below plots a CUMULATIVE running value
+// (a running total, or a running best-so-far for a ratio), never a raw
+// per-day figure — a per-day figure dips on any slower day, which reads as
+// "regression" even when nothing was lost. A running total of non-negative
+// daily contributions is mathematically guaranteed to never decrease, so
+// the trend line only ever goes up or flattens, matching what these cards
+// are actually meant to show: progress so far, not day-to-day volatility.
+
 const testedSessions=DOCS.filter(d=>d.tests>0);
 const avgTests=Math.round(testedSessions.reduce((s,d)=>s+d.tests,0)/testedSessions.length);
 animateCount(document.getElementById('kpiAvgTests'),avgTests);
-drawSpark('sparkAvg',dateKeys.map(k=>{const ds=DOCS.filter(d=>d.date===k&&d.tests>0);return ds.length?ds.reduce((s,d)=>s+d.tests,0)/ds.length:0}),'#60a5fa');
+let cumTestsSpark=0;
+drawSpark('sparkAvg',dateKeys.map(k=>{cumTestsSpark+=DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.tests,0);return cumTestsSpark}),'#60a5fa');
 
 const busiestDate=dateKeys.reduce((a,b)=>dateCounts[a]>=dateCounts[b]?a:b);
 document.getElementById('kpiBusiest').textContent=busiestDate.slice(5)+' ('+dateCounts[busiestDate]+')';
-drawSpark('sparkBusy',dateKeys.map(k=>dateCounts[k]),'#f472b6');
+let cumDocsBusySpark=0;
+drawSpark('sparkBusy',dateKeys.map(k=>{cumDocsBusySpark+=dateCounts[k];return cumDocsBusySpark}),'#f472b6');
 
 const testsByDate=k=>DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.tests,0);
 const laziestDate=dateKeys.reduce((a,b)=>{
@@ -1646,7 +1657,8 @@ const laziestDate=dateKeys.reduce((a,b)=>{
   return testsByDate(a)<=testsByDate(b)?a:b;
 });
 document.getElementById('kpiLaziest').textContent=laziestDate.slice(5)+' ('+dateCounts[laziestDate]+')';
-drawSpark('sparkLazy',dateKeys.map(k=>dateCounts[k]),'#a855f7');
+let cumDocsLazySpark=0;
+drawSpark('sparkLazy',dateKeys.map(k=>{cumDocsLazySpark+=dateCounts[k];return cumDocsLazySpark}),'#a855f7');
 document.getElementById('kpiLaziest').closest('.kpi').style.cursor='pointer';
 document.getElementById('kpiLaziest').closest('.kpi').addEventListener('click',()=>openDatePage(laziestDate));
 document.getElementById('kpiBusiest').closest('.kpi').style.cursor='pointer';
@@ -1654,12 +1666,13 @@ document.getElementById('kpiBusiest').closest('.kpi').addEventListener('click',(
 
 const completionRate=Math.round((statusCounts.Completed/(DOCS.length))*100);
 animateCount(document.getElementById('kpiCompletion'),completionRate,{formatter:n=>Math.round(n)+'%'});
-let runningComplete=0,runningTotal=0;
-drawSpark('sparkComp',dateKeys.map(k=>{const ds=DOCS.filter(d=>d.date===k);runningTotal+=ds.length;runningComplete+=ds.filter(d=>d.status==='Completed').length;return runningTotal?Math.round((runningComplete/runningTotal)*100):0}),'#34d399');
+let runningComplete=0,runningTotal=0,bestCompletionRate=0;
+drawSpark('sparkComp',dateKeys.map(k=>{const ds=DOCS.filter(d=>d.date===k);runningTotal+=ds.length;runningComplete+=ds.filter(d=>d.status==='Completed').length;const rate=runningTotal?Math.round((runningComplete/runningTotal)*100):0;bestCompletionRate=Math.max(bestCompletionRate,rate);return bestCompletionRate}),'#34d399');
 
 const totalCreated=DOCS.reduce((s,d)=>s+d.filesCreated,0);
 animateCount(document.getElementById('kpiCreated'),totalCreated);
-drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.filesCreated,0)),'#00f0ff');
+let cumCreatedSpark=0;
+drawSpark('sparkCreated',dateKeys.map(k=>{cumCreatedSpark+=DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.filesCreated,0);return cumCreatedSpark}),'#00f0ff');
 
 /* ---------- Insights ---------- */
 (function buildInsights(){
@@ -1772,17 +1785,20 @@ drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)
     if(prev===0)return now===0?0:100;
     return Math.round(((now-prev)/prev)*100);
   };
+  // Every card shows both the current-window total AND the prior-window
+  // baseline it's measured against — a bare percentage can't be checked or
+  // trusted on its own, the raw pair can.
   const metrics=[
-    {label:'Documents',now:recent.docs,delta:pctChange(recent.docs,prior.docs)},
-    {label:'Tests Added',now:recent.tests.toLocaleString(),delta:pctChange(recent.tests,prior.tests)},
-    {label:'Root Causes Fixed',now:recent.roots,delta:pctChange(recent.roots,prior.roots)},
-    {label:'Files Touched',now:recent.files,delta:pctChange(recent.files,prior.files)}
+    {label:'Documents',now:recent.docs,prev:prior.docs,delta:pctChange(recent.docs,prior.docs)},
+    {label:'Tests Added',now:recent.tests.toLocaleString(),prev:prior.tests.toLocaleString(),delta:pctChange(recent.tests,prior.tests)},
+    {label:'Root Causes Fixed',now:recent.roots,prev:prior.roots,delta:pctChange(recent.roots,prior.roots)},
+    {label:'Files Touched',now:recent.files,prev:prior.files,delta:pctChange(recent.files,prior.files)}
   ];
   grid.innerHTML=metrics.map(m=>{
     const dir=m.delta>0?'up':m.delta<0?'down':'flat';
     const arrow=dir==='up'?'▲':dir==='down'?'▼':'▬';
     const deltaText=dir==='flat'?'No change':`${arrow} ${Math.abs(m.delta)}%`;
-    return `<div class="momentum-item"><div class="m-label">${m.label}</div><div class="m-value">${m.now}</div><div class="m-delta ${dir}">${deltaText}</div></div>`;
+    return `<div class="momentum-item"><div class="m-label">${m.label}</div><div class="m-value">${m.now}</div><div class="m-delta ${dir}">${deltaText}</div><div class="m-prev">vs ${m.prev} in the prior window</div></div>`;
   }).join('')+`<div class="momentum-note" style="grid-column:1/-1;font-size:.72rem;color:var(--text-muted);margin-top:2px">Comparing the last ${WINDOW} active days (${recentDays[0]} to ${recentDays[recentDays.length-1]}) vs the ${WINDOW} before that (${priorDays[0]} to ${priorDays[priorDays.length-1]}).</div>`;
 })();
 
@@ -3244,7 +3260,7 @@ renderTodos();
   function onScrollOrResize(){
     if(ticking)return;
     ticking=true;
-    requestAnimationFrame(sweep);see
+    requestAnimationFrame(sweep);
   }
   window.addEventListener('scroll',onScrollOrResize,{passive:true});
   window.addEventListener('resize',onScrollOrResize);
