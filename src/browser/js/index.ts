@@ -21,6 +21,7 @@ import {
 import { createXMLHttpRequestClass } from './xhr';
 import { createPermissionApiBindings } from './permissions-api';
 import type { PermissionPrompt } from '../web-apis/web-apis-permissions';
+import type { PersistentPermissionStore } from '../storage/persistent-stores';
 import { createWebSocketClass } from './websocket-api';
 import { createRTCPeerConnectionClass, createRTCSessionDescriptionClass, createRTCIceCandidateClass } from './rtc-api';
 import { createWorkerConstructor } from './worker';
@@ -238,6 +239,7 @@ export function createGlobalEnv(
   corsEngine?: ICorsEngine,
   cookieJar?: ICookieJar,
   onPermissionRequest?: PermissionPrompt,
+  persistentPermissionStore?: PersistentPermissionStore,
 ): Environment {
   const env = new Environment(null);
   // The global scope is a `var`-hoisting boundary — Environment.declare()
@@ -1964,7 +1966,7 @@ export function createGlobalEnv(
   // permission-gated Web APIs, backed by the shared PermissionGatedWebApis
   // facade (one per page load, origin-scoped). promptUser resolves 'denied'
   // by default when the engine hasn't wired a real prompt UI (tests).
-  const permissionApis = createPermissionApiBindings(eventLoop, pageOrigin ?? '', isSecureContext, onPermissionRequest);
+  const permissionApis = createPermissionApiBindings(eventLoop, pageOrigin ?? '', isSecureContext, onPermissionRequest, persistentPermissionStore);
   navObj.properties.set('geolocation', { value: permissionApis.geolocation, writable: false, enumerable: true, configurable: false });
   navObj.properties.set('clipboard', { value: permissionApis.clipboard, writable: false, enumerable: true, configurable: false });
   env.setLocal('Notification', permissionApis.notifications);

@@ -65,6 +65,7 @@ import type { LayerCompositor } from '../rendering/compositing/layer-compositor'
 import { CssAnimationAnimator } from '../rendering/css-animations';
 import { setAnimationRuntime, dispatchAnimationEventToElement } from '../js/dom-bindings';
 import type { PermissionName } from '../web-apis/web-apis-permissions';
+import type { PersistentPermissionStore } from '../storage/persistent-stores';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTRUCTOR PARAMETERS
@@ -100,6 +101,8 @@ interface PageRendererDependencies {
   readonly onConsoleMessage?: (entry: ConsoleEntry) => void;
   /** Optional callback that shows a real permission prompt to the user and resolves with their choice. */
   readonly onPermissionRequest?: (origin: string, name: PermissionName) => Promise<'granted' | 'denied'>;
+  /** Optional persisted permission grants — makes a decision survive reload/restart instead of resetting every page load. */
+  readonly permissionStore?: PersistentPermissionStore;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,6 +467,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       this.deps.corsEngine,
       resourceLoader.getCookieJar() ?? undefined,
       this.deps.onPermissionRequest,
+      this.deps.permissionStore,
     );
 
     // Forward every console.log/warn/error/etc the page makes to whoever's

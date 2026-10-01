@@ -18,7 +18,10 @@ import {
   type GeolocationPosition,
   type ClipboardBackend,
   type NotificationOptions,
+  type PermissionName,
+  type PermissionState,
 } from '../web-apis/web-apis-permissions';
+import type { PersistentPermissionStore } from '../storage/persistent-stores';
 
 // ponytail: no real GPS/IP-geolocation on desktop — fixed default location
 // (San Francisco), replace with an IP-based lookup or OS location API if
@@ -277,7 +280,19 @@ export function createPermissionApiBindings(
   origin: string,
   isSecureContext: boolean,
   promptUser?: PermissionPrompt,
+  persistentStore?: PersistentPermissionStore,
 ): PermissionApiBindings {
+  // Only this page's own origin will ever be queried from this PermissionStore
+  // instance, so the seed only needs that one origin's grants, not the whole
+  // persisted store.
+  const permissionSeed = persistentStore
+    ? new Map([[origin, new Map(
+        persistentStore.entries()
+          .filter(([o]) => o === origin)
+          .map(([, name, state]) => [name, state] as [PermissionName, PermissionState]),
+      )]])
+    : undefined;
+
   const webApis = new PermissionGatedWebApis({
     origin,
     promptUser: promptUser ?? (async () => 'denied'),
@@ -285,6 +300,8 @@ export function createPermissionApiBindings(
     clipboardBackend: defaultClipboardBackend,
     vibrationBackend: { vibrate: () => {}, cancel: () => {} },
     isSecureContext,
+    permissionSeed,
+    onPermissionChange: persistentStore && ((o, name, state) => persistentStore.set(o, name, state)),
   });
 
   return {

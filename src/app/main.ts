@@ -127,6 +127,7 @@ import {
   PersistentBookmarkStore,
   PersistentHistoryStore,
   PersistentTokenStore,
+  PersistentPermissionStore,
 } from '../browser/storage/persistent-stores';
 import type { ISessionsStore } from '../browser/storage/sessions-store';
 import type { ICookieStore } from '../browser/storage/cookie-store';
@@ -235,6 +236,7 @@ const Tokens = Object.freeze({
   BrowserName: Symbol('BrowserName'),
   IncognitoManager: Symbol('IncognitoManager'),
   ProfileManager: Symbol('ProfileManager'),
+  PermissionStore: Symbol('PermissionStore'),
   // AI Research
   ResearchService: Symbol('ResearchService'),
 } as const);
@@ -568,6 +570,11 @@ class ApplicationBootstrap {
       () => new PersistentCookieStore(typeof window !== 'undefined' ? window.localStorage : undefined),
       ServiceLifetime.Singleton,
     );
+    c.register<PersistentPermissionStore>(
+      Tokens.PermissionStore,
+      () => new PersistentPermissionStore(typeof window !== 'undefined' ? window.localStorage : undefined),
+      ServiceLifetime.Singleton,
+    );
 
     // 9b. Settings persistence & service
     c.register<ISettingsStore>(
@@ -895,6 +902,8 @@ class ApplicationBootstrap {
       return true;
     });
 
+    const permissionStore = this.container.resolve<PersistentPermissionStore>(Tokens.PermissionStore);
+
     // Plug the rendering pipeline as the page renderer
     const pageRenderer = new PageRenderer({
       htmlParser: new HtmlParser(),
@@ -922,6 +931,7 @@ class ApplicationBootstrap {
       onFrameRendered: () => engine.notifyPageRepainted(),
       onConsoleMessage: (entry) => engine.notifyConsoleMessage(entry),
       onPermissionRequest: (origin, name) => engine.requestPermissionPrompt(origin, name),
+      permissionStore,
     });
     engine.setPageRenderer(pageRenderer);
 
@@ -945,6 +955,7 @@ class ApplicationBootstrap {
     page.setHistoryService(historyServiceInstance);
     page.setIncognitoManager(incognitoManager);
     page.setProfileManager(profileManager);
+    page.setPermissionStore(permissionStore);
     page.setCache(cacheManager);
 
     // Incognito: pause history recording and isolate the cookie jar for the

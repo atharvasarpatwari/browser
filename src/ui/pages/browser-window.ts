@@ -54,6 +54,7 @@ import { FindBar } from '../components/find-bar/find-bar';
 import { PermissionBar } from '../components/permission-bar/permission-bar';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
 import type { IProfileManager } from '../../browser/settings/profiles';
+import type { PersistentPermissionStore } from '../../browser/storage/persistent-stores';
 import type { DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
 import { SettingsPage } from './settings-page';
@@ -170,6 +171,7 @@ interface IBrowserWindowPage extends IDisposable {
   setResearchService(service: IResearchService): void;
   setIncognitoManager(manager: IIncognitoManager): void;
   setProfileManager(manager: IProfileManager): void;
+  setPermissionStore(store: PersistentPermissionStore): void;
   setCache(cache: ICacheManager): void;
 
   // ── External chrome bridge (native shells driving this page's tabs/nav) ────
@@ -568,6 +570,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private contextMenu: ContextMenu | null = null;
   private incognitoManager: IIncognitoManager | null = null;
   private profileManager: IProfileManager | null = null;
+  private permissionStore: PersistentPermissionStore | null = null;
   private cache: ICacheManager | null = null;
   private closedTabUrls: string[] = [];
   private tabSessionBridge: TabSessionBridge | null = null;
@@ -1091,7 +1094,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     container.style.cssText = 'width:100%;height:100%;';
     this.contentArea.appendChild(container);
     this.activeContentPanel = container;
-    this.activeSettingsPage = new SettingsPage(undefined, this.profileManager ?? undefined);
+    this.activeSettingsPage = new SettingsPage(undefined, this.profileManager ?? undefined, this.permissionStore ?? undefined);
     this.activeSettingsPage.mount(container);
     if (this.settingsService) {
       this.settingsService.init(this.activeSettingsPage);
@@ -2039,6 +2042,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setProfileManager(manager: IProfileManager): void {
     this.profileManager = manager;
+  }
+
+  setPermissionStore(store: PersistentPermissionStore): void {
+    this.permissionStore = store;
   }
 
   setCache(cache: ICacheManager): void {

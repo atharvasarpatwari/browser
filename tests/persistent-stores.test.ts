@@ -6,6 +6,7 @@ import {
   PersistentHistoryStore,
   PersistentTokenStore,
   PersistentPasswordStore,
+  PersistentPermissionStore,
 } from '../src/browser/storage/persistent-stores';
 import { AuthProtocol, CredentialType } from '../src/browser/auth/auth-provider';
 import type { CookieData } from '../src/browser/storage/cookie-store';
@@ -962,5 +963,62 @@ describe('PersistentPasswordStore', () => {
     await noStorage.init('master');
     await noStorage.add(makePasswordData());
     expect(noStorage.count()).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERSISTENT PERMISSION STORE
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('PersistentPermissionStore', () => {
+  let storage: MockStorage;
+  let store: PersistentPermissionStore;
+
+  beforeEach(() => {
+    storage = new MockStorage();
+    store = new PersistentPermissionStore(storage as unknown as Storage);
+  });
+
+  it('should return undefined for a permission never set', () => {
+    expect(store.get('https://example.com', 'geolocation')).toBeUndefined();
+  });
+
+  it('should set and get a permission', () => {
+    store.set('https://example.com', 'geolocation', 'granted');
+    expect(store.get('https://example.com', 'geolocation')).toBe('granted');
+  });
+
+  it('should keep separate permissions per origin', () => {
+    store.set('https://a.example', 'notifications', 'granted');
+    store.set('https://b.example', 'notifications', 'denied');
+    expect(store.get('https://a.example', 'notifications')).toBe('granted');
+    expect(store.get('https://b.example', 'notifications')).toBe('denied');
+  });
+
+  it('should revoke a permission', () => {
+    store.set('https://example.com', 'clipboard-read', 'granted');
+    store.revoke('https://example.com', 'clipboard-read');
+    expect(store.get('https://example.com', 'clipboard-read')).toBeUndefined();
+  });
+
+  it('should list all grants via entries()', () => {
+    store.set('https://a.example', 'geolocation', 'granted');
+    store.set('https://b.example', 'notifications', 'denied');
+    const entries = store.entries();
+    expect(entries).toHaveLength(2);
+    expect(entries).toContainEqual(['https://a.example', 'geolocation', 'granted']);
+    expect(entries).toContainEqual(['https://b.example', 'notifications', 'denied']);
+  });
+
+  it('should persist grants to localStorage and survive a new instance', () => {
+    store.set('https://example.com', 'geolocation', 'granted');
+    const store2 = new PersistentPermissionStore(storage as unknown as Storage);
+    expect(store2.get('https://example.com', 'geolocation')).toBe('granted');
+  });
+
+  it('should operate in-memory when no storage is available', () => {
+    const noStorage = new PersistentPermissionStore();
+    noStorage.set('https://example.com', 'geolocation', 'granted');
+    expect(noStorage.get('https://example.com', 'geolocation')).toBe('granted');
   });
 });

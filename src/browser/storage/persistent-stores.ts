@@ -16,6 +16,7 @@ import { encryptData, decryptData } from '../auth/token-store';
 import { generateSecureId } from '../../common/crypto-utils';
 import type { IPasswordStore, PasswordEntry, PasswordEntryData } from './password-store';
 import { InMemoryPasswordStore } from './password-store';
+import type { PermissionName, PermissionState } from '../web-apis/web-apis-permissions';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER
@@ -857,6 +858,58 @@ export {
   PersistentHistoryStore,
   PersistentTokenStore,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERSISTENT PERMISSION STORE
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PERMISSION_STORAGE_KEY = 'nova-permissions';
+
+/**
+ * localStorage-backed per-origin permission grants, so a decision survives
+ * reload/restart instead of PermissionStore's own per-page-load in-memory
+ * Map. Kept ignorant of the live PermissionStore/PermissionGatedWebApis
+ * instances — it's wired in via a seed Map + onPersist callback, the same
+ * injection pattern PermissionStore already uses for promptUser.
+ */
+class PersistentPermissionStore {
+  private readonly storage: Storage | null;
+  private grants: Map<string, Map<PermissionName, PermissionState>>;
+
+  constructor(storage?: Storage) {
+    this.storage = storage ?? null;
+    const stored = loadJson<Record<string, Record<PermissionName, PermissionState>>>(this.storage, PERMISSION_STORAGE_KEY);
+    this.grants = new Map(Object.entries(stored ?? {}).map(([o, m]) => [o, new Map(Object.entries(m) as [PermissionName, PermissionState][])]));
+  }
+
+  private persist(): void {
+    const obj: Record<string, Record<string, PermissionState>> = {};
+    for (const [origin, m] of this.grants) obj[origin] = Object.fromEntries(m);
+    saveJson(this.storage, PERMISSION_STORAGE_KEY, obj);
+  }
+
+  get(origin: string, name: PermissionName): PermissionState | undefined {
+    return this.grants.get(origin)?.get(name);
+  }
+
+  set(origin: string, name: PermissionName, state: PermissionState): void {
+    const m = this.grants.get(origin) ?? new Map();
+    m.set(name, state);
+    this.grants.set(origin, m);
+    this.persist();
+  }
+
+  revoke(origin: string, name: PermissionName): void {
+    this.grants.get(origin)?.delete(name);
+    this.persist();
+  }
+
+  entries(): readonly (readonly [string, PermissionName, PermissionState])[] {
+    return [...this.grants].flatMap(([o, m]) => [...m].map(([n, s]) => [o, n, s] as const));
+  }
+}
+
+export { PersistentPermissionStore };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PERSISTENT PASSWORD STORE

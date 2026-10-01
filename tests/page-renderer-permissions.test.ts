@@ -16,8 +16,12 @@ import { PaintEngine } from '../src/browser/rendering/paint-engine';
 import { ResourceLoader } from '../src/browser/networking/resource-loader';
 import { ResourcePrioritizer } from '../src/browser/networking/resource-prioritizer';
 import type { PermissionName } from '../src/browser/web-apis/web-apis-permissions';
+import { PersistentPermissionStore } from '../src/browser/storage/persistent-stores';
 
-function makeRenderer(onPermissionRequest?: (origin: string, name: PermissionName) => Promise<'granted' | 'denied'>) {
+function makeRenderer(
+  onPermissionRequest?: (origin: string, name: PermissionName) => Promise<'granted' | 'denied'>,
+  permissionStore?: PersistentPermissionStore,
+) {
   return new PageRenderer({
     htmlParser: new HtmlParser(),
     domTree: new DomTree(),
@@ -27,6 +31,7 @@ function makeRenderer(onPermissionRequest?: (origin: string, name: PermissionNam
     resourceLoader: new ResourceLoader(),
     prioritizer: new ResourcePrioritizer(),
     onPermissionRequest,
+    permissionStore,
   });
 }
 
@@ -68,6 +73,26 @@ describe('PageRenderer — permission-gated Web APIs (real pipeline, no mocks)',
     await flush();
 
     expect(textOf(renderer, 'log')).toBe('ok:37.7749,-122.4194');
+  });
+
+  it('a granted permission writes through to a supplied PersistentPermissionStore', async () => {
+    const store = new PersistentPermissionStore();
+    const renderer = makeRenderer(async () => 'granted', store);
+    await render(renderer, `
+      <html><body>
+        <div id="log"></div>
+        <script>
+          navigator.geolocation.getCurrentPosition(function(pos) {
+            document.getElementById('log').textContent = 'ok';
+          });
+        </script>
+      </body></html>
+    `);
+
+    await flush();
+
+    expect(textOf(renderer, 'log')).toBe('ok');
+    expect(store.get('https://example.test/', 'geolocation')).toBe('granted');
   });
 
   it('navigator.geolocation.getCurrentPosition calls the error callback with PERMISSION_DENIED when the user blocks', async () => {
