@@ -33,6 +33,8 @@ const SUPPORTED_MIME_TYPES = new Set([
   'image/jpg',
   'image/webp',
   'image/gif',
+  'image/avif',
+  'image/svg+xml',
 ]);
 
 function normalizeMime(mimeType: string): string {
@@ -80,8 +82,12 @@ export class ImageDecoder implements IImageDecoder {
         return await this.decodeWebp(bytes);
       }
 
-      if (mime === 'image/gif') {
+      if (mime === 'image/gif' || mime === 'image/avif') {
         return await this.decodeViaCanvas(bytes, mime);
+      }
+
+      if (mime === 'image/svg+xml') {
+        return await this.decodeSvgViaImage(bytes, mime);
       }
 
       return null;
@@ -120,11 +126,16 @@ export class ImageDecoder implements IImageDecoder {
 
   /**
    * Decode via the renderer's own native image decoder (createImageBitmap +
-   * canvas), for formats with no JS decoder here. GIF is the real-world case
-   * — real sites lean on it for tiny spacer/icon images (e.g. Hacker News),
-   * and hand-rolling LZW/GIF decoding to match pngjs/jpeg-js's approach would
-   * just re-implement what Chromium already does correctly. Only the first
-   * frame of an animated GIF is decoded — animation is a separate feature.
+   * canvas), for formats with no JS decoder here. GIF is the original
+   * real-world case — real sites lean on it for tiny spacer/icon images
+   * (e.g. Hacker News), and hand-rolling LZW/GIF decoding to match
+   * pngjs/jpeg-js's approach would just re-implement what Chromium already
+   * does correctly. Only the first frame of an animated GIF is decoded —
+   * animation is a separate feature. AVIF rides the same path (unlike SVG,
+   * it's a raster bitmap codec, not vector content, so it doesn't hit the
+   * createImageBitmap-can't-rasterize-vectors gap SVG did) — confirmed live
+   * via a real sharp-encoded test file: createImageBitmap(aviBlob) decodes
+   * correctly in this host's Chromium, no separate decode path needed.
    */
   private async decodeViaCanvas(bytes: Uint8Array, mimeType: string): Promise<DecodedImage | null> {
     if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function') {
@@ -148,6 +159,58 @@ export class ImageDecoder implements IImageDecoder {
       };
     } finally {
       bitmap.close();
+    }
+  }
+
+  /**
+   * Decode SVG via the renderer's own real <img>/drawImage pipeline, rather
+   * than hand-writing a second SVG path-data parser — the host's own
+   * rasterizer already parses/paints SVG correctly, and since it's decoded
+   * as an image source rather than navigated to, embedded <script>/event
+   * handlers never execute (the same guarantee a real <img src="*.svg">
+   * gets in any browser). Inline <svg> as live, stylable DOM content is a
+   * separate, much larger problem this does not attempt.
+   *
+   * Deliberately NOT createImageBitmap()-based like decodeViaCanvas() above
+   * — confirmed via live testing that createImageBitmap(svgBlob) throws
+   * InvalidStateError ("source image could not be decoded") in this host's
+   * Chromium build, even for a well-formed SVG with explicit width/height.
+   * <img> + drawImage() is the real, verified-working path for rasterizing
+   * SVG; createImageBitmap's SVG support is inconsistent across engines in
+   * a way GIF's is not.
+   */
+  private async decodeSvgViaImage(bytes: Uint8Array, mimeType: string): Promise<DecodedImage | null> {
+    if (typeof Image !== 'function' || typeof OffscreenCanvas !== 'function') {
+      return null;
+    }
+    const blob = new Blob([bytes as unknown as ArrayBuffer], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      // A 5s timeout guards against a host whose Image implementation never
+      // fires onload/onerror for a blob: URL (confirmed happy-dom does this
+      // for real SVG content in tests — it has Image/OffscreenCanvas as
+      // real functions but doesn't actually decode anything).
+      const loaded = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 5000);
+        img.onload = () => { clearTimeout(timer); resolve(true); };
+        img.onerror = () => { clearTimeout(timer); resolve(false); };
+        img.src = url;
+      });
+      if (!loaded || img.naturalWidth <= 0 || img.naturalHeight <= 0) return null;
+
+      const canvas = new OffscreenCanvas(img.naturalWidth, img.naturalHeight);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, img.naturalWidth, img.naturalHeight);
+      return {
+        data: imageData.data,
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+      };
+    } finally {
+      URL.revokeObjectURL(url);
     }
   }
 

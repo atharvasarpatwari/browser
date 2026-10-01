@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { PNG } from 'pngjs';
 import * as jpeg from 'jpeg-js';
 import { encode as encodeWebp } from '@stacksjs/ts-webp';
@@ -81,6 +81,14 @@ describe('isSupportedImageType', () => {
 
   it('should support image/gif', () => {
     expect(isSupportedImageType('image/gif')).toBe(true);
+  });
+
+  it('should support image/svg+xml', () => {
+    expect(isSupportedImageType('image/svg+xml')).toBe(true);
+  });
+
+  it('should support image/avif', () => {
+    expect(isSupportedImageType('image/avif')).toBe(true);
   });
 
   it('should not support image/bmp', () => {
@@ -220,6 +228,35 @@ describe('ImageDecoder', () => {
       const buf = new Uint8Array([1, 2, 3, 4]);
       const result = await decoder.decode(buf, 'image/gif');
       expect(result).toBeNull();
+    });
+
+    it('should return null for AVIF data when no native canvas decoder is available', async () => {
+      // Same decodeViaCanvas() path as GIF — real rasterization was
+      // confirmed live during implementation (a real sharp-encoded test
+      // file decoded correctly via createImageBitmap in the dev-preview
+      // browser pane); happy-dom can't prove that here, same as GIF.
+      const buf = new Uint8Array([1, 2, 3, 4]);
+      const result = await decoder.decode(buf, 'image/avif');
+      expect(result).toBeNull();
+    });
+
+    it('should return null for SVG data when no native canvas decoder is available', async () => {
+      // happy-dom's Image never fires onload/onerror for a blob: URL (it
+      // has Image/OffscreenCanvas as real functions but doesn't actually
+      // decode anything), so decodeSvgViaImage() falls through its 5s
+      // safety timeout — fake timers skip the real wait. Real rasterization
+      // can only be proven live, in an environment with a real Image
+      // decoder (a packaged Electron window, or the dev-preview browser
+      // pane — confirmed working there during implementation).
+      vi.useFakeTimers();
+      try {
+        const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>');
+        const resultPromise = decoder.decode(svg, 'image/svg+xml');
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(await resultPromise).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should return null for garbage PNG data', async () => {
