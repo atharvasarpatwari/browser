@@ -245,6 +245,26 @@ describe('RawSocketHttpClient over the explicit proxy wire', () => {
     expect((cert as { subject?: { CN?: string } }).subject?.CN).toBe('localhost');
     await handle.destroy();
   });
+
+  it('reports authorized:false for a self-signed cert the system trust store does not know', async () => {
+    const handle: ISocketHandle = await proxy.openTcp({ host: '127.0.0.1', port: tlsPort, tls: true });
+    await once(handle, 'secureConnect');
+    const auth = await handle.getTlsAuthorization();
+    expect(auth.authorized).toBe(false);
+    expect(auth.authorizationError).toBeTruthy();
+    await handle.destroy();
+  });
+
+  it('TlsHandler.negotiate() rejects the same self-signed cert as untrusted, not Valid (regression: it used to rubber-stamp any presented cert)', async () => {
+    // hostname must match the test cert's CN ('localhost') so this isolates
+    // the trust check — a hostname mismatch would fail negotiate() for an
+    // unrelated reason and wouldn't prove this fix.
+    const { TlsHandler } = await import('../src/browser/networking/tls-handler');
+    const handler = new TlsHandler({ useRealTls: true, verifyCertificates: true });
+    const result = await handler.negotiate('localhost', tlsPort);
+    expect(result.verified).toBe(false);
+    expect(result.verificationStatus).not.toBe('valid');
+  });
 });
 
 function concat(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {

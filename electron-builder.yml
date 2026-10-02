@@ -1,6 +1,11 @@
 appId: com.nova.browser
 productName: Nova Browser
 copyright: "© 2026 Nova Browser"
+# Actual uploading is handled by the release workflow's own
+# softprops/action-gh-release step — the build scripts pass --publish=never
+# so electron-builder never uploads itself, but it still needs this provider
+# config to generate latest.yml/latest-mac.yml/latest-linux.yml (the
+# manifests electron-updater reads) with the right repo info.
 publish:
   provider: github
   owner: atharvasarpatwari
@@ -12,7 +17,6 @@ files:
   - electron/**
   - dist/index.html
   - dist/assets/**
-  - "!node_modules/**"
 asar: true
 npmRebuild: false
 win:

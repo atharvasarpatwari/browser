@@ -1,7 +1,7 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { HtmlDocument, HtmlElement, HtmlNode } from './html-parser';
-import { NodeType } from './html-parser';
-import { querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll, type SelectableElement } from './css5/selector';
+import { NodeType, HtmlParser } from './html-parser';
+import { querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll, matchesSelectorString, type SelectableElement } from './css5/selector';
 import { CssParser as Css5Parser } from './css5/parser';
 
 type DomNodeType = 'document' | 'element' | 'text' | 'comment';
@@ -32,6 +32,14 @@ interface DomElement extends DomNode {
   loadingState: 'none' | 'lazy' | 'loading' | 'loaded' | 'error';
   /** Cached will-change computed value (populated by CSS cascade). */
   willChange: string | null;
+  /** Live value for input/textarea/select — unset until first touched, then diverges from the `value`/`selected` content attribute (which represents defaultValue), matching real DOM semantics. Optional (not initialized at every DomElement construction site) so existing object literals across the codebase don't all need updating. */
+  value?: string | null;
+  /** Live checked state for input[type=checkbox|radio] — unset until first touched, then diverges from the `checked` content attribute (defaultChecked). */
+  checked?: boolean | null;
+  /** Live selected-option index for select — unset until first touched. */
+  selectedIndex?: number | null;
+  /** Caret offset into `value`, for input/textarea editing. Unset until the element is focused/edited. */
+  caretOffset?: number | null;
 }
 
 interface DomTextNode extends DomNode {
@@ -148,8 +156,11 @@ interface IDomTree extends IDisposable {
   getElementById(id: string): DomElement | null;
   getElementsByTagName(tagName: string): readonly DomElement[];
   getElementsByClassName(names: string): readonly DomElement[];
-  querySelector(selector: string): DomElement | null;
-  querySelectorAll(selector: string): readonly DomElement[];
+  querySelector(selector: string, scopeRoot?: DomElement): DomElement | null;
+  querySelectorAll(selector: string, scopeRoot?: DomElement): readonly DomElement[];
+  matches(element: DomElement, selector: string): boolean;
+  /** Parse an HTML fragment (e.g. for innerHTML) into detached nodes, ready to appendChild/insertBefore. */
+  parseFragment(html: string): DomNode[];
   insertBefore(parent: DomElement, newChild: DomNode, referenceChild: DomNode | null): void;
   appendChild(parent: DomElement, child: DomNode): void;
   removeChild(parent: DomElement, child: DomNode): void;
@@ -173,6 +184,10 @@ interface IDomTree extends IDisposable {
   getOwnerDocument(node: DomNode): DomDocument | null;
   /** WHATWG DOM § 4 — isConnected: whether node is connected to a document */
   isConnected(node: DomNode): boolean;
+  /** The currently focused element's domId, or null if nothing is focused. Backs `document.activeElement` and the `:focus` pseudo-class. */
+  getFocusedElementId(): string | null;
+  /** Set (or clear, with null) the focused element, marking the old and new focused elements' style dirty so `:focus` repaints. */
+  setFocusedElementId(domId: string | null): void;
 }
 
 let _domNodeSeq = 0;
@@ -223,6 +238,10 @@ class SelectableDomNode implements SelectableElement {
     return this._element;
   }
 
+  get focused(): boolean {
+    return this._domTree.getFocusedElementId() === this._element.domId;
+  }
+
   private _resolve(): void {
     this._resolved = true;
     const p = this._element.parent;
@@ -241,6 +260,7 @@ class DomTree implements IDomTree {
   private readonly mutations: DomMutation[] = [];
   private readonly idIndex = new Map<string, DomElement>();
   private selectableCache = new WeakMap<DomElement, SelectableDomNode>();
+  private focusedElementId: string | null = null;
 
   buildFromHtml(htmlDoc: HtmlDocument): DomDocument {
     this.nodeIndex.clear();
@@ -258,6 +278,19 @@ class DomTree implements IDomTree {
     return this.nodeIndex.get(domId) ?? null;
   }
 
+  getFocusedElementId(): string | null {
+    return this.focusedElementId;
+  }
+
+  setFocusedElementId(domId: string | null): void {
+    if (domId === this.focusedElementId) return;
+    const previous = this.focusedElementId ? this.nodeIndex.get(this.focusedElementId) : null;
+    this.focusedElementId = domId;
+    const next = domId ? this.nodeIndex.get(domId) : null;
+    if (previous) this.markDirty(previous, 'style');
+    if (next) this.markDirty(next, 'style');
+  }
+
   getElementById(id: string): DomElement | null {
     return this.idIndex.get(id) ?? null;
   }
@@ -265,7 +298,7 @@ class DomTree implements IDomTree {
   getElementsByTagName(tagName: string): readonly DomElement[] {
     const lower = tagName.toLowerCase();
     return [...this.nodeIndex.values()].filter(
-      (n): n is DomElement => n.nodeType === 'element' && (n as DomElement).tagName === lower,
+      (n): n is DomElement => n.nodeType === 'element' && (lower === '*' || (n as DomElement).tagName === lower),
     );
   }
 
@@ -293,7 +326,12 @@ class DomTree implements IDomTree {
     return result;
   }
 
-  querySelector(selector: string): DomElement | null {
+  querySelector(selector: string, scopeRoot?: DomElement): DomElement | null {
+    // Element.querySelector excludes the scope element itself, unlike
+    // Document.querySelector which legitimately matches the document root —
+    // route through querySelectorAll's exclusion so a root-selector match
+    // doesn't short-circuit the search before its descendants are checked.
+    if (scopeRoot) return this.querySelectorAll(selector, scopeRoot)[0] ?? null;
     const root = this.document?.bodyElement ?? this.document?.htmlElement;
     if (!root) return null;
     const selectable = this.toSelectable(root);
@@ -301,14 +339,34 @@ class DomTree implements IDomTree {
     return result instanceof SelectableDomNode ? result.domElement : null;
   }
 
-  querySelectorAll(selector: string): readonly DomElement[] {
-    const root = this.document?.bodyElement ?? this.document?.htmlElement;
+  querySelectorAll(selector: string, scopeRoot?: DomElement): readonly DomElement[] {
+    const root = scopeRoot ?? this.document?.bodyElement ?? this.document?.htmlElement;
     if (!root) return [];
     const selectable = this.toSelectable(root);
     const results = css5QuerySelectorAll(selectable, selector);
     return results
       .map(r => r instanceof SelectableDomNode ? r.domElement : null)
-      .filter((e): e is DomElement => e !== null);
+      .filter((e): e is DomElement => e !== null && e !== scopeRoot);
+  }
+
+  matches(element: DomElement, selector: string): boolean {
+    return matchesSelectorString(this.toSelectable(element), selector);
+  }
+
+  parseFragment(html: string): DomNode[] {
+    // A fragment is parsed as its own tiny document, then only its body's
+    // children are lifted out — same "parse in a body context" model real
+    // engines use for innerHTML, so `<tr>`/`<td>`-only fragments and stray
+    // text nodes come out the same shape a real page would produce.
+    const result = new HtmlParser().parse(html);
+    const bodyHtml = result.document.bodyElement;
+    if (!bodyHtml) return [];
+    const nodes: DomNode[] = [];
+    for (const child of bodyHtml.children) {
+      const converted = this.convertNode(child, null);
+      if (converted) nodes.push(converted);
+    }
+    return nodes;
   }
 
   toSelectable(element: DomElement): SelectableDomNode {

@@ -30,6 +30,18 @@ export class InlineFormattingContext {
   /** The Y position where the first line box starts. */
   readonly startY: number;
 
+  /**
+   * The X position line boxes are anchored to (added to every box/run's
+   * computed x). Defaults to 0 — the common case, where a formatting
+   * context's own coordinate space already starts at the page-absolute
+   * left edge of its content. A nested context built for an inline
+   * element's own children (e.g. <b>bold</b> inside a paragraph) needs
+   * this set to that element's actual position on the line, or its
+   * content renders back at x=0 instead of after the text that precedes
+   * the element.
+   */
+  readonly startX: number;
+
   /** Float exclusion zones that affect available width. */
   private exclusionZones: FloatExclusionZone[] = [];
 
@@ -45,6 +57,12 @@ export class InlineFormattingContext {
   /** Font weight for text measurement. */
   private fontWeight: string;
 
+  /** Whole-line text direction — mirrors box order within a line for 'rtl'. */
+  private direction: 'ltr' | 'rtl';
+
+  /** Resolved (physical) text alignment for this context's lines. */
+  private textAlign: 'left' | 'right' | 'center' | 'justify';
+
   constructor(
     availableWidth: number,
     startY: number,
@@ -53,15 +71,28 @@ export class InlineFormattingContext {
       defaultFontSize?: number;
       fontFamily?: string;
       fontWeight?: string;
+      startX?: number;
+      direction?: 'ltr' | 'rtl';
+      textAlign?: 'left' | 'right' | 'center' | 'justify';
     },
   ) {
     this.availableWidth = availableWidth;
     this.startY = startY;
+    this.startX = options?.startX ?? 0;
     this.exclusionZones = options?.exclusionZones ?? [];
     this.defaultFontSize = options?.defaultFontSize ?? 16;
     this.fontFamily = options?.fontFamily ?? 'sans-serif';
     this.fontWeight = options?.fontWeight ?? 'normal';
-    this.currentLine = this.createLineBox(startY);
+    this.direction = options?.direction ?? 'ltr';
+    this.textAlign = options?.textAlign ?? 'left';
+    // Line boxes track Y relative to this context's own start (0-based) —
+    // pushTextSegment/addBox add `this.startY` back on top to get an
+    // absolute position, and startNewLine()'s `currentLine.y + lineHeight`
+    // increment only stays correct if every line's `.y` is on the same
+    // (relative) footing. Seeding the first line with the *absolute*
+    // startY here (as this used to) double-counted it: the first line's
+    // boxes rendered at startY + startY instead of startY.
+    this.currentLine = this.createLineBox(0);
   }
 
   /**
@@ -132,7 +163,7 @@ export class InlineFormattingContext {
     }
 
     // Position the box horizontally on the current line
-    lb.x = leftOffset + this.currentLine.usedWidth + lb.marginLeft;
+    lb.x = this.startX + leftOffset + this.currentLine.usedWidth + lb.marginLeft;
 
     // Update the line box with this element
     this.currentLine.boxes.push(box);
@@ -276,7 +307,7 @@ export class InlineFormattingContext {
     const box: InlineLevelBox = {
       element: null,
       box: {
-        x: this.currentLine.usedWidth,
+        x: this.startX + this.currentLine.usedWidth,
         y: this.startY + this.currentLine.y,
         width,
         height: lineHeight,
@@ -314,11 +345,30 @@ export class InlineFormattingContext {
       // Ensure minimum height of at least the strut height
       line.height = Math.max(line.height, strutHeight);
 
+      // Horizontal placement: addBox()/pushTextSegment() always accumulate
+      // boxes left-to-right from startX (the "logical order" pass, direction-
+      // agnostic since line-wrapping decisions don't depend on direction).
+      // Re-derive each box's final x here for alignment + RTL mirroring —
+      // ponytail: aligns/mirrors against the full availableWidth rather than
+      // the line's own (possibly float-narrowed) span; fine for the common
+      // whole-page-RTL-no-floats case, revisit if RTL+floats needs the exact
+      // per-line width from getAvailableWidthAt(line.y).
+      const lineWidth = Math.max(0, this.availableWidth);
+      const used = line.usedWidth;
+      let alignOffset = 0;
+      if (this.textAlign === 'right') alignOffset = lineWidth - used;
+      else if (this.textAlign === 'center') alignOffset = (lineWidth - used) / 2;
+
       // Position each box vertically within the line box
       for (const box of line.boxes) {
         // Position relative to line box top
         const offsetFromTop = line.baseline - box.baselineOffset;
-        box.box.y = line.y + Math.max(0, offsetFromTop);
+        box.box.y = this.startY + line.y + Math.max(0, offsetFromTop);
+
+        const relX = box.box.x - this.startX;
+        box.box.x = this.direction === 'rtl'
+          ? this.startX + alignOffset + (used - (relX + box.box.width))
+          : this.startX + alignOffset + relX;
       }
 
       totalHeight += line.height;
@@ -336,6 +386,17 @@ export class InlineFormattingContext {
       total += line.height;
     }
     return total;
+  }
+
+  /**
+   * Returns the absolute Y of the line an inline-level box was just placed
+   * on by addBox() — before finalize()'s per-box baseline adjustment, which
+   * only matters for sub-pixel vertical alignment. Lets a caller recursing
+   * into that box's own children (e.g. an inline element like <b>) position
+   * them at the box's real line instead of the formatting context's origin.
+   */
+  getCurrentLineY(): number {
+    return this.startY + this.currentLine.y;
   }
 
   /**

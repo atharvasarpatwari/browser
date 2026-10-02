@@ -1,4 +1,24 @@
 import type { DomElement, DomNode, LayoutBox } from '../dom-tree';
+import { getTextMeasurer } from './text-measure';
+import { findBreakOpportunities } from './line-break';
+
+/** Recursively concatenates a cell's descendant text, skipping display:none subtrees. */
+function collectCellText(node: DomNode, depth = 0): string {
+  if (depth > 8) return '';
+  if (node.nodeType === 'text') return (node as DomNode & { text?: string }).text ?? '';
+  if (node.nodeType !== 'element') return '';
+  const el = node as DomElement;
+  if (el.computedStyle?.get('display') === 'none') return '';
+  return el.children.map(c => collectCellText(c, depth + 1)).join('');
+}
+
+/** Whether a cell contains a nested <table> anywhere — such a cell must be free to grow to fit it. */
+function containsNestedTable(node: DomNode, depth = 0): boolean {
+  if (depth > 8 || node.nodeType !== 'element') return false;
+  const el = node as DomElement;
+  if (el.computedStyle?.get('display') === 'table') return true;
+  return el.children.some(c => containsNestedTable(c, depth + 1));
+}
 
 export interface TableCell {
   element: DomElement;
@@ -188,9 +208,43 @@ export class TableFormattingContext {
         if (rawW && rawW !== 'auto') {
           cellMin = resolveLength(rawW, '0');
           cellMax = cellMin;
-        } else {
+        } else if (containsNestedTable(cell.element)) {
+          // A cell wrapping a nested table (e.g. a whole-page layout table's
+          // own <td>s) must stay free to grow to whatever width that table
+          // needs — there's no text here to measure against.
           cellMin = 40;
           cellMax = this.options.availableWidth;
+        } else {
+          // No explicit width and no nested table: size from the cell's own
+          // content instead of assuming it wants up to the entire table
+          // width. That assumption made every column-less <td> compete
+          // equally for available width regardless of how little content it
+          // actually held — a one-character "1." cell and a full headline
+          // cell ended up with identical column widths, squeezing the real
+          // content into a column far narrower than it needed and forcing
+          // artificial wrapping.
+          const text = collectCellText(cell.element).trim();
+          if (text) {
+            const measurer = getTextMeasurer();
+            const fontFamily = cellStyle.get('font-family') ?? 'sans-serif';
+            const fontWeight = cellStyle.get('font-weight');
+            const fullWidth = measurer.measure(text, this.options.fontSize, fontFamily, fontWeight).width;
+            let maxWordWidth = 0;
+            let start = 0;
+            for (const opp of findBreakOpportunities(text)) {
+              const word = text.slice(start, opp.index);
+              maxWordWidth = Math.max(maxWordWidth, measurer.measure(word, this.options.fontSize, fontFamily, fontWeight).width);
+              start = opp.index;
+            }
+            maxWordWidth = Math.max(maxWordWidth, measurer.measure(text.slice(start), this.options.fontSize, fontFamily, fontWeight).width);
+            cellMin = Math.max(20, maxWordWidth);
+            cellMax = Math.max(cellMin, Math.min(fullWidth, this.options.availableWidth));
+          } else {
+            // No text and no nested table — a small icon/spacer cell, not
+            // one that should compete for the table's remaining width.
+            cellMin = 20;
+            cellMax = 40;
+          }
         }
         const col = cell.col;
         const span = cell.colspan;
@@ -277,22 +331,32 @@ export class TableFormattingContext {
     }
   }
 
+  /**
+   * Lays out each cell via the `layoutCell` callback, which must return the
+   * actual outer height the cell's content used (e.g. `layoutNode`'s
+   * returned bottom-Y minus the cell's top-Y). A row's pre-computed height
+   * (from `resolve()`, which only knows a cell's CSS `height` or a 20px
+   * guess) is just a lower bound — real content like a wrapped multi-line
+   * title routinely needs more. Advancing to the next row by the guess
+   * instead of the real height is what made unrelated rows overlap.
+   */
   layoutCells(
     contentX: number,
     contentY: number,
-    layoutCell: (cell: DomElement, x: number, y: number, w: number, h: number) => void,
-  ): void {
+    layoutCell: (cell: DomElement, x: number, y: number, w: number, h: number) => number,
+  ): number {
     const spacing = this.options.borderCollapse === 'separate' ? this.options.borderSpacing : 0;
     let y = contentY;
     if (this.options.captionSide === 'top') {
       for (const cap of this.captions) {
-        layoutCell(cap, contentX, y, this.totalWidth, 20);
-        y += 20 + spacing;
+        const used = layoutCell(cap, contentX, y, this.totalWidth, 20);
+        y += Math.max(20, used) + spacing;
       }
     }
     y += spacing;
     for (const row of this.rows) {
       let xOffset = spacing;
+      let actualRowHeight = row.height;
       for (const cell of row.cells) {
         const cellX = contentX + xOffset;
         const cellY = y;
@@ -301,18 +365,22 @@ export class TableFormattingContext {
           cellW += this.columns[cell.col + s].finalWidth;
         }
         cellW += spacing * (cell.colspan - 1);
-        layoutCell(cell.element, cellX, cellY, Math.max(0, cellW), Math.max(0, cell.contentHeight));
+        const used = layoutCell(cell.element, cellX, cellY, Math.max(0, cellW), Math.max(0, cell.contentHeight));
+        actualRowHeight = Math.max(actualRowHeight, used);
         xOffset += cellW + spacing;
       }
-      y += row.height + spacing;
+      row.height = actualRowHeight;
+      y += actualRowHeight + spacing;
     }
     if (this.options.captionSide === 'bottom') {
       y += spacing;
       for (const cap of this.captions) {
-        layoutCell(cap, contentX, y, this.totalWidth, 20);
-        y += 20 + spacing;
+        const used = layoutCell(cap, contentX, y, this.totalWidth, 20);
+        y += Math.max(20, used) + spacing;
       }
     }
+    this.totalHeight = y - contentY;
+    return y;
   }
 
   getTotalWidth(): number {

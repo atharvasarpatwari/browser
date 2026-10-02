@@ -372,6 +372,19 @@ describe('NavigationController', () => {
     expect((result.error as NavigationBlockedError).guardName).toBe('BlockAll');
   });
 
+  it('should follow a guard-supplied upgradeUrl instead of blocking', async () => {
+    const ctrl = new NavigationController(parser);
+    ctrl.addGuard({
+      name: 'HttpsUpgrader',
+      canNavigate: async (request) => !request.url.startsWith('http://'),
+      upgradeUrl: (request) => request.url.replace('http://', 'https://'),
+    });
+
+    const result = await ctrl.navigate('http://example.com');
+    expect(result.success).toBe(true);
+    expect(result.entry?.url).toBe('https://example.com/');
+  });
+
   it('should pass allowed guards', async () => {
     const ctrl = new NavigationController(parser);
     const guard = {

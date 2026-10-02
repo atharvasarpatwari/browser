@@ -13,6 +13,14 @@ describe('Toolbar', () => {
     expect(toolbar.state.canGoForward).toBe(false);
     expect(toolbar.state.loading).toBe(false);
     expect(toolbar.state.shieldEnabled).toBe(true);
+    expect(toolbar.state.incognito).toBe(false);
+  });
+
+  it('setIncognito should update state', () => {
+    toolbar.setIncognito(true);
+    expect(toolbar.state.incognito).toBe(true);
+    toolbar.setIncognito(false);
+    expect(toolbar.state.incognito).toBe(false);
   });
 
   it('setCanGoBack should update state', () => {

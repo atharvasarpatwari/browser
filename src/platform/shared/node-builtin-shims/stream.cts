@@ -32,12 +32,14 @@ MiniEmitter.prototype.removeListener = function (this: { _events: Map<string, un
   return this;
 };
 
-const fallbackStream = {
-  Stream: MiniEmitter,
-  Readable: MiniEmitter,
-  Writable: MiniEmitter,
-  Duplex: MiniEmitter,
-  Transform: MiniEmitter,
-  PassThrough: MiniEmitter,
-};
+// Node's real `stream` module exports the `Stream` constructor itself
+// (callable directly as `Stream.call(this)`, e.g. in pngjs's ChunkStream),
+// with the other stream classes attached to it as static properties.
+const fallbackStream = MiniEmitter as unknown as Record<string, unknown>;
+fallbackStream.Stream = MiniEmitter;
+fallbackStream.Readable = MiniEmitter;
+fallbackStream.Writable = MiniEmitter;
+fallbackStream.Duplex = MiniEmitter;
+fallbackStream.Transform = MiniEmitter;
+fallbackStream.PassThrough = MiniEmitter;
 export = realStream ?? (fallbackStream as unknown as typeof realStream);

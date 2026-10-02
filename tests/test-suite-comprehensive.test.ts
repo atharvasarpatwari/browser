@@ -1282,7 +1282,7 @@ describe('12 · cache-manager.ts', () => {
       headers: new Map([['content-type', 'text/html']]),
       contentType: 'text/html', statusCode: 200,
       expiresAt: Date.now() + 3600_000, etag: '"v1"',
-      lastModified: null, immutable: false,
+      lastModified: null, immutable: false, bodyBinary: null,
     });
     const entry = await cm.get('https://cached.com');
     expect(entry).not.toBeNull();
@@ -1306,7 +1306,7 @@ describe('12 · cache-manager.ts', () => {
     await cm.set('https://has.com', {
       url: 'https://has.com', body: 'x',
       headers: new Map(), contentType: 'text/plain', statusCode: 200,
-      expiresAt: null, etag: null, lastModified: null, immutable: false,
+      expiresAt: null, etag: null, lastModified: null, immutable: false, bodyBinary: null,
     });
     expect(await cm.has('https://has.com')).toBe(true);
   });
@@ -1316,7 +1316,7 @@ describe('12 · cache-manager.ts', () => {
     await cm.set('https://del.com', {
       url: 'https://del.com', body: 'x',
       headers: new Map(), contentType: 'text/plain', statusCode: 200,
-      expiresAt: null, etag: null, lastModified: null, immutable: false,
+      expiresAt: null, etag: null, lastModified: null, immutable: false, bodyBinary: null,
     });
     expect(await cm.delete('https://del.com')).toBe(true);
     expect(await cm.has('https://del.com')).toBe(false);
@@ -1327,7 +1327,7 @@ describe('12 · cache-manager.ts', () => {
     await cm.set('https://x.com', {
       url: 'https://x.com', body: 'x',
       headers: new Map(), contentType: 'text/plain', statusCode: 200,
-      expiresAt: null, etag: null, lastModified: null, immutable: false,
+      expiresAt: null, etag: null, lastModified: null, immutable: false, bodyBinary: null,
     });
     await cm.clear();
     expect(cm.getStats().totalEntries).toBe(0);
@@ -1338,7 +1338,7 @@ describe('12 · cache-manager.ts', () => {
     const entry = {
       url: '', body: 'x', headers: new Map(), contentType: 'text/plain',
       statusCode: 200, expiresAt: Date.now() + 3600_000, etag: null,
-      lastModified: null, immutable: false,
+      lastModified: null, immutable: false, bodyBinary: null,
     };
     await cm.set('https://a.com', { ...entry, url: 'https://a.com' });
     await new Promise(r => setTimeout(r, 2));
@@ -1359,7 +1359,7 @@ describe('12 · cache-manager.ts', () => {
       url: 'https://expired.com', body: 'old',
       headers: new Map(), contentType: 'text/plain', statusCode: 200,
       expiresAt: 1, // already expired
-      etag: null, lastModified: null, immutable: false,
+      etag: null, lastModified: null, immutable: false, bodyBinary: null,
     });
     expect(await cm.get('https://expired.com')).toBeNull();
   });

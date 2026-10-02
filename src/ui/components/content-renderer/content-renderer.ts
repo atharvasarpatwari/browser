@@ -9,6 +9,32 @@ interface IContentRenderer extends IDisposable {
   attach(container: HTMLElement): void;
   setBrandName(name: string): void;
   setLinkHoverHandler(handler: (url: string | null) => void): void;
+  /** Called with content-buffer-space coordinates whenever the rendered canvas is clicked. */
+  setClickHandler(handler: (x: number, y: number) => void): void;
+  /**
+   * Called whenever the rendered canvas is right-clicked, with the hit-test
+   * point in content-buffer-space (bufX, bufY) and the same point in real
+   * viewport space (viewX, viewY) — the former for engine hit-testing, the
+   * latter for positioning a menu on screen.
+   */
+  setContextMenuHandler(handler: (bufX: number, bufY: number, viewX: number, viewY: number) => void): void;
+  /** Called with content-buffer-space coordinates whenever the rendered canvas is double-clicked. */
+  setDblClickHandler(handler: (x: number, y: number) => void): void;
+  /** Called on keydown/keyup while the rendered canvas has focus. */
+  setKeyHandler(handler: (type: string, key: string, code: string, modifiers: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean }) => void): void;
+  /** Called with content-buffer-space coordinates and wheel deltas whenever the rendered canvas is scrolled. */
+  setWheelHandler(handler: (x: number, y: number, deltaX: number, deltaY: number) => void): void;
+  /** Called whenever the rendered canvas's container is resized. */
+  setResizeHandler(handler: () => void): void;
+  /** Scale factor (1 = 100%) applied to the rendered page content. */
+  setZoom(factor: number): void;
+  /**
+   * Scale factors to convert a content-buffer-space rect (e.g. a layout box,
+   * in the engine's own pixel space) into the same units as the on-screen
+   * canvas — already zoom-aware, since it reads the canvas's *post-transform*
+   * bounding rect. Returns null if nothing is rendered yet.
+   */
+  getBufferToViewportScale(): { scaleX: number; scaleY: number } | null;
   renderHtml(html: string, options?: ContentRenderOptions): void;
   renderFromImageData(imageData: ImageData, freshCanvas?: boolean): void;
   renderSearchResults(query: string, searchUrl: string, results: readonly SearchResult[]): void;
@@ -28,9 +54,21 @@ class ContentRenderer implements IContentRenderer {
   private container: HTMLElement | null = null;
   private _brandName = 'Nova Browser';
   private _linkHoverHandler: ((url: string | null) => void) | null = null;
+  private _clickHandler: ((x: number, y: number) => void) | null = null;
+  private _contextMenuHandler: ((bufX: number, bufY: number, viewX: number, viewY: number) => void) | null = null;
+  private _dblClickHandler: ((x: number, y: number) => void) | null = null;
+  private _keyHandler: ((type: string, key: string, code: string, modifiers: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean }) => void) | null = null;
+  private _wheelHandler: ((x: number, y: number, deltaX: number, deltaY: number) => void) | null = null;
+  private _resizeHandler: (() => void) | null = null;
+  private _resizeObserver: ResizeObserver | null = null;
+  private _clickWiredCanvas: HTMLCanvasElement | null = null;
+  private _zoomFactor = 1;
 
   attach(container: HTMLElement): void {
     this.container = container;
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = new ResizeObserver(() => this._resizeHandler?.());
+    this._resizeObserver.observe(container);
   }
 
   setBrandName(name: string): void {
@@ -39,6 +77,49 @@ class ContentRenderer implements IContentRenderer {
 
   setLinkHoverHandler(handler: (url: string | null) => void): void {
     this._linkHoverHandler = handler;
+  }
+
+  setClickHandler(handler: (x: number, y: number) => void): void {
+    this._clickHandler = handler;
+  }
+
+  setContextMenuHandler(handler: (bufX: number, bufY: number, viewX: number, viewY: number) => void): void {
+    this._contextMenuHandler = handler;
+  }
+
+  setDblClickHandler(handler: (x: number, y: number) => void): void {
+    this._dblClickHandler = handler;
+  }
+
+  setKeyHandler(handler: (type: string, key: string, code: string, modifiers: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean }) => void): void {
+    this._keyHandler = handler;
+  }
+
+  setWheelHandler(handler: (x: number, y: number, deltaX: number, deltaY: number) => void): void {
+    this._wheelHandler = handler;
+  }
+
+  setResizeHandler(handler: () => void): void {
+    this._resizeHandler = handler;
+  }
+
+  setZoom(factor: number): void {
+    this._zoomFactor = factor;
+    const canvas = this.container?.querySelector('canvas');
+    if (canvas) this.applyZoom(canvas);
+  }
+
+  getBufferToViewportScale(): { scaleX: number; scaleY: number } | null {
+    const canvas = this.container?.querySelector('canvas');
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (canvas.width === 0 || canvas.height === 0) return null;
+    return { scaleX: rect.width / canvas.width, scaleY: rect.height / canvas.height };
+  }
+
+  private applyZoom(el: HTMLElement): void {
+    el.style.transform = this._zoomFactor === 1 ? '' : `scale(${this._zoomFactor})`;
+    el.style.transformOrigin = 'top left';
   }
 
   renderHtml(html: string, options?: ContentRenderOptions): void {
@@ -83,7 +164,15 @@ class ContentRenderer implements IContentRenderer {
       const el = document.createElement('canvas');
       el.width = imageData.width;
       el.height = imageData.height;
-      el.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#fff;display:block;';
+      // The canvas's internal pixel buffer is fixed at the engine's render
+      // viewport size, but CSS stretches/shrinks it to fill whatever size
+      // the container actually is. The browser's default bilinear scaling
+      // blends adjacent pixels when it does — fatal for this rasterizer's
+      // sharp, non-anti-aliased bitmap font glyphs, since blending two
+      // neighboring characters' edges together is exactly what makes
+      // adjacent words look like they're overlapping. Nearest-neighbor
+      // scaling keeps each glyph's edges crisp instead.
+      el.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#fff;display:block;image-rendering:pixelated;';
       this.container!.appendChild(el);
       return el;
     })();
@@ -93,6 +182,61 @@ class ContentRenderer implements IContentRenderer {
     const ctx = target.getContext('2d');
     if (!ctx) return;
     ctx.putImageData(imageData, 0, 0);
+    this.applyZoom(target);
+
+    // Wire the click listener once per canvas element — a fresh canvas gets
+    // its own listener; a reused (repainted-in-place) one keeps the existing.
+    if (this._clickWiredCanvas !== target) {
+      this._clickWiredCanvas = target;
+      // A canvas isn't focusable (and so can't receive keydown/keyup at all)
+      // without an explicit tabIndex — without this, keyboard events could
+      // never reach page content no matter what's wired below.
+      target.tabIndex = 0;
+      target.style.outline = 'none';
+      const toBuffer = (ev: MouseEvent): { x: number; y: number } => {
+        const rect = target.getBoundingClientRect();
+        return {
+          x: (ev.clientX - rect.left) * (target.width / rect.width),
+          y: (ev.clientY - rect.top) * (target.height / rect.height),
+        };
+      };
+      target.addEventListener('click', (ev) => {
+        target.focus();
+        if (!this._clickHandler) return;
+        const { x, y } = toBuffer(ev);
+        this._clickHandler(x, y);
+      });
+      target.addEventListener('dblclick', (ev) => {
+        if (!this._dblClickHandler) return;
+        const { x, y } = toBuffer(ev);
+        this._dblClickHandler(x, y);
+      });
+      target.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        if (!this._contextMenuHandler) return;
+        const rect = target.getBoundingClientRect();
+        const bufX = (ev.clientX - rect.left) * (target.width / rect.width);
+        const bufY = (ev.clientY - rect.top) * (target.height / rect.height);
+        this._contextMenuHandler(bufX, bufY, ev.clientX, ev.clientY);
+      });
+      target.addEventListener('keydown', (ev) => {
+        if (!this._keyHandler) return;
+        this._keyHandler('keydown', ev.key, ev.code, {
+          altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey, repeat: ev.repeat,
+        });
+      });
+      target.addEventListener('keyup', (ev) => {
+        if (!this._keyHandler) return;
+        this._keyHandler('keyup', ev.key, ev.code, {
+          altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey, repeat: ev.repeat,
+        });
+      });
+      target.addEventListener('wheel', (ev) => {
+        if (!this._wheelHandler) return;
+        const { x, y } = toBuffer(ev);
+        this._wheelHandler(x, y, ev.deltaX, ev.deltaY);
+      }, { passive: true });
+    }
   }
 
   renderSearchResults(query: string, searchUrl: string, results: readonly SearchResult[]): void {
@@ -218,13 +362,13 @@ class ContentRenderer implements IContentRenderer {
     this.container.innerHTML = '';
 
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:50px 20px;position:relative;overflow:hidden;';
+    wrapper.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:50px 20px;position:relative;overflow:hidden;background:var(--bg-base,#060810);';
     wrapper.innerHTML = `
-      <div style="font-family:system-ui,-apple-system,sans-serif;font-size:42px;font-weight:700;letter-spacing:-.03em;margin-bottom:2px;background:linear-gradient(135deg,#f0eee6 0%,#9bb5ff 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">${this.escapeHtml(this._brandName)}</div>
-      <div style="font-size:13px;color:#9aa0a6;margin-bottom:30px;letter-spacing:.3px;">Private &amp; secure browsing</div>
-      <div style="display:flex;align-items:center;width:100%;max-width:440px;background:rgba(255,255,255,0.8);border:1px solid #dfe1e5;border-radius:24px;padding:0 12px;margin-bottom:18px;backdrop-filter:blur(12px);">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa0a6" stroke-width="2" style="margin-right:8px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <div style="flex:1;color:#9aa0a6;font-size:13px;padding:9px 0;">Search the web or enter a URL...</div>
+      <div style="font-family:var(--font-display,'Playfair Display',Georgia,serif);font-size:42px;font-weight:600;letter-spacing:-.02em;margin-bottom:2px;background:linear-gradient(90deg,var(--cyan-400,#22d3ee),var(--cyan-300,#67e8f9));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">${this.escapeHtml(this._brandName)}</div>
+      <div style="font-family:var(--font-ui,'DM Sans',sans-serif);font-size:13px;color:var(--tx-tertiary,#94a3b8);margin-bottom:30px;letter-spacing:.3px;">Private &amp; secure browsing</div>
+      <div style="display:flex;align-items:center;width:100%;max-width:440px;background:var(--bg-input,#121828);border:1px solid var(--bd-default,rgba(255,255,255,.1));border-radius:24px;padding:0 12px;margin-bottom:18px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tx-tertiary,#94a3b8)" stroke-width="2" style="margin-right:8px;flex-shrink:0;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <div style="flex:1;font-family:var(--font-ui,'DM Sans',sans-serif);color:var(--tx-tertiary,#94a3b8);font-size:13px;padding:9px 0;">Search the web or enter a URL...</div>
       </div>
     `;
     this.container.appendChild(wrapper);
@@ -255,6 +399,8 @@ class ContentRenderer implements IContentRenderer {
   dispose(): void {
     this.clear();
     this.container = null;
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
   }
 
   private escapeHtml(str: string): string {

@@ -22,12 +22,9 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     container.remove();
   });
 
-  it('hideChromeUI hides the toolbar/tab-bar DOM but keeps them mounted', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+  it('forceDesktopChrome mounts the real desktop chrome and exposes chrome state', async () => {
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
-    // The page should mount successfully either way; the key behavioral
-    // guarantee is that mounting does not throw and getChromeState() works
-    // even when chrome is hidden.
     expect(page.isMounted).toBe(true);
     expect(() => page.getChromeState()).not.toThrow();
   });
@@ -56,7 +53,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('getChromeState() reflects the initial single tab', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const state = page.getChromeState();
     expect(Array.isArray(state.tabs)).toBe(true);
@@ -65,7 +62,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('getChromeState() exposes a per-tab loading flag (needed for the address-bar spinner)', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const id = page.createTab('https://example.com/');
     const tab = page.getChromeState().tabs.find((t) => t.id === id);
@@ -74,7 +71,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('getChromeState() exposes default homeUrl and searchTemplate when no settings service', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const state = page.getChromeState();
     // Default changed from 'about:blank' to 'about:newtab' so a first-ever
@@ -85,7 +82,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('getChromeState() reflects the settingsService home page and default search engine', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     page.setSettingsService({
       getString: (key: string, fallback = '') => {
         if (key === 'homePage') return 'https://example.com/home';
@@ -100,7 +97,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('createTab() adds a tab and returns its id', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const before = page.getChromeState().tabs.length;
     const id = page.createTab('https://example.com/');
@@ -111,7 +108,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('closeTab() removes a tab', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const id = page.createTab('https://example.com/');
     const removed = page.closeTab(id);
@@ -120,7 +117,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('activateTabExternal() switches the active tab', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const id = page.createTab('https://example.com/');
     const ok = page.activateTabExternal(id);
@@ -129,7 +126,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('onChromeState() fires on tab creation with a fresh snapshot', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const snapshots: unknown[] = [];
     page.onChromeState((s) => snapshots.push(s));
@@ -138,7 +135,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('offChromeState() stops further notifications', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     let count = 0;
     const handler = () => { count++; };
@@ -151,7 +148,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('getChromeState() exposes a per-tab error field, null for healthy tabs', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const tab = page.getChromeState().tabs[0];
     expect(tab).toBeDefined();
@@ -159,7 +156,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('getChromeState() records a per-tab error when the active-tab navigation fails', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const controller = new NavigationController(new UrlParser());
     page.setNavigationController(controller);
@@ -173,7 +170,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('a subsequent successful navigation clears the per-tab error', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const controller = new NavigationController(new UrlParser());
     page.setNavigationController(controller);
@@ -185,7 +182,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('errors are recorded per-tab and stay on the correct tab across switches', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const controller = new NavigationController(new UrlParser());
     page.setNavigationController(controller);
@@ -200,7 +197,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('records a per-tab error from engine pageLoadError and clears it on pageLoadStarted', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const handlers: Record<string, Array<(e: unknown) => void>> = {};
     const fakeEngine = {
@@ -231,7 +228,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('bookmark add/remove round-trips through the real BookmarkService and fires onLibraryChanged', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     page.setBookmarkService(new BookmarkService());
 
@@ -252,7 +249,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('history query/delete round-trips through the real HistoryService and fires onLibraryChanged', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     const historyService = new HistoryService();
     page.setHistoryService(historyService);
@@ -271,7 +268,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('setIncognitoExternal() toggles the incognito session and reflects in getChromeState()', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
     expect(page.isIncognito()).toBe(false);
     expect(page.getChromeState().incognito).toBe(false);
@@ -286,7 +283,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('resolveContextTarget() returns link URL/text from a layout hit-test', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
 
     const anchor = {
@@ -315,7 +312,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('resolveContextTarget() returns image URL when the hit element is an img inside a link', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
 
     const img = {
@@ -348,7 +345,7 @@ describe('BrowserWindowPage — native chrome bridge', () => {
   });
 
   it('resolveContextTarget() returns null when nothing is hit and when hit has no link/image', async () => {
-    page = new BrowserWindowPage({ hideChromeUI: true });
+    page = new BrowserWindowPage({ forceDesktopChrome: true });
     await page.mount(container);
 
     const fakeEngine = {
@@ -407,6 +404,10 @@ describe('android-native-bridge', () => {
       setIncognitoExternal: (_enabled: boolean) => {},
       isIncognito: () => false,
       resolveContextTarget: (_x: number, _y: number) => null,
+      findInPageExternal: (_query: string) => ({ current: -1, total: 0 }),
+      findNextExternal: () => ({ current: -1, total: 0 }),
+      findPreviousExternal: () => ({ current: -1, total: 0 }),
+      closeFindExternal: () => {},
       ...overrides,
     } as unknown as IBrowserWindowPage;
   }
@@ -579,6 +580,34 @@ describe('android-native-bridge', () => {
     window.novaNative!.setIncognito(true);
     window.novaNative!.setIncognito(false);
     expect(calls).toEqual([true, false]);
+  });
+
+  it('window.novaNative.findInPage/findNext/findPrevious delegate to the page and return JSON match counts', () => {
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: () => {} };
+    const queries: string[] = [];
+    const fakePage = makeFakePage({
+      findInPageExternal: (query: string) => { queries.push(query); return { current: 0, total: 3 }; },
+      findNextExternal: () => ({ current: 1, total: 3 }),
+      findPreviousExternal: () => ({ current: 0, total: 3 }),
+    });
+
+    installAndroidNativeBridge(fakePage);
+    expect(JSON.parse(window.novaNative!.findInPage('fox'))).toEqual({ current: 0, total: 3 });
+    expect(JSON.parse(window.novaNative!.findNext())).toEqual({ current: 1, total: 3 });
+    expect(JSON.parse(window.novaNative!.findPrevious())).toEqual({ current: 0, total: 3 });
+    expect(queries).toEqual(['fox']);
+  });
+
+  it('window.novaNative.closeFind delegates to the page', () => {
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: () => {} };
+    let closed = false;
+    const fakePage = makeFakePage({
+      closeFindExternal: () => { closed = true; },
+    });
+
+    installAndroidNativeBridge(fakePage);
+    window.novaNative!.closeFind();
+    expect(closed).toBe(true);
   });
 
   it('window.novaNative.openInNewTab delegates to the page createTab', () => {

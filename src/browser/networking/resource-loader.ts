@@ -5,12 +5,13 @@ import type { IResponseParser } from './response-parser';
 import { ResponseParser } from './response-parser';
 import type { DiscoveredResource, DiscoveredResourceKind } from '../rendering/html-parser';
 import type { ITrackerBlocker } from '../security/tracker-blocker';
-import type { ICacheManager } from './cache-manager';
+import type { ICacheManager, CacheEntry } from './cache-manager';
 import type { ICorsEngine, CorsRequest } from '../security/cors';
 import { CorsMode, CorsCredentials, CorsBlockedError, CorsViolationError } from '../security/cors';
 import { parseOrigin, isSameOrigin, isSameSite } from '../security/origin-service';
 import { PriorityQueue } from './priority-queue';
 import { BandwidthEstimator } from './bandwidth-estimator';
+import type { ICookieJar } from './cookie-jar';
 
 interface ResourceLoadResult {
   readonly url: string;
@@ -25,6 +26,65 @@ interface ResourceLoadResult {
   readonly durationMs: number;
   readonly fromCache: boolean;
   readonly error: string | null;
+  /** DNS/connect/TLS/wait/download breakdown, when the platform exposed it. */
+  readonly timing?: ResourceLoadTiming;
+}
+
+/** DNS → Connect → TLS → Wait (TTFB) → Download breakdown for one request. */
+interface ResourceLoadTiming {
+  readonly dnsMs: number | null;
+  readonly connectMs: number | null;
+  readonly tlsMs: number | null;
+  readonly ttfbMs: number | null;
+  readonly downloadMs: number | null;
+  readonly totalMs: number | null;
+}
+
+/**
+ * Reads the real DNS/Connect/TLS/Wait/Download split for `url` from the
+ * browser's own Resource Timing API — the same data DevTools' Network panel
+ * "Timing" tab shows, and the only source for it: fetch() itself never
+ * exposes these sub-phases, since the browser (not our JS) owns the socket.
+ * Cross-origin entries omit the fine-grained fields unless the server sends
+ * `Timing-Allow-Origin`, in which case every *Ms below is just null — never
+ * thrown, so a locked-down third-party response still logs a normal entry.
+ */
+// The Resource Timing buffer defaults to 250 entries (Chromium/Firefox alike)
+// and silently stops recording new ones once full — a page that loads more
+// than 250 resources over its lifetime (trivial for an unbundled dev build,
+// or any long-lived tab) would otherwise go quietly blind to every load
+// after the 250th. Raised once, lazily, on first use.
+let resourceTimingBufferRaised = false;
+
+function computeResourceTiming(url: string): ResourceLoadTiming | null {
+  if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') return null;
+
+  if (!resourceTimingBufferRaised) {
+    performance.setResourceTimingBufferSize?.(5000);
+    resourceTimingBufferRaised = true;
+  }
+
+  const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+  let match: PerformanceResourceTiming | undefined;
+  for (const entry of entries) {
+    if (entry.name === url) match = entry; // last one wins — the just-finished request
+  }
+  if (!match) return null;
+
+  const span = (a: number, b: number): number | null => (b > a ? b - a : null);
+  const tlsMs = match.secureConnectionStart > 0 ? span(match.secureConnectionStart, match.connectEnd) : null;
+  const connectMs = tlsMs !== null
+    ? span(match.connectStart, match.secureConnectionStart)
+    : span(match.connectStart, match.connectEnd);
+
+  return {
+    dnsMs: span(match.domainLookupStart, match.domainLookupEnd),
+    connectMs,
+    tlsMs,
+    ttfbMs: span(match.requestStart, match.responseStart),
+    downloadMs: span(match.responseStart, match.responseEnd),
+    totalMs: match.responseEnd > 0 ? match.responseEnd - match.startTime : null,
+  };
 }
 
 interface ResourceBatchResult {
@@ -40,6 +100,10 @@ interface ResourceLoadOptions {
   readonly priority?: ResourcePriority;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
+  /** HTTP method — defaults to GET when absent (only form submission sets this). */
+  readonly method?: HttpMethod;
+  /** Request body for a POST-method load (application/x-www-form-urlencoded string). */
+  readonly body?: string;
 }
 
 interface IResourceLoader extends IDisposable {
@@ -52,6 +116,9 @@ interface IResourceLoader extends IDisposable {
   setMaxConcurrent(max: number): void;
   on(type: RequestEventType, handler: (event: RequestEvent) => void): void;
   off(type: RequestEventType, handler: (event: RequestEvent) => void): void;
+  setOnLoad(listener: ((result: ResourceLoadResult) => void) | null): void;
+  getCookieJar(): ICookieJar | null;
+  setCors(cors: ICorsEngine, pageOrigin: string): void;
 }
 
 class ResourceLoader implements IResourceLoader {
@@ -61,11 +128,13 @@ class ResourceLoader implements IResourceLoader {
   private readonly blocker: ITrackerBlocker | null;
   private cache: ICacheManager | null = null;
   private cors: ICorsEngine | null = null;
+  private cookieJar: ICookieJar | null = null;
   private pageOrigin = '';
   private maxConcurrent = 6;
   private activeCount = 0;
   private readonly pendingQueue = new PriorityQueue<{ resolve: () => void }>();
   private readonly bandwidth = new BandwidthEstimator();
+  private onLoad: ((result: ResourceLoadResult) => void) | null = null;
 
   constructor(
     client: IHttpClient = new FetchHttpClient(),
@@ -90,9 +159,36 @@ class ResourceLoader implements IResourceLoader {
     this.pageOrigin = pageOrigin;
   }
 
-  async loadResource(url: string, _kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
+  setCookieJar(cookieJar: ICookieJar): void {
+    this.cookieJar = cookieJar;
+  }
+
+  /** Exposes the same jar used for the HTTP request/response pipeline so `document.cookie` reads/writes the real cookie store instead of a page-local shadow copy. */
+  getCookieJar(): ICookieJar | null {
+    return this.cookieJar;
+  }
+
+  async loadResource(url: string, kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
+    const result = await this.loadResourceCore(url, kind, options);
+    const timing = result.fromCache ? null : computeResourceTiming(url);
+    const withTiming = timing ? { ...result, timing } : result;
+    this.onLoad?.(withTiming);
+    return withTiming;
+  }
+
+  /** Notified with every resource load's final result (success, error, cached, or blocked) — for a DevTools Network panel. */
+  setOnLoad(listener: ((result: ResourceLoadResult) => void) | null): void {
+    this.onLoad = listener;
+  }
+
+  private async loadResourceCore(url: string, _kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
     // ── Cache check ─────────────────────────────────────────────────────────
+    // staleEntry is snapshotted via getStale() BEFORE calling get(), since
+    // get() deletes an expired entry as a side effect before returning null —
+    // capturing it later would already find revalidation candidates gone.
+    let staleEntry: CacheEntry | null = null;
     if (this.cache) {
+      staleEntry = await this.cache.getStale(url);
       const cached = await this.cache.get(url);
       if (cached) {
         return {
@@ -101,7 +197,7 @@ class ResourceLoader implements IResourceLoader {
           statusCode: cached.statusCode,
           contentType: cached.contentType,
           body: cached.body,
-          bodyBinary: null,
+          bodyBinary: cached.bodyBinary,
           headers: cached.headers,
           loadedAt: Date.now(),
           durationMs: 0,
@@ -137,19 +233,48 @@ class ResourceLoader implements IResourceLoader {
       }
     }
 
+    // Enforces options.timeoutMs regardless of which IHttpClient is behind
+    // `this.client` — FetchHttpClient never reads HttpRequestSpec.timeoutMs on
+    // its own, so without this a slow/blackholed host hangs the whole pipeline
+    // instead of failing fast (some clients, e.g. RawSocketHttpClient, also
+    // enforce it themselves; this is a harmless, defense-in-depth duplicate).
+    let timedOut = false;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutMs = options?.timeoutMs ?? 15_000;
+
+    const method = options?.method ?? 'GET';
     try {
       const headers = new Map<string, string>([['accept', '*/*']]);
-      const signal = options?.signal ?? new AbortController().signal;
+      if (staleEntry) {
+        if (staleEntry.etag) headers.set('if-none-match', staleEntry.etag);
+        else if (staleEntry.lastModified) headers.set('if-modified-since', staleEntry.lastModified);
+      }
+      const timeoutController = new AbortController();
+      timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        timeoutController.abort();
+      }, timeoutMs);
+      const externalSignal = options?.signal;
+      if (externalSignal) {
+        if (externalSignal.aborted) timeoutController.abort();
+        else externalSignal.addEventListener('abort', () => timeoutController.abort(), { once: true });
+      }
+      const signal = timeoutController.signal;
 
       // ── CORS pre-request check ──────────────────────────────────────────
+      // NoCors, not Cors: ResourceLoader only ever handles HTML-parser-
+      // discovered passive subresources (images/stylesheets/scripts/sub-
+      // documents), which real browsers load in no-cors mode by default —
+      // fetch()/XHR are the real-CORS-mode traffic, and they already go
+      // through a separate, correct path (fetch-api.ts/xhr.ts).
       let corsPreflightDone = false;
       if (this.cors && this.pageOrigin) {
         const corsReq: CorsRequest = {
           url,
           origin:      this.pageOrigin,
-          method:      'GET',
+          method,
           headers,
-          mode:        CorsMode.Cors,
+          mode:        CorsMode.NoCors,
           credentials: CorsCredentials.Omit,
         };
         const preCheck = this.cors.checkRequest(corsReq);
@@ -202,13 +327,19 @@ class ResourceLoader implements IResourceLoader {
       }
 
       const specBase: Omit<HttpRequestSpec, 'url'> = {
-        method: 'GET',
+        method,
         headers,
-        timeoutMs: options?.timeoutMs ?? 15_000,
+        timeoutMs,
+        body: options?.body,
       };
 
       // Follow 3xx redirects here — ResourceLoader talks to IHttpClient directly
       // (bypassing RequestManager), so redirect policy lives in this loop.
+      // ponytail: real browsers demote a 301/302/303 POST redirect to GET
+      // (dropping the body) while 307/308 preserve method+body; this loop
+      // resends specBase unchanged for every hop regardless of status code.
+      // Add per-status demotion if a POST form redirecting via 301/302 ever
+      // needs it — rare in practice for form submission.
       const redirectStatusCodes = new Set([301, 302, 303, 307, 308]);
       const maxRedirects = 10;
       let currentUrl = url;
@@ -216,7 +347,19 @@ class ResourceLoader implements IResourceLoader {
 
       try {
         for (let hops = 0; ; hops++) {
+          if (this.cookieJar) {
+            const cookieHeader = this.cookieJar.getCookieHeader(currentUrl);
+            if (cookieHeader) headers.set('cookie', cookieHeader);
+            else headers.delete('cookie');
+          }
+
           res = await this.client.send({ ...specBase, url: currentUrl }, signal);
+
+          if (this.cookieJar) {
+            const setCookies = res.setCookieHeaders
+              ?? (res.headers.get('set-cookie') ? [res.headers.get('set-cookie')!] : []);
+            if (setCookies.length > 0) this.cookieJar.setFromResponse(currentUrl, setCookies);
+          }
 
           if (!redirectStatusCodes.has(res.statusCode)) {
             break;
@@ -249,13 +392,17 @@ class ResourceLoader implements IResourceLoader {
       const durationMs = Date.now() - start;
 
       // ── CORS post-response check ────────────────────────────────────────
+      // NoCors here too (see the pre-request check above) — checkResponse()
+      // treats a NoCors response as opaque with no ACAO requirement, which
+      // is both correct per spec and what lets ordinary cross-origin
+      // subresources keep loading once this check actually starts running.
       if (this.cors && this.pageOrigin && !corsPreflightDone) {
         const corsReq: CorsRequest = {
           url,
           origin:      this.pageOrigin,
-          method:      'GET',
+          method,
           headers,
-          mode:        CorsMode.Cors,
+          mode:        CorsMode.NoCors,
           credentials: CorsCredentials.Omit,
         };
         try {
@@ -325,28 +472,52 @@ class ResourceLoader implements IResourceLoader {
         }
       }
 
+      // ── Conditional revalidation (304) ────────────────────────────────────
+      // Not an early-return releaseSlot() site — the surrounding finally
+      // already releases the slot once on every path out of this try block.
+      if (res.statusCode === 304 && staleEntry && this.cache) {
+        const ttlMs = parsed.cache.maxAge !== null ? parsed.cache.maxAge * 1000 : undefined;
+        const expiresAt = ttlMs === 0 ? Date.now() - 1 : (ttlMs !== undefined ? Date.now() + ttlMs : null);
+        await this.cache.set(url, { ...staleEntry, expiresAt });
+        return {
+          url: currentUrl,
+          kind: _kind,
+          statusCode: 200,
+          contentType: staleEntry.contentType,
+          body: staleEntry.body,
+          bodyBinary: staleEntry.bodyBinary,
+          headers: staleEntry.headers,
+          loadedAt: Date.now(),
+          durationMs,
+          fromCache: true,
+          error: null,
+        };
+      }
+
       // ── Record bandwidth ──────────────────────────────────────────────────
       this.bandwidth.record(res.body.length, durationMs);
 
       // ── Populate cache ────────────────────────────────────────────────────
-      if (this.cache && res.statusCode >= 200 && res.statusCode < 400) {
-        const etag = res.headers.get('etag') ?? null;
-        const lastModified = res.headers.get('last-modified') ?? null;
-        const cacheControl = res.headers.get('cache-control') ?? '';
-        const immutable = cacheControl.includes('immutable');
-        const maxAgeMatch = /max-age=(\d+)/.exec(cacheControl);
-        const ttlMs = maxAgeMatch ? parseInt(maxAgeMatch[1]!) * 1000 : undefined;
+      if (this.cache && res.statusCode >= 200 && res.statusCode < 400 && res.statusCode !== 304 && !parsed.cache.noStore) {
+        const ttlMs = parsed.cache.maxAge !== null ? parsed.cache.maxAge * 1000 : undefined;
+        // no-cache means "may be stored but must be revalidated before every
+        // use" — forced immediate staleness reuses the existing expiresAt
+        // mechanism instead of adding a new mustRevalidate field.
+        const expiresAt = parsed.cache.noCache || ttlMs === 0
+          ? Date.now() - 1
+          : (ttlMs !== undefined ? Date.now() + ttlMs : null);
 
         await this.cache.set(url, {
           url,
           body: res.body,
+          bodyBinary: res.bodyBinary,
           contentType: parsed.mimeType.full || 'application/octet-stream',
           statusCode: res.statusCode,
           headers: res.headers,
-          etag,
-          lastModified,
-          immutable,
-          expiresAt: ttlMs ? Date.now() + ttlMs : null,
+          etag: parsed.cache.etag,
+          lastModified: parsed.cache.lastModified,
+          immutable: parsed.cache.immutable,
+          expiresAt,
         });
       }
 
@@ -364,7 +535,9 @@ class ResourceLoader implements IResourceLoader {
         error: null,
       };
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorMessage = timedOut
+        ? `Request to "${url}" timed out after ${timeoutMs}ms.`
+        : err instanceof Error ? err.message : String(err);
       return {
         url,
         kind: _kind,
@@ -379,6 +552,7 @@ class ResourceLoader implements IResourceLoader {
         error: errorMessage,
       };
     } finally {
+      clearTimeout(timeoutTimer);
       this.releaseSlot();
     }
   }
@@ -482,4 +656,4 @@ class ResourceLoader implements IResourceLoader {
 }
 
 export { ResourceLoader };
-export type { IResourceLoader, ResourceLoadResult, ResourceBatchResult, ResourceLoadOptions, ResourcePriority };
+export type { IResourceLoader, ResourceLoadResult, ResourceBatchResult, ResourceLoadOptions, ResourcePriority, ResourceLoadTiming };

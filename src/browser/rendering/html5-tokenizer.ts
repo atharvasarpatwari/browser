@@ -1304,6 +1304,7 @@ class Html5Tokenizer {
     if (ch === ';') {
       this.charRefSeenSemicolon = true;
       this.flushNumericCharRef();
+      this.state = this.charRefReturnState;
     } else if (isAsciiHexDigit(ch)) {
       this.charRefCode = this.charRefCode * 16 + hexValue(ch);
     } else {
@@ -1317,6 +1318,7 @@ class Html5Tokenizer {
     if (ch === ';') {
       this.charRefSeenSemicolon = true;
       this.flushNumericCharRef();
+      this.state = this.charRefReturnState;
     } else if (isAsciiDigit(ch)) {
       this.charRefCode = this.charRefCode * 10 + (ch.charCodeAt(0) - 0x30);
     } else {
@@ -1681,12 +1683,31 @@ class Html5Tokenizer {
     return this.input[this.pos + offset] ?? '';
   }
 
+  private isInAttrCharRef(): boolean {
+    return this.state === S.CHAR_REF || this.state === S.NAMED_CHAR_REF ||
+      this.state === S.NUMERIC_CHAR_REF || this.state === S.HEX_CHAR_REF_START ||
+      this.state === S.HEX_CHAR_REF || this.state === S.DEC_CHAR_REF_START ||
+      this.state === S.DEC_CHAR_REF
+      ? this.charRefReturnState === S.ATTR_VALUE_DQ ||
+        this.charRefReturnState === S.ATTR_VALUE_SQ ||
+        this.charRefReturnState === S.ATTR_VALUE_UQ
+      : false;
+  }
+
   private appendChar(ch: string): void {
-    this.charBuf += ch;
+    if (this.isInAttrCharRef()) {
+      this.attrValue += ch;
+    } else {
+      this.charBuf += ch;
+    }
   }
 
   private appendString(s: string): void {
-    this.charBuf += s;
+    if (this.isInAttrCharRef()) {
+      this.attrValue += s;
+    } else {
+      this.charBuf += s;
+    }
   }
 
   private flushText(): void {
@@ -1716,7 +1737,19 @@ class Html5Tokenizer {
   }
 
   private commitAttr(): void {
-    this.attrs.set(this.attrName, this.attrValue);
+    // emitTag() unconditionally calls this once more at the very end of
+    // every tag (on top of the per-attribute calls already made while
+    // tokenizing), to flush whatever attribute was still being built when
+    // the tag closed. A real attribute name can never be empty (the
+    // tokenizer only enters the attribute-name state on a real character),
+    // so an empty attrName here means either the tag had zero attributes,
+    // or the last real one was already committed and reset — either way,
+    // nothing new to commit. Without this guard, `attrs.set('', '')`
+    // added a bogus empty-named attribute to every single parsed tag,
+    // regardless of how many real attributes it had.
+    if (this.attrName !== '') {
+      this.attrs.set(this.attrName, this.attrValue);
+    }
     this.attrName = '';
     this.attrValue = '';
   }
@@ -1734,10 +1767,24 @@ class Html5Tokenizer {
         offset:  this.tokenStart,
       });
 
-      // Enter RAWTEXT/RCDATA/SCRIPT/PLAINTEXT if appropriate.
-      if (!this.endTagMode) {
-        this.setupRawTextMode(this.tagName);
+      const openedTagName = this.tagName;
+      const wasEndTag = this.endTagMode;
+      this.tagName = '';
+      this.attrs = new Map();
+      this.selfClosing = false;
+      this.endTagMode = false;
+      this.state = S.DATA;
+
+      // Enter RAWTEXT/RCDATA/SCRIPT/PLAINTEXT if appropriate — must run
+      // after the S.DATA reset above, since it overrides that default.
+      // (Running before, as this used to, meant the reset always clobbered
+      // it back to S.DATA, so <script>/<style> content was never actually
+      // read as raw text — any "<"/">" inside real JS or CSS, e.g. a
+      // comparison operator, got misread as a bogus tag.)
+      if (!wasEndTag) {
+        this.setupRawTextMode(openedTagName);
       }
+      return;
     }
     this.tagName = '';
     this.attrs = new Map();

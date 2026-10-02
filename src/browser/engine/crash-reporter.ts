@@ -22,6 +22,7 @@
 import type { IDisposable } from '../../app/dependency-container';
 import { loadNodeBuiltin } from '../networking/node-builtins';
 import { randomUUID } from '../security/crypto-utils';
+import { createLogger } from '../../common/logger';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -308,8 +309,7 @@ class CrashReporter implements ICrashReporter {
     if (this.config.logReports) {
       const tabInfo = report.tabId ? ` [tab=${report.tabId}]` : '';
       const urlInfo = report.url ? ` url=${report.url}` : '';
-      console.error(
-        `[CrashReporter:${report.source}:${report.severity}] ` +
+      createLogger(`CrashReporter:${report.source}:${report.severity}`).error(
         `Phase "${report.phase}"${tabInfo}${urlInfo}: ${report.error.message}`,
       );
     }

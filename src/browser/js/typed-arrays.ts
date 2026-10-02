@@ -158,7 +158,7 @@ const TYPED_ARRAY_META: Record<TypedArrayName, TypedArrayMeta> = {
 
 // ── ArrayBuffer ──────────────────────────────────────────────────────────────
 
-function wrapArrayBuffer(native: ArrayBuffer): JSObject {
+export function wrapArrayBuffer(native: ArrayBuffer): JSObject {
   const ab = createObject(arrayBufferProto) as JSObjectWithMeta;
   ab.__type_override = 'arraybuffer';
   ab.__nativeBuffer = native;

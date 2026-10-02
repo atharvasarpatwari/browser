@@ -84,6 +84,7 @@ export interface TreeBuilderContext {
   // Close element helpers
   closePElement(): void;
   closeTableCellElement(): void;
+  clearStackToTableBodyContext(): void;
 
   // Adoption agency
   adoptionAgencyAlgorithm(token: Token): void;

@@ -129,6 +129,10 @@ interface NavigationEntry {
    * null when no state has been associated with this entry.
    */
   readonly state: unknown;
+  /** HTTP method for this load — defaults to GET when absent (only form submission sets this). */
+  readonly method?: string;
+  /** Request body for a POST-method entry (application/x-www-form-urlencoded string). */
+  readonly body?: string;
 }
 
 /**
@@ -149,6 +153,10 @@ interface NavigationRequest {
    * When provided, it is stored on the resulting NavigationEntry.
    */
   readonly state?: unknown;
+  /** HTTP method for this load — defaults to GET when absent (only form submission sets this). */
+  readonly method?: string;
+  /** Request body for a POST-method request (application/x-www-form-urlencoded string). */
+  readonly body?: string;
 }
 
 /** The outcome of a navigation call. */
@@ -280,6 +288,12 @@ interface INavigationGuard {
   canNavigate(request: NavigationRequest): Promise<boolean>;
   /** Optional human-readable reason surfaced in the error and UI. */
   blockedReason?(request: NavigationRequest): string;
+  /**
+   * When canNavigate() returned false, a guard may implement this to redirect
+   * to a different URL instead of failing the navigation outright (e.g. an
+   * HTTP→HTTPS upgrade). Returning null/undefined falls back to a hard block.
+   */
+  upgradeUrl?(request: NavigationRequest): string | null | undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -289,7 +303,7 @@ interface INavigationGuard {
 interface INavigationController {
   // ── Navigation actions ────────────────────────────────────────────────────
   /** Navigate to a URL, creating a new history entry. */
-  navigate(url: string, referrer?: string, state?: unknown): Promise<NavigationResult>;
+  navigate(url: string, referrer?: string, state?: unknown, init?: { method?: string; body?: string }): Promise<NavigationResult>;
   /** Full control — pass a NavigationRequest directly. */
   navigateTo(request: NavigationRequest): Promise<NavigationResult>;
   /** Move one step backwards in history. Synchronous. */
@@ -573,13 +587,15 @@ class NavigationController implements INavigationController {
 
   // ── navigate / navigateTo ──────────────────────────────────────────────────
 
-  navigate(url: string, referrer?: string, state?: unknown): Promise<NavigationResult> {
+  navigate(url: string, referrer?: string, state?: unknown, init?: { method?: string; body?: string }): Promise<NavigationResult> {
     return this.navigateTo({
       url,
       type: NavigationType.Push,
       referrer,
       userInitiated: true,
       state,
+      method: init?.method,
+      body: init?.body,
     });
   }
 
@@ -603,6 +619,9 @@ class NavigationController implements INavigationController {
     // ── Step 3: Guard chain ──────────────────────────────────────────────────
     const guardOutcome = await this.runGuards(request);
     if (!guardOutcome.allowed) {
+      if (guardOutcome.upgradeUrl) {
+        return this.navigateTo({ ...request, url: guardOutcome.upgradeUrl });
+      }
       return this.fail(
         request,
         new NavigationBlockedError(
@@ -644,6 +663,8 @@ class NavigationController implements INavigationController {
       scrollY:   0,
       parsedUrl,
       state:     request.state ?? null,
+      method:    request.method,
+      body:      request.body,
     };
 
     if (request.type === NavigationType.Replace ||
@@ -1001,6 +1022,7 @@ class NavigationController implements INavigationController {
     allowed: boolean;
     blockedBy?: string;
     reason?: string;
+    upgradeUrl?: string;
   }> {
     for (const guard of this.guards) {
       let allowed: boolean;
@@ -1016,6 +1038,10 @@ class NavigationController implements INavigationController {
       }
 
       if (!allowed) {
+        const upgradeUrl = guard.upgradeUrl?.(request);
+        if (upgradeUrl) {
+          return { allowed: false, blockedBy: guard.name, upgradeUrl };
+        }
         const reason = guard.blockedReason?.(request) ?? 'Navigation denied.';
         return { allowed: false, blockedBy: guard.name, reason };
       }

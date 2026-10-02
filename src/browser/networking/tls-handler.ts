@@ -328,12 +328,16 @@ class TlsHandler implements ITlsHandler {
     // 2. Build certificate chain — try real TLS if enabled, fall back to simulated.
     let chain: readonly CertificateInfo[];
     let realTlsSucceeded = false;
+    let realAuthorized = false;
+    let realAuthorizationError: string | null = null;
     if (this.config.useRealTls) {
       try {
-        const realChain = await TlsHandler.buildCertificateChainReal(hostname, port);
-        if (realChain.length > 0) {
-          chain = realChain;
+        const real = await TlsHandler.buildCertificateChainReal(hostname, port);
+        if (real.chain.length > 0) {
+          chain = real.chain;
           realTlsSucceeded = true;
+          realAuthorized = real.authorized;
+          realAuthorizationError = real.authorizationError;
         } else {
           chain = TlsHandler.buildCertificateChain(hostname);
         }
@@ -345,9 +349,14 @@ class TlsHandler implements ITlsHandler {
     }
 
     // 3. Verify certificates.
-    const verificationStatus = this.config.verifyCertificates
+    let verificationStatus = this.config.verifyCertificates
       ? this.evaluator(chain, hostname)
       : CertVerificationStatus.Valid;
+
+    // 3.5. Fold in the real handshake's trust verdict — see applyRealAuthorization().
+    if (this.config.verifyCertificates && realTlsSucceeded) {
+      verificationStatus = TlsHandler.applyRealAuthorization(verificationStatus, realAuthorized, realAuthorizationError);
+    }
 
     // 4. Hostname verification (always runs if verify is on).
     let finalStatus = verificationStatus;
@@ -486,14 +495,43 @@ class TlsHandler implements ITlsHandler {
     certs: readonly CertificateInfo[],
     hostname: string,
   ): CertVerificationStatus {
-    // Real evaluation: if we got certificates from an actual TLS handshake,
-    // they are already verified by the system trust store during negotiation.
-    // The negotiate() method sets verified=true when Node.js tls.connect succeeds.
+    // This only judges chain well-formedness (expiry/key-size/hostname are
+    // re-checked independently in negotiate()'s steps 4-6 regardless of which
+    // evaluator ran). It does NOT judge root-of-trust — connect() runs with
+    // rejectUnauthorized:false specifically so the peer cert can be inspected
+    // before deciding, which means Node never throws on an untrusted chain by
+    // itself. The real root-of-trust signal is applyRealAuthorization() below,
+    // fed from the actual TLSSocket's post-handshake `authorized` property
+    // (which Node computes against the system trust store regardless of
+    // rejectUnauthorized) — see negotiate() step 3.5.
     if (certs.length === 0) return CertVerificationStatus.Unknown;
     return CertVerificationStatus.Valid;
   }
 
-  private static async buildCertificateChainReal(hostname: string, port: number): Promise<readonly CertificateInfo[]> {
+  /**
+   * Fold Node's real post-handshake trust verdict into the status — the piece
+   * defaultEvaluator() cannot provide on its own. Only overrides an otherwise-
+   * Valid verdict, and only applies when a real handshake actually ran (no
+   * verdict exists for the simulated/fallback chain).
+   */
+  static applyRealAuthorization(
+    status: CertVerificationStatus,
+    authorized: boolean,
+    authorizationError: string | null,
+  ): CertVerificationStatus {
+    if (status !== CertVerificationStatus.Valid || authorized) return status;
+    const err = (authorizationError ?? '').toUpperCase();
+    if (err.includes('EXPIRED')) return CertVerificationStatus.Expired;
+    if (err.includes('NOT_YET')) return CertVerificationStatus.NotYetValid;
+    if (err.includes('SELF_SIGNED')) return CertVerificationStatus.SelfSigned;
+    if (err.includes('HOSTNAME') || err.includes('ALTNAME')) return CertVerificationStatus.Mismatch;
+    return CertVerificationStatus.Untrusted;
+  }
+
+  private static async buildCertificateChainReal(
+    hostname: string,
+    port: number,
+  ): Promise<{ chain: readonly CertificateInfo[]; authorized: boolean; authorizationError: string | null }> {
     // Every socket is owned by the main process: open a probe connection
     // through the socket proxy, read the peer chain it observed, and tear the
     // probe down. The renderer never opens a tls socket directly.
@@ -505,8 +543,11 @@ class TlsHandler implements ITlsHandler {
       await onceSocketEvent(handle, 'secureConnect');
 
       const wire = await handle.getPeerCertificate();
+      const auth = await handle.getTlsAuthorization();
+      const authorized = Boolean((auth as { authorized?: boolean } | null)?.authorized);
+      const authorizationError = (auth as { authorizationError?: string | null } | null)?.authorizationError ?? null;
       if (!wire || !((wire as { subject?: unknown }).subject)) {
-        return [];
+        return { chain: [], authorized, authorizationError };
       }
       // The owner flattens the issuerCertificate chain (leaf first); a
       // self-referencing root is represented once, breaking the cycle.
@@ -540,7 +581,7 @@ class TlsHandler implements ITlsHandler {
         });
       });
 
-      return chain;
+      return { chain, authorized, authorizationError };
     } finally {
       void handle.destroy();
     }
@@ -613,9 +654,11 @@ class TlsHandler implements ITlsHandler {
 
   private static hostnameMatches(hostname: string, pattern: string): boolean {
     if (pattern.startsWith('*.')) {
-      // Wildcard: *.example.com matches sub.example.com but not example.com.
+      // Wildcard: *.example.com matches sub.example.com but not a.b.example.com
+      // or the bare example.com — RFC 6125 §6.4.3, one label only. The
+      // remaining prefix must therefore contain no further dots.
       const suffix = pattern.slice(1); // ".example.com"
-      return hostname.endsWith(suffix) && hostname.slice(0, -suffix.length).indexOf('.') !== -1;
+      return hostname.endsWith(suffix) && hostname.slice(0, -suffix.length).indexOf('.') === -1;
     }
     return hostname === pattern;
   }
@@ -680,13 +723,35 @@ class TlsHandler implements ITlsHandler {
       return CertVerificationStatus.Mismatch;
     }
 
-    // Walk chain to find a trusted root.
-    const rootFound = chain.some(cert => cert.subject === cert.issuer);
-    if (!rootFound && chain.length === 0) {
-      return CertVerificationStatus.Untrusted;
-    }
-
+    // This checks well-formedness (expiry/key-strength/hostname), not
+    // cryptographic root-of-trust — trustedCAs is intentionally unused here;
+    // a real chain's actual trust verdict comes from the live TLSSocket's
+    // `authorized` flag (see TlsHandler.applyRealAuthorization/negotiate()
+    // step 3.5), since verifying a signature chain against a PEM trust store
+    // ourselves would just reimplement what Node's TLS stack already does
+    // correctly during the real handshake.
     return CertVerificationStatus.Valid;
+  }
+
+  /** Shared human-readable label per status, used by both the interstitial and describeCertError(). */
+  private static readonly CERT_STATUS_LABELS: Record<string, string> = {
+    [CertVerificationStatus.Expired]: 'Certificate Expired',
+    [CertVerificationStatus.NotYetValid]: 'Certificate Not Yet Valid',
+    [CertVerificationStatus.Untrusted]: 'Certificate Not Trusted',
+    [CertVerificationStatus.Mismatch]: 'Hostname Mismatch',
+    [CertVerificationStatus.SelfSigned]: 'Self-Signed Certificate',
+    [CertVerificationStatus.Revoked]: 'Certificate Revoked',
+    [CertVerificationStatus.Pinned]: 'Certificate Pin Mismatch',
+    [CertVerificationStatus.Unknown]: 'Unknown Certificate Error',
+  };
+
+  /** Plain-text title + detail for a cert error, for surfacing in the browser's own error page (not generateInterstitial's standalone HTML). */
+  static describeCertError(hostname: string, status: CertVerificationStatus): { title: string; message: string } {
+    const title = TlsHandler.CERT_STATUS_LABELS[status] ?? 'Certificate Error';
+    return {
+      title,
+      message: `Your connection to ${hostname} is not private. Attackers might be trying to steal your information. Nova Browser has stopped the connection to this site.`,
+    };
   }
 
   /** Generate a security interstitial HTML page for certificate errors. */
@@ -695,17 +760,7 @@ class TlsHandler implements ITlsHandler {
     status: CertVerificationStatus,
     detail: string,
   ): string {
-    const statusLabels: Record<string, string> = {
-      [CertVerificationStatus.Expired]: 'Certificate Expired',
-      [CertVerificationStatus.NotYetValid]: 'Certificate Not Yet Valid',
-      [CertVerificationStatus.Untrusted]: 'Certificate Not Trusted',
-      [CertVerificationStatus.Mismatch]: 'Hostname Mismatch',
-      [CertVerificationStatus.SelfSigned]: 'Self-Signed Certificate',
-      [CertVerificationStatus.Revoked]: 'Certificate Revoked',
-      [CertVerificationStatus.Pinned]: 'Certificate Pin Mismatch',
-      [CertVerificationStatus.Unknown]: 'Unknown Certificate Error',
-    };
-    const title = statusLabels[status] ?? 'Certificate Error';
+    const title = TlsHandler.CERT_STATUS_LABELS[status] ?? 'Certificate Error';
     return `<!DOCTYPE html>
 <html lang="en">
 <head>

@@ -219,6 +219,16 @@ describe('SecurityLayer — navigation guard', () => {
     expect(layer.navigationGuard.blockedReason?.(request)).toContain('https://google.com/');
   });
 
+  it('exposes the https upgrade target via upgradeUrl, for guards that block', async () => {
+    const request = { url: 'http://google.com/', type: NavigationType.Push, userInitiated: true };
+    expect(layer.navigationGuard.upgradeUrl?.(request)).toBe('https://google.com/');
+  });
+
+  it('has no upgradeUrl for a navigation that is simply allowed', async () => {
+    const request = { url: 'https://google.com/', type: NavigationType.Push, userInitiated: true };
+    expect(layer.navigationGuard.upgradeUrl?.(request)).toBeFalsy();
+  });
+
   it('allows https navigation to preloaded hosts', async () => {
     const request = { url: 'https://google.com/', type: NavigationType.Push, userInitiated: true };
     expect(await layer.navigationGuard.canNavigate(request)).toBe(true);

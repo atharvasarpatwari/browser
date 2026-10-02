@@ -45,9 +45,15 @@ of each and confirm it's actually gone (not just hidden until next refresh).
 engine's real services, so this is also indirectly checking that the engine
 side persisted correctly.
 
-**Downloads** — trigger a download from a real page (a link with a
-downloadable file, or `<a download>`), then: pause it mid-transfer, resume
-it, cancel a different one, and use the share action on a completed one.
+**Downloads** — the core transfer is automated by `device-smoke-test.mjs`
+(Tier 2b): it drives `window.novaNative.download()` against a local test
+file over `adb reverse` and verifies the result byte-for-byte, so streaming/
+completion correctness is already covered on every smoke-test run. Still
+needs a person: trigger a download from a real page (a link with a
+downloadable file, or `<a download>`), then pause it mid-transfer, resume
+it, cancel a different one, and use the share action on a completed one —
+`pause()`/`resume()`/`cancel()` on `NativeDownloader` are only ever called
+from the Compose UI, with no bridge hook a script could drive instead.
 `NativeDownloader` supports streaming HTTP with resume (range requests) and
 gzip/deflate decompression — a good test target is a file large enough that
 pause/resume actually has time to matter, not a instant sub-second download.

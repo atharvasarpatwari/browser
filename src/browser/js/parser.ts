@@ -22,12 +22,30 @@ export class Parser {
   }
 
   parse(): AST.Program {
+    // A leading `'use strict';` directive (extremely common in bundled/
+    // transpiled real-world output) makes every function in the whole
+    // program strict, not just ones that repeat their own directive —
+    // pushed onto the same strictStack the with-statement check already
+    // reads, so every function-parsing call site below inherits it for
+    // free via the strictStack-or-own-directive check in lookaheadStrictDirective's callers.
+    const programStrict = this.is(TokenType.String) && this.peek().value === 'use strict'
+      && (this.peek(1).type === TokenType.Semicolon || this.peek(1).type === TokenType.EOF);
+    if (programStrict) this.strictStack.push(true);
     const body: AST.Statement[] = [];
     while (!this.is(TokenType.EOF)) {
       const stmt = this.parseStatement();
       if (stmt) body.push(stmt);
     }
+    if (programStrict) this.strictStack.pop();
     return { type: 'Program', body };
+  }
+
+  /** Whether the enclosing scope (an already-strict function, or a
+   *  program-level `'use strict'`) is currently strict — used so a nested
+   *  function correctly inherits strictness without repeating its own
+   *  directive, matching real JS's lexical strict-mode propagation. */
+  private inStrictContext(): boolean {
+    return this.strictStack.length > 0 && this.strictStack[this.strictStack.length - 1]!;
   }
 
   // ── Expression parsing (Pratt) ───────────────────────────────────────────
@@ -81,26 +99,83 @@ export class Parser {
     return this.parseExpression(2);
   }
 
+  /**
+   * A comma chain of 3+ items parses as a right-nested SequenceExpression
+   * (`a,b,c` -> {a, {b, c}}, one pairwise node per comma), not a flat list —
+   * see the Comma case in parseInfix(). Flatten it back out so arrow-param
+   * detection/extraction below doesn't stop at the first nested level.
+   */
+  private flattenSequence(expr: AST.Expression): AST.Expression[] {
+    if (expr.type !== 'SequenceExpression') return [expr];
+    return expr.expressions.flatMap((e) => this.flattenSequence(e));
+  }
+
+  /**
+   * Convert an expression parsed by the generic expression grammar into a
+   * parameter/destructuring pattern — needed because `(a, {b, c = 1}) =>`
+   * is only disambiguated from a parenthesized expression *after* it's
+   * already been parsed as one (real arrow-function grammar is ambiguous
+   * with a parenthesized expression until the `=>` is seen).
+   */
+  private expressionToPattern(expr: AST.Expression): AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern | null {
+    if (expr.type === 'Identifier') return expr;
+    if (expr.type === 'AssignmentExpression' && expr.operator === '=') {
+      const left = this.expressionToPattern(expr.left as AST.Expression);
+      if (!left || left.type === 'RestElement' || left.type === 'AssignmentPattern') return null;
+      return { type: 'AssignmentPattern', left, right: expr.right, loc: expr.loc };
+    }
+    if (expr.type === 'SpreadElement') {
+      const arg = this.expressionToPattern(expr.argument);
+      if (!arg || arg.type === 'RestElement') return null;
+      return { type: 'RestElement', argument: arg, loc: expr.loc };
+    }
+    if (expr.type === 'ArrayExpression') {
+      const elements = expr.elements.map(e => e === null ? null : this.expressionToPattern(e));
+      if (elements.some((e, i) => expr.elements[i] !== null && e === null)) return null;
+      return { type: 'ArrayPattern', elements: elements as (AST.Identifier | AST.AssignmentPattern | AST.RestElement | AST.ArrayPattern | AST.ObjectPattern | null)[], loc: expr.loc };
+    }
+    if (expr.type === 'ObjectExpression') {
+      const properties: (AST.ObjectPatternProperty | AST.RestElement)[] = [];
+      for (const prop of expr.properties) {
+        if (prop.type === 'SpreadElement') {
+          const arg = this.expressionToPattern(prop.argument);
+          if (!arg || arg.type === 'RestElement') return null;
+          properties.push({ type: 'RestElement', argument: arg, loc: prop.loc });
+        } else {
+          if (prop.value === null) return null;
+          const value = this.expressionToPattern(prop.value);
+          if (!value || value.type === 'RestElement') return null;
+          properties.push({ type: 'Property', key: prop.key, value, shorthand: prop.shorthand, computed: prop.computed, loc: prop.loc });
+        }
+      }
+      return { type: 'ObjectPattern', properties, loc: expr.loc };
+    }
+    return null;
+  }
+
   private isValidArrowParams(left: AST.Expression): boolean {
     if (left.type === 'Identifier') return true;
-    if (left.type === 'SequenceExpression') return left.expressions.every(e => e.type === 'Identifier');
-    return false;
+    if (left.type === 'SequenceExpression') return this.flattenSequence(left).every(e => this.expressionToPattern(e) !== null);
+    return this.expressionToPattern(left) !== null;
   }
 
   private parseArrowFunctionFromParams(left: AST.Expression): AST.ArrowFunctionExpression {
     const tok = this.peek();
-    const params: AST.Identifier[] = [];
-    if (left.type === 'Identifier') {
-      params.push(left);
-    } else if (left.type === 'SequenceExpression') {
-      for (const e of left.expressions) {
-        if (e.type === 'Identifier') params.push(e);
+    const params: (AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern)[] = [];
+    if (left.type === 'SequenceExpression') {
+      // `() => ...` also parses as an empty SequenceExpression.
+      for (const e of this.flattenSequence(left)) {
+        const p = this.expressionToPattern(e);
+        if (p) params.push(p);
       }
+    } else {
+      const p = this.expressionToPattern(left);
+      if (p) params.push(p);
     }
     this.advance(); // =>
     let body: AST.BlockStatement | AST.Expression;
     if (this.is(TokenType.LBrace)) {
-      const strict = this.lookaheadStrictDirective();
+      const strict = this.lookaheadStrictDirective() || this.inStrictContext();
       this.strictStack.push(strict);
       body = this.parseBlock();
       this.strictStack.pop();
@@ -124,7 +199,7 @@ export class Parser {
 
       case TokenType.TemplateEnd:
         this.advance();
-        return { type: 'TemplateLiteral', quasis: [{ type: 'TemplateElement', value: tok.value, tail: true }], expressions: [], loc: { line: tok.line, column: tok.column } };
+        return { type: 'TemplateLiteral', quasis: [{ type: 'TemplateElement', value: tok.value, raw: tok.raw ?? tok.value, tail: true }], expressions: [], loc: { line: tok.line, column: tok.column } };
 
       case TokenType.TemplateHead:
         return this.parseTemplateLiteral(tok);
@@ -155,7 +230,10 @@ export class Parser {
 
       case TokenType.RegExp:
         this.advance();
-        return { type: 'Literal', value: { type: 'RegExp', pattern: tok.value.split('/')[1] ?? '', flags: tok.value.split('/').pop() ?? '' }, raw: tok.value, loc: { line: tok.line, column: tok.column } };
+        // Read pattern/flags from regexParts, not by re-splitting tok.value
+        // on '/' — that breaks the instant the pattern contains an escaped
+        // slash ("\/"), since split() doesn't know it isn't a delimiter.
+        return { type: 'Literal', value: { type: 'RegExp', pattern: tok.regexParts?.pattern ?? '', flags: tok.regexParts?.flags ?? '' }, raw: tok.value, loc: { line: tok.line, column: tok.column } };
 
       case TokenType.Identifier:
         this.advance();
@@ -168,7 +246,17 @@ export class Parser {
         return this.parseObjectExpression();
 
       case TokenType.Function:
+      // Reached only for `async function(...)` — parseExpression()'s own
+      // Async handling above covers every async-arrow shape and explicitly
+      // excludes this one. parseFunctionExpression() already consumes an
+      // optional leading `async` itself.
+      case TokenType.Async:
         return this.parseFunctionExpression();
+
+      // Class expression: `var x = class {}`, `new class {}`, `(class {}).x`.
+      // parseClassDeclaration() already tolerates a missing name.
+      case TokenType.Class:
+        return this.parseClassDeclaration();
 
       case TokenType.LParen:
         return this.parseParenExpression();
@@ -223,7 +311,7 @@ export class Parser {
     const tok = this.peek();
     this.advance();
     let isDelegate = delegate;
-    if (this.is(TokenType.Generator)) {
+    if (this.is(TokenType.Star)) {
       this.advance();
       isDelegate = true;
     }
@@ -260,6 +348,7 @@ export class Parser {
       case TokenType.EqualEqualEqual:
       case TokenType.BangEqualEqual:
       case TokenType.Instanceof:
+      case TokenType.In:
         this.advance();
         const right = this.parseExpression(prec);
         return { type: 'BinaryExpression', operator: tok.value, left, right, loc: { line: tok.line, column: tok.column } };
@@ -287,8 +376,19 @@ export class Parser {
       case TokenType.GreaterGreaterAssign:
       case TokenType.GreaterGreaterGreaterAssign:
       case TokenType.QuestionQuestionAssign:
+      case TokenType.AmpersandAmpersandAssign:
+      case TokenType.PipePipeAssign:
         this.advance();
-        const assignRight = this.parseExpression(prec - 1);
+        // Assignment is right-associative, so the right side must accept
+        // another same-precedence assignment (`a = b = c` → `a = (b = c)`)
+        // — but `prec - 1` overshoots: since Comma sits at exactly
+        // `prec - 1`, that also let the right side swallow a following
+        // comma (e.g. `{ k: () => n ||= 5, other: () => 1 }` parsed the
+        // arrow's whole concise body as `n ||= (5, other)`, eating the next
+        // property's key and desyncing everything after it). Recursing at
+        // the SAME precedence gets right-associativity without also
+        // annexing the next-lower-precedence operator.
+        const assignRight = this.parseExpression(prec);
         return { type: 'AssignmentExpression', operator: tok.value, left, right: assignRight, loc: { line: tok.line, column: tok.column } };
 
       // Update operators
@@ -338,12 +438,42 @@ export class Parser {
         this.expect(TokenType.RParen);
         return { type: 'CallExpression', callee: left, arguments: args, optional: false, loc: { line: tok.line, column: tok.column } };
 
-      // Ternary
+      // Tagged template: tag`...` — a template literal immediately following
+      // an expression with no operator between them (e.g. String.raw`a${b}c`,
+      // or the minifier idiom (0, fn)``). Binds as tightly as a call.
+      case TokenType.TemplateHead: {
+        const quasi = this.parseTemplateLiteral(tok);
+        return { type: 'TaggedTemplateExpression', tag: left, quasi, loc: { line: tok.line, column: tok.column } };
+      }
+      case TokenType.TemplateEnd: {
+        this.advance();
+        const quasi: AST.TemplateLiteral = {
+          type: 'TemplateLiteral',
+          quasis: [{ type: 'TemplateElement', value: tok.value, raw: tok.raw ?? tok.value, tail: true }],
+          expressions: [],
+          loc: { line: tok.line, column: tok.column },
+        };
+        return { type: 'TaggedTemplateExpression', tag: left, quasi, loc: { line: tok.line, column: tok.column } };
+      }
+
+      // Ternary. Real ECMAScript grammar: `ConditionalExpression: ... "?"
+      // AssignmentExpression ":" AssignmentExpression` — both branches are
+      // AssignmentExpressions (precedence 2: consumes "="/compound-assign,
+      // stops at ","). The alternate used `prec` (this Question token's own
+      // precedence, 3) as its minimum instead, which stops one level too
+      // early — right at a bare identifier, before consuming a trailing
+      // "=" — so `j ? x=5 : x=6` silently mis-parsed as `(j ? (x=5) : x) =
+      // 6`: a ConditionalExpression used as an assignment target, which
+      // isn't even a valid LeftHandSideExpression in real JS. This exact
+      // shape (`l||(j?a[h]=l=X:l=h)`) is how real jQuery's own internal
+      // per-element data-cache ID assignment is written, so every element
+      // silently never got a data-cache entry, breaking `.on()`/`.trigger()`
+      // and anything else built on jQuery's own `data()`/`_data()`.
       case TokenType.Question:
         this.advance();
-        const consequent = this.parseExpression();
+        const consequent = this.parseExpression(2);
         this.expect(TokenType.Colon);
-        const alternate = this.parseExpression(prec);
+        const alternate = this.parseExpression(2);
         return { type: 'ConditionalExpression', test: left, consequent, alternate, loc: { line: tok.line, column: tok.column } };
 
       // Comma (sequence)
@@ -375,7 +505,7 @@ export class Parser {
     const quasis: AST.TemplateElement[] = [];
     const expressions: AST.Expression[] = [];
 
-    quasis.push({ type: 'TemplateElement', value: headToken.value, tail: false });
+    quasis.push({ type: 'TemplateElement', value: headToken.value, raw: headToken.raw ?? headToken.value, tail: false });
     this.advance(); // consume TemplateHead
 
     while (true) {
@@ -389,19 +519,19 @@ export class Parser {
       if (this.lexer) {
         const seg = this.lexer.readTemplatePart(headToken.line, headToken.column);
         if (seg.type === TokenType.TemplateMiddle) {
-          quasis.push({ type: 'TemplateElement', value: seg.value, tail: false });
+          quasis.push({ type: 'TemplateElement', value: seg.value, raw: seg.raw ?? seg.value, tail: false });
         } else if (seg.type === TokenType.TemplateTail) {
-          quasis.push({ type: 'TemplateElement', value: seg.value, tail: true });
+          quasis.push({ type: 'TemplateElement', value: seg.value, raw: seg.raw ?? seg.value, tail: true });
           break;
         }
       } else {
         const next = this.peek();
         if (next.type === TokenType.TemplateMiddle) {
           this.advance();
-          quasis.push({ type: 'TemplateElement', value: next.value, tail: false });
+          quasis.push({ type: 'TemplateElement', value: next.value, raw: next.raw ?? next.value, tail: false });
         } else if (next.type === TokenType.TemplateTail) {
           this.advance();
-          quasis.push({ type: 'TemplateElement', value: next.value, tail: true });
+          quasis.push({ type: 'TemplateElement', value: next.value, raw: next.raw ?? next.value, tail: true });
           break;
         } else {
           break;
@@ -412,10 +542,47 @@ export class Parser {
     return { type: 'TemplateLiteral', quasis, expressions, loc: { line: headToken.line, column: headToken.column } };
   }
 
-  private parseNewExpression(): AST.NewExpression {
+  private parseNewExpression(): AST.NewExpression | AST.NewTargetExpression {
     const tok = this.peek();
     this.advance();
-    const callee = this.parseExpression(18);
+    // `new.target` — the meta-property, not a constructor call. Without this
+    // check, `.target` fell straight into parseExpression(18) as if it were
+    // the constructor callee, which doesn't start a valid expression — the
+    // resulting mis-parse silently produced garbage (extra, nonsensical
+    // console.log arguments in practice) rather than a clean error.
+    if (this.is(TokenType.Dot)) {
+      this.advance();
+      this.expect(TokenType.Identifier); // "target"
+      return { type: 'NewTargetExpression', loc: { line: tok.line, column: tok.column } };
+    }
+    // `new`'s callee is a MemberExpression: it can chain `.prop`/`[expr]`
+    // accesses (`new a.b.c(...)`, real jQuery-style `new p.fn.init(...)`)
+    // but must NOT swallow a following `(...)` call — that argument list
+    // belongs to `new` itself. The shared Pratt precedence table
+    // (infixPrecedence) groups Dot/LBracket/LParen at the same level, so
+    // parseExpression(18) here couldn't split "consume member access" from
+    // "consume a call": it stopped at the very first token (before even
+    // `.`), returning a bare identifier as the callee. The surrounding
+    // expression parser then picked up `.Init(...)` as an ordinary member
+    // call on the freshly-constructed value — `new p.Init(a,b)` silently
+    // became `(new p()).Init(a,b)`. When a constructor's own body does
+    // exactly this (`p = function(){ return new p.Init(...); }`, jQuery's
+    // real core factory), that misparse recurses into `new p()` forever.
+    let callee: AST.Expression = this.parsePrefix();
+    while (this.is(TokenType.Dot) || this.is(TokenType.LBracket)) {
+      if (this.is(TokenType.Dot)) {
+        this.advance();
+        const propTok = this.peek();
+        this.advance();
+        const prop: AST.Identifier = { type: 'Identifier', name: propTok.value, loc: { line: propTok.line, column: propTok.column } };
+        callee = { type: 'MemberExpression', object: callee, property: prop, computed: false, optional: false, loc: { line: tok.line, column: tok.column } };
+      } else {
+        this.advance();
+        const prop = this.parseExpression();
+        this.expect(TokenType.RBracket);
+        callee = { type: 'MemberExpression', object: callee, property: prop, computed: true, optional: false, loc: { line: tok.line, column: tok.column } };
+      }
+    }
     let args: AST.Expression[] = [];
     if (this.is(TokenType.LParen)) {
       this.advance();
@@ -464,20 +631,37 @@ export class Parser {
     return { type: 'ObjectExpression', properties, loc: { line: tok.line, column: tok.column } };
   }
 
+  /**
+   * `get`/`set` only introduce an accessor when a real property-key token
+   * follows — otherwise the word itself IS the property's name, as in
+   * `{ get: expr }` (plain property), `{ get, }` (shorthand), or
+   * `{ get() {} }` (a method literally named "get"). Without this check,
+   * `parseProperty()` always consumed `get`/`set` and handed whatever came
+   * next (even a bare `:`) to parsePropertyKey(), which silently swallowed
+   * it as a garbage key and cascaded into nonsense a token at a time.
+   */
+  private startsAccessorName(): boolean {
+    const next = this.peek(1).type;
+    return next === TokenType.Identifier || next === TokenType.String
+      || next === TokenType.Number || next === TokenType.LBracket;
+  }
+
   private parseProperty(): AST.PropertyDefinition {
     let kind: 'init' | 'get' | 'set' = 'init';
     let isMethod = false;
     let isShorthand = false;
 
-    if (this.is(TokenType.Get)) { this.advance(); kind = 'get'; }
-    else if (this.is(TokenType.Set)) { this.advance(); kind = 'set'; }
+    if (this.is(TokenType.Get) && this.startsAccessorName()) { this.advance(); kind = 'get'; }
+    else if (this.is(TokenType.Set) && this.startsAccessorName()) { this.advance(); kind = 'set'; }
 
     const key = this.parsePropertyKey();
     const computed = this.peek(-1)?.type === TokenType.RBracket;
 
     if (this.is(TokenType.LParen)) {
       isMethod = true;
+      this.expect(TokenType.LParen);
       const params = this.parseParams();
+      this.expect(TokenType.RParen);
       const body = this.parseBlock();
       return {
         type: 'PropertyDefinition', key, value: {
@@ -493,9 +677,18 @@ export class Parser {
       return { type: 'PropertyDefinition', key, value, kind, computed, shorthand: false, method: false };
     }
 
-    // Shorthand property
+    // Shorthand property, optionally with a default (`{a = 1}`) — only
+    // valid when this object literal turns out to be a destructuring
+    // pattern (`const {a = 1} = x` or an arrow param), but real engines
+    // parse it permissively here and only matter once it's actually used
+    // as a pattern (via expressionToPattern) rather than as a value.
     if (key.type === 'Identifier') {
       isShorthand = true;
+      if (this.is(TokenType.Equal)) {
+        this.advance();
+        const right = this.parseAssignExpr();
+        return { type: 'PropertyDefinition', key, value: { type: 'AssignmentExpression', operator: '=', left: key, right, loc: key.loc }, kind, computed, shorthand: true, method: false };
+      }
       return { type: 'PropertyDefinition', key, value: key, kind, computed, shorthand: true, method: false };
     }
 
@@ -524,7 +717,7 @@ export class Parser {
     if (this.is(TokenType.Async)) { this.advance(); async = true; }
     this.expect(TokenType.Function);
     let generator = false;
-    if (this.is(TokenType.Generator)) { this.advance(); generator = true; }
+    if (this.is(TokenType.Star)) { this.advance(); generator = true; }
     let id: AST.Identifier | null = null;
     if (this.is(TokenType.Identifier)) {
       id = { type: 'Identifier', name: this.peek().value };
@@ -533,7 +726,7 @@ export class Parser {
     this.expect(TokenType.LParen);
     const params = this.parseParams();
     this.expect(TokenType.RParen);
-    const strict = this.lookaheadStrictDirective();
+    const strict = this.lookaheadStrictDirective() || this.inStrictContext();
     this.strictStack.push(strict);
     const body = this.parseBlock();
     this.strictStack.pop();
@@ -548,8 +741,32 @@ export class Parser {
       this.advance(); // )
       return this.parseArrowFunctionFromParams({ type: 'SequenceExpression', expressions: [], loc: { line: openTok.line, column: openTok.column } });
     }
-    const expr = this.parseExpression();
+    // A leading/embedded `...` (`(...args) => `, `(a, ...rest) => `) is only
+    // ever valid here as an arrow rest parameter — real comma-expression
+    // grammar has no such thing — but the generic expression parser has no
+    // way to parse a bare `...expr` at all, since spread is otherwise only
+    // legal inside call arguments / array / object literals. Build the
+    // parenthesized item list by hand instead of delegating straight to
+    // parseExpression() so a `...` item can be recognized before it's
+    // reached as if it were a normal expression term.
+    const items: AST.Expression[] = [];
+    let sawSpread = false;
+    for (;;) {
+      if (this.is(TokenType.Ellipsis)) {
+        sawSpread = true;
+        const spreadTok = this.peek();
+        this.advance();
+        items.push({ type: 'SpreadElement', argument: this.parseAssignExpr(), loc: { line: spreadTok.line, column: spreadTok.column } });
+      } else {
+        items.push(this.parseAssignExpr());
+      }
+      if (this.is(TokenType.Comma)) { this.advance(); continue; }
+      break;
+    }
     this.expect(TokenType.RParen);
+    const expr: AST.Expression = (items.length === 1 && !sawSpread)
+      ? items[0]
+      : { type: 'SequenceExpression', expressions: items, loc: { line: openTok.line, column: openTok.column } };
     // Arrow function: (params) => body
     if (this.is(TokenType.Arrow) && this.isValidArrowParams(expr)) {
       return this.parseArrowFunctionFromParams(expr);
@@ -707,13 +924,22 @@ export class Parser {
       if (this.is(TokenType.LBracket)) {
         const key = this.parseExpression();
         this.expect(TokenType.Colon);
-        const value = this.parseBindingName();
+        let value: AST.Identifier | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern | AST.RestElement = this.parseBindingName();
+        if (this.is(TokenType.Equal)) {
+          this.advance();
+          value = { type: 'AssignmentPattern', left: value as AST.Identifier, right: this.parseExpression(2) };
+        }
         properties.push({ type: 'Property', key, value: value as any, shorthand: false, computed: true, loc: { line: tok.line, column: tok.column } });
         if (this.is(TokenType.Comma)) this.advance();
         continue;
       }
       const keyTok = this.peek();
-      if (keyTok.type === TokenType.Identifier) {
+      // Any IdentifierName is a valid destructuring key, including reserved
+      // words (`{class: r}`, `{get: g}`, `{as: a}`) — real minified React/
+      // Tailwind CSS code renames a `class` prop this way. Only a genuine
+      // string/number literal key needs the general-expression path below
+      // (it can't be used as a shorthand or plain binding name anyway).
+      if (keyTok.type !== TokenType.String && keyTok.type !== TokenType.Number) {
         this.advance();
         const key: AST.Identifier = { type: 'Identifier', name: keyTok.value, loc: { line: keyTok.line, column: keyTok.column } };
         let value: AST.Identifier | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern | AST.RestElement;
@@ -733,7 +959,11 @@ export class Parser {
       } else {
         const key = this.parseExpression();
         this.expect(TokenType.Colon);
-        const value = this.parseBindingName();
+        let value: AST.Identifier | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern | AST.RestElement = this.parseBindingName();
+        if (this.is(TokenType.Equal)) {
+          this.advance();
+          value = { type: 'AssignmentPattern', left: value as AST.Identifier, right: this.parseExpression(2) };
+        }
         properties.push({ type: 'Property', key, value: value as any, shorthand: false, computed: false, loc: { line: tok.line, column: tok.column } });
       }
       if (this.is(TokenType.Comma)) this.advance();
@@ -743,17 +973,25 @@ export class Parser {
   }
 
   /** Parse a pattern — identifier with optional default value, or rest element. Used for function params where '=' is a default value. */
-  private parsePattern(): AST.Identifier | AST.AssignmentPattern | AST.RestElement {
+  private parsePattern(): AST.Identifier | AST.AssignmentPattern | AST.RestElement | AST.ArrayPattern | AST.ObjectPattern {
     if (this.is(TokenType.Ellipsis)) {
       this.advance();
       return { type: 'RestElement', argument: this.parsePattern() as AST.Identifier };
+    }
+    if (this.is(TokenType.LBracket) || this.is(TokenType.LBrace)) {
+      const target = this.is(TokenType.LBracket) ? this.parseArrayPattern() : this.parseObjectPattern();
+      if (this.is(TokenType.Equal)) {
+        this.advance();
+        return { type: 'AssignmentPattern', left: target, right: this.parseExpression(2) };
+      }
+      return target;
     }
     const tok = this.peek();
     this.advance();
     const id: AST.Identifier = { type: 'Identifier', name: tok.value };
     if (this.is(TokenType.Equal)) {
       this.advance();
-      const right = this.parseExpression();
+      const right = this.parseExpression(2);
       return { type: 'AssignmentPattern', left: id, right };
     }
     return id;
@@ -765,13 +1003,13 @@ export class Parser {
     if (this.is(TokenType.Async)) { this.advance(); async = true; }
     this.expect(TokenType.Function);
     let generator = false;
-    if (this.is(TokenType.Generator)) { this.advance(); generator = true; }
+    if (this.is(TokenType.Star)) { this.advance(); generator = true; }
     const id: AST.Identifier = { type: 'Identifier', name: this.peek().value };
     this.advance();
     this.expect(TokenType.LParen);
     const params = this.parseParams();
     this.expect(TokenType.RParen);
-    const strict = this.lookaheadStrictDirective();
+    const strict = this.lookaheadStrictDirective() || this.inStrictContext();
     this.strictStack.push(strict);
     const body = this.parseBlock();
     this.strictStack.pop();
@@ -797,24 +1035,33 @@ export class Parser {
 
   private parseClassBody(): AST.ClassBody {
     this.expect(TokenType.LBrace);
-    const body: (AST.PropertyDefinition | AST.MethodDefinition)[] = [];
+    const body: (AST.PropertyDefinition | AST.MethodDefinition | AST.StaticBlock)[] = [];
     while (!this.is(TokenType.RBrace) && !this.is(TokenType.EOF)) {
       if (this.is(TokenType.Static)) {
         this.advance();
+        // `static { ... }` — a static initialization block, not a member
+        // named "static" followed by a property. Without this check the
+        // `{` fell straight into parsePropertyKey() (expecting a member
+        // name or a computed `[expr]` key), which mis-parsed the block's
+        // contents as if they were a key expression — anywhere from an
+        // outright parse error to silently swallowing the block with no
+        // effect, depending on what happened to be inside it.
+        if (this.is(TokenType.LBrace)) {
+          const blockBody = this.parseBlock();
+          body.push({ type: 'StaticBlock', body: blockBody.body });
+          continue;
+        }
+        let accessorKind: 'get' | 'set' | null = null;
+        if (this.is(TokenType.Get) && this.startsAccessorName()) { this.advance(); accessorKind = 'get'; }
+        else if (this.is(TokenType.Set) && this.startsAccessorName()) { this.advance(); accessorKind = 'set'; }
         const key = this.parsePropertyKey();
-        this.expect(TokenType.LParen);
-        const params = this.parseParams();
-        this.expect(TokenType.RParen);
-        this.strictStack.push(true);
-        const funcBody = this.parseBlock();
-        this.strictStack.pop();
-        body.push({
-          type: 'MethodDefinition', key,
-          value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
-          kind: 'method', computed: false, static: true,
-        });
-      } else {
-        const key = this.parsePropertyKey();
+        // parsePropertyKey() consumes `]` itself for a computed `[expr]`
+        // key, so the previous token tells us which form it was — this
+        // was hardcoded to `computed: false` unconditionally, so a
+        // computed method name evaluated to the *variable's own name*
+        // instead of its value (`[methodName]() {}` defined a method
+        // literally called "methodName", not whatever methodName held).
+        const computed = this.peek(-1)?.type === TokenType.RBracket;
         if (this.is(TokenType.LParen)) {
           this.advance();
           const params = this.parseParams();
@@ -822,17 +1069,45 @@ export class Parser {
           this.strictStack.push(true);
           const funcBody = this.parseBlock();
           this.strictStack.pop();
-          const kind = key.type === 'Identifier' && key.name === 'constructor' ? 'constructor' : 'method';
           body.push({
             type: 'MethodDefinition', key,
             value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
-            kind, computed: false, static: false,
+            kind: accessorKind ?? 'method', computed, static: true,
+          });
+        } else {
+          // A static field (`static x = 1;`), not a method — the static
+          // branch previously assumed every `static <key>` was a method
+          // and unconditionally expected `(` next, so `static count = 0`
+          // failed to parse at all.
+          let init: AST.Expression | null = null;
+          if (this.is(TokenType.Equal)) { this.advance(); init = this.parseExpression(); }
+          if (this.is(TokenType.Semicolon)) this.advance();
+          body.push({ type: 'PropertyDefinition', key, value: init, kind: 'init', computed, shorthand: false, method: false, static: true });
+        }
+      } else {
+        let accessorKind: 'get' | 'set' | null = null;
+        if (this.is(TokenType.Get) && this.startsAccessorName()) { this.advance(); accessorKind = 'get'; }
+        else if (this.is(TokenType.Set) && this.startsAccessorName()) { this.advance(); accessorKind = 'set'; }
+        const key = this.parsePropertyKey();
+        const computed = this.peek(-1)?.type === TokenType.RBracket;
+        if (this.is(TokenType.LParen)) {
+          this.advance();
+          const params = this.parseParams();
+          this.expect(TokenType.RParen);
+          this.strictStack.push(true);
+          const funcBody = this.parseBlock();
+          this.strictStack.pop();
+          const kind = accessorKind ?? (key.type === 'Identifier' && key.name === 'constructor' ? 'constructor' : 'method');
+          body.push({
+            type: 'MethodDefinition', key,
+            value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
+            kind, computed, static: false,
           });
         } else {
           let init: AST.Expression | null = null;
           if (this.is(TokenType.Equal)) { this.advance(); init = this.parseExpression(); }
           if (this.is(TokenType.Semicolon)) this.advance();
-          body.push({ type: 'PropertyDefinition', key, value: init, kind: 'init', computed: false, shorthand: false, method: false });
+          body.push({ type: 'PropertyDefinition', key, value: init, kind: 'init', computed, shorthand: false, method: false });
         }
       }
     }
@@ -893,6 +1168,8 @@ export class Parser {
   private parseForStatement(): AST.Statement {
     const tok = this.peek();
     this.advance();
+    const isAwait = this.is(TokenType.Await);
+    if (isAwait) this.advance();
     this.expect(TokenType.LParen);
 
     // for-in / for-of
@@ -912,15 +1189,26 @@ export class Parser {
         const right = this.parseExpression();
         this.expect(TokenType.RParen);
         const body = this.parseStatement()!;
-        return { type: 'ForOfStatement', left: { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init: null }], kind: kind as 'var' | 'let' | 'const' }, right, body, await: false, loc: { line: tok.line, column: tok.column } };
+        return { type: 'ForOfStatement', left: { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init: null }], kind: kind as 'var' | 'let' | 'const' }, right, body, await: isAwait, loc: { line: tok.line, column: tok.column } };
       }
-      // for (var x = ...)
+      // for (var x = ..., y = ...; ...) — one or more comma-separated declarators
       let init: AST.Expression | null = null;
       if (this.is(TokenType.Equal)) {
         this.advance();
         init = this.parseExpression(2);
       }
-      const decl: AST.VariableDeclaration = { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init }], kind: kind as 'var' | 'let' | 'const' };
+      const declarations: AST.VariableDeclarator[] = [{ type: 'VariableDeclarator', id, init }];
+      while (this.is(TokenType.Comma)) {
+        this.advance();
+        const nextId = this.parseBindingName();
+        let nextInit: AST.Expression | null = null;
+        if (this.is(TokenType.Equal)) {
+          this.advance();
+          nextInit = this.parseExpression(2);
+        }
+        declarations.push({ type: 'VariableDeclarator', id: nextId, init: nextInit });
+      }
+      const decl: AST.VariableDeclaration = { type: 'VariableDeclaration', declarations, kind: kind as 'var' | 'let' | 'const' };
       this.expect(TokenType.Semicolon);
       const test = this.is(TokenType.Semicolon) ? null : this.parseExpression();
       this.expect(TokenType.Semicolon);
@@ -947,7 +1235,7 @@ export class Parser {
         const right = this.parseExpression();
         this.expect(TokenType.RParen);
         const body = this.parseStatement()!;
-        return { type: 'ForOfStatement', left: { type: 'Identifier', name }, right, body, await: false, loc: { line: tok.line, column: tok.column } };
+        return { type: 'ForOfStatement', left: { type: 'Identifier', name }, right, body, await: isAwait, loc: { line: tok.line, column: tok.column } };
       }
       this.pos = savedPos;
     }
@@ -1072,16 +1360,24 @@ export class Parser {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   /** Pre-scan: check if the next tokens are a 'use strict' directive without consuming them. */
+  // Called right before parseBlock(), with the body's opening '{' still the
+  // current token (every call site checks `this.is(TokenType.LBrace)` or has
+  // just consumed the parameter list, both leaving '{' next) — so the
+  // potential directive is one token further ahead, not the current token.
+  // Checking `this.peek()` here meant this always saw '{' itself, never a
+  // string, so a `'use strict'` directive was silently ignored everywhere:
+  // every function's `this` fallback (interpreter.ts) treated it as
+  // non-strict, handing it the global object instead of `undefined`.
   private lookaheadStrictDirective(): boolean {
-    if (this.peek().type !== TokenType.String) return false;
-    const val = this.peek().value;
+    if (this.peek(1).type !== TokenType.String) return false;
+    const val = this.peek(1).value;
     if (val !== 'use strict') return false;
-    const next = this.peek(1);
-    return next.type === TokenType.Semicolon || next.type === TokenType.RBrace || next.type === TokenType.EOF;
+    const after = this.peek(2);
+    return after.type === TokenType.Semicolon || after.type === TokenType.RBrace || after.type === TokenType.EOF;
   }
 
-  private parseParams(): (AST.Identifier | AST.RestElement | AST.AssignmentPattern)[] {
-    const params: (AST.Identifier | AST.RestElement | AST.AssignmentPattern)[] = [];
+  private parseParams(): (AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern)[] {
+    const params: (AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern)[] = [];
     while (!this.is(TokenType.RParen) && !this.is(TokenType.EOF)) {
       params.push(this.parsePattern());
       if (this.is(TokenType.Comma)) this.advance();
@@ -1206,7 +1502,9 @@ export class Parser {
       case TokenType.LessLessAssign:
       case TokenType.GreaterGreaterAssign:
       case TokenType.GreaterGreaterGreaterAssign:
-      case TokenType.QuestionQuestionAssign: return 2;
+      case TokenType.QuestionQuestionAssign:
+      case TokenType.AmpersandAmpersandAssign:
+      case TokenType.PipePipeAssign: return 2;
 
       case TokenType.Question: return 3;
       case TokenType.QuestionQuestion: return 4;
@@ -1246,7 +1544,9 @@ export class Parser {
       case TokenType.Dot:
       case TokenType.QuestionDot:
       case TokenType.LBracket:
-      case TokenType.LParen: return 17;
+      case TokenType.LParen:
+      case TokenType.TemplateHead:
+      case TokenType.TemplateEnd: return 17;
 
       default: return 0;
     }

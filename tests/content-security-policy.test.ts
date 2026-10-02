@@ -790,6 +790,17 @@ describe('CspPolicyStore', () => {
     expect(policy!.directives.has('script-src')).toBe(true);
   });
 
+  it('should default to enabled and disable/re-enable enforcement', () => {
+    store.store('https://example.com', parseCspHeader("script-src 'self'"));
+    expect(store.isEnabled()).toBe(true);
+
+    store.setEnabled(false);
+    expect(store.getEnforcePolicy('https://example.com')).toBeNull();
+
+    store.setEnabled(true);
+    expect(store.getEnforcePolicy('https://example.com')).not.toBeNull();
+  });
+
   it('should getReportOnlyPolicy', () => {
     const reportOnly = parseCspHeader("script-src 'self' 'unsafe-inline'");
     store.store('https://example.com', parseCspHeader("script-src 'self'"), reportOnly);
@@ -1233,6 +1244,66 @@ describe('CspNavigationGuard', () => {
     });
     guard.clearViolations();
     expect(guard.getViolations().length).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CSP Guard Adapter tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { CspGuardAdapter } from '../src/browser/security/csp-guard-adapter';
+import { NavigationType } from '../src/browser/navigation/navigation-controller';
+
+describe('CspGuardAdapter', () => {
+  let store: CspPolicyStore;
+  let guard: CspNavigationGuard;
+  let adapter: CspGuardAdapter;
+
+  beforeEach(() => {
+    store = new CspPolicyStore();
+    guard = new CspNavigationGuard(store);
+    adapter = new CspGuardAdapter(guard);
+  });
+
+  afterEach(() => {
+    store.dispose();
+  });
+
+  it('should allow navigation when no CSP policy', async () => {
+    const allowed = await adapter.canNavigate({
+      url: 'https://example.com/page',
+      type: NavigationType.Push,
+      userInitiated: true,
+    });
+    expect(allowed).toBe(true);
+  });
+
+  it('should block canNavigate and expose the upgraded URL when upgrade-insecure-requests applies', async () => {
+    // CspGuardAdapter doesn't forward documentOrigin, so the policy lookup
+    // resolves against the request URL's own (http:) origin.
+    store.store('http://example.com', parseCspHeader("default-src 'self'; upgrade-insecure-requests"));
+    const request = {
+      url: 'http://example.com/page',
+      type: NavigationType.Push,
+      userInitiated: true,
+    };
+    const allowed = await adapter.canNavigate(request);
+    expect(allowed).toBe(false);
+    expect(adapter.upgradeUrl(request)).toBe('https://example.com/page');
+    expect(adapter.blockedReason(request)).toContain('https://example.com/page');
+  });
+
+  it('should block without an upgrade URL on a genuine CSP violation', async () => {
+    store.store('https://other.com', parseCspHeader("form-action 'none'"));
+    const request = {
+      url: 'https://other.com/submit',
+      type: 'form-submit' as NavigationType,
+      userInitiated: true,
+    };
+    const allowed = await adapter.canNavigate(request);
+    expect(allowed).toBe(false);
+    expect(adapter.upgradeUrl(request)).toBeUndefined();
+    expect(adapter.blockedReason(request)).not.toContain('instead');
   });
 });
 

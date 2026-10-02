@@ -251,7 +251,7 @@ function evaluateMediaQuery(
   return result;
 }
 
-function evaluateMediaQueries(
+export function evaluateMediaQueries(
   queries: readonly CssMediaQuery[],
   viewport: Viewport,
 ): boolean {
@@ -627,6 +627,30 @@ function expandBoxShorthand(
   result.set(`${property}-right`, right);
   result.set(`${property}-bottom`, bottom);
   result.set(`${property}-left`, left);
+  return result;
+}
+
+/**
+ * `overflow` is a real shorthand for `overflow-x`/`overflow-y` (1 value sets
+ * both, 2 values set x then y) — but it was never expanded here, so
+ * `overflow-x`/`overflow-y` stayed unset and later got force-filled with
+ * their OWN initial value ('visible') by setInitialValues()'s ALL_PROPERTIES
+ * pass. That left a self-contradictory computed style (`overflow: hidden`
+ * alongside `overflow-x/-y: visible`), and every caller that reads
+ * `overflow-x ?? overflow` picked up the bogus 'visible' — since `??` only
+ * falls through on null/undefined, not on an already-present 'visible' —
+ * silently defeating `overflow: hidden`/`scroll`/`auto` everywhere.
+ */
+function expandOverflowShorthand(value: string): Map<string, string> {
+  const parts = splitTokenList(value);
+  const result = new Map<string, string>();
+  if (parts.length === 1) {
+    result.set('overflow-x', parts[0]);
+    result.set('overflow-y', parts[0]);
+  } else if (parts.length === 2) {
+    result.set('overflow-x', parts[0]);
+    result.set('overflow-y', parts[1]);
+  }
   return result;
 }
 
@@ -1067,6 +1091,8 @@ export function expandShorthands(
       expanded = expandBorderRadiusShorthand(decl.value);
     } else if (prop === 'background') {
       expanded = expandBackgroundShorthand(decl.value);
+    } else if (prop === 'overflow') {
+      expanded = expandOverflowShorthand(decl.value);
     } else if (prop === 'font') {
       expanded = expandFontShorthand(decl.value);
     } else if (prop === 'list-style') {
@@ -1099,6 +1125,21 @@ export function expandShorthands(
 // USER-AGENT DEFAULTS
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Metadata/raw-text elements the HTML5 tree builder correctly parses into
+ * the DOM (see html5/modes/head.ts's own list) but that must never paint:
+ * their text-node children are markup/script source, not page content. With
+ * no UA default here they fell through to the general display:inline
+ * fallback, so a <style> or <title>'s raw text rendered as visible text on
+ * every real page that used them (e.g. a page's inline <style> block's CSS
+ * source appearing as text on screen).
+ */
+const HIDDEN_ELEMENTS = new Set([
+  'head',
+  'base', 'basefont', 'bgsound', 'link', 'meta',
+  'noscript', 'script', 'style', 'template', 'title',
+]);
+
 const BLOCK_ELEMENTS = new Set([
   'html',
   'body',
@@ -1120,7 +1161,6 @@ const BLOCK_ELEMENTS = new Set([
   'footer',
   'main',
   'aside',
-  'table',
   'form',
   'blockquote',
   'hr',
@@ -1172,6 +1212,29 @@ const INLINE_ELEMENTS = new Set([
   'picture',
 ]);
 
+/**
+ * Table constituent elements' `display` comes entirely from the UA
+ * stylesheet in real browsers — HTML has no attribute for it, pages just
+ * rely on `<table>`/`<tr>`/`<td>` implicitly being table/table-row/
+ * table-cell. Without this map these tags matched none of the sets above
+ * and fell back to plain `inline`, which meant the table-layout code path
+ * (gated on seeing `display: table` specifically) never ran for ANY
+ * ordinary HTML table — every `<tr>`/`<td>` rendered as if it were a
+ * `<span>`, silently flattening rows and columns into one inline run.
+ */
+const TABLE_DISPLAY_ELEMENTS: Record<string, string> = {
+  table: 'table',
+  tr: 'table-row',
+  td: 'table-cell',
+  th: 'table-cell',
+  thead: 'table-header-group',
+  tbody: 'table-row-group',
+  tfoot: 'table-footer-group',
+  caption: 'table-caption',
+  col: 'table-column',
+  colgroup: 'table-column-group',
+};
+
 /** Returns user-agent default declarations for a given element tag. */
 export function getUserAgentDefaults(
   tagName: string,
@@ -1180,7 +1243,11 @@ export function getUserAgentDefaults(
   const styles = new Map<string, string>();
 
   // Display
-  if (BLOCK_ELEMENTS.has(tag)) {
+  if (HIDDEN_ELEMENTS.has(tag)) {
+    styles.set('display', 'none');
+  } else if (TABLE_DISPLAY_ELEMENTS[tag]) {
+    styles.set('display', TABLE_DISPLAY_ELEMENTS[tag]);
+  } else if (BLOCK_ELEMENTS.has(tag)) {
     styles.set('display', 'block');
   } else if (INLINE_ELEMENTS.has(tag)) {
     styles.set('display', 'inline');
@@ -1563,12 +1630,16 @@ export function computeComputedStyles(
   // Apply inline styles — split into important and non-important.
   // Per CSS spec, inline !important beats stylesheet !important.
   if (inlineDecls.length > 0) {
-    // Resolve var() in inline declarations using the custom properties collected so far.
-    const inlineResolved = inlineDecls.map((d) => ({
+    // Resolve var() in inline declarations using the custom properties collected so far,
+    // then expand shorthands (inline `overflow:hidden`/`background:#fff`/`margin:...`
+    // etc. never went through expandShorthands() before — only cascade declarations
+    // did — leaving overflow-x/-y, background-color, etc. unset from an inline
+    // shorthand and vulnerable to being overwritten by their own initial value later.
+    const inlineResolved = expandShorthands(inlineDecls.map((d) => ({
       property: d.property,
       value: d.property.startsWith('--') ? d.value : resolveVarReferences(d.value, earlyCustomProps),
       important: d.important,
-    }));
+    })));
     // Non-important inline styles apply first (override cascade but can be overridden by stylesheet !important)
     for (const decl of inlineResolved) {
       if (!decl.important) {
@@ -1610,6 +1681,11 @@ export function computeComputedStyles(
       }
     }
   }
+
+  // 7.5. Resolve logical margin/padding/inset properties (margin-inline-start,
+  //      padding-block, etc.) to their physical equivalents — layout only
+  //      reads physical properties (margin-left, padding-top, ...).
+  resolveLogicalProperties(computed);
 
   // 8. Set initial values for properties still unset.
   setInitialValues(computed);
@@ -1661,6 +1737,61 @@ export function collectKeyframes(stylesheet: CssStylesheet): Map<string, CssKeyf
   }
   walk(stylesheet.rules);
   return keyframes;
+}
+
+// Inline-axis logical properties: physical side depends on `direction`
+// (ltr vs rtl). Block-axis ones (below) map straight to top/bottom —
+// ponytail: vertical writing-modes (vertical-rl/lr) aren't handled, since
+// horizontal-tb covers the overwhelming majority of real pages; add a
+// writing-mode branch here if that ever matters.
+const LOGICAL_INLINE_PROPERTIES: Record<string, { ltr: string; rtl: string }> = {
+  'margin-inline-start': { ltr: 'margin-left', rtl: 'margin-right' },
+  'margin-inline-end': { ltr: 'margin-right', rtl: 'margin-left' },
+  'padding-inline-start': { ltr: 'padding-left', rtl: 'padding-right' },
+  'padding-inline-end': { ltr: 'padding-right', rtl: 'padding-left' },
+  'inset-inline-start': { ltr: 'left', rtl: 'right' },
+  'inset-inline-end': { ltr: 'right', rtl: 'left' },
+};
+
+const LOGICAL_BLOCK_PROPERTIES: Record<string, string> = {
+  'margin-block-start': 'margin-top',
+  'margin-block-end': 'margin-bottom',
+  'padding-block-start': 'padding-top',
+  'padding-block-end': 'padding-bottom',
+  'inset-block-start': 'top',
+  'inset-block-end': 'bottom',
+};
+
+// Two-value shorthands (`margin-inline: 1em 2em`) that expand to the
+// -start/-end longhands above before those get mapped to physical sides.
+const LOGICAL_SHORTHANDS: Record<string, [string, string]> = {
+  'margin-inline': ['margin-inline-start', 'margin-inline-end'],
+  'padding-inline': ['padding-inline-start', 'padding-inline-end'],
+  'inset-inline': ['inset-inline-start', 'inset-inline-end'],
+  'margin-block': ['margin-block-start', 'margin-block-end'],
+  'padding-block': ['padding-block-start', 'padding-block-end'],
+  'inset-block': ['inset-block-start', 'inset-block-end'],
+};
+
+function resolveLogicalProperties(computed: Map<string, string>): void {
+  for (const [shorthand, [startProp, endProp]] of Object.entries(LOGICAL_SHORTHANDS)) {
+    const value = computed.get(shorthand);
+    if (value === undefined) continue;
+    const parts = value.trim().split(/\s+/);
+    if (!computed.has(startProp)) computed.set(startProp, parts[0]!);
+    if (!computed.has(endProp)) computed.set(endProp, parts[1] ?? parts[0]!);
+  }
+
+  const direction = computed.get('direction') === 'rtl' ? 'rtl' : 'ltr';
+
+  for (const [logical, sides] of Object.entries(LOGICAL_INLINE_PROPERTIES)) {
+    const value = computed.get(logical);
+    if (value !== undefined) computed.set(sides[direction], value);
+  }
+  for (const [logical, physical] of Object.entries(LOGICAL_BLOCK_PROPERTIES)) {
+    const value = computed.get(logical);
+    if (value !== undefined) computed.set(physical, value);
+  }
 }
 
 function setInitialValues(computed: Map<string, string>): void {

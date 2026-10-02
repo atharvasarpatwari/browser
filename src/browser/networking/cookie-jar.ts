@@ -116,8 +116,10 @@ interface ICookieJar extends IDisposable {
   setFromResponse(url: string, setCookieHeaders: readonly string[]): number;
   /** Get cookies that should be sent with a request to the given URL. */
   getForRequest(url: string): readonly CookieData[];
-  /** Get the Cookie header string for a request URL. */
+  /** Get the Cookie header string for a request URL. Includes HttpOnly cookies — this backs real HTTP requests, which must still send them over the wire. */
   getCookieHeader(url: string): string;
+  /** Get the Cookie header string visible to page script (document.cookie) — excludes HttpOnly cookies, which must never be exposed to script. */
+  getCookieHeaderForScript(url: string): string;
   /** Get a specific cookie by name and URL. */
   get(url: string, name: string): CookieData | null;
   /** Get all cookies (for inspection/debugging). */
@@ -223,6 +225,15 @@ class CookieJar implements ICookieJar {
   getCookieHeader(url: string): string {
     const cookies = this.getForRequest(url);
     return cookies.map(c => `${c.name}=${c.value}`).join('; ');
+  }
+
+  // ── ICookieJar: getCookieHeaderForScript ────────────────────────────
+
+  getCookieHeaderForScript(url: string): string {
+    return this.getForRequest(url)
+      .filter(c => !c.httpOnly)
+      .map(c => `${c.name}=${c.value}`)
+      .join('; ');
   }
 
   // ── ICookieJar: get ────────────────────────────────────────────────

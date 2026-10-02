@@ -287,7 +287,15 @@ export function createCustomElementsObject() {
     value: createNativeFunction('define', (_this, args) => {
       const name = toString(args[0]);
       const ctor = args[1];
-      if (typeof ctor !== 'object' || ctor === null || (ctor as JSObject).type !== 'function') {
+      // Real-world custom elements are almost always defined via `class X
+      // extends HTMLElement` (a class needs a real superclass constructor
+      // call, which plain functions can't express) — a class's own
+      // internal representation has type: 'class', distinct from a plain
+      // function declaration/expression's type: 'closure' or a
+      // native-style callable's type: 'function'. Only accepting
+      // 'function' rejected every real class-based custom element.
+      const ctorType = typeof ctor === 'object' && ctor !== null ? (ctor as JSObject | JSFunction).type : null;
+      if (ctorType !== 'function' && ctorType !== 'class' && ctorType !== 'closure') {
         throw new TypeError('Custom element constructor must be a function');
       }
       registry.set(name, ctor as JSFunction);
@@ -639,6 +647,26 @@ export function createPerformanceObject() {
     value: createNativeFunction('clearResourceTimings', () => undefined),
     writable: true, enumerable: true, configurable: true,
   });
+
+  // Legacy `PerformanceTiming` (window.performance.timing) — deprecated by
+  // the spec in favor of PerformanceNavigationTiming, but still commonly
+  // feature-detected and read by real-world page scripts (e.g. YouTube's
+  // own timing beacon code). Nova has no real per-phase navigation timing
+  // to report here, so every field shares one epoch timestamp — enough for
+  // "does this property exist and is it a number" checks and for duration
+  // math (`x - navigationStart`) to not throw or produce NaN.
+  const navigationStart = Date.now();
+  const timingObj = createObject(null);
+  for (const field of [
+    'navigationStart', 'unloadEventStart', 'unloadEventEnd', 'redirectStart', 'redirectEnd',
+    'fetchStart', 'domainLookupStart', 'domainLookupEnd', 'connectStart', 'connectEnd',
+    'secureConnectionStart', 'requestStart', 'responseStart', 'responseEnd', 'domLoading',
+    'domInteractive', 'domContentLoadedEventStart', 'domContentLoadedEventEnd', 'domComplete',
+    'loadEventStart', 'loadEventEnd',
+  ]) {
+    timingObj.properties.set(field, { value: navigationStart, writable: false, enumerable: true, configurable: false });
+  }
+  perfObj.properties.set('timing', { value: timingObj, writable: false, enumerable: true, configurable: false });
 
   return perfObj;
 }

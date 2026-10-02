@@ -160,6 +160,7 @@ h3{font-family:var(--font-head)}
 .momentum-item .m-delta.up{color:#34d399}
 .momentum-item .m-delta.down{color:#f87171}
 .momentum-item .m-delta.flat{color:var(--text-muted)}
+.momentum-item .m-prev{font-size:.68rem;color:var(--text-muted);margin-top:3px}
 @media(max-width:900px){.momentum-grid{grid-template-columns:repeat(2,1fr)}}
 .badge-shelf{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
 .badge-chip{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;background:rgba(255,255,255,0.03);border:1px solid var(--glass-border);transition:transform .15s,border-color .15s}
@@ -481,10 +482,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   </div>
   <h1 class="sr-only">Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num" id="statDocs">253</span> Documents</span>
-    <span><span class="num" id="statDays">42</span> Days</span>
-    <span><span class="num" id="statTests">9,265</span> Total Suite Tests</span>
-    <span>Generated <span class="num" id="statGenerated">2026-09-12 20:59:18</span></span>
+    <span><span class="num" id="statDocs">337</span> Documents</span>
+    <span><span class="num" id="statDays">58</span> Days</span>
+    <span><span class="num" id="statTests">9,549</span> Total Suite Tests</span>
+    <span>Generated <span class="num" id="statGenerated">2026-10-01</span></span>
   </p>
 </header>
 
@@ -516,10 +517,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <div class="kpi-row" id="kpis">
-  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">253</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
-  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,265</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
-  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">469</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
-  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,348</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">337</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,549</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
+  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">692</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,791</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
   <div class="kpi amber glass"><span class="icon">📐</span><div class="value" id="kpiCompliance">~78%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
 </div>
 
@@ -886,6 +887,23 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 
 <script>
 const DOCS = [
+{file:"2026-10-01-devtools-accessibility-tab-implemented.md",date:"2026-10-01",title:"DevTools Accessibility Tab (Phase 6j)",category:"UI",tests:5,status:"Completed",rootCauses:1,filesModified:1,filesCreated:2},
+{file:"2026-10-01-cors-corp-enforcement-activated.md",date:"2026-10-01",title:"Activate CORS/CORP Subresource Enforcement (Phase 6i)",category:"Security",tests:6,status:"Completed",rootCauses:1,filesModified:6,filesCreated:1},
+{file:"2026-10-01-permissions-settings-page-implemented.md",date:"2026-10-01",title:"Permissions Settings Page (Phase 6h) — Grants Now Survive Reload, and Can Be Revoked",category:"UI",tests:12,status:"Completed",rootCauses:1,filesModified:8,filesCreated:2},
+{file:"2026-10-01-avif-image-decoding-implemented.md",date:"2026-10-01",title:"AVIF Image Decoding via the Host's Real Rasterizer (Phase 6g)",category:"Rendering",tests:2,status:"Completed",rootCauses:1,filesModified:2,filesCreated:1},
+{file:"2026-10-01-svg-image-decoding-implemented.md",date:"2026-10-01",title:"SVG Image Decoding via the Host's Real Rasterizer (Phase 6f)",category:"Rendering",tests:2,status:"Completed",rootCauses:1,filesModified:2,filesCreated:1},
+{file:"2026-10-01-http-cache-correctness-fixes-implemented.md",date:"2026-10-01",title:"HTTP Cache Correctness Fixes (Phase 6e) — Three Real Bugs in the Live Cache",category:"IPC/Networking",tests:4,status:"Completed",rootCauses:3,filesModified:5,filesCreated:1},
+{file:"2026-10-01-bookmark-import-export-implemented.md",date:"2026-10-01",title:"Bookmark Import/Export (Phase 6d) — A Dedicated Parser Instead of the Engine's Own",category:"UI",tests:6,status:"Completed",rootCauses:1,filesModified:1,filesCreated:2},
+{file:"2026-10-01-download-open-show-retry-wired.md",date:"2026-10-01",title:"Open File, Show in Folder, and Retry — Wiring the Downloads Panel's Last Stubs",category:"UI",tests:2,status:"Completed",rootCauses:0,filesModified:7,filesCreated:0},
+{file:"2026-09-28-real-downloads-to-disk-implemented.md",date:"2026-09-28",title:"Real Downloads-to-Disk (Phase 6b) — Every Download Was Fake",category:"Architecture",tests:3,status:"Completed",rootCauses:1,filesModified:4,filesCreated:2},
+{file:"2026-09-28-httponly-cookie-enforcement-implemented.md",date:"2026-09-28",title:"HttpOnly Cookie Enforcement (Phase 6a) — document.cookie Was Exposing HttpOnly Cookies",category:"Security",tests:3,status:"Completed",rootCauses:1,filesModified:3,filesCreated:2},
+{file:"2026-09-28-profiles-settings-page-implemented.md",date:"2026-09-28",title:"Profiles Settings Page (Phase 5a) — A Complete Backend Sitting With Zero Wiring",category:"UI",tests:5,status:"Completed",rootCauses:1,filesModified:3,filesCreated:2},
+{file:"2026-09-28-post-form-submission-implemented.md",date:"2026-09-28",title:"POST Form Submission (Phase 2d) — Forms Were Silently Downgraded to GET",category:"HTML5",tests:3,status:"Completed",rootCauses:1,filesModified:8,filesCreated:0},
+{file:"2026-09-28-permission-prompt-ui-implemented.md",date:"2026-09-28",title:"Permission-Prompt UI — Geolocation, Notifications, and Clipboard Are Now Real",category:"UI",tests:-15,status:"Completed",rootCauses:2,filesModified:7,filesCreated:4},
+{file:"2026-09-28-form-interactivity-implemented.md",date:"2026-09-28",title:"Forms Were 0/14 on the Feature Audit — Now Interactive End-to-End",category:"HTML5",tests:15,status:"Completed",rootCauses:4,filesModified:6,filesCreated:2},
+{file:"2026-09-27-tls-validation-rubber-stamp-and-page-input-events-never-dispatched.md",date:"2026-09-27",title:"TLS Validation Was Rubber-Stamping Untrusted Certs, and Only Click Ever Reached Page Content",category:"Security",tests:20,status:"Completed",rootCauses:2,filesModified:16,filesCreated:3},
+{file:"2026-09-26-core-browser-keyboard-shortcuts-added.md",date:"2026-09-26",title:"Core Browser Keyboard Shortcuts Added — Including a Real Ctrl+L Focus Bug Caught by Live Testing",category:"UI",tests:4,status:"Completed",rootCauses:1,filesModified:2,filesCreated:2},
+{file:"2026-09-25-release-pipeline-first-real-run-found-three-bugs.md",date:"2026-09-25",title:"The Release Pipeline Had Never Actually Run — A Throwaway Tag Found Three Real Bugs, Including One I Introduced Fixing the First",category:"Architecture",tests:0,status:"Completed",rootCauses:4,filesModified:3,filesCreated:1},
 {file:"2026-07-18-application-bootstrap-wiring.md",date:"2026-07-18",title:"Application Bootstrap Wiring",category:"Architecture",tests:14,status:"Completed",rootCauses:0,filesModified:3,filesCreated:2},
 {file:"2026-07-18-crash-recovery-isolation.md",date:"2026-07-18",title:"Crash Recovery & Isolation",category:"Security",tests:88,status:"Completed",rootCauses:6,filesModified:2,filesCreated:5},
 {file:"2026-07-18-css-grid-layout.md",date:"2026-07-18",title:"CSS Grid Layout",category:"CSS",tests:50,status:"Completed",rootCauses:0,filesModified:2,filesCreated:0},
@@ -1136,10 +1154,76 @@ const DOCS = [
 {file:"2026-09-07-roadmap-implementation.md",date:"2026-09-07",title:"Roadmap Implementation — Dead-WebRTC Removal, Engines, Typecheck, Remote Debugging",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:5,filesCreated:1},
 {file:"2026-09-07-strategic-roadmap.md",date:"2026-09-07",title:"Nova Browser Strategic Roadmap — Better = More of a Real Browser You Can Ship",category:"Plan",tests:0,status:"In Progress",rootCauses:0,filesModified:0,filesCreated:0},
 {file:"2026-09-10-browser-interface-design-mockup.md",date:"2026-09-10",title:"Browser Interface Design Mockup (Claude Design Canvas)",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
+{file:"2026-09-12-click-dispatch-and-timer-pump.md",date:"2026-09-12",title:"Click/Pointer Event Dispatch + Post-Load Timer Pump",category:"JavaScript",tests:0,status:"Completed",rootCauses:4,filesModified:6,filesCreated:1},
+{file:"2026-09-12-devtools-console-panel.md",date:"2026-09-12",title:"DevTools Console Panel — Wiring Real Page Output Into a Visible Panel",category:"UI",tests:0,status:"Completed",rootCauses:4,filesModified:6,filesCreated:2},
+{file:"2026-09-12-devtools-elements-tab.md",date:"2026-09-12",title:"DevTools Elements Tab — Live DOM Tree View",category:"UI",tests:0,status:"Completed",rootCauses:1,filesModified:3,filesCreated:1},
+{file:"2026-09-12-devtools-network-tab.md",date:"2026-09-12",title:"DevTools Network Tab — Real Resource Load Log",category:"UI",tests:0,status:"Completed",rootCauses:1,filesModified:6,filesCreated:1},
+{file:"2026-09-12-page-zoom.md",date:"2026-09-12",title:"Page Zoom — Wiring the Orphaned ZoomManager to Real Rendering",category:"UI",tests:0,status:"Completed",rootCauses:4,filesModified:3,filesCreated:1},
+{file:"2026-09-12-toolbar-menu-and-internal-pages.md",date:"2026-09-12",title:"Toolbar Buttons, Main Menu, and Internal Pages",category:"UI",tests:0,status:"Completed",rootCauses:6,filesModified:6,filesCreated:1},
+{file:"2026-09-12-shortcuts-context-menu-autocomplete.md",date:"2026-09-12",title:"Tab Shortcuts, Page Context Menu, Fullscreen, and Real Address Bar Autocomplete",category:"UI",tests:0,status:"Completed",rootCauses:4,filesModified:4,filesCreated:1},
+{file:"2026-09-12-rtl-writing-mode-text-align.md",date:"2026-09-12",title:"RTL Direction + text-align — Wiring Parsed-But-Inert CSS Into Layout",category:"CSS",tests:0,status:"Completed",rootCauses:1,filesModified:2,filesCreated:1},
+{file:"2026-09-12-find-in-page.md",date:"2026-09-12",title:"Real Find-in-Page — Ctrl+F Searches the Actual Page",category:"UI",tests:0,status:"Completed",rootCauses:1,filesModified:3,filesCreated:2},
 {file:"2026-09-12-hn-rendering-pipeline-fixes.md",date:"2026-09-12",title:"HN Rendering Pipeline — 11 Root-Cause Fixes (Tree-Builder, Layout, Tokenizer)",category:"Rendering",tests:3,status:"Completed",rootCauses:11,filesModified:18,filesCreated:0},
 {file:"2026-09-12-nova-interface-mockup-implementation.md",date:"2026-09-12",title:"Nova Interface Mockup Implementation (.nova-* UI Reconciliation)",category:"UI",tests:0,status:"Completed",rootCauses:3,filesModified:7,filesCreated:0},
-{file:"2026-09-12-analytics-dashboard-update.md",date:"2026-09-12",title:"Analytics Dashboard Refresh — Latest Docs Resync (through 2026-09-12)",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1}
-
+{file:"2026-09-12-analytics-dashboard-update.md",date:"2026-09-12",title:"Analytics Dashboard Refresh — Latest Docs Resync (through 2026-09-12)",category:"Architecture",tests:0,status:"Completed",rootCauses:0,filesModified:1,filesCreated:1},
+{file:"2026-09-13-security-enforcement-wiring.md",date:"2026-09-13",title:"Security Runtime Enforcement Wiring (CSP / CORS / Secure Context)",category:"Security",tests:22,status:"Completed",rootCauses:4,filesModified:5,filesCreated:2},
+{file:"2026-09-14-destructuring-and-default-params.md",date:"2026-09-14",title:"JS Engine — Destructuring and Default Parameters Were Silently No-Ops",category:"JavaScript",tests:14,status:"Completed",rootCauses:4,filesModified:5,filesCreated:1},
+{file:"2026-09-14-android-duplicate-mobile-chrome.md",date:"2026-09-14",title:"Android — Duplicate Bottom Toolbar Under the Native Host",category:"UI",tests:0,status:"Completed",rootCauses:1,filesModified:1,filesCreated:1},
+{file:"2026-09-14-android-mobile-native-chrome.md",date:"2026-09-14",title:"Android — Mobile-Native Chrome (Tab Switcher, Not a Desktop Tab Strip)",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:2,filesCreated:1},
+{file:"2026-09-14-android-find-in-page.md",date:"2026-09-14",title:"Android — Find in Page, a Real Engine Feature With No Way to Trigger It",category:"UI",tests:2,status:"Completed",rootCauses:1,filesModified:6,filesCreated:2},
+{file:"2026-09-14-js-in-operator-parser-hang.md",date:"2026-09-14",title:"JS Engine — 'in' Operator Hung the Parser Forever (www.google.com Never Loaded)",category:"JavaScript",tests:2,status:"Completed",rootCauses:2,filesModified:2,filesCreated:1},
+{file:"2026-09-14-js-parser-real-world-compat-sweep.md",date:"2026-09-14",title:"JS Engine — Six More Real-World Parser/Interpreter Gaps (Found Bisecting www.google.com)",category:"JavaScript",tests:14,status:"Completed",rootCauses:7,filesModified:4,filesCreated:1},
+{file:"2026-09-14-css-engine-real-world-gaps.md",date:"2026-09-14",title:"CSS Engine — Six Real Gaps Found Sweeping Against Real-World Fixtures",category:"CSS",tests:1,status:"Completed",rootCauses:6,filesModified:7,filesCreated:2},
+{file:"2026-09-14-css-engine-round-2-more-real-gaps.md",date:"2026-09-14",title:"CSS Engine Round 2 — Five More Real Gaps (Grid Auto-Fill, Multi-Column, Cascade Order, Overflow, Rasterizer State Leak)",category:"CSS",tests:0,status:"Completed",rootCauses:5,filesModified:7,filesCreated:1},
+{file:"2026-09-14-css-engine-round-3-transforms-and-stacking.md",date:"2026-09-14",title:"CSS Engine Round 3 — Transforms Were Completely Non-Functional, Plus Three More Real Gaps",category:"CSS",tests:0,status:"Completed",rootCauses:4,filesModified:7,filesCreated:1},
+{file:"2026-09-14-nova-start-page.md",date:"2026-09-14",title:"Nova Start Page — New New-Tab-Page Design, Wired to Real Bookmarks/History",category:"UI",tests:8,status:"Completed",rootCauses:2,filesModified:2,filesCreated:2},
+{file:"2026-09-14-webrtc-phase2-dtls-sctp-plan.md",date:"2026-09-14",title:"WebRTC Phase 2 — Real DTLS 1.2 + SCTP + DCEP (Browser Interop)",category:"Plan",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
+{file:"2026-09-15-js-engine-try-catch-escape-and-dom-live-bindings.md",date:"2026-09-15",title:"JS Engine — Try/Catch Escape Bug Uncovers 17 Real Gaps (classList, innerHTML, regex literals, Event, and more)",category:"JavaScript",tests:1,status:"Completed",rootCauses:18,filesModified:8,filesCreated:2},
+{file:"2026-09-15-js-engine-round-2-generators-iteration-parameters.md",date:"2026-09-15",title:"JS Engine Round 2 — Generators, for-of, Destructured Parameters, and 8 More Real Gaps",category:"JavaScript",tests:0,status:"Completed",rootCauses:12,filesModified:7,filesCreated:1},
+{file:"2026-09-15-js-engine-round-3-class-features.md",date:"2026-09-15",title:"JS Engine Round 3 — Classes Were Fundamentally Broken: instanceof, Setters, Fields, and a Stack Overflow",category:"JavaScript",tests:0,status:"Completed",rootCauses:9,filesModified:6,filesCreated:1},
+{file:"2026-09-16-js-engine-round-4-native-ctor-escape-and-error-instanceof.md",date:"2026-09-16",title:"JS Engine Round 4 — More Try/Catch Escape Sites, Plus instanceof TypeError Was Always False",category:"JavaScript",tests:0,status:"Completed",rootCauses:2,filesModified:4,filesCreated:1},
+{file:"2026-09-16-js-engine-round-5-prototype-inheritance-and-function-methods.md",date:"2026-09-16",title:"JS Engine Round 5 — The Classic Prototype-Inheritance Pattern Was Completely Broken (and So Was Every Template Literal Escape)",category:"JavaScript",tests:10,status:"Completed",rootCauses:8,filesModified:9,filesCreated:1},
+{file:"2026-09-16-js-engine-round-6-static-blocks-array-from-new-target.md",date:"2026-09-16",title:"JS Engine Round 6 — Static Blocks, Array.from, and new.target Were All Broken or Missing",category:"JavaScript",tests:9,status:"Completed",rootCauses:4,filesModified:6,filesCreated:1},
+{file:"2026-09-16-android-web-chrome-unification.md",date:"2026-09-16",title:"Android — Replaced the Native Compose Chrome with the Real Desktop Web Chrome",category:"UI",tests:0,status:"Completed",rootCauses:4,filesModified:14,filesCreated:1},
+{file:"2026-09-16-new-tab-never-rendered-content.md",date:"2026-09-16",title:"A New Tab's Content Never Rendered — the Real Start Page Was Built but Unreachable",category:"UI",tests:0,status:"Completed",rootCauses:2,filesModified:3,filesCreated:1},
+{file:"2026-09-16-bookmarks-history-panel-theme-and-touch-fix.md",date:"2026-09-16",title:"Bookmarks/History/Downloads Panels Had a Hardcoded Light Theme, and a Touch-Invisible Remove Button",category:"UI",tests:0,status:"Completed",rootCauses:2,filesModified:2,filesCreated:1},
+{file:"2026-09-16-https-only-mode-setting.md",date:"2026-09-16",title:"HTTPS-First and CSP Enforcement Were Fully Built, but Invisible to the User",category:"Security",tests:1,status:"Completed",rootCauses:2,filesModified:4,filesCreated:1},
+{file:"2026-09-16-https-upgrade-was-a-block-not-a-redirect.md",date:"2026-09-16",title:"HTTPS-Only Mode Didn't Upgrade Navigations — It Just Blocked Them",category:"Security",tests:3,status:"Completed",rootCauses:1,filesModified:4,filesCreated:1},
+{file:"2026-09-16-incognito-mode-was-a-menu-label.md",date:"2026-09-16",title:"Incognito Mode Was a Menu Label — No History Pause, No Cookie Isolation, No Indicator",category:"Security",tests:7,status:"Completed",rootCauses:4,filesModified:7,filesCreated:1},
+{file:"2026-09-17-html5-parser-in-head-whitespace-corrupted-every-real-page.md",date:"2026-09-17",title:"The HTML5 Parser Corrupted Every Realistically-Formatted Page — Every Page Rendered Blank",category:"HTML5",tests:1,status:"Completed",rootCauses:1,filesModified:2,filesCreated:1},
+{file:"2026-09-17-cookie-jar-networking-wiring.md",date:"2026-09-17",title:"Cookie Jar Networking Wiring — Two Built Subsystems, Neither Reachable",category:"IPC/Networking",tests:4,status:"Completed",rootCauses:1,filesModified:5,filesCreated:1},
+{file:"2026-09-19-windows-app-single-instance-and-window-state.md",date:"2026-09-19",title:"The Windows App Had No Single-Instance Lock and Forgot Its Window Size Every Launch",category:"Architecture",tests:0,status:"Completed",rootCauses:2,filesModified:2,filesCreated:1},
+{file:"2026-09-19-devtools-network-real-timing-breakdown.md",date:"2026-09-19",title:"DevTools Network Tab Got a Real DNS/Connect/TLS/Wait/Download Breakdown",category:"IPC/Networking",tests:7,status:"Completed",rootCauses:2,filesModified:3,filesCreated:2},
+{file:"2026-09-19-windows-packaged-build-electron-version-pin.md",date:"2026-09-19",title:"The Windows App Couldn't Be Packaged at All — electron Was a Range, Not a Version",category:"Architecture",tests:0,status:"Completed",rootCauses:1,filesModified:1,filesCreated:1},
+{file:"2026-09-19-crash-isolation-baseline-test.md",date:"2026-09-19",title:"A Parked \"Big Feature\" Was Actually Already Working — Confirmed, Not Assumed",category:"Architecture",tests:2,status:"Completed",rootCauses:1,filesModified:2,filesCreated:1},
+{file:"2026-09-19-csp-upgrade-insecure-requests-redirect.md",date:"2026-09-19",title:"CSP upgrade-insecure-requests Was Silently Discarded",category:"Security",tests:3,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0},
+{file:"2026-09-19-electron-navigation-timeout-hang.md",date:"2026-09-19",title:"Electron Navigation Hang — Missing Fetch Timeout + Broken Client Detection",category:"IPC/Networking",tests:1,status:"Completed",rootCauses:2,filesModified:3,filesCreated:0},
+{file:"2026-09-20-native-networking-dns-wiring-scoped-and-blocked.md",date:"2026-09-20",title:"Native DNS/TLS/HTTP Wiring — Scoped Per-Subsystem, Blocked on a Missing Toolchain",category:"IPC/Networking",tests:0,status:"Planned",rootCauses:2,filesModified:3,filesCreated:1},
+{file:"2026-09-20-tls-wildcard-hostname-matching-was-inverted.md",date:"2026-09-20",title:"TLS Wildcard Certificate Matching Was Completely Inverted",category:"Security",tests:2,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0},
+{file:"2026-09-21-web-sql-database-implemented.md",date:"2026-09-21",title:"Web SQL Database — Implemented, Made Atomic, Given Aggregate Functions",category:"JavaScript",tests:29,status:"Completed",rootCauses:0,filesModified:1,filesCreated:4},
+{file:"2026-09-21-three-real-js-engine-gaps-from-youtube-bisection.md",date:"2026-09-21",title:"Three Real JS-Engine Gaps Found Bisecting YouTube",category:"JavaScript",tests:4,status:"Completed",rootCauses:3,filesModified:5,filesCreated:0},
+{file:"2026-09-22-five-more-js-engine-gaps-from-youtube-bisection.md",date:"2026-09-22",title:"Five More Real JS-Engine Gaps Found Continuing the YouTube Bisection",category:"JavaScript",tests:7,status:"Completed",rootCauses:5,filesModified:7,filesCreated:0},
+{file:"2026-09-22-document-cookie-never-implemented.md",date:"2026-09-22",title:"document.cookie Was Never Implemented — Found Bisecting Wikipedia",category:"JavaScript",tests:1,status:"Completed",rootCauses:1,filesModified:5,filesCreated:0},
+{file:"2026-09-22-two-real-js-engine-gaps-from-github-bisection.md",date:"2026-09-22",title:"Two Real JS-Engine Gaps Found Bisecting GitHub's Own Assets",category:"JavaScript",tests:2,status:"Completed",rootCauses:2,filesModified:5,filesCreated:0},
+{file:"2026-09-22-object-prototype-tostring-implemented.md",date:"2026-09-22",title:"Object.prototype.toString/Symbol.toStringTag Were Never Implemented",category:"JavaScript",tests:1,status:"Completed",rootCauses:1,filesModified:4,filesCreated:0},
+{file:"2026-09-22-custom-elements-rejected-real-classes.md",date:"2026-09-22",title:"customElements.define() Rejected Every Real Class-Based Custom Element",category:"JavaScript",tests:1,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0},
+{file:"2026-09-22-four-gaps-from-react-dev-bisection.md",date:"2026-09-22",title:"Four Real Gaps Found Bisecting react.dev — Including Two Fundamental Destructuring Bugs",category:"JavaScript",tests:4,status:"Completed",rootCauses:4,filesModified:5,filesCreated:0},
+{file:"2026-09-22-native-errors-uncatchable-and-skipped-finally.md",date:"2026-09-22",title:"Native Engine Errors Were Uncatchable, and Skipped finally When Uncaught",category:"JavaScript",tests:2,status:"Completed",rootCauses:2,filesModified:2,filesCreated:0},
+{file:"2026-09-22-block-scoped-let-const-leaked-out-of-every-block.md",date:"2026-09-22",title:"let/const Leaked Out of Every Bare, if, while, and do-while Block",category:"JavaScript",tests:1,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0},
+{file:"2026-09-22-url-location-tostring-coercion-missing.md",date:"2026-09-22",title:"new URL(relative, base) Threw \"Invalid URL\" for a Real URL or Location Base",category:"JavaScript",tests:1,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0},
+{file:"2026-09-22-const-for-of-throws-plus-four-more-gaps.md",date:"2026-09-22",title:"for (const x of/in ...) Always Threw, Plus 4 More Gaps From a Fresh Bisection",category:"JavaScript",tests:5,status:"Completed",rootCauses:5,filesModified:6,filesCreated:0},
+{file:"2026-09-23-top-level-this-and-use-strict-detection-broken.md",date:"2026-09-23",title:"Top-Level this Was undefined, and 'use strict' Detection Never Actually Worked",category:"JavaScript",tests:3,status:"Completed",rootCauses:3,filesModified:3,filesCreated:0},
+{file:"2026-09-23-array-prototype-never-existed.md",date:"2026-09-23",title:"Array.prototype Was Never Exposed as a Real Object",category:"JavaScript",tests:1,status:"Completed",rootCauses:3,filesModified:3,filesCreated:0},
+{file:"2026-09-23-new-memberexpression-precedence-bug.md",date:"2026-09-23",title:"new a.b.c(args) Misparsed as (new a.b).c(args), Recursing Forever in Real jQuery",category:"JavaScript",tests:1,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0},
+{file:"2026-09-23-element-getelementsbytagname-and-documentfragment-missing.md",date:"2026-09-23",title:"A Plain Element Had No getElementsByTagName, and createDocumentFragment Didn't Exist",category:"JavaScript",tests:1,status:"Completed",rootCauses:2,filesModified:3,filesCreated:0},
+{file:"2026-09-23-empty-statement-crashed-if-for-in-bodies.md",date:"2026-09-23",title:"An Empty Statement (;) as an if/Loop Body Crashed the Engine — Real jQuery Now Loads End-to-End",category:"JavaScript",tests:1,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0},
+{file:"2026-09-23-array-index-assignment-never-grew-length.md",date:"2026-09-23",title:"Array Index Assignment Never Grew .length — Unlocking Real jQuery's Selector Engine and DOM Manipulation",category:"JavaScript",tests:2,status:"Completed",rootCauses:3,filesModified:3,filesCreated:0},
+{file:"2026-09-23-ternary-alternate-branch-precedence-bug.md",date:"2026-09-23",title:"A Ternary's Branches Were Parsed at the Wrong Precedence — Broke Real jQuery's Entire Event System",category:"JavaScript",tests:1,status:"Completed",rootCauses:1,filesModified:2,filesCreated:0},
+{file:"2026-09-23-html-attr-tokenizer-and-array-slice-negative-index.md",date:"2026-09-23",title:"A Bogus Empty Attribute on Every Parsed Tag, and Array.slice(-N) Returning the Whole Array",category:"JavaScript",tests:2,status:"Completed",rootCauses:2,filesModified:3,filesCreated:0},
+{file:"2026-09-23-merge-main-nova-css-architecture-conflict.md",date:"2026-09-23",title:"Merging origin/main — A Real UI-Architecture Conflict Hiding Behind a Clean Merge",category:"Architecture",tests:23,status:"Completed",rootCauses:8,filesModified:11,filesCreated:9},
+{file:"2026-09-23-quic-stream-frame-exceeded-macos-udp-datagram-limit.md",date:"2026-09-23",title:"QUIC Stream Writes Sent as One Giant UDP Datagram — Failed Outright on macOS",category:"IPC/Networking",tests:0,status:"Completed",rootCauses:1,filesModified:1,filesCreated:1},
+{file:"2026-09-24-android-download-test-automation-and-cdp-client-bug.md",date:"2026-09-24",title:"Automating the Android Download Test — a Real CDP Client Bug, and Two Genuine Environment Blockers",category:"Architecture",tests:0,status:"Completed",rootCauses:1,filesModified:2,filesCreated:1},
+{file:"2026-09-24-electron-builder-node-modules-exclusion-broke-auto-updater.md",date:"2026-09-24",title:"Packaged Windows Build Verified — But electron-updater Was Silently Dead in Every Platform's Installer",category:"Architecture",tests:0,status:"Completed",rootCauses:1,filesModified:1,filesCreated:1}
 ];
 
 /* Last-updated stamp: when the DOCS dataset is refreshed, bump these so the header
@@ -1550,14 +1634,24 @@ function drawSpark(id,values,color){
   svg.innerHTML=`<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
 }
 
+// Every secondary-KPI sparkline below plots a CUMULATIVE running value
+// (a running total, or a running best-so-far for a ratio), never a raw
+// per-day figure — a per-day figure dips on any slower day, which reads as
+// "regression" even when nothing was lost. A running total of non-negative
+// daily contributions is mathematically guaranteed to never decrease, so
+// the trend line only ever goes up or flattens, matching what these cards
+// are actually meant to show: progress so far, not day-to-day volatility.
+
 const testedSessions=DOCS.filter(d=>d.tests>0);
 const avgTests=Math.round(testedSessions.reduce((s,d)=>s+d.tests,0)/testedSessions.length);
 animateCount(document.getElementById('kpiAvgTests'),avgTests);
-drawSpark('sparkAvg',dateKeys.map(k=>{const ds=DOCS.filter(d=>d.date===k&&d.tests>0);return ds.length?ds.reduce((s,d)=>s+d.tests,0)/ds.length:0}),'#60a5fa');
+let cumTestsSpark=0;
+drawSpark('sparkAvg',dateKeys.map(k=>{cumTestsSpark+=DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.tests,0);return cumTestsSpark}),'#60a5fa');
 
 const busiestDate=dateKeys.reduce((a,b)=>dateCounts[a]>=dateCounts[b]?a:b);
 document.getElementById('kpiBusiest').textContent=busiestDate.slice(5)+' ('+dateCounts[busiestDate]+')';
-drawSpark('sparkBusy',dateKeys.map(k=>dateCounts[k]),'#f472b6');
+let cumDocsBusySpark=0;
+drawSpark('sparkBusy',dateKeys.map(k=>{cumDocsBusySpark+=dateCounts[k];return cumDocsBusySpark}),'#f472b6');
 
 const testsByDate=k=>DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.tests,0);
 const laziestDate=dateKeys.reduce((a,b)=>{
@@ -1565,7 +1659,8 @@ const laziestDate=dateKeys.reduce((a,b)=>{
   return testsByDate(a)<=testsByDate(b)?a:b;
 });
 document.getElementById('kpiLaziest').textContent=laziestDate.slice(5)+' ('+dateCounts[laziestDate]+')';
-drawSpark('sparkLazy',dateKeys.map(k=>dateCounts[k]),'#a855f7');
+let cumDocsLazySpark=0;
+drawSpark('sparkLazy',dateKeys.map(k=>{cumDocsLazySpark+=dateCounts[k];return cumDocsLazySpark}),'#a855f7');
 document.getElementById('kpiLaziest').closest('.kpi').style.cursor='pointer';
 document.getElementById('kpiLaziest').closest('.kpi').addEventListener('click',()=>openDatePage(laziestDate));
 document.getElementById('kpiBusiest').closest('.kpi').style.cursor='pointer';
@@ -1573,12 +1668,13 @@ document.getElementById('kpiBusiest').closest('.kpi').addEventListener('click',(
 
 const completionRate=Math.round((statusCounts.Completed/(DOCS.length))*100);
 animateCount(document.getElementById('kpiCompletion'),completionRate,{formatter:n=>Math.round(n)+'%'});
-let runningComplete=0,runningTotal=0;
-drawSpark('sparkComp',dateKeys.map(k=>{const ds=DOCS.filter(d=>d.date===k);runningTotal+=ds.length;runningComplete+=ds.filter(d=>d.status==='Completed').length;return runningTotal?Math.round((runningComplete/runningTotal)*100):0}),'#34d399');
+let runningComplete=0,runningTotal=0,bestCompletionRate=0;
+drawSpark('sparkComp',dateKeys.map(k=>{const ds=DOCS.filter(d=>d.date===k);runningTotal+=ds.length;runningComplete+=ds.filter(d=>d.status==='Completed').length;const rate=runningTotal?Math.round((runningComplete/runningTotal)*100):0;bestCompletionRate=Math.max(bestCompletionRate,rate);return bestCompletionRate}),'#34d399');
 
 const totalCreated=DOCS.reduce((s,d)=>s+d.filesCreated,0);
 animateCount(document.getElementById('kpiCreated'),totalCreated);
-drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.filesCreated,0)),'#00f0ff');
+let cumCreatedSpark=0;
+drawSpark('sparkCreated',dateKeys.map(k=>{cumCreatedSpark+=DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.filesCreated,0);return cumCreatedSpark}),'#00f0ff');
 
 /* ---------- Insights ---------- */
 (function buildInsights(){
@@ -1691,17 +1787,20 @@ drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)
     if(prev===0)return now===0?0:100;
     return Math.round(((now-prev)/prev)*100);
   };
+  // Every card shows both the current-window total AND the prior-window
+  // baseline it's measured against — a bare percentage can't be checked or
+  // trusted on its own, the raw pair can.
   const metrics=[
-    {label:'Documents',now:recent.docs,delta:pctChange(recent.docs,prior.docs)},
-    {label:'Tests Added',now:recent.tests.toLocaleString(),delta:pctChange(recent.tests,prior.tests)},
-    {label:'Root Causes Fixed',now:recent.roots,delta:pctChange(recent.roots,prior.roots)},
-    {label:'Files Touched',now:recent.files,delta:pctChange(recent.files,prior.files)}
+    {label:'Documents',now:recent.docs,prev:prior.docs,delta:pctChange(recent.docs,prior.docs)},
+    {label:'Tests Added',now:recent.tests.toLocaleString(),prev:prior.tests.toLocaleString(),delta:pctChange(recent.tests,prior.tests)},
+    {label:'Root Causes Fixed',now:recent.roots,prev:prior.roots,delta:pctChange(recent.roots,prior.roots)},
+    {label:'Files Touched',now:recent.files,prev:prior.files,delta:pctChange(recent.files,prior.files)}
   ];
   grid.innerHTML=metrics.map(m=>{
     const dir=m.delta>0?'up':m.delta<0?'down':'flat';
     const arrow=dir==='up'?'▲':dir==='down'?'▼':'▬';
     const deltaText=dir==='flat'?'No change':`${arrow} ${Math.abs(m.delta)}%`;
-    return `<div class="momentum-item"><div class="m-label">${m.label}</div><div class="m-value">${m.now}</div><div class="m-delta ${dir}">${deltaText}</div></div>`;
+    return `<div class="momentum-item"><div class="m-label">${m.label}</div><div class="m-value">${m.now}</div><div class="m-delta ${dir}">${deltaText}</div><div class="m-prev">vs ${m.prev} in the prior window</div></div>`;
   }).join('')+`<div class="momentum-note" style="grid-column:1/-1;font-size:.72rem;color:var(--text-muted);margin-top:2px">Comparing the last ${WINDOW} active days (${recentDays[0]} to ${recentDays[recentDays.length-1]}) vs the ${WINDOW} before that (${priorDays[0]} to ${priorDays[priorDays.length-1]}).</div>`;
 })();
 
@@ -3163,7 +3262,7 @@ renderTodos();
   function onScrollOrResize(){
     if(ticking)return;
     ticking=true;
-    requestAnimationFrame(sweep);see
+    requestAnimationFrame(sweep);
   }
   window.addEventListener('scroll',onScrollOrResize,{passive:true});
   window.addEventListener('resize',onScrollOrResize);

@@ -5,32 +5,39 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.LibraryBooks
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nova.browser.BrowserViewModel
-import com.nova.browser.ui.components.AddressBar
 import com.nova.browser.ui.components.ContextMenuSheet
 import com.nova.browser.ui.components.DownloadsSheet
 import com.nova.browser.ui.components.EngineWebView
 import com.nova.browser.ui.components.ErrorPage
-import com.nova.browser.ui.components.LibrarySheet
-import com.nova.browser.ui.components.TabsBar
 
+/**
+ * The engine's own chrome (toolbar/tab-strip/address-bar/bookmark-bar/status-bar
+ * — the same code and look desktop uses, see forceDesktopChrome in
+ * browser-window.ts) renders full-screen inside the WebView. This Activity's
+ * Compose tree no longer duplicates any of that: it hosts the WebView, and
+ * wires the handful of things a web page genuinely can't do itself on
+ * Android — real file downloads (native DownloadManager, via NativeDownloader),
+ * a long-press content menu (canvas-rendered pages have no native
+ * HitTestResult), file chooser and runtime-permission grants for page JS.
+ * The web chrome's own hamburger menu reaches Downloads/Incognito through
+ * NovaStateBridge for exactly this reason — see android-native-bridge.ts.
+ */
 @Composable
 fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
-    var showLibrary by remember { mutableStateOf(false) }
-    var showDownloads by remember { mutableStateOf(false) }
     val activeTab = viewModel.activeTab
     val context = LocalContext.current
+    val downloadsRequested by viewModel.downloadsRequested
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -65,11 +72,13 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
         }
     }
 
-    fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            val granted = context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-            if (!granted) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    LaunchedEffect(downloadsRequested) {
+        if (downloadsRequested) {
+            if (Build.VERSION.SDK_INT >= 33) {
+                val granted = context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                if (!granted) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
     }
 
@@ -77,58 +86,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
         viewModel.goBack()
     }
 
-    Scaffold(
-        topBar = {
-            Column {
-                TabsBar(
-                    tabs = viewModel.tabs,
-                    activeTabId = viewModel.activeTabId.value ?: "",
-                    incognito = viewModel.incognito.value,
-                    onToggleIncognito = { viewModel.setIncognito(!viewModel.incognito.value) },
-                    onSelect = viewModel::selectTab,
-                    onClose = viewModel::closeTab,
-                    onNewTab = { viewModel.newTab() }
-                )
-                AddressBar(
-                    text = viewModel.addressBarText.value,
-                    onTextChange = { /* draft state is handled locally inside AddressBar */ },
-                    onSubmit = { input -> viewModel.navigate(input) },
-                    isLoading = activeTab?.loading ?: false,
-                    isSecure = viewModel.addressBarText.value.startsWith("https://"),
-                    isBookmarked = viewModel.isBookmarked(activeTab?.url ?: ""),
-                    onReload = { viewModel.reload() },
-                    onStop = { viewModel.stop() },
-                    onToggleBookmark = { viewModel.toggleBookmark() },
-                    onCopyUrl = {
-                        activeTab?.let { viewModel.copyToClipboard("URL", it.url) }
-                    },
-                    onShareUrl = {
-                        activeTab?.let { viewModel.shareUrl(it.title, it.url) }
-                    }
-                )
-            }
-        },
-        bottomBar = {
-            BottomAppBar(actions = {
-                IconButton(onClick = { viewModel.goBack() }, enabled = viewModel.canGoBack.value) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                }
-                IconButton(onClick = { viewModel.goForward() }, enabled = viewModel.canGoForward.value) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Forward")
-                }
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = {
-                    showDownloads = true
-                    requestNotificationPermissionIfNeeded()
-                }) {
-                    Icon(Icons.Filled.Download, contentDescription = "Downloads")
-                }
-                IconButton(onClick = { showLibrary = true }) {
-                    Icon(Icons.Filled.LibraryBooks, contentDescription = "Bookmarks & History")
-                }
-            })
-        }
-    ) { padding ->
+    Scaffold { padding ->
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
             // Mounted exactly once for the app's lifetime — the engine owns all
             // tabs internally, so there is no per-tab WebView to switch between.
@@ -139,7 +97,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
         }
     }
 
-    if (showDownloads) {
+    if (downloadsRequested) {
         DownloadsSheet(
             downloads = viewModel.downloads,
             onOpen = { viewModel.openDownload(it) },
@@ -149,22 +107,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
             onCancel = viewModel::cancelDownload,
             onRemove = viewModel::removeDownload,
             onClearCompleted = viewModel::clearCompletedDownloads,
-            onDismiss = { showDownloads = false }
-        )
-    }
-
-    if (showLibrary) {
-        LibrarySheet(
-            bookmarks = viewModel.bookmarks,
-            history = viewModel.history,
-            onOpen = { url ->
-                viewModel.navigate(url)
-                showLibrary = false
-            },
-            onRemoveBookmark = viewModel::removeBookmark,
-            onRemoveHistory = viewModel::removeHistoryEntry,
-            onClearHistory = viewModel::clearHistory,
-            onDismiss = { showLibrary = false }
+            onDismiss = { viewModel.clearDownloadsRequest() }
         )
     }
 

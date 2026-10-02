@@ -30,6 +30,8 @@ export interface SelectableElement {
   readonly attributes: ReadonlyMap<string, string>;
   readonly parent: SelectableElement | null;
   readonly children: readonly SelectableElement[];
+  /** Whether this element currently has keyboard focus. Undefined in contexts (e.g. parse-time trees) with no interactive state. */
+  readonly focused?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -199,7 +201,7 @@ function matchesDynamicPseudoClass(element: SelectableElement, name: string): bo
   // We return false for interactive states.
   switch (name) {
     case 'hover':    return false;
-    case 'focus':    return false;
+    case 'focus':    return Boolean(element.focused);
     case 'active':   return false;
     case 'visited':  return false;
     case 'link':     return true;  // :link matches unvisited links
@@ -407,6 +409,16 @@ export function querySelectorAll(root: SelectableElement, selector: string): Sel
     }
   }
   return result;
+}
+
+/**
+ * Check whether a single element (not its descendants) matches a selector
+ * string — the engine behind Element.matches()/.closest().
+ */
+export function matchesSelectorString(element: SelectableElement, selector: string): boolean {
+  const parsed = parseSelectorString(selector);
+  if (!parsed) return false;
+  return matchesSelectorList(element, parsed);
 }
 
 /**

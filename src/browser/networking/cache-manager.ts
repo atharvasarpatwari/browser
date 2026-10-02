@@ -4,6 +4,7 @@ interface CacheEntry {
   readonly key: string;
   readonly url: string;
   readonly body: string;
+  readonly bodyBinary: Uint8Array | null;
   readonly headers: ReadonlyMap<string, string>;
   readonly contentType: string;
   readonly statusCode: number;
@@ -48,6 +49,8 @@ interface CacheStats {
 
 interface ICacheManager extends IDisposable {
   get(url: string): Promise<CacheEntry | null>;
+  /** Raw lookup with no expiry check and no hit/miss counting — recovers etag/lastModified for revalidation even after get() has already deleted an expired entry. */
+  getStale(url: string): Promise<CacheEntry | null>;
   set(url: string, entry: Omit<CacheEntry, 'key' | 'createdAt' | 'lastAccessedAt' | 'sizeBytes'>): Promise<void>;
   delete(url: string): Promise<boolean>;
   clear(): Promise<void>;
@@ -94,8 +97,12 @@ class CacheManager implements ICacheManager {
     return updated;
   }
 
+  async getStale(url: string): Promise<CacheEntry | null> {
+    return this.store.get(url) ?? null;
+  }
+
   async set(url: string, data: Omit<CacheEntry, 'key' | 'createdAt' | 'lastAccessedAt' | 'sizeBytes'>): Promise<void> {
-    const sizeBytes = data.body.length;
+    const sizeBytes = data.bodyBinary?.byteLength ?? data.body.length;
     const createdAt = Date.now();
 
     const expiresAt = data.expiresAt ?? (createdAt + this.policy.defaultTtlMs);
@@ -104,6 +111,7 @@ class CacheManager implements ICacheManager {
       key: url,
       url,
       body: data.body,
+      bodyBinary: data.bodyBinary,
       headers: data.headers,
       contentType: data.contentType,
       statusCode: data.statusCode,

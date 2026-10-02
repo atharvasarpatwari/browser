@@ -61,6 +61,8 @@ export enum TokenType {
   QuestionDot,
   QuestionQuestion,
   QuestionQuestionAssign,
+  AmpersandAmpersandAssign,
+  PipePipeAssign,
   Question,
   Colon,
   Ellipsis,
@@ -142,6 +144,18 @@ export interface Token {
   readonly value: string;
   readonly line: number;
   readonly column: number;
+  /** Template literal segments only: the untouched source text (escape
+   *  sequences not decoded), for String.raw / TaggedTemplateExpression's
+   *  `.raw` array. Absent on every other token, where `value` already IS
+   *  the raw source text. */
+  readonly raw?: string;
+  /** RegExp tokens only: pattern and flags read separately by the lexer
+   *  (which already tracks escapes character-by-character). `value` is
+   *  still `/pattern/flags` for display/debugging, but the parser must read
+   *  the real values from here — re-splitting `value` on '/' breaks the
+   *  moment the pattern contains an escaped slash (`\/`), which is common
+   *  in real-world regexes (e.g. matching a closing HTML tag). */
+  readonly regexParts?: { readonly pattern: string; readonly flags: string };
 }
 
 export function tokenTypeName(tt: TokenType): string {
@@ -199,6 +213,8 @@ export function tokenTypeName(tt: TokenType): string {
     case TokenType.QuestionDot: return '?.';
     case TokenType.QuestionQuestion: return '??';
     case TokenType.QuestionQuestionAssign: return '??=';
+    case TokenType.AmpersandAmpersandAssign: return '&&=';
+    case TokenType.PipePipeAssign: return '||=';
     case TokenType.Question: return '?';
     case TokenType.Colon: return ':';
     case TokenType.Ellipsis: return '...';
@@ -306,7 +322,16 @@ const KEYWORDS: Record<string, TokenType> = {
   'import': TokenType.Import,
   'export': TokenType.Export,
   'from': TokenType.From,
-  'as': TokenType.As,
+  // 'as' is deliberately NOT a hard keyword here — real JS never reserves
+  // it; it's only meaningful contextually right after an import/export
+  // specifier (`import { x as y }`), syntax this parser doesn't implement
+  // at all (no other reference to TokenType.As exists anywhere in
+  // parser.ts). Treating it as a real keyword broke every real-world use
+  // of `as` as a plain identifier — most commonly a destructuring rename
+  // with a default (`let {as: r = "div"} = props`, from real React/JSX
+  // "polymorphic component" code) — since `TokenType.As` doesn't satisfy
+  // the `TokenType.Identifier` checks destructuring-key/declaration-name
+  // parsing correctly requires.
   'static': TokenType.Static,
   'get': TokenType.Get,
   'set': TokenType.Set,

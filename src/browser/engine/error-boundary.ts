@@ -25,6 +25,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
+import { createLogger } from '../../common/logger';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -121,9 +122,11 @@ class ErrorBoundary implements IErrorBoundary {
   private config: ErrorBoundaryConfig;
   private readonly errorHistory: ErrorRecord[] = [];
   private errorCount = 0;
+  private readonly log: ReturnType<typeof createLogger>;
 
   constructor(config?: Partial<ErrorBoundaryConfig>) {
     this.config = { ...DEFAULT_BOUNDARY_CONFIG, ...config };
+    this.log = createLogger(`ErrorBoundary:${this.config.name}`);
   }
 
   exec<T>(fn: () => T, context?: string): BoundaryResult<T> {
@@ -278,10 +281,7 @@ class ErrorBoundary implements IErrorBoundary {
     }
 
     if (this.config.logErrors) {
-      console.error(
-        `[ErrorBoundary:${this.config.name}] Attempt ${attempt} failed: ${error.message}`,
-        context ? `(${context})` : '',
-      );
+      this.log.error(`Attempt ${attempt} failed: ${error.message}`, context ? `(${context})` : '');
     }
   }
 

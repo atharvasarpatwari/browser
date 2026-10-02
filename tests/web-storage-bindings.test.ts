@@ -117,7 +117,7 @@ describe('Web Storage Bindings', () => {
 
       expect(invoke(env2, 'localStorage', 'getItem', ['theme'])).toBe('dark');
       expect(invoke(env2, 'localStorage', 'getItem', ['count'])).toBe('42');
-      expect(invoke(env2, 'localStorage', 'getItem', ['missing'])).toBeUndefined();
+      expect(invoke(env2, 'localStorage', 'getItem', ['missing'])).toBeNull();
     });
 
     it('does not share storage across origins even on the same disk path', () => {
@@ -131,7 +131,7 @@ describe('Web Storage Bindings', () => {
       clearStorageCaches();
       const envB = new Environment(null);
       bindStorageAPIs(envB, { origin: 'https://origin-b.com', diskPath: diskPath2 });
-      expect(invoke(envB, 'localStorage', 'getItem', ['k'])).toBeUndefined();
+      expect(invoke(envB, 'localStorage', 'getItem', ['k'])).toBeNull();
     });
   });
 });

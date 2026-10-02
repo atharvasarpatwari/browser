@@ -3,6 +3,7 @@ import type { IToolbar, ToolbarState, ToolbarEventUnion } from './toolbar';
 
 interface ToolbarViewConfig {
   readonly containerId: string;
+  readonly showTrafficLights: boolean;
   readonly showShieldButton: boolean;
   readonly showBookmarkButton: boolean;
   readonly brandName?: string;
@@ -10,6 +11,7 @@ interface ToolbarViewConfig {
 
 const DEFAULT_VIEW_CONFIG: ToolbarViewConfig = {
   containerId: 'toolbar',
+  showTrafficLights: true,
   showShieldButton: true,
   showBookmarkButton: true,
 };
@@ -22,17 +24,6 @@ interface IToolbarView extends IDisposable {
   setEventHandler(handler: (event: ToolbarEventUnion) => void): void;
 }
 
-const ICON_BACK =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg>';
-const ICON_FORWARD =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5l4.5 4.5L6 12.5"/></svg>';
-const ICON_RELOAD =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13 2.2v3.3h-3.3"/></svg>';
-const ICON_STAR =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 0.7 4.3L8 11.1l-3.8 2 0.7-4.3-3.1-3 4.3-.6z"/></svg>';
-const ICON_SHIELD =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5l5.5 2.5v4.3c0 3.2-2.3 5.4-5.5 6.2-3.2-.8-5.5-3-5.5-6.2V4z"/></svg>';
-
 class ToolbarView implements IToolbarView {
   private readonly config: ToolbarViewConfig;
   private readonly model: IToolbar;
@@ -40,8 +31,11 @@ class ToolbarView implements IToolbarView {
   private backBtn: HTMLButtonElement | null = null;
   private fwdBtn: HTMLButtonElement | null = null;
   private reloadBtn: HTMLButtonElement | null = null;
-  private shieldBtn: HTMLButtonElement | null = null;
+  private homeBtn: HTMLButtonElement | null = null;
+  private shieldBtn: HTMLElement | null = null;
   private bookmarkBtn: HTMLElement | null = null;
+  private menuBtn: HTMLElement | null = null;
+  private incognitoBadge: HTMLElement | null = null;
   private eventHandler: ((event: ToolbarEventUnion) => void) | null = null;
 
   constructor(model: IToolbar, config?: Partial<ToolbarViewConfig>) {
@@ -66,18 +60,26 @@ class ToolbarView implements IToolbarView {
     this.backBtn = null;
     this.fwdBtn = null;
     this.reloadBtn = null;
+    this.homeBtn = null;
     this.shieldBtn = null;
     this.bookmarkBtn = null;
+    this.menuBtn = null;
+    this.incognitoBadge = null;
   }
 
   update(state: ToolbarState): void {
     if (this.backBtn) this.backBtn.disabled = !state.canGoBack;
     if (this.fwdBtn) this.fwdBtn.disabled = !state.canGoForward;
     if (this.reloadBtn) {
-      this.reloadBtn.classList.toggle('loading', state.loading);
+      this.reloadBtn.textContent = state.loading ? '×' : '↻';
       this.reloadBtn.title = state.loading ? 'Stop' : 'Reload';
     }
-    this.updateShield(state.shieldEnabled);
+    if (this.shieldBtn) {
+      this.shieldBtn.style.color = state.shieldEnabled ? 'var(--text-success)' : 'var(--text-tertiary)';
+    }
+    if (this.incognitoBadge) {
+      this.incognitoBadge.style.display = state.incognito ? 'flex' : 'none';
+    }
   }
 
   setEventHandler(handler: (event: ToolbarEventUnion) => void): void {
@@ -87,16 +89,33 @@ class ToolbarView implements IToolbarView {
   private build(): void {
     if (!this.container) return;
     this.container.innerHTML = '';
+    this.container.className = 'title-bar';
+    this.container.style.cssText = 'display:flex;align-items:center;padding:5px 10px;background:var(--bg-elevated);border-bottom:1px solid var(--border-subtle);flex-shrink:0;gap:7px;user-select:none;';
 
-    this.backBtn = this.createNavButton(ICON_BACK, 'Back', !this.model.state.canGoBack);
+    if (this.config.showTrafficLights) {
+      const trafficLights = document.createElement('div');
+      trafficLights.className = 'traffic-lights';
+      trafficLights.style.cssText = 'display:flex;gap:5px;margin-right:6px;';
+      for (const color of ['#ff5f56', '#ffbd2e', '#27c93f']) {
+        const dot = document.createElement('span');
+        dot.className = `tl tl-${color === '#ff5f56' ? 'r' : color === '#ffbd2e' ? 'y' : 'g'}`;
+        dot.style.cssText = `width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;transition:opacity var(--t-fast);`;
+        dot.addEventListener('mouseenter', () => { dot.style.opacity = '0.8'; });
+        dot.addEventListener('mouseleave', () => { dot.style.opacity = '1'; });
+        trafficLights.appendChild(dot);
+      }
+      this.container.appendChild(trafficLights);
+    }
+
+    this.backBtn = this.createNavButton('◀', 'Back', !this.model.state.canGoBack);
     this.backBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'back' }));
     this.container.appendChild(this.backBtn);
 
-    this.fwdBtn = this.createNavButton(ICON_FORWARD, 'Forward', !this.model.state.canGoForward);
+    this.fwdBtn = this.createNavButton('▶', 'Forward', !this.model.state.canGoForward);
     this.fwdBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'forward' }));
     this.container.appendChild(this.fwdBtn);
 
-    this.reloadBtn = this.createNavButton(ICON_RELOAD, 'Reload', false);
+    this.reloadBtn = this.createNavButton('↻', 'Reload', false);
     this.reloadBtn.addEventListener('click', () => {
       if (this.model.state.loading) {
         this.dispatchEvent({ kind: 'stop' });
@@ -106,59 +125,74 @@ class ToolbarView implements IToolbarView {
     });
     this.container.appendChild(this.reloadBtn);
 
-    const addressSlot = document.createElement('div');
-    addressSlot.className = 'address-bar-slot nova-addressbar';
-    addressSlot.style.cssText = 'flex:1;min-width:0;';
-    this.container.appendChild(addressSlot);
+    this.homeBtn = this.createNavButton('⌂', 'Home', false);
+    this.homeBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'home' }));
+    this.container.appendChild(this.homeBtn);
+
+    this.incognitoBadge = document.createElement('div');
+    this.incognitoBadge.className = 'incognito-badge';
+    this.incognitoBadge.title = 'Private browsing — history and cookies from this session won\'t be saved';
+    this.incognitoBadge.style.cssText = 'display:none;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:rgba(124,92,255,0.18);color:var(--text-accent-bright,#a78bfa);font-size:11px;font-weight:600;letter-spacing:.02em;flex-shrink:0;user-select:none;';
+    this.incognitoBadge.textContent = '🕶️ Incognito';
+    this.container.appendChild(this.incognitoBadge);
+
+    const addressBarArea = document.createElement('div');
+    addressBarArea.className = 'address-bar-slot';
+    addressBarArea.style.cssText = 'flex:1;min-width:0;';
+    this.container.appendChild(addressBarArea);
 
     if (this.config.showBookmarkButton) {
-      this.bookmarkBtn = document.createElement('button');
-      this.bookmarkBtn.setAttribute('type', 'button');
-      this.bookmarkBtn.className = 'nova-star';
-      this.bookmarkBtn.innerHTML = ICON_STAR;
-      this.bookmarkBtn.title = 'Bookmark this page';
+      this.bookmarkBtn = this.createIconBtn('☆', 'Bookmark this page');
       this.bookmarkBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'bookmarkAdd' }));
       this.container.appendChild(this.bookmarkBtn);
     }
 
-    const divider = document.createElement('div');
-    divider.className = 'nova-toolbar-divider';
-    this.container.appendChild(divider);
-
     if (this.config.showShieldButton) {
-      this.shieldBtn = this.createNavButton(ICON_SHIELD, `${this.config.brandName ?? 'Nova'} Shield`, false);
-      this.updateShield(this.model.state.shieldEnabled);
-      this.shieldBtn.addEventListener('click', () => {
-        this.dispatchEvent({ kind: 'shieldToggle', enabled: !this.model.state.shieldEnabled });
-      });
+      this.shieldBtn = this.createIconBtn('🛡️', `${this.config.brandName ?? 'Nova'} Shield`);
+      this.shieldBtn.style.color = this.model.state.shieldEnabled ? 'var(--text-success)' : 'var(--text-tertiary)';
+      this.shieldBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'shieldToggle', enabled: !this.model.state.shieldEnabled }));
       this.container.appendChild(this.shieldBtn);
     }
 
-    const menuBtn = document.createElement('button');
-    menuBtn.type = 'button';
-    menuBtn.className = 'nova-menu-btn nova-nav-btn';
-    menuBtn.title = 'Menu';
-    for (let i = 0; i < 3; i++) {
-      menuBtn.appendChild(document.createElement('span'));
-    }
-    menuBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'menuClick' }));
-    this.container.appendChild(menuBtn);
+    this.menuBtn = this.createIconBtn('☰', 'Menu');
+    this.menuBtn.addEventListener('click', () => {
+      const rect = this.menuBtn!.getBoundingClientRect();
+      this.dispatchEvent({ kind: 'menuClick', x: rect.right, y: rect.bottom + 4 });
+    });
+    this.container.appendChild(this.menuBtn);
   }
 
-  private createNavButton(svg: string, title: string, disabled: boolean): HTMLButtonElement {
+  private createNavButton(text: string, title: string, disabled: boolean): HTMLButtonElement {
     const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'nova-nav-btn';
+    btn.className = 'nav-btn';
+    btn.textContent = text;
     btn.title = title;
     btn.disabled = disabled;
-    btn.innerHTML = svg;
+    btn.style.cssText = 'border:none;background:none;color:var(--text-tertiary);font-size:14px;cursor:pointer;padding:3px 6px;border-radius:var(--radius-sm);line-height:1;transition:all var(--t-fast);font-family:inherit;';
+    btn.addEventListener('mouseenter', () => {
+      if (!btn.disabled) btn.style.color = 'var(--text-primary)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.color = 'var(--text-tertiary)';
+    });
     return btn;
   }
 
-  private updateShield(enabled: boolean): void {
-    if (this.shieldBtn) {
-      this.shieldBtn.style.color = enabled ? 'var(--green-400)' : '';
-    }
+  private createIconBtn(text: string, title: string): HTMLElement {
+    const btn = document.createElement('button');
+    btn.className = 'addr-btn';
+    btn.textContent = text;
+    btn.title = title;
+    btn.style.cssText = 'border:none;background:none;color:var(--text-tertiary);font-size:14px;cursor:pointer;padding:3px 5px;border-radius:var(--radius-sm);transition:all var(--t-fast);line-height:1;font-family:inherit;';
+    btn.addEventListener('mouseenter', () => {
+      btn.style.background = 'var(--bg-overlay)';
+      btn.style.color = 'var(--text-accent-bright)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.background = 'none';
+      btn.style.color = 'var(--text-tertiary)';
+    });
+    return btn;
   }
 
   private dispatchEvent(event: ToolbarEventUnion): void {

@@ -318,6 +318,34 @@ describe('HistoryService', () => {
     expect(svc.totalEntries).toBe(1);
   });
 
+  it('setRecordingEnabled(false) should stop recording committed navigations', async () => {
+    const parser = new UrlParser();
+    const controller = new NavigationController(parser);
+    const svc = new HistoryService();
+
+    svc.connectController(controller);
+    svc.setRecordingEnabled(false);
+    await controller.navigate('https://example.com');
+
+    expect(svc.totalEntries).toBe(0);
+  });
+
+  it('setRecordingEnabled(true) should resume recording', async () => {
+    const parser = new UrlParser();
+    const controller = new NavigationController(parser);
+    const svc = new HistoryService();
+
+    svc.connectController(controller);
+    svc.setRecordingEnabled(false);
+    await controller.navigate('https://private.example.com');
+    svc.setRecordingEnabled(true);
+    await controller.navigate('https://public.example.com');
+
+    expect(svc.totalEntries).toBe(1);
+    expect(await svc.getEntryByUrl('https://private.example.com/')).toBeNull();
+    expect(await svc.getEntryByUrl('https://public.example.com/')).not.toBeNull();
+  });
+
   it('initialize and shutdown should work', async () => {
     const svc = new HistoryService();
     await svc.initialize();

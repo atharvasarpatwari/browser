@@ -4,12 +4,15 @@
  * Boundary between the isolated Electron renderer and the main process
  * (Phase 5 contextIsolation migration, see doc/socket-proxy-design.md).
  *
- * Exposes three things on `window.nova`:
+ * Exposes four things on `window.nova`:
  *
  *   ipc     — the nova:net socket-proxy transport. `request` round-trips an
  *             RPC over ipcRenderer.invoke; `on` relays webContents.push
  *             frames ({ socketId, frame } envelopes) and returns an
  *             unsubscribe. The renderer never touches net/tls/dgram.
+ *   shell   — openPath/showItemInFolder, round-tripped over the nova:shell
+ *             IPC handle (main.cjs) since the renderer has no direct access
+ *             to electron.shell under contextIsolation.
  *   require — controlled loader for the read-only Node builtins the renderer
  *             still legitimately needs. Narrow allowlist: fs/path/crypto/
  *             zlib/dns/os/tls. No net, no dgram — sockets are proxy-only.
@@ -65,8 +68,29 @@ const ipcBridge = Object.freeze({
 })
 
 /* -------------------------------------------------------------------------- */
+/*  shell — real electron.shell calls (Open file / Show in folder)            */
+/* -------------------------------------------------------------------------- */
+
+const shellBridge = Object.freeze({
+  openPath(path) {
+    return ipcRenderer.invoke('nova:shell', { action: 'openPath', path })
+  },
+  showItemInFolder(path) {
+    return ipcRenderer.invoke('nova:shell', { action: 'showItemInFolder', path })
+  },
+})
+
+/* -------------------------------------------------------------------------- */
 /*  process — frozen diagnostics snapshot, no event-surface                   */
 /* -------------------------------------------------------------------------- */
+
+// Reads a `--flag=value` passed via BrowserWindow's webPreferences.additionalArguments
+// (see electron/main.cjs) — the renderer can't call main-only `app.getPath(...)`
+// itself, so main resolves the real path and hands it down this way.
+function parseArg(prefix) {
+  const arg = process.argv.find((a) => a.startsWith(prefix))
+  return arg ? arg.slice(prefix.length) : null
+}
 
 const processSnapshot = Object.freeze({
   platform: process.platform,
@@ -79,6 +103,7 @@ const processSnapshot = Object.freeze({
     electron: process.versions.electron,
   }),
   env: Object.freeze(Object.assign({}, process.env)),
+  downloadsDir: parseArg('--nova-downloads-dir='),
 })
 
 /* -------------------------------------------------------------------------- */
@@ -87,6 +112,7 @@ const processSnapshot = Object.freeze({
 
 contextBridge.exposeInMainWorld('nova', {
   ipc: ipcBridge,
+  shell: shellBridge,
   require: safeRequire,
   process: processSnapshot,
 })

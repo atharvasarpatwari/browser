@@ -31,22 +31,27 @@ describe('HeuristicTextMeasurer', () => {
     expect(m.baseline).toBe(16 * 0.8);
   });
 
-  it('wider characters produce greater width', () => {
+  it('width is exactly text.length * fontSize (matches the rasterizer\'s fixed-width bitmap font)', () => {
+    const m = measurer.measure('hello', 16, 'sans-serif');
+    expect(m.width).toBe(5 * 16);
+  });
+
+  it('every character advances the same, regardless of character shape', () => {
     const narrow = measurer.measure('iiii', 16, 'sans-serif');
     const wide = measurer.measure('MMMM', 16, 'sans-serif');
-    expect(wide.width).toBeGreaterThan(narrow.width);
+    expect(wide.width).toBe(narrow.width);
   });
 
-  it('monospace font is wider than serif for same text', () => {
+  it('font family does not change measured width (paint has one bitmap font)', () => {
     const serif = measurer.measure('hello', 16, 'serif');
     const mono = measurer.measure('hello', 16, 'monospace');
-    expect(mono.width).toBeGreaterThanOrEqual(serif.width);
+    expect(mono.width).toBe(serif.width);
   });
 
-  it('bold text is slightly wider than normal', () => {
+  it('font weight does not change measured width (paint has one bitmap font)', () => {
     const normal = measurer.measure('hello', 16, 'sans-serif');
     const bold = measurer.measure('hello', 16, 'sans-serif', 'bold');
-    expect(bold.width).toBeGreaterThan(normal.width);
+    expect(bold.width).toBe(normal.width);
   });
 
   it('larger font size produces proportionally larger metrics', () => {

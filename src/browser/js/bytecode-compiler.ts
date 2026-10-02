@@ -606,8 +606,32 @@ export class BytecodeCompiler {
           this.builder.emit(OP.PUSH_UNDEFINED);
         }
         this.compileDestructurePattern(decl.id.left, stmt.kind);
+      } else if (decl.id.type === 'ArrayPattern' || decl.id.type === 'ObjectPattern') {
+        // The parser's actual shape for `var [a, b] = expr` / `var {a, b} = expr` —
+        // id is the pattern itself, never wrapped in AssignmentPattern.
+        if (decl.init) {
+          this.compileExpression(decl.init);
+        } else {
+          this.builder.emit(OP.PUSH_UNDEFINED);
+        }
+        this.compileDestructurePattern(decl.id, stmt.kind);
       }
     }
+  }
+
+  /** Stack: [value] -> [value === undefined ? <default> : value]. Used for destructuring/param defaults. */
+  private compileDefaultOr(defaultExpr: AST.Expression): void {
+    this.builder.emit(OP.DUP);
+    this.builder.emit(OP.PUSH_UNDEFINED);
+    this.builder.emit(OP.SEQ);
+    const elseJump = this.builder.emitJump(OP.JMP_IF_FALSE);
+    this.builder.emit(OP.POP); // pop bool
+    this.builder.emit(OP.POP); // pop stale (undefined) value
+    this.compileExpression(defaultExpr);
+    const endJump = this.builder.emitJump(OP.JMP);
+    this.builder.patchJump(elseJump);
+    this.builder.emit(OP.POP); // pop bool, keep original value
+    this.builder.patchJump(endJump);
   }
 
   private compileDestructurePattern(
@@ -615,12 +639,18 @@ export class BytecodeCompiler {
     kind: 'var' | 'let' | 'const',
   ): void {
     if (pattern.type === 'Identifier') {
-      const existing = this.resolveLocal(pattern.name);
-      if (existing) {
-        this.builder.emitU16(OP.STORE_LOCAL, existing.slot);
+      if (this.isProgram && (kind === 'var' || this.depth === 0)) {
+        // Top-level vars live in the global env (read back via LOAD_GLOBAL), not a local slot.
+        this.builder.emitU16(OP.DEFINE_VAR, this.builder.addConst(pattern.name));
+        this.builder.emit(kind === 'var' ? 0 : kind === 'let' ? 1 : 2);
       } else {
-        this.declareLocal(pattern.name, kind);
-        this.builder.emitU16(OP.STORE_LOCAL, this.resolveLocal(pattern.name)!.slot);
+        const existing = this.resolveLocal(pattern.name);
+        if (existing) {
+          this.builder.emitU16(OP.STORE_LOCAL, existing.slot);
+        } else {
+          this.declareLocal(pattern.name, kind);
+          this.builder.emitU16(OP.STORE_LOCAL, this.resolveLocal(pattern.name)!.slot);
+        }
       }
       this.builder.emit(OP.POP);
     } else if (pattern.type === 'ArrayPattern') {
@@ -630,26 +660,39 @@ export class BytecodeCompiler {
         this.builder.emit(OP.DUP);
         this.builder.emitU16(OP.PUSH_CONST, this.builder.addConst(i));
         this.builder.emit(OP.COMPUTED_GET);
-        if (el.type === 'Identifier') {
-          const existing = this.resolveLocal(el.name);
-          if (existing) {
-            this.builder.emitU16(OP.STORE_LOCAL, existing.slot);
-          } else {
-            this.declareLocal(el.name, kind);
-            this.builder.emitU16(OP.STORE_LOCAL, this.resolveLocal(el.name)!.slot);
-          }
-          this.builder.emit(OP.POP);
+        if (el.type === 'Identifier' || el.type === 'ArrayPattern' || el.type === 'ObjectPattern') {
+          this.compileDestructurePattern(el, kind);
         } else if (el.type === 'AssignmentPattern') {
-          // TODO: default value in destructuring
-          this.builder.emit(OP.POP);
+          this.compileDefaultOr(el.right);
+          this.compileDestructurePattern(el.left, kind);
         } else {
+          // ponytail: nested RestElement inside an array pattern ([a, ...b]) not implemented
           this.builder.emit(OP.POP);
         }
       }
       this.builder.emit(OP.POP); // pop original array
     } else if (pattern.type === 'ObjectPattern') {
-      // TODO: full object destructuring
-      this.builder.emit(OP.POP);
+      for (const prop of pattern.properties) {
+        if (prop.type === 'RestElement') {
+          // ponytail: rest-in-object-pattern ({a, ...rest}) not implemented
+          continue;
+        }
+        this.builder.emit(OP.DUP);
+        if (prop.computed) {
+          this.compileExpression(prop.key);
+          this.builder.emit(OP.COMPUTED_GET);
+        } else {
+          const keyName = prop.key.type === 'Identifier' ? prop.key.name : String((prop.key as AST.Literal).value);
+          this.builder.emitU16(OP.PROP_GET_NAME, this.builder.addConst(keyName));
+        }
+        if (prop.value.type === 'AssignmentPattern') {
+          this.compileDefaultOr(prop.value.right);
+          this.compileDestructurePattern(prop.value.left, kind);
+        } else {
+          this.compileDestructurePattern(prop.value, kind);
+        }
+      }
+      this.builder.emit(OP.POP); // pop original object
     }
   }
 
@@ -759,12 +802,25 @@ export class BytecodeCompiler {
         fnCompiler.builder.emit(OP.POP);
         slotIdx++;
       } else if (p.type === 'RestElement') {
-        // Rest params: collect remaining args into an array
+        // ponytail: only binds the first extra arg, not an array of all remaining args —
+        // real rest collection needs a runtime loop over `arguments`, add when a caller needs it
         fnCompiler.declareLocal((p.argument as AST.Identifier).name, 'var');
         slotIdx++;
       } else if (p.type === 'AssignmentPattern') {
-        // Default params
-        fnCompiler.declareLocal((p.left as AST.Identifier).name, 'var');
+        // Default params: fetch the raw arg by call position (not by compiler slot number,
+        // which can drift from position once p.left is a nested pattern), apply the default
+        // if it's undefined, then bind whatever pattern p.left is (identifier or destructure).
+        fnCompiler.builder.emit(OP.LOAD_ARGUMENTS);
+        fnCompiler.builder.emitU16(OP.PUSH_CONST, fnCompiler.builder.addConst(slotIdx));
+        fnCompiler.builder.emit(OP.COMPUTED_GET);
+        fnCompiler.compileDefaultOr(p.right);
+        fnCompiler.compileDestructurePattern(p.left, 'var');
+        slotIdx++;
+      } else if (p.type === 'ArrayPattern' || p.type === 'ObjectPattern') {
+        fnCompiler.builder.emit(OP.LOAD_ARGUMENTS);
+        fnCompiler.builder.emitU16(OP.PUSH_CONST, fnCompiler.builder.addConst(slotIdx));
+        fnCompiler.builder.emit(OP.COMPUTED_GET);
+        fnCompiler.compileDestructurePattern(p, 'var');
         slotIdx++;
       }
     }

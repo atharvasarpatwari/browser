@@ -17,9 +17,9 @@ describe('TabManager', () => {
       expect(tab.id.length).toBeGreaterThan(0);
     });
 
-    it('createTab with default URL about:blank', () => {
+    it('createTab with no destination opens the start page, not a blank tab', () => {
       const tab = manager.createTab();
-      expect(tab.url).toBe('about:blank');
+      expect(tab.url).toBe('nova://newtab');
     });
 
     it('createTab with custom URL', () => {

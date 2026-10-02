@@ -55,11 +55,20 @@ describe('classifyDisplay', () => {
     expect(classifyDisplay('flow-root')).toBe('block');
   });
 
-  it('should classify table displays as table', () => {
+  it('should classify only the table box itself as table', () => {
     expect(classifyDisplay('table')).toBe('table');
     expect(classifyDisplay('inline-table')).toBe('table');
-    expect(classifyDisplay('table-row')).toBe('table');
-    expect(classifyDisplay('table-cell')).toBe('table');
+  });
+
+  it('should classify table-internal roles as block (their content is an ordinary block formatting context, per CSS2.1 17.5.2)', () => {
+    // layoutNode dispatches purely on this value: if table-row/table-cell
+    // also mapped to 'table', layoutTableContainer's direct layoutNode()
+    // call on each <td> would recurse into laying the cell out as its own
+    // (row-less) table instead of laying out its actual content.
+    expect(classifyDisplay('table-row')).toBe('block');
+    expect(classifyDisplay('table-cell')).toBe('block');
+    expect(classifyDisplay('table-row-group')).toBe('block');
+    expect(classifyDisplay('table-caption')).toBe('block');
   });
 
   it('should classify list-item as block', () => {
