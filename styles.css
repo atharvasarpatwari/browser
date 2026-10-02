@@ -1428,6 +1428,33 @@ input    { font-family:inherit; }
   height:1px; margin:var(--sp-2) 0; background:var(--bd-subtle);
 }
 
+/* Omnibox rich rows (icon · title/description · hint) and section headers */
+.nova-dropdown-header {
+  padding:var(--sp-3) var(--sp-5) var(--sp-1);
+  font-size:var(--sz-xs); text-transform:uppercase; letter-spacing:.06em;
+  color:var(--tx-tertiary); user-select:none;
+}
+.nova-dropdown-item--rich { min-height:34px; }
+.nova-dropdown-item__icon {
+  flex:0 0 20px; display:flex; align-items:center; justify-content:center; font-size:14px;
+}
+.nova-dropdown-swatch {
+  width:16px; height:16px; border-radius:var(--r-2); border:1px solid var(--bd-default);
+}
+.nova-dropdown-item__body {
+  flex:1; min-width:0; display:flex; flex-direction:column; gap:1px;
+}
+.nova-dropdown-item__text {
+  color:var(--tx-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.nova-dropdown-item__desc {
+  font-size:var(--sz-xs); color:var(--tx-tertiary);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.nova-dropdown-item__hint { flex-shrink:0; font-size:var(--sz-xs); color:var(--tx-tertiary); }
+.nova-dropdown-item--selected .nova-dropdown-item__hint { color:var(--tx-secondary); }
+.nova-dropdown-match { font-weight:700; color:var(--accent); }
+
 
 /* ============================================================================
    28. FIND-IN-PAGE BAR
@@ -1455,6 +1482,18 @@ input    { font-family:inherit; }
 .nova-find-bar-count {
   font-size:var(--sz-xs); color:var(--tx-tertiary);
   min-width:48px; text-align:center;
+}
+.nova-find-bar[hidden] { display:none; }
+.nova-find-bar input[aria-invalid] { border-color:var(--danger,#f0625f); }
+.nova-find-bar-count--empty { color:var(--danger,#f0625f); }
+.nova-find-btn {
+  min-width:24px; height:24px; padding:0 var(--sp-2);
+  background:transparent; border:1px solid transparent; border-radius:var(--r-2);
+  color:var(--tx-secondary); font-size:var(--sz-xs); cursor:pointer;
+}
+.nova-find-btn:hover { background:var(--bg-hover); color:var(--tx-primary); }
+.nova-find-toggle[aria-pressed="true"] {
+  background:var(--bg-hover); border-color:var(--accent); color:var(--tx-primary);
 }
 
 

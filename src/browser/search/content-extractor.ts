@@ -7,8 +7,13 @@ const SKIP_TAGS: ReadonlySet<string> = new Set([
   'nav', 'footer', 'aside', 'select', 'option', 'button', 'textarea',
 ]);
 
-/** Never part of the readable body (their text is captured separately as title/description). */
-const NON_BODY_TAGS: ReadonlySet<string> = new Set(['head', 'title']);
+/**
+ * Never part of the readable body (their text is captured separately as the title). `<head>` is not
+ * listed on purpose: everything legitimately inside it (title, script, style, noscript, template) is
+ * already skipped, and the engine's tree builder nests a whole page under a stray `<head>` when
+ * whitespace separates `</head>` from `<body>` — skipping it would index an empty page.
+ */
+const NON_BODY_TAGS: ReadonlySet<string> = new Set(['title']);
 
 const HIDDEN_STYLE = /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)/i;
 const MAX_BODY_CHARS = 100_000;

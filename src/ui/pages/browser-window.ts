@@ -9,7 +9,7 @@ import type { IStatusBar } from '../components/status-bar/status-bar';
 import type { IToolbar } from '../components/toolbar/toolbar';
 import type { ITrackerBlocker } from '../../browser/security/tracker-blocker';
 import type { IAdBlocker } from '../../browser/security/ad-blocker';
-import type { IUrlParser } from '../../browser/navigation/url-parser';
+import type { IUrlParser, ParsedUrl } from '../../browser/navigation/url-parser';
 import type { IContentRenderer } from '../components/content-renderer/content-renderer';
 import type { INavigationBridge } from '../components/navigation-bridge';
 import type { IBrowserEngine, EngineEvent } from '../../browser/engine/browser-engine';
@@ -44,12 +44,15 @@ import { ContentRenderer } from '../components/content-renderer/content-renderer
 import { NavigationFetcher } from '../components/navigation-fetcher';
 import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
-import type { DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
+import type { DomDocument, DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
+import type { NavigationEvent } from '../../browser/navigation/navigation-controller';
+import { parseResearchUrl } from '../../browser/omnibox/ai-research-provider';
 import { SettingsPage } from './settings-page';
 import { DownloadsPage } from './downloads-page';
-import { NewTabPage } from './new-tab-page';
+import { NewTabPage, SEARCH_URL_TEMPLATES } from './new-tab-page';
 import { ResearchPage } from './research-page';
+import { SearchIntegration } from './search-integration';
 import type { ISettingsPage } from './settings-page';
 import type { IResearchPage } from './research-page';
 import type { ISettingsService } from '../../browser/storage/settings-service';
@@ -80,13 +83,6 @@ const DEFAULT_PAGE_CONFIG: BrowserWindowPageConfig = {
   showBookmarkBar: true,
   showMenuBar: true,
   hideChromeUI: false,
-};
-
-/** Search-URL templates keyed by the `defaultSearchEngine` setting value. */
-const SEARCH_URL_TEMPLATES: Record<string, string> = {
-  google: 'https://www.google.com/search?q=%s',
-  bing: 'https://www.bing.com/search?q=%s',
-  duckduckgo: 'https://duckduckgo.com/?q=%s',
 };
 
 /** Serializable snapshot pushed to onChromeState() listeners (e.g. a native host bridge). */
@@ -145,6 +141,10 @@ interface IBrowserWindowPage extends IDisposable {
   setAdBlocker(blocker: IAdBlocker): void;
   setBrowserName(name: IBrowserName): void;
   setResearchService(service: IResearchService): void;
+  /** Where the loaded page's DOM comes from (find-in-page searches its laid-out text). */
+  setPageDocumentProvider(provider: () => DomDocument | null): void;
+  /** A page finished loading — feeds the personal search archive (when the user opted in). */
+  onPageDocumentReady(url: string, doc: DomDocument): void;
 
   // ── External chrome bridge (native shells driving this page's tabs/nav) ────
   /** Push-based state: fires on every syncAll() (tab created/removed/activated, url changed, etc). */
@@ -211,7 +211,21 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private navigationFetcher: NavigationFetcher | null = null;
   private pipelineController: INavigationController | null = null;
   private localController: INavigationController | null = null;
+  private search: SearchIntegration | null = null;
+  private pageDocumentProvider: (() => DomDocument | null) | null = null;
   private readonly onBridgeUrlNavigated = () => { this.syncAll(); };
+
+  /**
+   * Every committed navigation (typed URL, back/forward, reload, new or switched tab) lands here:
+   * built-in pages (nova://, about:) are drawn by this window; anything else is the engine's job,
+   * so only the previous built-in page's widgets are released.
+   */
+  private readonly onNavigationCommitted = (event: NavigationEvent): void => {
+    if (event.kind !== 'navigationCommitted') return;
+    const parsed = event.entry.parsedUrl;
+    if (this.drawnOnCommit(parsed)) this.handleContentForUrl(event.entry.url);
+    else if (!parsed.isSpecialPage) this.cleanupContentPanel();
+  };
 
   /** Per-tab load errors (keyed by tab id) recorded from navigationFailed bridge events. */
   private readonly tabErrors = new Map<string, { code: string; description: string; url: string }>();
@@ -219,6 +233,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   /** Engine-bus handlers (unregistered on re-set so a long-lived page leaks no subscriptions). */
   private readonly engineLoadErrorHandler = (event: EngineEvent): void => {
     if (event.kind !== 'pageLoadError') return;
+    this.search?.onContentReplaced();
     const activeTabId = this.tabManager?.activeTabId ?? null;
     if (activeTabId) {
       this.tabErrors.set(activeTabId, {
@@ -235,6 +250,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (activeTabId) this.tabErrors.delete(activeTabId);
     this.syncAll();
   };
+  /** A new page bitmap replaces the content area; an in-place repaint only moves the text around. */
+  private readonly enginePageHandler = (event: EngineEvent): void => {
+    if (event.kind === 'pageLoadReady') this.search?.onContentReplaced();
+    else if (event.kind === 'pageRepainted') this.search?.onPageRepainted();
+  };
 
   /**
    * Tracks navigation failure/success on the bridge so pushed ChromeStateSnapshot
@@ -243,6 +263,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
    */
   private readonly onBridgeNavState = (event: { kind: string; url?: string; error?: Error }): void => {
     const activeTabId = this.tabManager?.activeTabId ?? null;
+    if (event.kind === 'navigationStarted') this.search?.onContentReplaced();
     switch (event.kind) {
       case 'navigationStarted':
       case 'navigationCompleted':
@@ -471,6 +492,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
       onStop: () => this.stop(),
     });
 
+    this.installSearch();
+
     if (!savedTabs) this.tabManager.createTab();
 
     if (areas.content) {
@@ -501,8 +524,40 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this._mounted = true;
   }
 
+  /** Omnibox, nova://search, find-in-page and the personal archive, wired to this window's tabs and services. */
+  private installSearch(): void {
+    this.search = new SearchIntegration({
+      addressBar: () => this.addressBar,
+      addressBarView: () => this.addressBarView,
+      contentArea: () => this.contentArea,
+      settings: () => this.settingsService,
+      history: () => this.historyService,
+      bookmarks: () => this.bookmarkService,
+      listTabs: () => (this.tabManager?.tabs ?? []).map((t) => ({
+        id: t.id, title: t.title || t.url, url: t.url, active: t.id === this.tabManager?.activeTabId,
+      })),
+      isIncognito: () => this.isIncognito(),
+      normalizeUrl: (raw) => this.parser.normalize(raw),
+      open: (url, newTab) => {
+        if (newTab) this.createTab(url);
+        else void this.navigate(url);
+      },
+      switchTab: (id) => { this.activateTabExternal(id); },
+      reload: () => this.reload(),
+      closeActiveTab: () => {
+        const id = this.tabManager?.activeTabId;
+        if (id) this.closeTab(id);
+      },
+    });
+    this.search.install();
+    if (this.pageDocumentProvider) this.search.setPageDocumentProvider(this.pageDocumentProvider);
+  }
+
   async unmount(): Promise<void> {
     this.navigationFetcher?.dispose();
+    this.pipelineController?.off('navigationCommitted', this.onNavigationCommitted);
+    this.search?.dispose();
+    this.search = null;
     this.cleanupSettingsPage();
     this.cleanupDownloadsPage();
     this.cleanupContentPanel();
@@ -549,13 +604,31 @@ class BrowserWindowPage implements IBrowserWindowPage {
   async navigate(url: string): Promise<void> {
     if (this.navigationBridge) {
       await this.navigationBridge.navigate(url);
+      // Built-in pages were already drawn when the navigation committed (onNavigationCommitted).
       const currentUrl = this.navigationBridge.currentUrl;
-      if (currentUrl) {
+      if (currentUrl && !this.drawnOnCommit(this.parseOrNull(currentUrl))) {
         this.handleContentForUrl(currentUrl);
       }
       this.syncAll();
       return;
     }
+  }
+
+  private parseOrNull(url: string): ParsedUrl | null {
+    try {
+      return this.parser.parse(url);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Built-in pages are drawn the moment their navigation commits. `about:blank` is the exception:
+   * it is what a tab starts as, and committing it must not wipe the start screen — only an explicit
+   * navigate('about:blank') clears the content.
+   */
+  private drawnOnCommit(parsed: ParsedUrl | null): boolean {
+    return !!parsed && parsed.isSpecialPage && parsed.normalized !== 'about:blank';
   }
 
   /**
@@ -640,10 +713,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
    */
   private renderSpecialPage(page: string, url: string): void {
     this.cleanupContentPanel();
+    this.contentRenderer?.clear(); // drop whatever the previous page left in the content area
 
-    switch (page) {
+    // `nova://search?q=x` → `nova://search`: pages that take parameters read them from `url`.
+    switch (page.replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase()) {
       case 'about:blank':
-        this.contentRenderer?.clear();
         break;
 
       case 'about:newtab':
@@ -661,7 +735,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
         break;
 
       case 'nova://research':
-        this.renderResearchPanel();
+        this.renderResearchPanel(parseResearchUrl(url));
+        break;
+
+      case 'nova://search':
+        this.renderSearchPanel(url);
         break;
 
       case 'nova://history':
@@ -709,7 +787,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.activeContentPanel = container;
     this.activeNewTabPage = new NewTabPage();
 
-    const searchEngine = this.settingsService?.getString('defaultSearchEngine', 'google') ?? 'google';
+    const searchEngine = this.settingsService?.getString('defaultSearchEngine', 'nova') ?? 'nova';
     this.activeNewTabPage.setSearchEngine(searchEngine);
 
     this.activeNewTabPage.mount(container);
@@ -787,7 +865,18 @@ class BrowserWindowPage implements IBrowserWindowPage {
     });
   }
 
-  private renderResearchPanel(): void {
+  private renderSearchPanel(url: string): void {
+    if (!this.contentArea || !this.search) return;
+    this.cleanupContentPanel();
+    const container = document.createElement('div');
+    container.style.cssText = 'width:100%;height:100%;';
+    this.contentArea.appendChild(container);
+    this.activeContentPanel = container;
+    this.search.renderSearchPage(container, url);
+  }
+
+  /** `query` (from `nova://research?q=…`) starts the research as soon as the page is up. */
+  private renderResearchPanel(query: string | null = null): void {
     if (!this.contentArea) return;
     this.cleanupContentPanel();
     const container = document.createElement('div');
@@ -813,6 +902,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.activeResearchPage.on('externalNavigation', (event) => {
       if (event.url) this.navigate(event.url);
     });
+
+    if (query) this.activeResearchPage.submitQuery(query);
   }
 
   private renderHistoryPanel(): void {
@@ -1259,8 +1350,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   /** Resolves the `defaultSearchEngine` setting into a `%s` search URL template. */
   private getSearchTemplate(): string {
-    const id = this.settingsService?.getString('defaultSearchEngine', 'google') || 'google';
-    return SEARCH_URL_TEMPLATES[id] ?? SEARCH_URL_TEMPLATES.google;
+    const id = this.settingsService?.getString('defaultSearchEngine', 'nova') || 'nova';
+    return SEARCH_URL_TEMPLATES[id] ?? SEARCH_URL_TEMPLATES.nova;
   }
 
   createTab(url?: string): string {
@@ -1364,10 +1455,23 @@ class BrowserWindowPage implements IBrowserWindowPage {
     // chaining keeps the call robust to hit-test-only fakes in tests.
     this.browserEngine?.off?.('pageLoadError', this.engineLoadErrorHandler);
     this.browserEngine?.off?.('pageLoadStarted', this.engineLoadStartedHandler);
+    this.browserEngine?.off?.('pageLoadReady', this.enginePageHandler);
+    this.browserEngine?.off?.('pageRepainted', this.enginePageHandler);
     this.browserEngine = engine;
     engine.on?.('pageLoadError', this.engineLoadErrorHandler);
     engine.on?.('pageLoadStarted', this.engineLoadStartedHandler);
+    engine.on?.('pageLoadReady', this.enginePageHandler);
+    engine.on?.('pageRepainted', this.enginePageHandler);
     this.syncNavigationPipeline();
+  }
+
+  setPageDocumentProvider(provider: () => DomDocument | null): void {
+    this.pageDocumentProvider = provider;
+    this.search?.setPageDocumentProvider(provider);
+  }
+
+  onPageDocumentReady(url: string, doc: DomDocument): void {
+    this.search?.onPageDocumentReady(url, doc);
   }
 
   setNavigationController(controller: INavigationController): void {
@@ -1415,7 +1519,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.navigationFetcher = null;
     this.navigationBridge?.dispose();
     this.navigationBridge = null;
+    this.pipelineController?.off('navigationCommitted', this.onNavigationCommitted);
     this.pipelineController = controller;
+    controller.on('navigationCommitted', this.onNavigationCommitted);
 
     if (this.tabManager && this.addressBar && this.toolbar) {
       this.navigationBridge = new NavigationBridge(
@@ -1592,6 +1698,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.cleanupDownloadsPage();
     this.cleanupNewTabPage();
     this.cleanupResearchPage();
+    this.search?.disposeSearchPage();
     if (this.activeContentPanel) {
       this.activeContentPanel.remove();
       this.activeContentPanel = null;

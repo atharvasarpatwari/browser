@@ -92,6 +92,18 @@ describe('extractIndexableDocument', () => {
     expect(doc!.body).not.toContain('Unique Title Words');
   });
 
+  it('indexes pretty-printed pages, whose content the tree builder nests under a stray <head>', () => {
+    // Whitespace between <html> and <head> makes the engine's tree builder emit html(head, body(head(title, h1, p))).
+    const html = `<!doctype html>\n<html>\n<head><title>Pretty Printed</title></head>\n<body>\n<h1>Heading</h1><p>${LOREM}</p>\n</body>\n</html>`;
+    const doc = extract(html);
+    expect(doc!.title).toBe('Pretty Printed');
+    expect(doc!.headings).toEqual([{ level: 1, text: 'Heading' }]);
+    expect(doc!.body).toContain('Lorem ipsum');
+    expect(doc!.body).not.toContain('Pretty Printed');
+    // same page without the whitespace: same result
+    expect(extract(html.replace(/\n/g, ''))!.body).toBe(doc!.body);
+  });
+
   it('never indexes pages with a password field', () => {
     expect(extract(`<body><form><input type="password" name="p"></form><p>${LOREM}</p></body>`)).toBeNull();
     expect(extract(`<body><form><input TYPE="Password"></form><p>${LOREM}</p></body>`)).toBeNull();

@@ -1,4 +1,5 @@
 import { expandSearchTemplate } from './search-template';
+import type { OmniboxProvider, OmniboxResult } from './omnibox';
 
 interface Bang {
   /** Lower-case, 1–12 letters/digits; typed as `!keyword`. */
@@ -115,5 +116,59 @@ class BangRegistry {
   }
 }
 
-export { BangRegistry, BUILT_IN_BANGS };
+const BANG_PREFIX_RE = /^!([a-z0-9]{0,12})(?:\s+(.*))?$/i;
+const BANG_SUFFIX_RE = /^(.+?)\s+!([a-z0-9]{1,12})$/i;
+
+/**
+ * Rows for `!bang` input: completions while the keyword is still being typed, and a one-click
+ * "Search <engine> for …" row once a known bang has a query (prefix `!g cats` or suffix `cats !g`).
+ */
+class BangSuggestionsProvider implements OmniboxProvider {
+  readonly name = 'bangs';
+
+  constructor(private readonly registry: BangRegistry) {}
+
+  getSuggestions(input: string, maxResults = 5): OmniboxResult[] {
+    const text = input.trim();
+
+    const suffix = BANG_SUFFIX_RE.exec(text);
+    if (suffix && this.registry.has(suffix[2]!)) return [this.searchRow(text, suffix[2]!, suffix[1]!.trim())];
+
+    const prefix = BANG_PREFIX_RE.exec(text);
+    if (!prefix) return [];
+    const [, keyword = '', rest] = prefix;
+    if (rest !== undefined) {
+      return this.registry.has(keyword) && rest.trim() ? [this.searchRow(text, keyword, rest.trim())] : [];
+    }
+    return this.registry.complete(keyword, maxResults).map((bang, i) => ({
+      type: 'engine' as const,
+      id: `bang:${bang.keyword}`,
+      text: `!${bang.keyword}`,
+      description: `Search ${bang.name}`,
+      hint: 'Tab to select',
+      icon: '🔎',
+      score: 90 - i,
+      source: this.name,
+      action: 'fill' as const,
+    }));
+  }
+
+  private searchRow(typed: string, keyword: string, query: string): OmniboxResult {
+    const bang = this.registry.get(keyword)!;
+    return {
+      type: 'search',
+      id: `bang:${bang.keyword}:search`,
+      text: typed,
+      description: `Search ${bang.name} for "${query}"`,
+      url: expandSearchTemplate(bang.url, { searchTerms: query }),
+      hint: bang.name,
+      icon: '🔎',
+      score: 100,
+      source: this.name,
+      action: 'navigate',
+    };
+  }
+}
+
+export { BangRegistry, BangSuggestionsProvider, BUILT_IN_BANGS };
 export type { Bang };

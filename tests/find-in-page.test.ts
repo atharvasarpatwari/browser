@@ -227,6 +227,15 @@ describe('FindInPage — navigation and events', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it('also emits cleared when a search that found nothing is replaced by an empty query', () => {
+    const f = make();
+    f.find('absent');
+    const handler = vi.fn();
+    f.onEvent(handler);
+    f.find('');
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'cleared' }));
+  });
+
   it('supports unsubscribing and survives throwing handlers', () => {
     const f = make();
     const good = vi.fn();

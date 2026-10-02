@@ -48,7 +48,10 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
     id: 'general', title: 'General', icon: '⚙',
     settings: [
       { key: 'homePage', label: 'Home page', description: 'Page shown on new tab', type: 'text', defaultValue: 'about:newtab' },
-      { key: 'defaultSearchEngine', label: 'Search engine', description: 'Default search provider', type: 'select', defaultValue: 'google', options: [{ label: 'Google', value: 'google' }, { label: 'Bing', value: 'bing' }, { label: 'DuckDuckGo', value: 'duckduckgo' }] },
+      { key: 'defaultSearchEngine', label: 'Search engine', description: 'Default search provider', type: 'select', defaultValue: 'nova', options: [{ label: 'Nova', value: 'nova' }, { label: 'Google', value: 'google' }, { label: 'Bing', value: 'bing' }, { label: 'DuckDuckGo', value: 'duckduckgo' }] },
+      { key: 'enableSearchSuggestions', label: 'Search suggestions', description: 'Send what you type in the address bar to the suggestions provider below (never in private browsing)', type: 'boolean', defaultValue: true },
+      { key: 'suggestionsEngine', label: 'Suggestions provider', description: 'Who receives your typing for suggestions', type: 'select', defaultValue: 'duckduckgo', options: [{ label: 'DuckDuckGo', value: 'duckduckgo' }, { label: 'Google', value: 'google' }, { label: 'Bing', value: 'bing' }, { label: 'Brave', value: 'brave' }] },
+      { key: 'archiveEnabled', label: 'Personal search archive', description: 'Index the pages you visit on this device so you can search them later (private pages are never indexed)', type: 'boolean', defaultValue: false },
       { key: 'restoreSession', label: 'Restore last session', description: 'Reopen tabs from last session on startup', type: 'boolean', defaultValue: true },
     ],
   },
@@ -59,6 +62,7 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'blockPopups', label: 'Block pop-ups', description: 'Block automatic pop-up windows', type: 'boolean', defaultValue: true },
       { key: 'enableSafeBrowsing', label: 'Safe Browsing', description: 'Warn about dangerous sites', type: 'boolean', defaultValue: true },
       { key: 'doNotTrack', label: 'Send Do Not Track', description: 'Request sites not to track you', type: 'boolean', defaultValue: false },
+      { key: 'stripTrackingParams', label: 'Remove tracking parameters', description: 'Strip utm_*, fbclid and similar from the links you open', type: 'boolean', defaultValue: true },
     ],
   },
   {

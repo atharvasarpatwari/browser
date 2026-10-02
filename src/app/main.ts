@@ -851,9 +851,10 @@ class ApplicationBootstrap {
     });
 
     // Plug the rendering pipeline as the page renderer
+    const domTree = this.container.resolve<IDomTree>(Tokens.DomTree);
     const pageRenderer = new PageRenderer({
       htmlParser: new HtmlParser(),
-      domTree: this.container.resolve<IDomTree>(Tokens.DomTree),
+      domTree,
       cssParser: this.container.resolve<ICssParser>(Tokens.CssParser),
       layoutEngine: this.container.resolve<ILayoutEngine>(Tokens.LayoutEngine),
       paintEngine: this.container.resolve<IPaintEngine>(Tokens.PaintEngine),
@@ -867,8 +868,10 @@ class ApplicationBootstrap {
       corsEngine: this.container.resolve<ICorsService>(Tokens.CorsService),
       securityLayer,
       onFrameRendered: () => engine.notifyPageRepainted(),
+      onDocumentReady: (url, doc) => page.onPageDocumentReady(url, doc),
     });
     engine.setPageRenderer(pageRenderer);
+    page.setPageDocumentProvider(() => domTree.getDocument());
 
     this.log('Browser UI mounted');
 

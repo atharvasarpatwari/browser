@@ -81,7 +81,8 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     // launch (no homePage setting yet) shows the real New Tab Page instead
     // of a blank page — see getHomeUrl() in browser-window.ts.
     expect(state.homeUrl).toBe('about:newtab');
-    expect(state.searchTemplate).toBe('https://www.google.com/search?q=%s');
+    // Nova's own search is the default engine (nova://search renders in the window).
+    expect(state.searchTemplate).toBe('nova://search?q=%s');
   });
 
   it('getChromeState() reflects the settingsService home page and default search engine', async () => {

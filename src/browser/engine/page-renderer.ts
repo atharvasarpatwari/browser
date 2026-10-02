@@ -94,6 +94,8 @@ interface PageRendererDependencies {
   readonly storageDir?: string;
   /** Optional callback invoked after each reflow/repaint frame (page repaint). */
   readonly onFrameRendered?: () => void;
+  /** Optional callback invoked once per page load, after the document is parsed, scripted, laid out and painted. */
+  readonly onDocumentReady?: (url: string, doc: DomDocument) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -210,6 +212,13 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // 11. Wire the incremental reflow/repaint controller for post-load DOM
     //     mutations (JS-triggered changes, scroll/scroll-triggered relayout).
     this.initReflowController(doc);
+
+    // 12. Tell interested parties (e.g. the personal search archive) the document is ready.
+    try {
+      this.deps.onDocumentReady?.(result.url, doc);
+    } catch {
+      // An observer must never break page rendering.
+    }
   }
 
   /**

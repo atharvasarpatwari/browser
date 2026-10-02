@@ -45,11 +45,19 @@ interface OmniboxOptions {
   readonly canonicalDedupe?: boolean;
 }
 
+/** Narrows one query to specific providers and/or rewrites the text they see (e.g. `@tabs foo`). */
+interface OmniboxRoute {
+  /** Only providers with these names run. */
+  readonly providers?: readonly string[];
+  /** Text handed to providers instead of the raw input (the payload after a scope or bang). */
+  readonly query?: string;
+}
+
 interface IOmnibox extends IDisposable {
   addProvider(provider: OmniboxProvider): void;
   removeProvider(name: string): boolean;
   getProviders(): OmniboxProvider[];
-  onInputChanged(input: string, maxResults?: number): Promise<OmniboxResult[]>;
+  onInputChanged(input: string, maxResults?: number, route?: OmniboxRoute): Promise<OmniboxResult[]>;
   selectResult(result: OmniboxResult): void;
   clear(): void;
   onEvent(handler: OmniboxEventHandler): () => void;
@@ -105,7 +113,7 @@ class Omnibox implements IOmnibox {
     return [...this.providers];
   }
 
-  async onInputChanged(input: string, maxResults = 8): Promise<OmniboxResult[]> {
+  async onInputChanged(input: string, maxResults = 8, route?: OmniboxRoute): Promise<OmniboxResult[]> {
     const seq = ++this._seq;
     if (!this._enabled || !input.trim()) {
       const results: OmniboxResult[] = [];
@@ -115,8 +123,9 @@ class Omnibox implements IOmnibox {
       return results;
     }
 
-    const trimmed = input.trim();
-    const providers = [...this.providers];
+    const trimmed = route?.query !== undefined ? route.query.trim() : input.trim();
+    const allowed = route?.providers ? new Set(route.providers) : null;
+    const providers = this.providers.filter((p) => !allowed || allowed.has(p.name));
     const lists: OmniboxResult[][] = providers.map(() => []);
     let version = 0;
     let publishedVersion = -1;
@@ -227,6 +236,6 @@ class Omnibox implements IOmnibox {
 
 export { Omnibox, canonicalUrl };
 export type {
-  IOmnibox, OmniboxOptions, OmniboxResult, OmniboxProvider, OmniboxResultType,
+  IOmnibox, OmniboxOptions, OmniboxRoute, OmniboxResult, OmniboxProvider, OmniboxResultType,
   OmniboxAction, OmniboxEvent, OmniboxEventKind, OmniboxEventHandler,
 };

@@ -170,11 +170,11 @@ class FindInPage implements IFindInPage {
   constructor(private readonly source: FindTextSource = EMPTY_SOURCE) {}
 
   find(query: string, options: FindOptions = {}): FindResult {
-    const hadMatches = this.matches.length > 0;
+    const hadState = this._query !== '' || this.matches.length > 0;
     this.reset();
     if (!query.trim()) {
       const result = this.snapshot();
-      if (hadMatches) this.emit({ kind: 'cleared', result });
+      if (hadState) this.emit({ kind: 'cleared', result }); // lets a UI drop a stale "No results"
       return result;
     }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BangRegistry, BUILT_IN_BANGS } from '../src/browser/omnibox/bangs';
+import { BangRegistry, BangSuggestionsProvider, BUILT_IN_BANGS } from '../src/browser/omnibox/bangs';
 
 describe('built-in bang catalog', () => {
   it('has around fifty well-formed, unique entries', () => {
@@ -74,5 +74,49 @@ describe('BangRegistry', () => {
     expect(r.complete('stack').map((b) => b.keyword)).toEqual(['so']);
     expect(r.complete('zzzz')).toEqual([]);
     expect(r.complete('g', 2)).toHaveLength(2);
+  });
+});
+
+describe('BangSuggestionsProvider', () => {
+  const provider = new BangSuggestionsProvider(new BangRegistry());
+
+  it('completes a keyword that is still being typed, best matches first', () => {
+    const rows = provider.getSuggestions('!g');
+    expect(rows[0]).toMatchObject({
+      type: 'engine', id: 'bang:g', text: '!g', description: 'Search Google', hint: 'Tab to select', action: 'fill', score: 90,
+    });
+    expect(rows.map((r) => r.score)).toEqual([90, 89, 88, 87, 86]);
+    expect(rows.every((r) => r.text.startsWith('!g'))).toBe(true);
+    expect(provider.getSuggestions('!g', 2)).toHaveLength(2);
+  });
+
+  it('lists some bangs for a lone "!"', () => {
+    expect(provider.getSuggestions('!')).toHaveLength(5);
+  });
+
+  it('offers a one-click search row for a prefix bang with a query', () => {
+    expect(provider.getSuggestions('!g cats & dogs')).toEqual([{
+      type: 'search', id: 'bang:g:search', text: '!g cats & dogs', description: 'Search Google for "cats & dogs"',
+      url: 'https://www.google.com/search?q=cats%20%26%20dogs', hint: 'Google', icon: '🔎', score: 100,
+      source: 'bangs', action: 'navigate',
+    }]);
+  });
+
+  it('also understands a suffix bang', () => {
+    const [row] = provider.getSuggestions('react docs !gh');
+    expect(row).toMatchObject({ text: 'react docs !gh', url: 'https://github.com/search?q=react%20docs', hint: 'GitHub' });
+  });
+
+  it('stays quiet for unknown bangs, plain text and empty queries', () => {
+    expect(provider.getSuggestions('!zz cats')).toEqual([]);
+    expect(provider.getSuggestions('cats !zz')).toEqual([]);
+    expect(provider.getSuggestions('hello world')).toEqual([]);
+    expect(provider.getSuggestions('')).toEqual([]);
+  });
+
+  it('honours caller-supplied bangs', () => {
+    const custom = new BangSuggestionsProvider(new BangRegistry([{ keyword: 'mine', name: 'Mine', url: 'https://mine.example/?q={searchTerms}' }]));
+    expect(custom.getSuggestions('!mine x')[0]).toMatchObject({ url: 'https://mine.example/?q=x', hint: 'Mine' });
+    expect(custom.getSuggestions('!min')[0]).toMatchObject({ text: '!mine' });
   });
 });

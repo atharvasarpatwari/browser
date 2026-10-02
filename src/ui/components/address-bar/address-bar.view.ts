@@ -1,5 +1,20 @@
 import type { IDisposable } from '../../../app/dependency-container';
+import type { OmniboxResult } from '../../../browser/omnibox/omnibox';
 import type { IAddressBar, AddressBarState, AddressBarEventUnion } from './address-bar';
+import { appendHighlighted, appendRanges } from '../highlight';
+
+/** How a result was chosen: Alt+Enter, Ctrl/Cmd+click and middle-click ask for a new tab. */
+interface ActivationOptions {
+  readonly newTab: boolean;
+}
+
+type ResultHandler = (result: OmniboxResult, how: ActivationOptions) => void;
+
+/**
+ * Called on Enter before the legacy "treat the text as a URL or search" path. Return true when the
+ * submission was handled (the legacy path is then skipped). `selected` is the row the user arrowed to.
+ */
+type SubmitInterceptor = (value: string, selected: OmniboxResult | null, how: ActivationOptions) => boolean;
 
 interface AddressBarViewConfig {
   readonly containerId: string;
@@ -12,7 +27,7 @@ const DEFAULT_VIEW_CONFIG: AddressBarViewConfig = {
   containerId: 'address-bar',
   showRefreshButton: true,
   showSecurityIcon: true,
-  maxSuggestions: 6,
+  maxSuggestions: 8,
 };
 
 const ICON_LOCKED =
@@ -30,6 +45,10 @@ interface IAddressBarView extends IDisposable {
   detach(): void;
   update(state: AddressBarState): void;
   setEventHandler(handler: (event: AddressBarEventUnion) => void): void;
+  setResultHandler(handler: ResultHandler): void;
+  setSubmitInterceptor(interceptor: SubmitInterceptor): void;
+  /** Replaces the input text as if typed (focuses it and refreshes suggestions). */
+  fill(text: string): void;
   setNavigationCallbacks(callbacks: {
     onBack?: () => void;
     onForward?: () => void;
@@ -41,6 +60,40 @@ interface IAddressBarView extends IDisposable {
   selectAll(): void;
 }
 
+// Dropdown section headers, shown when the rows span more than one section.
+const GROUP_LABEL: Readonly<Record<OmniboxResult['type'], string>> = {
+  search: 'Suggestions', suggestion: 'Suggestions', engine: 'Suggestions',
+  tab: 'Open tabs', bookmark: 'Bookmarks & history', history: 'Bookmarks & history', url: 'Go to',
+  answer: 'Instant answer', archive: 'Personal archive', action: 'Commands', ai: 'Ask Nova AI',
+};
+
+const DEFAULT_ICON: Readonly<Record<OmniboxResult['type'], string>> = {
+  search: '🔍', suggestion: '🔍', engine: '🔎', tab: '🗂️', bookmark: '⭐', history: '🕘', url: '🌐',
+  answer: '🧮', archive: '🗃️', action: '⚡', ai: '✨',
+};
+
+/** What arrowing onto / Tab-completing a row puts in the input; null keeps the typed text. */
+function fillTextOf(r: OmniboxResult): string | null {
+  switch (r.type) {
+    case 'search': case 'suggestion': return r.text;
+    case 'url': case 'history': case 'bookmark': case 'tab': case 'archive': return r.url ?? r.text;
+    case 'engine': return `${r.text} `;
+    default: return null;
+  }
+}
+
+/** Rows grouped by section, sections ordered by their best-ranked row, order within a section preserved. */
+function groupResults(results: readonly OmniboxResult[]): Array<{ label: string; rows: OmniboxResult[] }> {
+  const groups = new Map<string, OmniboxResult[]>();
+  for (const r of results) {
+    const label = GROUP_LABEL[r.type];
+    const rows = groups.get(label);
+    if (rows) rows.push(r);
+    else groups.set(label, [r]);
+  }
+  return [...groups].map(([label, rows]) => ({ label, rows }));
+}
+
 class AddressBarView implements IAddressBarView {
   private readonly config: AddressBarViewConfig;
   private readonly model: IAddressBar;
@@ -50,6 +103,14 @@ class AddressBarView implements IAddressBarView {
   private suggestionsContainer: HTMLElement | null = null;
   private refreshButton: HTMLElement | null = null;
   private eventHandler: ((event: AddressBarEventUnion) => void) | null = null;
+  private resultHandler: ResultHandler | null = null;
+  private submitInterceptor: SubmitInterceptor | null = null;
+  /** Rich rows in display (flattened, grouped) order — index-aligned with the rows' DOM. */
+  private rows: OmniboxResult[] = [];
+  /** What the user typed, so arrowing past a non-filling row can restore it. */
+  private typedValue = '';
+  private legacyShown = false;
+  private boundResultsHandler: ((e: AddressBarEventUnion) => void) | null = null;
   private navCallbacks: {
     onBack?: () => void;
     onForward?: () => void;
@@ -74,10 +135,20 @@ class AddressBarView implements IAddressBarView {
     this.container = container;
     this.build();
     this.installGlobalShortcuts();
+    this.boundResultsHandler = (e) => {
+      if (e.kind === 'resultsChanged') this.renderResults((e as { readonly results: readonly OmniboxResult[] }).results);
+    };
+    this.model.on('resultsChanged', this.boundResultsHandler);
   }
 
   detach(): void {
     this.uninstallGlobalShortcuts();
+    if (this.boundResultsHandler) {
+      this.model.off('resultsChanged', this.boundResultsHandler);
+      this.boundResultsHandler = null;
+    }
+    this.rows = [];
+    this.legacyShown = false;
     if (this.container) {
       this.container.innerHTML = '';
       this.container = null;
@@ -102,11 +173,30 @@ class AddressBarView implements IAddressBarView {
       this.securityIcon.innerHTML = state.secure ? ICON_LOCKED : ICON_UNLOCKED;
     }
 
-    this.renderSuggestions(state.suggestions);
+    // Legacy string suggestions only. Rich rows are event-driven (`resultsChanged`), so an unrelated
+    // chrome refresh must not hide or re-render a dropdown the user is arrowing through.
+    if (state.suggestions.length > 0 || this.legacyShown) this.renderSuggestions(state.suggestions);
   }
 
   setEventHandler(handler: (event: AddressBarEventUnion) => void): void {
     this.eventHandler = handler;
+  }
+
+  setResultHandler(handler: ResultHandler): void {
+    this.resultHandler = handler;
+  }
+
+  setSubmitInterceptor(interceptor: SubmitInterceptor): void {
+    this.submitInterceptor = interceptor;
+  }
+
+  fill(text: string): void {
+    if (!this.inputElement) return;
+    this.inputElement.value = text;
+    this.typedValue = text;
+    this.selectedSuggestionIndex = -1;
+    this.inputElement.focus();
+    this.model.setDraft(text);
   }
 
   setNavigationCallbacks(callbacks: {
@@ -163,6 +253,7 @@ class AddressBarView implements IAddressBarView {
 
     this.inputElement.addEventListener('focus', () => {
       this.previousValue = this.inputElement?.value ?? '';
+      this.typedValue = this.previousValue;
       this.container?.classList.add('focused');
       this.selectAll();
     });
@@ -175,6 +266,8 @@ class AddressBarView implements IAddressBarView {
 
     this.inputElement.addEventListener('input', () => {
       this.selectedSuggestionIndex = -1;
+      this.typedValue = this.inputElement?.value ?? '';
+      this.model.setDraft(this.typedValue);
     });
 
     this.container.appendChild(this.inputElement);
@@ -215,7 +308,14 @@ class AddressBarView implements IAddressBarView {
         e.preventDefault();
         const value = input.value.trim();
         if (value) {
-          this.model.setValue(value);
+          const selected = this.selectedRow();
+          if (selected?.action === 'fill') { // a completion row (!g, @tabs): keep typing instead of submitting
+            this.fill(fillTextOf(selected) ?? selected.text);
+            break;
+          }
+          const handled = this.submitInterceptor?.(value, selected, { newTab: e.altKey }) ?? false;
+          if (!handled) this.model.setValue(value);
+          this.hideSuggestions();
           input.blur();
         }
         break;
@@ -249,7 +349,7 @@ class AddressBarView implements IAddressBarView {
         if (items && items.length > 0) {
           this.selectedSuggestionIndex = Math.max(this.selectedSuggestionIndex - 1, -1);
           if (this.selectedSuggestionIndex === -1) {
-            input.value = this.previousValue;
+            input.value = this.typedValue;
           }
           this.highlightSuggestion(items);
         }
@@ -257,7 +357,20 @@ class AddressBarView implements IAddressBarView {
       }
 
       case 'Tab': {
-        // Accept the selected suggestion on Tab.
+        // Rich rows: complete the input with the highlighted row (or the top row, when it offers a
+        // completion such as `!g `) and keep typing — Tab never navigates.
+        if (this.rows.length > 0) {
+          const target = this.selectedSuggestionIndex >= 0 ? this.rows[this.selectedSuggestionIndex] : this.rows[0];
+          const fill = target ? fillTextOf(target) : null;
+          if (target && fill !== null && (this.selectedSuggestionIndex >= 0 || target.type === 'engine')) {
+            e.preventDefault();
+            input.value = fill;
+            this.typedValue = fill;
+            this.model.setDraft(fill);
+          }
+          break;
+        }
+        // Legacy string suggestions: accept the selected one.
         if (this.selectedSuggestionIndex >= 0) {
           const items = this.suggestionsContainer?.querySelectorAll('.nova-dropdown-item');
           const selected = items?.[this.selectedSuggestionIndex];
@@ -291,11 +404,21 @@ class AddressBarView implements IAddressBarView {
       const selected = i === this.selectedSuggestionIndex;
       el.classList.toggle('nova-dropdown-item--selected', selected);
       el.setAttribute('aria-selected', selected ? 'true' : 'false');
-      // Update input value to the selected suggestion.
-      if (selected && this.inputElement) {
+      if (!selected || !this.inputElement) return;
+      // Preview the selected row in the input. Rich rows say what to show (or nothing); legacy rows show their text.
+      if (el.dataset.rich) {
+        this.inputElement.value = el.dataset.fill ?? this.typedValue;
+      } else {
         this.inputElement.value = el.textContent ?? '';
       }
+      this.inputElement.setAttribute('aria-activedescendant', el.id);
+      el.scrollIntoView?.({ block: 'nearest' });
     });
+    if (this.selectedSuggestionIndex < 0) this.inputElement?.removeAttribute('aria-activedescendant');
+  }
+
+  private selectedRow(): OmniboxResult | null {
+    return this.selectedSuggestionIndex >= 0 ? this.rows[this.selectedSuggestionIndex] ?? null : null;
   }
 
   // ── Private: global shortcuts ─────────────────────────────────────────────
@@ -361,6 +484,8 @@ class AddressBarView implements IAddressBarView {
     this.suggestionsContainer.style.display = 'block';
     this.inputElement?.setAttribute('aria-expanded', 'true');
     this.selectedSuggestionIndex = -1;
+    this.rows = [];
+    this.legacyShown = true;
 
     for (let i = 0; i < toShow.length; i++) {
       const suggestion = toShow[i]!;
@@ -378,13 +503,119 @@ class AddressBarView implements IAddressBarView {
     }
   }
 
+  /** Renders the omnibox's rich rows: icon, highlighted title, description, hint, and section headers. */
+  private renderResults(results: readonly OmniboxResult[]): void {
+    const container = this.suggestionsContainer;
+    if (!container) return;
+    if (results.length === 0) {
+      this.hideSuggestions();
+      return;
+    }
+
+    const groups = groupResults(results.slice(0, this.config.maxSuggestions));
+    this.rows = groups.flatMap((g) => g.rows);
+    this.legacyShown = false;
+    this.selectedSuggestionIndex = -1;
+    this.inputElement?.removeAttribute('aria-activedescendant');
+
+    const words = this.typedValue.toLowerCase().split(/\s+/).filter(Boolean);
+    container.innerHTML = '';
+    let index = 0;
+    for (const group of groups) {
+      if (groups.length > 1) {
+        const header = document.createElement('div');
+        header.className = 'nova-dropdown-header';
+        header.setAttribute('role', 'presentation');
+        header.textContent = group.label;
+        container.appendChild(header);
+      }
+      for (const result of group.rows) container.appendChild(this.buildRow(result, index++, words));
+    }
+    container.style.display = 'block';
+    this.inputElement?.setAttribute('aria-expanded', 'true');
+  }
+
+  private buildRow(result: OmniboxResult, index: number, words: readonly string[]): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'nova-dropdown-item nova-dropdown-item--rich';
+    row.id = `address-bar-suggestion-${index}`;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', 'false');
+    row.dataset.rich = '1';
+    row.dataset.type = result.type;
+    const fill = fillTextOf(result);
+    if (fill !== null) row.dataset.fill = fill;
+
+    const icon = document.createElement('span');
+    icon.className = 'nova-dropdown-item__icon';
+    const swatch = result.meta?.swatch;
+    if (typeof swatch === 'string' && /^#[0-9a-f]{6}$/i.test(swatch)) {
+      const chip = document.createElement('span');
+      chip.className = 'nova-dropdown-swatch';
+      chip.style.background = swatch;
+      icon.appendChild(chip);
+    } else {
+      // Providers may carry an image URL in `icon`; only short (emoji/glyph) values are shown as text.
+      icon.textContent = result.icon && result.icon.length <= 4 ? result.icon : DEFAULT_ICON[result.type];
+    }
+    row.appendChild(icon);
+
+    const body = document.createElement('span');
+    body.className = 'nova-dropdown-item__body';
+    const title = document.createElement('span');
+    title.className = 'nova-dropdown-item__text';
+    // Instant answers and commands show their own text; everything else highlights what was typed.
+    if (result.type === 'answer' || result.type === 'action' || result.type === 'ai') title.textContent = result.text;
+    else appendHighlighted(title, result.text, words);
+    body.appendChild(title);
+    if (result.description && result.description !== result.text) {
+      const desc = document.createElement('span');
+      desc.className = 'nova-dropdown-item__desc';
+      const ranges = result.meta?.highlights;
+      if (result.type === 'archive' && Array.isArray(ranges)) appendRanges(desc, result.description, ranges as Array<[number, number]>);
+      else desc.textContent = result.description;
+      body.appendChild(desc);
+    }
+    row.appendChild(body);
+
+    if (result.hint) {
+      const hint = document.createElement('span');
+      hint.className = 'nova-dropdown-item__hint';
+      hint.textContent = result.hint;
+      row.appendChild(hint);
+    }
+
+    // mousedown (not click) so the input's blur does not hide the row before it is chosen.
+    row.addEventListener('mousedown', (e: MouseEvent) => {
+      e.preventDefault();
+      this.activateRow(index, { newTab: e.button === 1 || e.ctrlKey || e.metaKey });
+    });
+    return row;
+  }
+
+  private activateRow(index: number, how: ActivationOptions): void {
+    const result = this.rows[index];
+    if (!result) return;
+    if (result.action === 'fill') {
+      this.fill(fillTextOf(result) ?? result.text);
+      return;
+    }
+    this.hideSuggestions();
+    this.inputElement?.blur();
+    if (this.resultHandler) this.resultHandler(result, how);
+    else this.model.setValue(result.url ?? result.text);
+  }
+
   private hideSuggestions(): void {
     if (this.suggestionsContainer) {
       this.suggestionsContainer.style.display = 'none';
       this.suggestionsContainer.innerHTML = '';
     }
     this.selectedSuggestionIndex = -1;
+    this.rows = [];
+    this.legacyShown = false;
     this.inputElement?.setAttribute('aria-expanded', 'false');
+    this.inputElement?.removeAttribute('aria-activedescendant');
   }
 
   // ── Private: dispatch ─────────────────────────────────────────────────────
@@ -405,5 +636,5 @@ class AddressBarView implements IAddressBarView {
   }
 }
 
-export { AddressBarView, DEFAULT_VIEW_CONFIG };
-export type { IAddressBarView, AddressBarViewConfig };
+export { AddressBarView, DEFAULT_VIEW_CONFIG, fillTextOf, groupResults };
+export type { IAddressBarView, AddressBarViewConfig, ActivationOptions, ResultHandler, SubmitInterceptor };

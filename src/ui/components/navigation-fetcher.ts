@@ -3,6 +3,7 @@ import type { IBrowserEngine, EngineEvent, PageLoadSession } from '../../browser
 import type { IContentRenderer } from './content-renderer/content-renderer';
 import type { IPaintEngine } from '../../browser/rendering/paint-engine';
 import type { INavigationController, NavigationEvent } from '../../browser/navigation/navigation-controller';
+import { isEngineRendered } from '../../browser/navigation/router';
 
 interface INavigationFetcher extends IDisposable {
   start(): void;
@@ -57,12 +58,12 @@ class NavigationFetcher implements INavigationFetcher {
     switch (e.kind) {
       case 'pageLoadReady':
         // A navigation commits a new page: replace the content canvas.
-        this.renderFromEngine(e.session, true);
+        if (this.rendersBitmap(e.session)) this.renderFromEngine(e.session, true);
         break;
       case 'pageRepainted':
         // In-place repaint (animation frames, async image loads): update the
         // existing canvas so the DOM element stays stable while animating.
-        if (e.session) this.renderFromEngine(e.session, false);
+        if (e.session && this.rendersBitmap(e.session)) this.renderFromEngine(e.session, false);
         break;
       case 'pageLoadError':
         this.contentRenderer.renderError(
@@ -82,6 +83,14 @@ class NavigationFetcher implements INavigationFetcher {
         this.contentRenderer.renderLoading(e.request.url);
         break;
     }
+  }
+
+  /**
+   * Built-in pages (nova://, about:) have no engine-rendered document — the window draws them —
+   * so the engine's page bitmap (blank, or the previous page) must not replace them.
+   */
+  private rendersBitmap(session: PageLoadSession): boolean {
+    return !session.routeResult || isEngineRendered(session.routeResult.type);
   }
 
   private renderFromEngine(session: PageLoadSession, freshCanvas: boolean): void {

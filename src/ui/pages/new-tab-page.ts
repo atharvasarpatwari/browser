@@ -40,13 +40,16 @@ const DEFAULT_QUICK_LINKS: readonly NewTabPageLink[] = [
   { label: 'Extensions', url: 'nova://extensions', icon: '\uD83D\uDD27' },
 ];
 
+/** Search-URL templates keyed by the `defaultSearchEngine` setting value. */
 const SEARCH_URL_TEMPLATES: Record<string, string> = {
+  nova: 'nova://search?q=%s',
   google: 'https://www.google.com/search?q=%s',
   bing: 'https://www.bing.com/search?q=%s',
   duckduckgo: 'https://duckduckgo.com/?q=%s',
 };
 
 const ENGINE_LABELS: Record<string, string> = {
+  nova: 'Nova',
   google: 'Google',
   bing: 'Bing',
   duckduckgo: 'DuckDuckGo',
@@ -143,7 +146,7 @@ class NewTabPage implements INewTabPage {
   private frequentSection: HTMLElement | null = null;
   private bookmarkSection: HTMLElement | null = null;
   private _mounted = false;
-  private searchEngine = 'google';
+  private searchEngine = 'nova';
   private clockInterval: ReturnType<typeof setInterval> | null = null;
   private bookmarks: readonly BookmarkEntry[] = [];
   private historyEntries: readonly HistoryEntry[] = [];
@@ -361,9 +364,7 @@ class NewTabPage implements INewTabPage {
 
     const dd = document.createElement('div');
     dd.className = 'ntp-dropdown';
-    const engines: Array<[string, string]> = [
-      ['google', 'Google'], ['bing', 'Bing'], ['duckduckgo', 'DuckDuckGo'],
-    ];
+    const engines = Object.entries(ENGINE_LABELS);
     for (const [key, label] of engines) {
       const item = document.createElement('div');
       item.className = 'ntp-dropdown-item' + (key === this.searchEngine ? ' active' : '');
@@ -663,7 +664,7 @@ class NewTabPage implements INewTabPage {
       const url = query.startsWith('http') ? query : `https://${query}`;
       this.emit({ kind: 'navigate', url });
     } else {
-      const template = SEARCH_URL_TEMPLATES[this.searchEngine] || SEARCH_URL_TEMPLATES.google;
+      const template = SEARCH_URL_TEMPLATES[this.searchEngine] || SEARCH_URL_TEMPLATES.nova;
       this.emit({ kind: 'navigate', url: template.replace('%s', encodeURIComponent(query)) });
     }
   }

@@ -195,6 +195,59 @@ describe('Omnibox — de-duplication', () => {
   });
 });
 
+describe('Omnibox — routing', () => {
+  const make = (omnibox: Omnibox, seen: string[]) => {
+    for (const name of ['a', 'b', 'c']) {
+      omnibox.addProvider({
+        name,
+        getSuggestions: (q) => { seen.push(`${name}:${q}`); return [result({ text: name, score: 1 })]; },
+      });
+    }
+  };
+
+  it('runs only the named providers and hands them the rewritten query', async () => {
+    const omnibox = new Omnibox();
+    const seen: string[] = [];
+    make(omnibox, seen);
+    const out = await omnibox.onInputChanged('@tabs foo', 8, { providers: ['a', 'c'], query: '  foo ' });
+    expect(seen.sort()).toEqual(['a:foo', 'c:foo']);
+    expect(out.map((r) => r.text).sort()).toEqual(['a', 'c']);
+  });
+
+  it('lets a scope pass an empty query (listing mode)', async () => {
+    const omnibox = new Omnibox();
+    const seen: string[] = [];
+    make(omnibox, seen);
+    await omnibox.onInputChanged('@tabs', 8, { providers: ['b'], query: '' });
+    expect(seen).toEqual(['b:']);
+  });
+
+  it('without a route every provider sees the trimmed input', async () => {
+    const omnibox = new Omnibox();
+    const seen: string[] = [];
+    make(omnibox, seen);
+    await omnibox.onInputChanged('  hello  ');
+    expect(seen.sort()).toEqual(['a:hello', 'b:hello', 'c:hello']);
+  });
+
+  it('keeps the raw input on emitted events', async () => {
+    const omnibox = new Omnibox();
+    const events = collect(omnibox);
+    make(omnibox, []);
+    await omnibox.onInputChanged('@tabs foo', 8, { providers: ['a'], query: 'foo' });
+    expect(events[0]!.input).toBe('@tabs foo');
+  });
+
+  it('runs nothing for an empty provider list and ignores unknown names', async () => {
+    const omnibox = new Omnibox();
+    const seen: string[] = [];
+    make(omnibox, seen);
+    expect(await omnibox.onInputChanged('x', 8, { providers: [] })).toEqual([]);
+    expect(await omnibox.onInputChanged('x', 8, { providers: ['nope', 'a'] })).toHaveLength(1);
+    expect(seen).toEqual(['a:x']);
+  });
+});
+
 describe('Omnibox — selecting results', () => {
   const select = (r: OmniboxResult) => {
     const omnibox = new Omnibox();
