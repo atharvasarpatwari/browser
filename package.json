@@ -41,6 +41,7 @@
     "format": "prettier --check src/ tests/",
     "format:fix": "prettier --write src/ tests/",
     "benchmark": "tsx src/benchmark/run.ts",
+    "benchmark:search": "vitest run tests/search-performance.test.ts --reporter=verbose",
     "native:build": "cargo build --release -p nova-bindings --manifest-path native/Cargo.toml",
     "native:build:dev": "cargo build -p nova-bindings --manifest-path native/Cargo.toml",
     "native:build:linux-x64": "cargo build --release --lib --manifest-path native/Cargo.toml --target x86_64-unknown-linux-gnu --features dns,tls,http",

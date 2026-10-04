@@ -65,6 +65,10 @@ const SNIPPET_SOURCE_CHARS = 2000;
 const SNIPPET_LENGTH = 200;
 const MAX_PREFIX_EXPANSIONS = 20;
 const PREFIX_FACTOR = 0.6;
+/** Terms are bucketed by their first characters, so a typed prefix scans one bucket instead of the whole vocabulary. */
+const PREFIX_BUCKET_CHARS = 2;
+/** Beyond this many results (or when they are a large share of the matches) sorting everything beats a bounded selection. */
+const TOP_K_MAX = 64;
 
 /** FNV-1a, 32-bit — cheap change detection for re-visited pages. */
 function hashText(text: string): string {
@@ -111,10 +115,17 @@ function buildSnippet(
  * In-memory inverted index ranked with BM25 (k1 = 1.2, b = 0.75). Postings are parallel arrays
  * (doc id, field-weighted term frequency). Removal tombstones the document; the index compacts
  * itself once tombstones pile up.
+ *
+ * Search cost is kept flat as the archive grows: typed prefixes look in a bucket of terms that share
+ * their first characters, scoring accumulates into dense per-document arrays (ids are small integers),
+ * and only the requested number of best pages is selected rather than sorting every match. The ranking
+ * is exactly the straightforward algorithm's (see tests/bm25-equivalence.test.ts).
  */
 class Bm25Index {
   private docs: DocRecord[] = [];
   private postings = new Map<string, Postings>();
+  /** First-characters → the terms (in `postings` order) that start with them. */
+  private prefixIndex = new Map<string, string[]>();
   private urlToId = new Map<string, number>();
   private totalLength = 0;
   private liveCount = 0;
@@ -168,7 +179,7 @@ class Bm25Index {
     });
     for (const [term, tf] of tfs) {
       let p = this.postings.get(term);
-      if (!p) { p = { ids: [], tfs: [] }; this.postings.set(term, p); }
+      if (!p) { p = { ids: [], tfs: [] }; this.postings.set(term, p); this.indexTerm(term); }
       p.ids.push(id);
       p.tfs.push(tf);
     }
@@ -202,6 +213,7 @@ class Bm25Index {
   clear(): void {
     this.docs = [];
     this.postings.clear();
+    this.prefixIndex.clear();
     this.urlToId.clear();
     this.totalLength = 0;
     this.liveCount = 0;
@@ -220,8 +232,8 @@ class Bm25Index {
       prefix = lastWord;
       const slot = slots[slots.length - 1]!;
       const expansions: Array<[string, number]> = [];
-      for (const [term, p] of this.postings) {
-        if (term !== slot[0]!.term && term.startsWith(lastWord)) expansions.push([term, p.ids.length]);
+      for (const term of this.prefixIndex.get(lastWord.slice(0, PREFIX_BUCKET_CHARS)) ?? []) {
+        if (term !== slot[0]!.term && term.startsWith(lastWord)) expansions.push([term, this.postings.get(term)!.ids.length]);
       }
       expansions.sort((a, b) => b[1] - a[1]);
       for (const [term] of expansions.slice(0, MAX_PREFIX_EXPANSIONS)) slot.push({ term, factor: PREFIX_FACTOR });
@@ -229,12 +241,18 @@ class Bm25Index {
 
     const n = this.liveCount;
     const avgLength = this.totalLength / n || 1;
-    const scores = new Map<number, number>();
-    const matched = new Map<number, number>();
+    // Document ids are dense small integers, so scores live in typed arrays rather than Maps.
+    const size = this.docs.length;
+    const scores = new Float64Array(size);
+    const matched = new Uint32Array(size);
+    const best = new Float64Array(size);
+    const bestFor = new Uint32Array(size); // the slot (1-based) whose `best` entry this is
+    const candidates: number[] = [];
 
-    for (const slot of slots) {
-      const best = new Map<number, number>();
-      for (const { term, factor } of slot) {
+    for (let s = 0; s < slots.length; s++) {
+      const stamp = s + 1;
+      const touched: number[] = [];
+      for (const { term, factor } of slots[s]!) {
         const p = this.postings.get(term);
         if (!p) continue;
         let df = p.ids.length;
@@ -250,30 +268,54 @@ class Bm25Index {
           if (!d.live) continue;
           const tf = p.tfs[i]!;
           const c = factor * idf * ((tf * (K1 + 1)) / (tf + K1 * (1 - B + (B * d.length) / avgLength)));
-          const prev = best.get(id);
-          if (prev === undefined || c > prev) best.set(id, c);
+          if (bestFor[id] !== stamp) { bestFor[id] = stamp; best[id] = c; touched.push(id); }
+          else if (c > best[id]!) best[id] = c;
         }
       }
-      for (const [id, c] of best) {
-        scores.set(id, (scores.get(id) ?? 0) + c);
-        matched.set(id, (matched.get(id) ?? 0) + 1);
+      for (const id of touched) { // a page counts once per query slot, at its best-matching term of that slot
+        if (matched[id] === 0) candidates.push(id);
+        scores[id] = scores[id]! + best[id]!;
+        matched[id] = matched[id]! + 1;
       }
     }
 
-    const ranked = [...scores.entries()]
-      .map(([id, score]) => ({ id, score, matched: matched.get(id)! }))
-      .sort((a, b) => b.matched - a.matched || b.score - a.score || b.id - a.id)
-      .slice(0, limit);
+    // Most query slots matched, then highest score, then the most recently added page.
+    const before = (a: number, b: number): boolean =>
+      matched[a] !== matched[b] ? matched[a]! > matched[b]! : scores[a] !== scores[b] ? scores[a]! > scores[b]! : a > b;
+    let ranked: number[];
+    if (Number.isInteger(limit) && limit > 0 && limit <= TOP_K_MAX && limit * 8 < candidates.length) {
+      ranked = []; // the `limit` best so far, best first
+      for (const id of candidates) {
+        if (ranked.length === limit && !before(id, ranked[limit - 1]!)) continue;
+        let at = ranked.length === limit ? limit - 1 : ranked.length;
+        while (at > 0 && before(id, ranked[at - 1]!)) { ranked[at] = ranked[at - 1]!; at--; }
+        ranked[at] = id;
+      }
+    } else {
+      ranked = candidates.sort((a, b) => (before(a, b) ? -1 : 1)).slice(0, limit);
+    }
 
     const termSet = new Set(slots.flat().map((s) => s.term));
-    return ranked.map(({ id, score, matched: m }) => {
+    return ranked.map((id) => {
       const d = this.docs[id]!;
       const snippet = buildSnippet(d.snippet, termSet, prefix);
       return {
         url: d.url, title: d.title, snippet: snippet.text, highlights: snippet.highlights,
-        score, visitedAt: d.visitedAt, matchedTerms: m, totalTerms: terms.length,
+        score: scores[id]!, visitedAt: d.visitedAt, matchedTerms: matched[id]!, totalTerms: terms.length,
       };
     });
+  }
+
+  private indexTerm(term: string): void {
+    const key = term.slice(0, PREFIX_BUCKET_CHARS);
+    const bucket = this.prefixIndex.get(key);
+    if (bucket) bucket.push(term);
+    else this.prefixIndex.set(key, [term]);
+  }
+
+  private rebuildPrefixIndex(): void {
+    this.prefixIndex.clear();
+    for (const term of this.postings.keys()) this.indexTerm(term);
   }
 
   /** Drops tombstoned documents and renumbers ids. */
@@ -283,6 +325,7 @@ class Bm25Index {
     this.docs.forEach((d, oldId) => {
       if (d.live) { remap.set(oldId, docs.length); docs.push(d); }
     });
+    let droppedTerms = false;
     for (const [term, p] of this.postings) {
       const ids: number[] = [];
       const tfs: number[] = [];
@@ -290,9 +333,10 @@ class Bm25Index {
         const newId = remap.get(oldId);
         if (newId !== undefined) { ids.push(newId); tfs.push(p.tfs[i]!); }
       });
-      if (ids.length === 0) this.postings.delete(term);
+      if (ids.length === 0) { this.postings.delete(term); droppedTerms = true; }
       else { p.ids = ids; p.tfs = tfs; }
     }
+    if (droppedTerms) this.rebuildPrefixIndex();
     this.docs = docs;
     this.urlToId = new Map(docs.map((d, id) => [canonicalUrl(d.url), id]));
     this.tombstones = 0;
@@ -324,6 +368,7 @@ class Bm25Index {
       if (entry[1].some((id) => typeof id !== 'number' || id < 0 || id >= index.docs.length)) return new Bm25Index();
       index.postings.set(entry[0], { ids: entry[1], tfs: entry[2] });
     }
+    index.rebuildPrefixIndex();
     index.docs.forEach((d, id) => {
       index.urlToId.set(canonicalUrl(d.url), id);
       index.totalLength += d.length;
