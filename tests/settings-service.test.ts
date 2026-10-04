@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SettingsStore } from '../src/browser/storage/settings-store';
 import { SettingsService } from '../src/browser/storage/settings-service';
+import { SettingsPage } from '../src/ui/pages/settings-page';
 import type { ISettingsPage, SettingsPageEvent } from '../src/ui/pages/settings-page';
 
 function createMockPage(): ISettingsPage & { _values: Map<string, unknown>; _handlers: Array<(e: SettingsPageEvent) => void> } {
@@ -26,6 +27,7 @@ function createMockPage(): ISettingsPage & { _values: Map<string, unknown>; _han
     },
     getActiveSection: () => 'general',
     setActiveSection: vi.fn(),
+    updateSections: vi.fn(),
     on: (_type: string, handler: (e: SettingsPageEvent) => void) => {
       handlers.push(handler);
     },
@@ -147,6 +149,34 @@ describe('SettingsService', () => {
     page._values.set('theme', 'blue');
     service.init(page);
     expect(service.getValue('theme')).toBe('blue');
+  });
+
+  it('getValue should fall back to the store for a value the page does not hold', () => {
+    store.set('theme', 'dark');
+    const page = createMockPage();
+    service.init(page);
+    page._values.clear(); // what SettingsPage.dispose() does to a closed page
+    expect(service.getValue('theme')).toBe('dark');
+    expect(service.getString('theme', 'x')).toBe('dark');
+    expect(service.getValue('never-set')).toBeUndefined();
+  });
+
+  it('settings keep their saved values after the settings page is closed (regression)', () => {
+    store.set('defaultSearchEngine', 'google');
+    store.set('archiveEnabled', true);
+    const container = document.createElement('div');
+    const page = new SettingsPage();
+    page.mount(container);
+    service.init(page);
+    expect(service.getString('defaultSearchEngine', 'nova')).toBe('google'); // open: the page answers
+
+    page.dispose(); // the user leaves Settings
+    expect(service.getString('defaultSearchEngine', 'nova')).toBe('google');
+    expect(service.getBoolean('archiveEnabled', false)).toBe(true);
+
+    service.setValue('defaultSearchEngine', 'bing'); // later writes still show up
+    expect(service.getString('defaultSearchEngine', 'nova')).toBe('bing');
+    expect(store.get('defaultSearchEngine')).toBe('bing');
   });
 
   it('setValue should update page when initialized', () => {

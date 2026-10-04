@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { AddressBar } from '../src/ui/components/address-bar/address-bar';
 import { AddressBarView } from '../src/ui/components/address-bar/address-bar.view';
-import { SearchIntegration, resolveDefaultEngine, HOST_ACTION_IDS, NOVA_ENGINE } from '../src/ui/pages/search-integration';
-import type { SearchHost } from '../src/ui/pages/search-integration';
+import { SearchIntegration, HOST_ACTION_IDS, novaSearchUrl } from '../src/ui/pages/search-integration';
+import type { SearchHost, HostEngine } from '../src/ui/pages/search-integration';
 import { SearchPage } from '../src/ui/pages/search-page';
 import { BrowserWindowPage } from '../src/ui/pages/browser-window';
 import { FindInPage } from '../src/browser/navigation-controls/find-in-page';
@@ -12,6 +12,8 @@ import { RouteType } from '../src/browser/navigation/router';
 import { UrlParser } from '../src/browser/navigation/url-parser';
 import { HtmlParser } from '../src/browser/rendering/html-parser';
 import { DomTree } from '../src/browser/rendering/dom-tree';
+import { SettingsService } from '../src/browser/storage/settings-service';
+import { SettingsStore } from '../src/browser/storage/settings-store';
 
 const TABS = [
   { id: 'tab-1', title: 'Docs home', url: 'https://example.com/docs', active: true },
@@ -33,17 +35,14 @@ function pressFind(init: KeyboardEventInit = { ctrlKey: true }): KeyboardEvent {
   return event;
 }
 
-describe('resolveDefaultEngine / HOST_ACTION_IDS', () => {
-  it('is Nova unless Settings names another engine', () => {
-    for (const id of ['nova', '', 'no-such-engine', 'constructor', '__proto__']) {
-      expect(resolveDefaultEngine(id).name, id).toBe('Nova');
-      expect(resolveDefaultEngine(id).searchUrl('a b&c'), id).toBe('nova://search?q=a%20b%26c');
-    }
-    expect(NOVA_ENGINE.searchUrl('x')).toBe('nova://search?q=x');
-    expect(resolveDefaultEngine('google')).toMatchObject({ name: 'Google' });
-    expect(resolveDefaultEngine('google').searchUrl('a b')).toMatch(/^https:\/\/www\.google\.com\/search\?q=a(%20|\+)b$/);
-    expect(resolveDefaultEngine('duckduckgo').searchUrl('x')).toContain('duckduckgo.com');
-    expect(resolveDefaultEngine('bing').searchUrl('x')).toContain('bing.com');
+const NOVA: HostEngine = { name: 'Nova', url: 'nova://search?q=%s', keyword: 'nova' };
+const GOOGLE: HostEngine = { name: 'Google', url: 'https://www.google.com/search?q=%s', keyword: 'g' };
+const DDG: HostEngine = { name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=%s', keyword: 'ddg' };
+
+describe('novaSearchUrl / HOST_ACTION_IDS', () => {
+  it('builds the Nova search page URL, encoding the query', () => {
+    expect(novaSearchUrl('a b&c')).toBe('nova://search?q=a%20b%26c');
+    expect(novaSearchUrl('')).toBe('nova://search?q=');
   });
 
   it('offers only commands the window can run', () => {
@@ -62,6 +61,8 @@ describe('SearchIntegration (fake host)', () => {
   let input: HTMLInputElement;
   let dropdown: HTMLElement;
   let flags: Record<string, boolean | string>;
+  let engines: HostEngine[];
+  let defaultEngine: HostEngine;
   let host: SearchHost & {
     open: Mock<(url: string, newTab: boolean) => void>;
     switchTab: Mock<(id: string) => void>;
@@ -84,6 +85,8 @@ describe('SearchIntegration (fake host)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     flags = { enableSearchSuggestions: false }; // no network in tests
+    engines = [NOVA, GOOGLE, DDG];
+    defaultEngine = NOVA;
     bar = document.createElement('div');
     area = document.createElement('div');
     document.body.append(bar, area);
@@ -107,6 +110,8 @@ describe('SearchIntegration (fake host)', () => {
       bookmarks: () => null,
       listTabs: () => TABS,
       isIncognito: () => false,
+      defaultEngine: () => defaultEngine,
+      engines: () => engines,
       normalizeUrl: (raw) => (/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`),
       open: vi.fn<(url: string, newTab: boolean) => void>(),
       switchTab: vi.fn<(id: string) => void>(),
@@ -133,11 +138,44 @@ describe('SearchIntegration (fake host)', () => {
       expect(host.open).toHaveBeenCalledWith('nova://search?q=hello%20world', false);
     });
 
-    it('uses the engine picked in Settings', async () => {
-      flags.defaultSearchEngine = 'google';
+    it('sends plain text to whichever engine the window says is the default', async () => {
+      defaultEngine = GOOGLE;
       await submit('hello world');
       expect(host.open).toHaveBeenCalledTimes(1);
-      expect(host.open.mock.calls[0]![0]).toMatch(/^https:\/\/www\.google\.com\/search\?q=hello(%20|\+)world$/);
+      expect(host.open).toHaveBeenCalledWith('https://www.google.com/search?q=hello%20world', false);
+    });
+
+    describe('the keywords of the user\'s engines are !bangs', () => {
+      it('works for engines present when the address bar was set up, even with another default', async () => {
+        defaultEngine = GOOGLE;
+        await submit('!ddg cats');
+        expect(host.open).toHaveBeenLastCalledWith('https://duckduckgo.com/?q=cats', false);
+        await submit('!nova cats'); // Nova's own search is reachable whatever the default is
+        expect(host.open).toHaveBeenLastCalledWith('nova://search?q=cats', false);
+      });
+
+      it('picks up engines added later, and forgets removed ones', async () => {
+        const example: HostEngine = { name: 'Example', url: 'https://example.com/s?q=%s', keyword: 'ex' };
+        await submit('!ex cats');
+        expect(host.open).toHaveBeenLastCalledWith('nova://search?q=!ex%20cats', false); // unknown: just a search
+
+        engines = [...engines, example];
+        search.onEnginesChanged();
+        await submit('!ex cats');
+        expect(host.open).toHaveBeenLastCalledWith('https://example.com/s?q=cats', false);
+
+        engines = [NOVA];
+        search.onEnginesChanged();
+        await submit('!ex cats');
+        expect(host.open).toHaveBeenLastCalledWith('nova://search?q=!ex%20cats', false);
+      });
+
+      it('lets a user engine override a built-in bang of the same keyword', async () => {
+        engines = [NOVA, { name: 'My G', url: 'https://mine.example/?q=%s', keyword: 'g' }];
+        search.onEnginesChanged();
+        await submit('!g cats');
+        expect(host.open).toHaveBeenLastCalledWith('https://mine.example/?q=cats', false);
+      });
     });
 
     it('opens typed addresses after normalising them', async () => {
@@ -305,7 +343,8 @@ describe('SearchIntegration (fake host)', () => {
       expect(panel.querySelector<HTMLInputElement>('input[type="search"]')!.value).toBe('two');
     });
 
-    it('searching from the page stays in Nova search', () => {
+    it('searching from the page stays in Nova search, even when another engine is the default', () => {
+      defaultEngine = GOOGLE;
       const panel = document.createElement('div');
       area.appendChild(panel);
       search.renderSearchPage(panel, 'nova://search?q=one');
@@ -313,6 +352,23 @@ describe('SearchIntegration (fake host)', () => {
       box.value = 'second query';
       box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       expect(host.open).toHaveBeenCalledWith('nova://search?q=second%20query', false);
+    });
+
+    it('offers the user\'s other engines as web shortcuts (not Nova itself)', () => {
+      const panel = document.createElement('div');
+      area.appendChild(panel);
+      search.renderSearchPage(panel, 'nova://search?q=rust%20lifetimes');
+      const labels = () => [...panel.querySelectorAll('button')].map((b) => b.textContent);
+      expect(labels()).toEqual(expect.arrayContaining(['Google', 'DuckDuckGo']));
+      expect(labels()).not.toContain('Nova');
+
+      [...panel.querySelectorAll('button')].find((b) => b.textContent === 'Google')!.click();
+      expect(host.open).toHaveBeenLastCalledWith('https://www.google.com/search?q=rust%20lifetimes', false);
+
+      engines = [NOVA, { name: 'Example', url: 'https://example.com/s?q=%s', keyword: 'ex' }];
+      search.renderSearchPage(panel, 'nova://search?q=x'); // rendered again: reads the current list
+      expect(labels()).toContain('Example');
+      expect(labels()).not.toContain('Google');
     });
   });
 
@@ -355,6 +411,7 @@ describe('BrowserWindowPage — search wiring', () => {
     getString: (k: string, f = '') => (typeof flags[k] === 'string' ? (flags[k] as string) : f),
     getBoolean: (k: string, f = false) => (typeof flags[k] === 'boolean' ? (flags[k] as boolean) : f),
     getNumber: (_k: string, f = 0) => f,
+    getValue: () => undefined,
     setValue,
     init: () => undefined,
   }) as unknown as Parameters<BrowserWindowPage['setSettingsService']>[0];
@@ -557,6 +614,115 @@ describe('BrowserWindowPage — search wiring', () => {
       await settle();
       expect(heading()).toBe('Nova Search');
       expect(searchBox()!.value).toBe('cats');
+    });
+  });
+
+  describe('search engines from Settings drive the address bar', () => {
+    const addressValue = () => page.getChromeState().addressValue;
+
+    const submitInAddressBar = async (text: string) => {
+      const box = container.querySelector<HTMLInputElement>('.nova-addressbar-input')!;
+      box.focus();
+      box.value = text;
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await settle();
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      await settle();
+    };
+
+    /** A fresh window on a real settings store, in the app's order: mount first, settings service after. */
+    const restart = async (store: SettingsStore) => {
+      await page.unmount();
+      page = new BrowserWindowPage();
+      await page.mount(container);
+      page.setSettingsService(new SettingsService(store));
+    };
+
+    const openEngineSettings = async () => {
+      await page.navigate('nova://settings');
+      const settings = page.getActiveSettingsPage()!;
+      settings.setActiveSection('search-engines');
+      settings.updateSections(settings.sections);
+    };
+
+    const addEngine = (name: string, url: string, keyword: string) => {
+      container.querySelector<HTMLInputElement>('.search-engine-name-input')!.value = name;
+      container.querySelector<HTMLInputElement>('.search-engine-url-input')!.value = url;
+      container.querySelector<HTMLInputElement>('.search-engine-keyword-input')!.value = keyword;
+      container.querySelector<HTMLElement>('.search-engine-add-btn')!.click();
+    };
+
+    it('an engine added in Settings works as a !bang straight away', async () => {
+      await restart(new SettingsStore());
+      await openEngineSettings();
+      addEngine('Example', 'https://example.com/search?q=%s', 'ex');
+      await submitInAddressBar('!ex cats');
+      expect(addressValue()).toBe('https://example.com/search?q=cats');
+    });
+
+    it('built-in engine keywords are bangs too, with Nova still the default', async () => {
+      await restart(new SettingsStore());
+      await submitInAddressBar('!ddg cats');
+      expect(addressValue()).toBe('https://duckduckgo.com/?q=cats');
+      await submitInAddressBar('plain words');
+      expect(addressValue()).toBe('nova://search?q=plain%20words');
+    });
+
+    it('"Set default" changes where plain searches go, and the choice is saved', async () => {
+      const store = new SettingsStore();
+      await restart(store);
+      await openEngineSettings();
+      const googleRow = [...container.querySelectorAll<HTMLElement>('.search-engine-row')].find((r) => r.textContent?.includes('Google'))!;
+      googleRow.querySelector<HTMLElement>('.search-engine-default-btn')!.click();
+      expect(store.get('defaultSearchEngine')).toBe('google');
+      await submitInAddressBar('hello world');
+      expect(addressValue()).toBe('https://www.google.com/search?q=hello%20world');
+    });
+
+    it('the chosen default survives leaving the Settings page (settings used to read as defaults afterwards)', async () => {
+      await restart(new SettingsStore());
+      await openEngineSettings();
+      const googleRow = [...container.querySelectorAll<HTMLElement>('.search-engine-row')].find((r) => r.textContent?.includes('Google'))!;
+      googleRow.querySelector<HTMLElement>('.search-engine-default-btn')!.click();
+
+      await page.navigate('about:newtab'); // closes Settings; the new-tab page re-reads the setting
+      expect(area().querySelector('.ntp-engine-btn')!.textContent).toBe('Google');
+      await submitInAddressBar('hello world');
+      expect(addressValue()).toBe('https://www.google.com/search?q=hello%20world');
+    });
+
+    it('a removed engine\'s keyword stops being a bang', async () => {
+      const removeRow = (marker: string) => {
+        const row = [...container.querySelectorAll<HTMLElement>('.search-engine-row')].find((r) => r.textContent?.includes(marker))!;
+        row.querySelector<HTMLElement>('.search-engine-remove-btn')!.click();
+      };
+      await restart(new SettingsStore());
+      await openEngineSettings();
+      addEngine('Zed', 'https://zed.example/?q=%s', 'zz');
+      await submitInAddressBar('!zz cats');
+      expect(addressValue()).toBe('https://zed.example/?q=cats');
+
+      await openEngineSettings();
+      removeRow('!zz');
+      await submitInAddressBar('!zz cats');
+      expect(addressValue()).toBe('nova://search?q=!zz%20cats');
+
+      // Removing a built-in engine only edits the user's list: `!ddg` stays one of the catalogue's bangs.
+      await openEngineSettings();
+      removeRow('!ddg');
+      await submitInAddressBar('!ddg cats');
+      expect(addressValue()).toBe('https://duckduckgo.com/?q=cats');
+    });
+
+    it('engines saved by an earlier run come back as bangs after a restart', async () => {
+      const store = new SettingsStore();
+      store.set('searchEngines', [
+        { name: 'Nova', url: 'nova://search?q=%s', keyword: 'nova' },
+        { name: 'Zed', url: 'https://zed.example/?q=%s', keyword: 'zz' },
+      ]);
+      await restart(store);
+      await submitInAddressBar('!zz cats');
+      expect(addressValue()).toBe('https://zed.example/?q=cats');
     });
   });
 

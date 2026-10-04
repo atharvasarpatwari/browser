@@ -50,7 +50,7 @@ import type { NavigationEvent } from '../../browser/navigation/navigation-contro
 import { parseResearchUrl } from '../../browser/omnibox/ai-research-provider';
 import { SettingsPage } from './settings-page';
 import { DownloadsPage } from './downloads-page';
-import { NewTabPage, SEARCH_URL_TEMPLATES } from './new-tab-page';
+import { NewTabPage } from './new-tab-page';
 import { ResearchPage } from './research-page';
 import { SearchIntegration } from './search-integration';
 import type { ISettingsPage } from './settings-page';
@@ -58,6 +58,10 @@ import type { IResearchPage } from './research-page';
 import type { ISettingsService } from '../../browser/storage/settings-service';
 import type { IBrowserName } from '../../browser/config/browser-name';
 import type { IResearchService } from '../../browser/research/research-types';
+import { SearchEngineManager } from '../../browser/omnibox/search-engine';
+import type { ISearchEngineManager, SearchEngine } from '../../browser/omnibox/search-engine';
+import { DEFAULT_SECTIONS } from './settings-page';
+import type { SettingsSection } from './settings-page';
 
 interface BrowserWindowPageConfig {
   readonly containerId: string;
@@ -84,6 +88,11 @@ const DEFAULT_PAGE_CONFIG: BrowserWindowPageConfig = {
   showMenuBar: true,
   hideChromeUI: false,
 };
+
+/** Maps a SearchEngine's display name onto the string persisted for `defaultSearchEngine`. */
+function engineSlug(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, '');
+}
 
 /** Serializable snapshot pushed to onChromeState() listeners (e.g. a native host bridge). */
 interface ChromeStateSnapshot {
@@ -197,10 +206,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private _mounted = false;
 
   private readonly parser: IUrlParser;
+  private readonly searchEngineManager: ISearchEngineManager = new SearchEngineManager();
   private contentRenderer: IContentRenderer | null = null;
   private contentArea: HTMLElement | null = null;
   private currentUrl = '';
   private contentNavigateHandler: ((e: Event) => void) | null = null;
+  private tabKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   private activeSettingsPage: ISettingsPage | null = null;
   private activeDownloadsPage: DownloadsPage | null = null;
   private activeNewTabPage: NewTabPage | null = null;
@@ -308,6 +319,43 @@ class BrowserWindowPage implements IBrowserWindowPage {
   constructor(config?: Partial<BrowserWindowPageConfig>) {
     this.config = { ...DEFAULT_PAGE_CONFIG, ...config };
     this.parser = new UrlParser();
+    this.searchEngineManager.onEvent((e) => {
+      if (e.kind === 'defaultChanged') {
+        this.settingsService?.setValue('defaultSearchEngine', engineSlug(e.engine.name));
+      }
+      if (e.kind === 'added' || e.kind === 'removed') {
+        this.persistSearchEngines();
+      }
+      this.refreshSettingsEngineUI();
+      this.search?.onEnginesChanged(); // engine keywords are `!bangs` in the address bar
+    });
+  }
+
+  private syncSearchEngineManagerFromSettings(): void {
+    const id = this.settingsService?.getString('defaultSearchEngine', 'nova') || 'nova';
+    const match = this.searchEngineManager.getEngines().find(e => engineSlug(e.name) === id.toLowerCase());
+    if (match) this.searchEngineManager.setDefaultEngine(match.id);
+  }
+
+  /** Persists the full ordered engine list (sans unstable `.id`/`.isDefault`) so add/remove/reorder survive a restart. */
+  private persistSearchEngines(): void {
+    this.settingsService?.setValue(
+      'searchEngines',
+      this.searchEngineManager.getEngines().map(({ id, isDefault, ...rest }) => rest),
+    );
+  }
+
+  /** Loads a previously-persisted engine list, if any, before the built-in defaults would otherwise apply. */
+  private loadPersistedSearchEngines(): void {
+    const raw = this.settingsService?.getValue<Array<Omit<SearchEngine, 'id' | 'isDefault'>>>('searchEngines');
+    if (Array.isArray(raw) && raw.length > 0 && raw.every(e => typeof e?.name === 'string' && typeof e?.url === 'string' && typeof e?.keyword === 'string')) {
+      this.searchEngineManager.replaceEngines(raw);
+    }
+  }
+
+  /** Re-renders the active Settings panel (if open) so the engine list / General dropdown reflect current state. */
+  private refreshSettingsEngineUI(): void {
+    this.activeSettingsPage?.updateSections(this.buildSettingsSections());
   }
 
   get isMounted(): boolean { return this._mounted; }
@@ -494,6 +542,16 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
     this.installSearch();
 
+    // Ctrl+T / Cmd+T: open a new tab from anywhere in the window.
+    this.tabKeyHandler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 't') {
+        e.preventDefault();
+        this.tabManager?.createTab();
+        this.syncAll();
+      }
+    };
+    document.addEventListener('keydown', this.tabKeyHandler);
+
     if (!savedTabs) this.tabManager.createTab();
 
     if (areas.content) {
@@ -537,6 +595,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
         id: t.id, title: t.title || t.url, url: t.url, active: t.id === this.tabManager?.activeTabId,
       })),
       isIncognito: () => this.isIncognito(),
+      defaultEngine: () => this.currentDefaultEngine(),
+      engines: () => this.searchEngineManager.getEngines(),
       normalizeUrl: (raw) => this.parser.normalize(raw),
       open: (url, newTab) => {
         if (newTab) this.createTab(url);
@@ -577,6 +637,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (this.contentArea && this.contentNavigateHandler) {
       this.contentArea.removeEventListener('nova-navigate', this.contentNavigateHandler);
     }
+    if (this.tabKeyHandler) {
+      document.removeEventListener('keydown', this.tabKeyHandler);
+    }
     this.layout?.dispose();
     if (this.container) {
       this.container.innerHTML = '';
@@ -597,6 +660,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.contentRenderer = null;
     this.contentArea = null;
     this.contentNavigateHandler = null;
+    this.tabKeyHandler = null;
     this.layout = null;
     this._mounted = false;
   }
@@ -771,7 +835,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     container.style.cssText = 'width:100%;height:100%;';
     this.contentArea.appendChild(container);
     this.activeContentPanel = container;
-    this.activeSettingsPage = new SettingsPage();
+    this.activeSettingsPage = new SettingsPage(this.buildSettingsSections());
     this.activeSettingsPage.mount(container);
     if (this.settingsService) {
       this.settingsService.init(this.activeSettingsPage);
@@ -786,9 +850,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.contentArea.appendChild(container);
     this.activeContentPanel = container;
     this.activeNewTabPage = new NewTabPage();
-
-    const searchEngine = this.settingsService?.getString('defaultSearchEngine', 'nova') ?? 'nova';
-    this.activeNewTabPage.setSearchEngine(searchEngine);
+    this.syncSearchEngineManagerFromSettings();
+    this.activeNewTabPage.setSearchEngineManager(this.searchEngineManager);
 
     this.activeNewTabPage.mount(container);
 
@@ -802,12 +865,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
       } else if (event.action === 'remove' && event.url && this.bookmarkService) {
         const bm = await this.bookmarkService.getBookmarkByUrl(event.url);
         if (bm) await this.bookmarkService.removeBookmark(bm.id);
-      }
-    });
-
-    this.activeNewTabPage.on('searchEngineChanged', (event) => {
-      if (event.engine) {
-        this.settingsService?.setValue('defaultSearchEngine', event.engine);
       }
     });
 
@@ -1348,10 +1405,168 @@ class BrowserWindowPage implements IBrowserWindowPage {
     return this.settingsService?.getString('homePage', 'about:newtab') || 'about:newtab';
   }
 
-  /** Resolves the `defaultSearchEngine` setting into a `%s` search URL template. */
-  private getSearchTemplate(): string {
+  /** Widens the settings page's `defaultSearchEngine` select and appends the dedicated management section. */
+  private buildSettingsSections(): SettingsSection[] {
+    const options = this.searchEngineManager.getEngines()
+      .map(e => ({ label: e.name, value: engineSlug(e.name) }));
+    const sections = DEFAULT_SECTIONS.map(section => section.id !== 'general' ? section : {
+      ...section,
+      settings: section.settings.map(s => s.key !== 'defaultSearchEngine' ? s : { ...s, options }),
+    });
+    sections.push({
+      id: 'search-engines', title: 'Search Engines', icon: '🔎',
+      settings: [],
+      renderExtra: ({ container }) => this.renderSearchEngineManager(container),
+    });
+    return sections;
+  }
+
+  /** Builds the add/remove/reorder/set-default search-engine management UI for the Settings page. */
+  private renderSearchEngineManager(container: HTMLElement): void {
+    const engines = this.searchEngineManager.getEngines();
+
+    const list = document.createElement('div');
+    list.className = 'search-engine-list';
+    list.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-bottom:20px;';
+
+    engines.forEach((engine, index) => {
+      const row = document.createElement('div');
+      row.className = 'search-engine-row';
+      row.dataset.engineId = engine.id;
+      row.draggable = true;
+      row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border-subtle,rgba(255,255,255,.06));border-radius:var(--radius-sm,4px);background:var(--bg-surface,#161618);cursor:grab;';
+
+      const icon = document.createElement('span');
+      icon.textContent = engine.icon ?? '🔍';
+      icon.style.cssText = 'font-size:16px;flex-shrink:0;';
+      row.appendChild(icon);
+
+      const info = document.createElement('div');
+      info.style.cssText = 'flex:1;min-width:0;';
+      const nameRow = document.createElement('div');
+      nameRow.style.cssText = 'font-size:13px;font-weight:600;color:var(--text-primary,#e0e0e0);';
+      nameRow.textContent = `${engine.name}  !${engine.keyword}`;
+      const urlRow = document.createElement('div');
+      urlRow.style.cssText = 'font-size:11px;color:var(--text-tertiary,#6a6a68);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      urlRow.textContent = engine.url;
+      info.appendChild(nameRow);
+      info.appendChild(urlRow);
+      row.appendChild(info);
+
+      const defaultBtn = document.createElement('button');
+      defaultBtn.type = 'button';
+      defaultBtn.className = 'search-engine-default-btn';
+      defaultBtn.textContent = engine.isDefault ? '★ Default' : '☆ Set default';
+      defaultBtn.style.cssText = `padding:5px 10px;border-radius:var(--radius-sm,4px);font-size:12px;cursor:${engine.isDefault ? 'default' : 'pointer'};border:1px solid var(--border-default,rgba(255,255,255,.1));background:${engine.isDefault ? 'var(--accent-dim,rgba(124,156,245,.12))' : 'var(--bg-elevated,#1c1c1e)'};color:${engine.isDefault ? 'var(--accent,#7c9cf5)' : 'var(--text-secondary,#a0a098)'};flex-shrink:0;`;
+      if (!engine.isDefault) {
+        defaultBtn.addEventListener('click', () => this.searchEngineManager.setDefaultEngine(engine.id));
+      }
+      row.appendChild(defaultBtn);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'search-engine-remove-btn';
+      removeBtn.textContent = '🗑';
+      const canRemove = engines.length > 1;
+      removeBtn.disabled = !canRemove;
+      removeBtn.style.cssText = `padding:5px 9px;border-radius:var(--radius-sm,4px);font-size:12px;border:1px solid var(--border-default,rgba(255,255,255,.1));background:var(--bg-elevated,#1c1c1e);color:var(--text-secondary,#a0a098);cursor:${canRemove ? 'pointer' : 'not-allowed'};opacity:${canRemove ? '1' : '.4'};flex-shrink:0;`;
+      if (canRemove) {
+        removeBtn.addEventListener('click', () => this.searchEngineManager.removeEngine(engine.id));
+      }
+      row.appendChild(removeBtn);
+
+      row.addEventListener('dragstart', (e) => {
+        e.dataTransfer?.setData('text/plain', engine.id);
+      });
+      row.addEventListener('dragover', (e) => e.preventDefault());
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const draggedId = e.dataTransfer?.getData('text/plain');
+        if (!draggedId || draggedId === engine.id) return;
+        this.searchEngineManager.reorderEngine(draggedId, index);
+        this.persistSearchEngines();
+        this.refreshSettingsEngineUI();
+      });
+
+      list.appendChild(row);
+    });
+
+    container.appendChild(list);
+
+    // Add-engine form
+    const form = document.createElement('div');
+    form.style.cssText = 'padding:14px;border:1px solid var(--border-subtle,rgba(255,255,255,.06));border-radius:var(--radius-md,6px);background:var(--bg-surface,#161618);display:flex;flex-direction:column;gap:8px;';
+
+    const formTitle = document.createElement('div');
+    formTitle.textContent = 'Add a search engine';
+    formTitle.style.cssText = 'font-size:13px;font-weight:600;color:var(--text-primary,#e0e0e0);margin-bottom:2px;';
+    form.appendChild(formTitle);
+
+    const mkInput = (placeholder: string, className: string): HTMLInputElement => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = className;
+      input.placeholder = placeholder;
+      input.style.cssText = 'width:100%;padding:7px 10px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);outline:none;box-sizing:border-box;';
+      return input;
+    };
+    const nameInput = mkInput('Name (e.g. My Search)', 'search-engine-name-input');
+    const urlInput = mkInput('URL template with %s (e.g. https://example.com/search?q=%s)', 'search-engine-url-input');
+    const keywordInput = mkInput('Keyword (e.g. ex)', 'search-engine-keyword-input');
+    const iconInput = mkInput('Icon (optional, e.g. 🔎)', 'search-engine-icon-input');
+    form.appendChild(nameInput);
+    form.appendChild(urlInput);
+    form.appendChild(keywordInput);
+    form.appendChild(iconInput);
+
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'search-engine-error';
+    errorDiv.style.cssText = 'font-size:12px;color:#e05a5a;display:none;';
+    form.appendChild(errorDiv);
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'search-engine-add-btn';
+    addBtn.textContent = 'Add engine';
+    addBtn.style.cssText = 'align-self:flex-start;padding:7px 16px;border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:var(--radius-sm,4px);background:var(--accent,#7c9cf5);color:#fff;font-size:13px;font-weight:600;cursor:pointer;';
+    addBtn.addEventListener('click', () => {
+      const name = nameInput.value.trim();
+      const url = urlInput.value.trim();
+      const keyword = keywordInput.value.trim().toLowerCase();
+      const icon = iconInput.value.trim() || undefined;
+
+      const showError = (msg: string) => {
+        errorDiv.textContent = msg;
+        errorDiv.style.display = 'block';
+      };
+
+      if (!name) return showError('Name is required.');
+      if (this.searchEngineManager.getEngines().some(e => engineSlug(e.name) === engineSlug(name))) {
+        return showError(`An engine named "${name}" already exists.`);
+      }
+      if (!url || !url.includes('%s')) return showError('URL must contain %s as the query placeholder.');
+      if (!keyword) return showError('Keyword is required.');
+      if (this.searchEngineManager.getEngineByKeyword(keyword)) {
+        return showError(`Keyword "!${keyword}" is already used by another engine.`);
+      }
+
+      this.searchEngineManager.addEngine({ name, url, keyword, icon });
+    });
+    form.appendChild(addBtn);
+
+    container.appendChild(form);
+  }
+
+  /** The engine the `defaultSearchEngine` setting names (Nova unless Settings says otherwise); the manager's own default if that engine was removed. */
+  private currentDefaultEngine(): SearchEngine {
     const id = this.settingsService?.getString('defaultSearchEngine', 'nova') || 'nova';
-    return SEARCH_URL_TEMPLATES[id] ?? SEARCH_URL_TEMPLATES.nova;
+    return this.searchEngineManager.getEngines().find(e => engineSlug(e.name) === id.toLowerCase())
+      ?? this.searchEngineManager.getDefaultEngine();
+  }
+
+  /** The default engine's `%s` search URL template. */
+  private getSearchTemplate(): string {
+    return this.currentDefaultEngine().url;
   }
 
   createTab(url?: string): string {
@@ -1448,6 +1663,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setSettingsService(service: ISettingsService): void {
     this.settingsService = service;
+    this.loadPersistedSearchEngines();
+    this.syncSearchEngineManagerFromSettings();
+    this.search?.onEnginesChanged(); // the saved list replaced the built-in one
   }
 
   setBrowserEngine(engine: IBrowserEngine): void {
@@ -1530,6 +1748,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.addressBar,
         this.toolbar,
         this.statusBar,
+        { searchEngineManager: this.searchEngineManager },
       );
       // Re-render tab strip / toolbar / address bar after every successful
       // navigation (bridge-driven navigations bypass tabManager events).

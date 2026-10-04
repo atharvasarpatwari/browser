@@ -60,8 +60,29 @@ describe('BangRegistry', () => {
     expect(r.add({ keyword: 'waytoolongkeyword', name: 'x', url: 'https://x.test/?q=%s' })).toBe(false);
     expect(r.add({ keyword: 'js', name: 'x', url: 'javascript:alert(1)' })).toBe(false);
     expect(r.add({ keyword: 'dt', name: 'x', url: 'data:text/html,hi' })).toBe(false);
+    expect(r.add({ keyword: 'st', name: 'x', url: 'nova://settings' })).toBe(false); // only Nova's search page, not any built-in page
     expect(r.add({ keyword: 'ok', name: 'x', url: 'https://x.test/?q=%s' })).toBe(true);
     expect(r.list().length).toBe(before + 1);
+  });
+
+  it('accepts Nova\'s own search page as a destination', () => {
+    const r = new BangRegistry([{ keyword: 'nova', name: 'Nova', url: 'nova://search?q=%s' }]);
+    expect(r.resolve('nova', 'cats & dogs')).toBe('nova://search?q=cats%20%26%20dogs');
+    expect(r.add({ keyword: 'n2', name: 'Nova too', url: 'NOVA://search/?q={searchTerms}' })).toBe(true);
+  });
+
+  it('replaceExtra swaps the caller-supplied bangs and restores any built-in they had overridden', () => {
+    const r = new BangRegistry([{ keyword: 'g', name: 'My Google', url: 'https://mine.example/?q=%s' }]);
+    expect(r.resolve('g', 'x')).toBe('https://mine.example/?q=x');
+
+    r.replaceExtra([{ keyword: 'mine', name: 'Mine', url: 'https://mine.example.com/s?q=%s' }]);
+    expect(r.resolve('g', 'x')).toBe('https://www.google.com/search?q=x'); // the built-in is back
+    expect(r.resolve('mine', 'x')).toBe('https://mine.example.com/s?q=x');
+    expect(r.list().length).toBe(BUILT_IN_BANGS.length + 1);
+
+    r.replaceExtra([]);
+    expect(r.has('mine')).toBe(false);
+    expect(r.list().length).toBe(BUILT_IN_BANGS.length);
   });
 
   it('completes partially typed bangs, best matches first', () => {

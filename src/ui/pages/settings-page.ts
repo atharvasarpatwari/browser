@@ -17,6 +17,8 @@ interface SettingsSection {
   readonly title: string;
   readonly icon: string;
   readonly settings: readonly SettingDefinition[];
+  /** Renders additional, non-generic content after this section's setting rows (e.g. a management UI). */
+  readonly renderExtra?: (ctx: { container: HTMLElement; page: ISettingsPage }) => void;
 }
 
 type SettingsPageEventType = 'settingChanged' | 'sectionChanged';
@@ -37,6 +39,7 @@ interface ISettingsPage extends IDisposable {
   resetToDefaults(): void;
   getActiveSection(): string;
   setActiveSection(sectionId: string): void;
+  updateSections(sections: readonly SettingsSection[]): void;
   on(type: SettingsPageEventType, handler: (event: SettingsPageEvent) => void): void;
   off(type: SettingsPageEventType, handler: (event: SettingsPageEvent) => void): void;
 }
@@ -121,6 +124,28 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'menuShowMoreTools', label: 'More tools', description: 'Show more tools submenu in menu', type: 'boolean', defaultValue: true },
       { key: 'menuShowHelp', label: 'Help', description: 'Show help in menu', type: 'boolean', defaultValue: true },
     ],
+    renderExtra: ({ container }) => {
+      const previewRow = document.createElement('div');
+      previewRow.style.cssText = 'margin-top:20px;padding:16px;border:1px solid var(--border-accent,rgba(124,156,245,.3));border-radius:var(--radius-md,6px);background:var(--accent-dim,rgba(124,156,245,.08));';
+      const previewLabel = document.createElement('div');
+      previewLabel.style.cssText = 'font-size:13px;color:var(--text-primary,#e0e0e0);margin-bottom:8px;font-weight:600;';
+      previewLabel.textContent = '☰  Preview Browser Menu';
+      previewRow.appendChild(previewLabel);
+      const previewDesc = document.createElement('div');
+      previewDesc.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin-bottom:12px;';
+      previewDesc.textContent = 'See how the browser dropdown menu looks with your current settings. Click below to open the preview.';
+      previewRow.appendChild(previewDesc);
+      const previewBtn = document.createElement('button');
+      previewBtn.textContent = 'Open Menu Preview';
+      previewBtn.style.cssText = 'padding:8px 20px;border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:var(--radius-sm,4px);background:var(--accent,#7c9cf5);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;';
+      previewBtn.addEventListener('mouseenter', () => { previewBtn.style.background = 'var(--accent-hover,#9bb5ff)'; });
+      previewBtn.addEventListener('mouseleave', () => { previewBtn.style.background = 'var(--accent,#7c9cf5)'; });
+      previewBtn.addEventListener('click', () => {
+        window.open('../ui/browser-menu.html', '_blank', 'width=340,height=700');
+      });
+      previewRow.appendChild(previewBtn);
+      container.appendChild(previewRow);
+    },
   },
 ];
 
@@ -131,7 +156,7 @@ class SettingsPage implements ISettingsPage {
   private _activeSection = 'general';
   private _mounted = false;
 
-  readonly sections: readonly SettingsSection[];
+  sections: readonly SettingsSection[];
 
   constructor(sections?: readonly SettingsSection[]) {
     this.sections = sections ?? DEFAULT_SECTIONS;
@@ -220,6 +245,11 @@ class SettingsPage implements ISettingsPage {
     this._activeSection = sectionId;
   }
 
+  updateSections(sections: readonly SettingsSection[]): void {
+    this.sections = sections;
+    this.render();
+  }
+
   on(type: SettingsPageEventType, handler: (event: SettingsPageEvent) => void): void {
     this.bus.push(handler);
   }
@@ -240,7 +270,7 @@ class SettingsPage implements ISettingsPage {
   private render(): void {
     if (!this.container) return;
 
-    const content = this.container.querySelector('.settings-content');
+    const content = this.container.querySelector<HTMLElement>('.settings-content');
     if (!content) return;
 
     const section = this.sections.find(s => s.id === this._activeSection);
@@ -341,29 +371,7 @@ class SettingsPage implements ISettingsPage {
       content.appendChild(row);
     }
 
-    // Add preview button for the menu section
-    if (section.id === 'menu') {
-      const previewRow = document.createElement('div');
-      previewRow.style.cssText = 'margin-top:20px;padding:16px;border:1px solid var(--border-accent,rgba(124,156,245,.3));border-radius:var(--radius-md,6px);background:var(--accent-dim,rgba(124,156,245,.08));';
-      const previewLabel = document.createElement('div');
-      previewLabel.style.cssText = 'font-size:13px;color:var(--text-primary,#e0e0e0);margin-bottom:8px;font-weight:600;';
-      previewLabel.textContent = '☰  Preview Browser Menu';
-      previewRow.appendChild(previewLabel);
-      const previewDesc = document.createElement('div');
-      previewDesc.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin-bottom:12px;';
-      previewDesc.textContent = 'See how the browser dropdown menu looks with your current settings. Click below to open the preview.';
-      previewRow.appendChild(previewDesc);
-      const previewBtn = document.createElement('button');
-      previewBtn.textContent = 'Open Menu Preview';
-      previewBtn.style.cssText = 'padding:8px 20px;border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:var(--radius-sm,4px);background:var(--accent,#7c9cf5);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;';
-      previewBtn.addEventListener('mouseenter', () => { previewBtn.style.background = 'var(--accent-hover,#9bb5ff)'; });
-      previewBtn.addEventListener('mouseleave', () => { previewBtn.style.background = 'var(--accent,#7c9cf5)'; });
-      previewBtn.addEventListener('click', () => {
-        window.open('../ui/browser-menu.html', '_blank', 'width=340,height=700');
-      });
-      previewRow.appendChild(previewBtn);
-      content.appendChild(previewRow);
-    }
+    if (section.renderExtra) section.renderExtra({ container: content, page: this });
   }
 
   dispose(): void {

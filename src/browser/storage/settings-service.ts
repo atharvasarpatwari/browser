@@ -45,9 +45,12 @@ class SettingsService implements ISettingsService {
   }
 
   getValue<T = unknown>(key: string): T | undefined {
-    if (this.page) {
-      return this.page.getSetting(key) as T | undefined;
-    }
+    // The settings page holds the live values while it is open. Once it is closed it has cleared them
+    // (`SettingsPage.dispose()`), but this service still points at it — so a value the page does not
+    // have is answered by the store, not by `undefined` (which made every setting read as its default
+    // after the user had visited Settings).
+    const live = this.page?.getSetting(key);
+    if (live !== undefined) return live as T;
     return this.store.get(key) as T | undefined;
   }
 

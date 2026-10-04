@@ -360,6 +360,19 @@ describe('SearchEngineManager', () => {
     expect(engines[0].isDefault).toBe(true);
   });
 
+  it('ships Nova first, as the default, and every built-in is well formed', () => {
+    const engines = manager.getEngines();
+    expect(engines[0]).toMatchObject({ name: 'Nova', url: 'nova://search?q=%s', keyword: 'nova', isDefault: true });
+    expect(manager.getDefaultEngine().name).toBe('Nova');
+    expect(manager.buildSearchUrl('a b')).toBe('nova://search?q=a%20b');
+    // keywords are unique, and the name's slug (what `defaultSearchEngine` persists) identifies one engine
+    expect(new Set(engines.map((e) => e.keyword)).size).toBe(engines.length);
+    expect(new Set(engines.map((e) => e.name.toLowerCase().replace(/\s+/g, ''))).size).toBe(engines.length);
+    for (const e of engines) expect(e.url, e.name).toContain('%s');
+    const wiki = engines.find((e) => e.name === 'Wikipedia')!;
+    expect(manager.buildSearchUrl('cats', wiki.id)).toBe('https://en.wikipedia.org/w/index.php?search=cats');
+  });
+
   it('getDefaultEngine returns default', () => {
     const def = manager.getDefaultEngine();
     expect(def.name).toBeTruthy();
@@ -437,6 +450,72 @@ describe('SearchEngineManager', () => {
   it('dispose clears engines', () => {
     manager.dispose();
     expect(manager.getEngines()).toEqual([]);
+  });
+
+  it('removeEngine refuses to remove the last remaining engine', () => {
+    const engines = manager.getEngines();
+    for (const e of engines.slice(1)) manager.removeEngine(e.id);
+    expect(manager.getEngines()).toHaveLength(1);
+    const last = manager.getEngines()[0];
+    expect(manager.removeEngine(last.id)).toBe(false);
+    expect(manager.getEngines()).toHaveLength(1);
+  });
+
+  it('removeEngine emits defaultChanged when the removed engine was the default', () => {
+    const def = manager.getDefaultEngine();
+    const handler = vi.fn();
+    manager.onEvent(handler);
+    manager.removeEngine(def.id);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'removed' }));
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'defaultChanged' }));
+    expect(manager.getDefaultEngine().id).toBe(manager.getEngines()[0].id);
+  });
+
+  it('removeEngine does not emit defaultChanged when the removed engine was not the default', () => {
+    const engine = manager.addEngine({ name: 'Temp', url: 'https://temp.com?q=%s', keyword: 't', icon: 'T' });
+    const handler = vi.fn();
+    manager.onEvent(handler);
+    manager.removeEngine(engine.id);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ kind: 'removed' }));
+  });
+
+  it('addEngine normalizes keyword to lowercase', () => {
+    const engine = manager.addEngine({ name: 'Custom', url: 'https://custom.com?q=%s', keyword: 'MiXeD', icon: 'C' });
+    expect(engine.keyword).toBe('mixed');
+    expect(manager.getEngineByKeyword('MIXED')).not.toBeNull();
+  });
+
+  it('reorderEngine moves an engine to a new index', () => {
+    const engines = manager.getEngines();
+    const moved = engines[engines.length - 1];
+    expect(manager.reorderEngine(moved.id, 0)).toBe(true);
+    expect(manager.getEngines()[0].id).toBe(moved.id);
+  });
+
+  it('reorderEngine clamps out-of-range indices and rejects unknown ids', () => {
+    const engines = manager.getEngines();
+    const first = engines[0];
+    expect(manager.reorderEngine(first.id, 999)).toBe(true);
+    expect(manager.getEngines()[manager.getEngines().length - 1].id).toBe(first.id);
+    expect(manager.reorderEngine('nonexistent', 0)).toBe(false);
+  });
+
+  it('replaceEngines swaps the full set and resets the default to the first entry', () => {
+    manager.replaceEngines([
+      { name: 'Alpha', url: 'https://alpha.com?q=%s', keyword: 'a' },
+      { name: 'Beta', url: 'https://beta.com?q=%s', keyword: 'b' },
+    ]);
+    const engines = manager.getEngines();
+    expect(engines).toHaveLength(2);
+    expect(engines.map(e => e.name)).toEqual(['Alpha', 'Beta']);
+    expect(manager.getDefaultEngine().name).toBe('Alpha');
+  });
+
+  it('replaceEngines no-ops on an empty list', () => {
+    const before = manager.getEngines();
+    manager.replaceEngines([]);
+    expect(manager.getEngines()).toEqual(before);
   });
 });
 

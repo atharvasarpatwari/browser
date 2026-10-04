@@ -211,6 +211,11 @@ class SearchSubsystem implements IDisposable {
     return this.controller;
   }
 
+  /** The user's engine list changed: re-read it into the `!keyword` bangs. */
+  refreshBangs(): void {
+    this.bangs.replaceExtra(this.deps.extraBangs?.() ?? []);
+  }
+
   /** Called when a page's DOM is ready: queues it for the personal archive if indexing is allowed. */
   indexPage(url: string, doc: DomDocument): boolean {
     if (!this.archive.canIndex(url)) return false;

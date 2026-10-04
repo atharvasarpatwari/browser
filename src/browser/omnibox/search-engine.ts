@@ -19,6 +19,9 @@ interface ISearchEngineManager extends IDisposable {
   getEngineByKeyword(keyword: string): SearchEngine | null;
   buildSearchUrl(query: string, engineId?: string): string;
   parseKeyword(input: string): { keyword: string; query: string } | null;
+  onEvent(handler: EngineEventHandler): () => void;
+  reorderEngine(id: string, newIndex: number): boolean;
+  replaceEngines(list: ReadonlyArray<Omit<SearchEngine, 'id' | 'isDefault'>>): void;
 }
 
 type EngineEventKind = 'added' | 'removed' | 'defaultChanged';
@@ -29,15 +32,21 @@ interface EngineEvent {
 
 type EngineEventHandler = (event: EngineEvent) => void;
 
+/** The first entry is the default engine. */
 const BUILT_IN_ENGINES: Array<Omit<SearchEngine, 'id' | 'isDefault'>> = [
+  { name: 'Nova', url: 'nova://search?q=%s', keyword: 'nova', icon: '✨' },
   { name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=%s', keyword: 'ddg', icon: '🦆' },
   { name: 'Google', url: 'https://www.google.com/search?q=%s', keyword: 'g', icon: '🔍' },
   { name: 'Bing', url: 'https://www.bing.com/search?q=%s', keyword: 'b', icon: '🔵' },
   { name: 'Brave', url: 'https://search.brave.com/search?q=%s', keyword: 'br', icon: '🦁' },
-  { name: 'Wikipedia', url: 'https://en.wikipedia.org/wiki/%s', keyword: 'w', icon: '📚' },
+  { name: 'Ecosia', url: 'https://www.ecosia.org/search?q=%s', keyword: 'eco', icon: '🌳' },
+  { name: 'Kagi', url: 'https://kagi.com/search?q=%s', keyword: 'k', icon: '🔮' },
+  { name: 'StartPage', url: 'https://www.startpage.com/do/search?q=%s', keyword: 'sp', icon: '🛡️' },
+  { name: 'Wikipedia', url: 'https://en.wikipedia.org/w/index.php?search=%s', keyword: 'w', icon: '📚' },
   { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=%s', keyword: 'yt', icon: '▶️' },
   { name: 'GitHub', url: 'https://github.com/search?q=%s', keyword: 'gh', icon: '🐙' },
   { name: 'Stack Overflow', url: 'https://stackoverflow.com/search?q=%s', keyword: 'so', icon: '📋' },
+  { name: 'Reddit', url: 'https://www.reddit.com/search/?q=%s', keyword: 'r', icon: '👽' },
 ];
 
 let engineCounter = 0;
@@ -89,22 +98,44 @@ class SearchEngineManager implements ISearchEngineManager {
 
   addEngine(opts: Omit<SearchEngine, 'id' | 'isDefault'>): SearchEngine {
     const id = `engine-${++engineCounter}`;
-    const engine: SearchEngine = { ...opts, id, isDefault: false };
+    const engine: SearchEngine = { ...opts, id, keyword: opts.keyword.trim().toLowerCase(), isDefault: false };
     this.engines.push(engine);
     this.emit({ kind: 'added', engine: { ...engine } });
     return { ...engine };
   }
 
   removeEngine(id: string): boolean {
+    if (this.engines.length <= 1) return false;
     const idx = this.engines.findIndex(e => e.id === id);
     if (idx < 0) return false;
     const [engine] = this.engines.splice(idx, 1);
-    if (this.defaultId === id && this.engines.length > 0) {
+    const wasDefault = this.defaultId === id;
+    if (wasDefault && this.engines.length > 0) {
       this.defaultId = this.engines[0].id;
       this.engines[0].isDefault = true;
     }
     this.emit({ kind: 'removed', engine });
+    if (wasDefault && this.engines.length > 0) {
+      this.emit({ kind: 'defaultChanged', engine: { ...this.engines[0] } });
+    }
     return true;
+  }
+
+  reorderEngine(id: string, newIndex: number): boolean {
+    const idx = this.engines.findIndex(e => e.id === id);
+    if (idx < 0) return false;
+    const clamped = Math.max(0, Math.min(newIndex, this.engines.length - 1));
+    if (clamped === idx) return true;
+    const [engine] = this.engines.splice(idx, 1);
+    this.engines.splice(clamped, 0, engine);
+    return true;
+  }
+
+  replaceEngines(list: ReadonlyArray<Omit<SearchEngine, 'id' | 'isDefault'>>): void {
+    if (list.length === 0) return;
+    this.engines = list.map(e => ({ ...e, id: `engine-${++engineCounter}`, isDefault: false }));
+    this.defaultId = this.engines[0].id;
+    this.engines[0].isDefault = true;
   }
 
   getEngineByKeyword(keyword: string): SearchEngine | null {

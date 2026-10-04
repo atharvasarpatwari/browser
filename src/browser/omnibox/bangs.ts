@@ -75,6 +75,8 @@ const BUILT_IN_BANGS: readonly Bang[] = [
 ];
 
 const KEYWORD_RE = /^[a-z0-9]{1,12}$/;
+/** Web search templates, plus Nova's own search page (so `!nova cats` works whatever the default engine is). */
+const SAFE_URL_RE = /^(?:https?:\/\/|nova:\/\/search[/?])/i;
 
 /**
  * Looks bangs up by keyword. Caller-supplied bangs (e.g. the user's own search engines) take
@@ -84,6 +86,12 @@ class BangRegistry {
   private readonly bangs = new Map<string, Bang>();
 
   constructor(extra: readonly Bang[] = []) {
+    this.replaceExtra(extra);
+  }
+
+  /** Resets the registry to the built-ins plus `extra` (the user's own engines, which win on a clash). */
+  replaceExtra(extra: readonly Bang[]): void {
+    this.bangs.clear();
     for (const bang of BUILT_IN_BANGS) this.bangs.set(bang.keyword, bang);
     for (const bang of extra) this.add(bang);
   }
@@ -91,7 +99,7 @@ class BangRegistry {
   /** Adds or replaces a bang. Returns false (and ignores it) when the keyword or template is unusable. */
   add(bang: Bang): boolean {
     const keyword = bang.keyword.toLowerCase();
-    if (!KEYWORD_RE.test(keyword) || !/^https?:\/\//i.test(bang.url)) return false;
+    if (!KEYWORD_RE.test(keyword) || !SAFE_URL_RE.test(bang.url)) return false;
     this.bangs.set(keyword, { ...bang, keyword });
     return true;
   }

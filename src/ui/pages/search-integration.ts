@@ -6,17 +6,22 @@ import { SearchSubsystem } from '../components/search-subsystem';
 import type { BookmarkPort, HistoryPort, SearchEngineInfo, SettingsPort } from '../components/search-subsystem';
 import type { OmniboxActions } from '../components/omnibox-controller';
 import { SearchPage } from './search-page';
-import type { SearchPageEngine, SettingsWritePort } from './search-page';
-import { SEARCH_URL_TEMPLATES, ENGINE_LABELS } from './new-tab-page';
+import type { SettingsWritePort } from './search-page';
 import { FindInPage } from '../../browser/navigation-controls/find-in-page';
 import { createDomFindSource } from '../../browser/navigation-controls/find-page-source';
 import { FindBarView } from '../components/find-bar/find-bar.view';
 import { FindHighlightOverlay } from '../components/find-bar/find-overlay';
 import { DEFAULT_BROWSER_ACTIONS } from '../../browser/omnibox/browser-actions';
-import { BUILT_IN_BANGS } from '../../browser/omnibox/bangs';
 import { expandSearchTemplate } from '../../browser/omnibox/search-template';
 import { buildResearchUrl } from '../../browser/omnibox/ai-research-provider';
 import type { SwitchableTab } from '../../browser/omnibox/tab-switch-provider';
+
+/** One of the user's search engines (what `SearchEngineManager` holds); `url` is a template with `%s`. */
+interface HostEngine {
+  readonly name: string;
+  readonly url: string;
+  readonly keyword: string;
+}
 
 /** What the search wiring needs from the window that owns tabs, navigation and settings. */
 interface SearchHost {
@@ -28,6 +33,10 @@ interface SearchHost {
   bookmarks(): BookmarkPort | null;
   listTabs(): readonly SwitchableTab[];
   isIncognito(): boolean;
+  /** Where plain-text searches from the address bar go. */
+  defaultEngine(): HostEngine;
+  /** The user's engines in their order: the search page's web shortcuts and the `!keyword` bangs. */
+  engines(): readonly HostEngine[];
   normalizeUrl(raw: string): string;
   /** Navigate the current tab, or open a new tab. */
   open(url: string, newTab: boolean): void;
@@ -52,21 +61,15 @@ const ACTION_PAGES: ReadonlyMap<string, string> = new Map([
 /** Browser commands the window can actually run (the omnibox only offers these). */
 const HOST_ACTION_IDS: ReadonlySet<string> = new Set([...ACTION_PAGES.keys(), 'new-tab', 'close-tab', 'reload-page']);
 
-/** "Search the web with…" chips on the Nova search page, in display order. */
-const WEB_ENGINES: readonly SearchPageEngine[] = ['ddg', 'g', 'b', 'br', 'eco', 'k', 'sp', 'w', 'yt', 'gh', 'so', 'r']
-  .flatMap((keyword) => BUILT_IN_BANGS.filter((b) => b.keyword === keyword))
-  .map((b) => ({ name: b.name, searchUrl: (q: string) => expandSearchTemplate(b.url, { searchTerms: q }) }));
-
 const REFRESH_INTERVAL_MS = 150;
 
-/** The default search engine (a `defaultSearchEngine` setting value): Nova's own search unless Settings names another known one. */
-function resolveDefaultEngine(id: string): SearchEngineInfo {
-  const key = Object.prototype.hasOwnProperty.call(SEARCH_URL_TEMPLATES, id) ? id : 'nova';
-  const template = SEARCH_URL_TEMPLATES[key]!;
-  return { name: ENGINE_LABELS[key] ?? key, searchUrl: (q) => expandSearchTemplate(template, { searchTerms: q }) };
-}
+/** Nova's own search page — what the search page's box always uses, whatever the default engine is. */
+const novaSearchUrl = (query: string): string => expandSearchTemplate('nova://search?q=%s', { searchTerms: query });
 
-const NOVA_ENGINE: SearchEngineInfo = resolveDefaultEngine('nova');
+const toEngineInfo = (e: HostEngine): SearchEngineInfo => ({
+  name: e.name,
+  searchUrl: (q) => expandSearchTemplate(e.url, { searchTerms: q }),
+});
 
 /**
  * Window-level glue for the search subsystem: the omnibox on the address bar, the `nova://search`
@@ -92,7 +95,7 @@ class SearchIntegration implements IDisposable {
     const view = this.host.addressBarView();
     if (!bar || !view || this.subsystem) return;
 
-    const engine = (): SearchEngineInfo => resolveDefaultEngine(this.host.settings()?.getString('defaultSearchEngine', 'nova') ?? 'nova');
+    const engine = (): SearchEngineInfo => toEngineInfo(this.host.defaultEngine());
     this.subsystem = new SearchSubsystem({
       settings: () => this.host.settings(),
       history: () => this.host.history(),
@@ -100,6 +103,7 @@ class SearchIntegration implements IDisposable {
       listTabs: () => this.host.listTabs(),
       isIncognito: () => this.host.isIncognito(),
       defaultEngine: engine,
+      extraBangs: () => this.host.engines(),
       normalizeUrl: (raw) => this.host.normalizeUrl(raw),
       availableActions: DEFAULT_BROWSER_ACTIONS.filter((a) => HOST_ACTION_IDS.has(a.id)),
       fetchJson: this.host.fetchJson,
@@ -110,6 +114,11 @@ class SearchIntegration implements IDisposable {
 
     this.keyHandler = (e) => this.onKeyDown(e);
     document.addEventListener('keydown', this.keyHandler);
+  }
+
+  /** The user added, removed or replaced search engines: their keywords are `!bangs` too. */
+  onEnginesChanged(): void {
+    this.subsystem?.refreshBangs();
   }
 
   /** Where the live page's DOM comes from (find-in-page reads its laid-out text). */
@@ -148,9 +157,10 @@ class SearchIntegration implements IDisposable {
     this.searchPage = new SearchPage({
       archive: subsystem.archive,
       settings: () => this.host.settings() as SettingsWritePort | null,
-      webEngines: () => WEB_ENGINES,
+      // Nova's own engine is the page you are on; the rest are one-click ways to take the query to the web.
+      webEngines: () => this.host.engines().filter((e) => !e.url.startsWith('nova:')).map(toEngineInfo),
       navigate: (url, how) => this.host.open(url, how.newTab),
-      search: (q) => this.host.open(NOVA_ENGINE.searchUrl(q), false),
+      search: (q) => this.host.open(novaSearchUrl(q), false),
       research: (q) => this.host.open(buildResearchUrl(q), false),
     });
     this.searchPage.mount(container);
@@ -240,5 +250,5 @@ class SearchIntegration implements IDisposable {
   }
 }
 
-export { SearchIntegration, resolveDefaultEngine, HOST_ACTION_IDS, NOVA_ENGINE };
-export type { SearchHost };
+export { SearchIntegration, HOST_ACTION_IDS, novaSearchUrl };
+export type { SearchHost, HostEngine };
