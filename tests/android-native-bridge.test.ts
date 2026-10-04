@@ -523,6 +523,32 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     expect(target!.imageAlt).toBe('A picture');
   });
 
+  it('resolveContextTarget() finds a link in a real tree, whose chain of ancestors ends in the document node (it has no tag name)', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+
+    // The shape the layout engine really returns: lower-case tag names, up to a document node with no `tagName`.
+    // (It used to throw "Cannot read properties of undefined (reading 'toLowerCase')" on the way up, so every
+    // link and image in a real page resolved to nothing.)
+    const documentNode = { domId: 'doc', nodeType: 'document', parent: null, children: [] };
+    const body = { domId: 'b1', nodeType: 'element', tagName: 'body', attributes: new Map(), parent: documentNode, children: [] };
+    const anchor = {
+      domId: 'a1',
+      nodeType: 'element',
+      tagName: 'a',
+      attributes: new Map([['href', 'https://example.com/about']]),
+      parent: body,
+      children: [{ domId: 't1', nodeType: 'text', text: 'About us', parent: null, children: [] }],
+    } as unknown as DomElement;
+
+    page.setBrowserEngine({
+      getPageLayoutEngine: () => ({ getElementAtPoint: () => anchor }),
+    } as unknown as Parameters<typeof page.setBrowserEngine>[0]);
+    expect(page.resolveContextTarget(10, 10)).toEqual({
+      linkUrl: 'https://example.com/about', linkText: 'About us', imageUrl: null, imageAlt: null,
+    });
+  });
+
   it('resolveContextTarget() returns null when nothing is hit and when hit has no link/image', async () => {
     page = new BrowserWindowPage({ hideChromeUI: true });
     await page.mount(container);

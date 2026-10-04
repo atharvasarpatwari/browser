@@ -21,6 +21,20 @@ function mapRect(r: FindRect, t: ViewTransform): FindRect {
   return { x: r.x * t.scale + t.offsetX, y: r.y * t.scale + t.offsetY, width: r.width * t.scale, height: r.height * t.scale };
 }
 
+/**
+ * The inverse of the view transform: which pixel of the `frame`-sized bitmap lies under `point` (relative to the
+ * box the bitmap is shown in). Null for the margins `object-fit: contain` leaves around the image.
+ */
+function pointToFrame(
+  point: { readonly x: number; readonly y: number },
+  t: ViewTransform,
+  frame: { readonly width: number; readonly height: number },
+): { x: number; y: number } | null {
+  const x = (point.x - t.offsetX) / t.scale;
+  const y = (point.y - t.offsetY) / t.scale;
+  return x < 0 || y < 0 || x >= frame.width || y >= frame.height ? null : { x, y };
+}
+
 const COLOR_MATCH = 'rgba(255, 214, 0, 0.45)';
 const COLOR_ACTIVE = 'rgba(255, 128, 0, 0.7)';
 const COLOR_ACTIVE_OUTLINE = 'rgba(255, 90, 0, 0.95)';
@@ -132,5 +146,5 @@ class FindHighlightOverlay implements IDisposable {
   }
 }
 
-export { FindHighlightOverlay, computeViewTransform, mapRect };
+export { FindHighlightOverlay, computeViewTransform, mapRect, pointToFrame };
 export type { ViewTransform };

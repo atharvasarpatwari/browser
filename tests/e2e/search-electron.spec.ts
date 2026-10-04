@@ -2,7 +2,10 @@ import { test, expect } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { launchNova, startTestSite, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage } from './helpers/electron-app';
+import {
+  launchNova, startTestSite, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage, rightClickPage,
+  LINK_AT, IMAGE_AT, EMPTY_AT,
+} from './helpers/electron-app';
 import type { NovaApp, TestSite } from './helpers/electron-app';
 
 /**
@@ -166,4 +169,44 @@ test('the personal archive indexes visited pages and still finds them after a re
   await submitInOmnibox(page, 'nova://search?q=luminous');
   await expect(page.locator('.content-area h1')).toHaveText('Nova Search', { timeout: 30_000 });
   await expect(page.locator('.content-area article').first()).toContainText('Quasar notes', { timeout: 30_000 });
+});
+
+test('right-clicking a rendered page offers its links, its images and the page itself', async () => {
+  test.setTimeout(180_000);
+  nova = await launchNova(profile);
+  const { app, page } = nova;
+  const menu = page.locator('.nova-context-menu');
+  const entry = (label: string) => menu.getByText(label, { exact: true });
+  const clipboard = () => app.evaluate(({ clipboard: c }) => c.readText());
+
+  await openPage(page, `${site.origin}/links`);
+
+  // A link: its text is searchable, the address copies, and "open in new tab" loads it (the href is relative).
+  await rightClickPage(page, LINK_AT);
+  await expect(menu).toBeVisible();
+  await expect(entry('Search Nova for “Read about quasars”')).toBeVisible();
+  await expect(entry('Ask Nova AI about “Read about quasars”')).toBeVisible();
+  await entry('Copy link address').click();
+  await expect.poll(clipboard).toBe(`${site.origin}/quasar`);
+
+  await rightClickPage(page, LINK_AT);
+  await entry('Open link in new tab').click();
+  await expect(page.locator('.nova-tab')).toHaveCount(2);
+  await expect(omnibox(page)).toHaveValue(`${site.origin}/quasar`, { timeout: 30_000 });
+  await expect(page.locator('.content-area canvas').first()).toBeVisible({ timeout: 45_000 });
+
+  // An image on a local address: it can be opened and copied, but no outside service could fetch it.
+  await openPage(page, `${site.origin}/links`);
+  await rightClickPage(page, IMAGE_AT);
+  await expect(entry('Open image in new tab')).toBeVisible();
+  await expect(entry('Search the web for this image').locator('..')).toHaveCSS('pointer-events', 'none');
+  await entry('Copy image address').click();
+  await expect.poll(clipboard).toBe(`${site.origin}/pixel.png`);
+
+  // The page itself: navigation and find.
+  await rightClickPage(page, EMPTY_AT);
+  await expect(entry('Reload')).toBeVisible();
+  await expect(entry('Copy page address')).toBeVisible();
+  await entry('Find in page…').click();
+  await expect(page.locator('.nova-find-bar')).toBeVisible();
 });

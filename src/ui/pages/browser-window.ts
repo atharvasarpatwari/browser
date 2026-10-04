@@ -43,6 +43,7 @@ import { NavigationBridge } from '../components/navigation-bridge';
 import { ContentRenderer } from '../components/content-renderer/content-renderer';
 import { NavigationFetcher } from '../components/navigation-fetcher';
 import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
+import { PageContextMenuController } from '../components/context-menu/page-context-menu';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
 import type { DomDocument, DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
@@ -309,6 +310,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private historyEventHandler: ((event: { kind: string }) => void) | null = null;
   private bookmarkEventHandler: ((event: { kind: string }) => void) | null = null;
   private contextMenu: ContextMenu | null = null;
+  private pageContextMenu: PageContextMenuController | null = null;
   private incognitoManager: IIncognitoManager | null = null;
   private tabSessionBridge: TabSessionBridge | null = null;
   private tabPersistence: TabPersistenceManager | null = null;
@@ -577,6 +579,28 @@ class BrowserWindowPage implements IBrowserWindowPage {
         }
       };
       areas.content.addEventListener('nova-navigate', this.contentNavigateHandler);
+
+      // Right-click on a rendered page: links, images, or the page itself (desktop only — Android has its own long-press menu).
+      this.pageContextMenu = new PageContextMenuController({
+        area: areas.content,
+        menu: () => (this.contextMenu ??= new ContextMenu()),
+        resolveTarget: (x, y) => this.resolveContextTarget(x, y),
+        context: () => {
+          const state = this.getChromeState();
+          return { pageUrl: state.addressValue, engineName: this.currentDefaultEngine().name, canGoBack: state.canGoBack, canGoForward: state.canGoForward };
+        },
+        actions: {
+          openInNewTab: (url) => { this.createTab(url); },
+          copy: (text) => this.search?.copyText(text),
+          searchFor: (text) => this.search?.searchFor(text),
+          askAi: (text) => this.search?.askAi(text),
+          back: () => this.goBack(),
+          forward: () => this.goForward(),
+          reload: () => this.reload(),
+          find: () => { this.search?.openFindBar(); },
+        },
+      });
+      this.pageContextMenu.attach();
     }
 
     this._mounted = true;
@@ -625,6 +649,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.pipelineController?.off('navigationCommitted', this.onNavigationCommitted);
     this.search?.dispose();
     this.search = null;
+    this.pageContextMenu?.dispose();
+    this.pageContextMenu = null;
     this.cleanupSettingsPage();
     this.cleanupDownloadsPage();
     this.cleanupContentPanel();
@@ -1630,7 +1656,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     let node: DomElement | null = hit;
     let guard = 0;
     while (node && guard++ < 64) {
-      const tag = node.tagName.toLowerCase();
+      // The top of the chain is the document node, which has no tag name.
+      const tag = typeof node.tagName === 'string' ? node.tagName.toLowerCase() : '';
       if (tag === 'a' && node.attributes.has('href')) link ??= node;
       if (tag === 'img' && node.attributes.has('src')) image ??= node;
       node = node.parent as DomElement | null;
@@ -1645,9 +1672,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     };
   }
 
+  /** Resolves a link/image address against the page it is on (relative `href="/about"` is the usual case). */
   private resolveContextUrl(raw: string): string {
     try {
-      return new URL(raw, this.currentUrl || undefined).href;
+      return new URL(raw, this.navigationBridge?.currentUrl || undefined).href;
     } catch {
       return raw;
     }

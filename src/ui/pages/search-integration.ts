@@ -221,6 +221,20 @@ class SearchIntegration implements IDisposable {
     this.searchPage = null;
   }
 
+  /** "Search <default engine> for …" from the page's context menu — in a new tab, like the browser's own menu. */
+  searchFor(text: string): void {
+    this.host.open(toEngineInfo(this.host.defaultEngine()).searchUrl(text), true);
+  }
+
+  /** "Ask Nova AI about …" from the page's context menu. */
+  askAi(text: string): void {
+    this.host.open(buildResearchUrl(text), true);
+  }
+
+  copyText(text: string): void {
+    void navigator.clipboard?.writeText(text).catch(() => { /* clipboard unavailable */ });
+  }
+
   /** Shows the find bar over the page. Only rendered web pages (a bitmap canvas) can be searched. */
   openFindBar(): boolean {
     const area = this.host.contentArea();
@@ -265,7 +279,7 @@ class SearchIntegration implements IDisposable {
       switchTab: (id) => this.host.switchTab(id),
       runAction: (id) => this.runAction(id),
       research: (query) => this.host.open(buildResearchUrl(query), false),
-      copy: (text) => { void navigator.clipboard?.writeText(text).catch(() => { /* clipboard unavailable */ }); },
+      copy: (text) => this.copyText(text),
       fill: (text) => this.host.addressBarView()?.fill(text),
       deleteHistory: (id) => this.host.deleteHistoryEntry(id),
     };

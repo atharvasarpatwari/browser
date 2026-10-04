@@ -52,9 +52,11 @@ async function startTestSite(): Promise<TestSite> {
         const q = url.searchParams.get('q') ?? '';
         return send('text/html; charset=utf-8', html(`Results for ${q}`, `<p>You searched for ${q}.</p>`));
       }
-      case '/links':
+      case '/links': // big blocks below a spacer, in normal flow: roughly where they land is known (see LINK_AT / IMAGE_AT)
         return send('text/html; charset=utf-8', html('Links and images',
-          '<p><a href="/quasar">Read about quasars</a></p><p><img src="/pixel.png" alt="a red pixel" width="60" height="60"></p>'));
+          '<div style="height:300px">spacer</div>'
+          + '<a href="/quasar" style="display:block;height:200px">Read about quasars</a>'
+          + '<img src="/pixel.png" alt="a red pixel" style="display:block;width:300px;height:300px">'));
       case '/pixel.png':
         return send('image/png', PIXEL_PNG);
       default:
@@ -110,6 +112,36 @@ async function submitInOmnibox(page: Page, text: string): Promise<void> {
   await omnibox(page).press('Enter');
 }
 
+/**
+ * Page-bitmap coordinates (CSS px of the 1920-wide page) inside the `/links` page's link block and image: the heading
+ * and the 300 px spacer put the link at about y 390–590 and the image at about 590–890 (generous: ±60 px of slack).
+ */
+const LINK_AT = { x: 400, y: 490 };
+const IMAGE_AT = { x: 150, y: 740 };
+/** A page point nothing is at. */
+const EMPTY_AT = { x: 1500, y: 900 };
+
+/**
+ * Where a point of the page bitmap lands in the window: the bitmap is scaled into the content area with
+ * `object-fit: contain`, so this applies the same letterbox transform the app uses (in reverse).
+ */
+async function pagePointToClient(page: Page, point: { x: number; y: number }): Promise<{ x: number; y: number }> {
+  const canvas = page.locator('.content-area canvas').first();
+  const box = (await canvas.boundingBox())!;
+  const frame = await canvas.evaluate((c: HTMLCanvasElement) => ({ width: c.width, height: c.height }));
+  const scale = Math.min(box.width / frame.width, box.height / frame.height);
+  return {
+    x: box.x + (box.width - frame.width * scale) / 2 + point.x * scale,
+    y: box.y + (box.height - frame.height * scale) / 2 + point.y * scale,
+  };
+}
+
+/** Right-clicks a point of the page bitmap. */
+async function rightClickPage(page: Page, point: { x: number; y: number }): Promise<void> {
+  const at = await pagePointToClient(page, point);
+  await page.mouse.click(at.x, at.y, { button: 'right' });
+}
+
 /** Opens `url` through the address bar and waits until the engine has painted it. */
 async function openPage(page: Page, url: string): Promise<void> {
   await submitInOmnibox(page, url);
@@ -117,5 +149,8 @@ async function openPage(page: Page, url: string): Promise<void> {
   await expect(omnibox(page)).toHaveValue(url, { timeout: 15_000 });
 }
 
-export { startTestSite, launchNova, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage };
+export {
+  startTestSite, launchNova, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage,
+  LINK_AT, IMAGE_AT, EMPTY_AT, pagePointToClient, rightClickPage,
+};
 export type { TestSite, NovaApp };

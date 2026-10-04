@@ -1357,6 +1357,139 @@ describe('BrowserWindowPage — search wiring', () => {
     });
   });
 
+  describe('page right-click menu', () => {
+    const anchor = (href: string, text: string) => ({
+      domId: 'a1', nodeType: 'element', tagName: 'A', attributes: new Map([['href', href]]), parent: null,
+      children: [{ domId: 't1', nodeType: 'text', text, parent: null, children: [] }],
+    });
+    const picture = (src: string) => ({
+      domId: 'i1', nodeType: 'element', tagName: 'IMG', attributes: new Map([['src', src], ['alt', 'A cat']]), parent: null, children: [],
+    });
+    /** What the page's layout says is under the pointer. */
+    const hitTest = (element: unknown) => page.setBrowserEngine(
+      { getPageLayoutEngine: () => ({ getElementAtPoint: () => element }) } as unknown as Parameters<BrowserWindowPage['setBrowserEngine']>[0],
+    );
+    /** A rendered page: the engine's bitmap in the content area, shown in a known 960×540 box. */
+    const renderedPage = (): HTMLCanvasElement => {
+      const canvas = addPageCanvas(area());
+      canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 960, height: 540, x: 0, y: 0, right: 960, bottom: 540, toJSON: () => ({}) });
+      return canvas;
+    };
+    const rightClick = (on: Element): MouseEvent => {
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 100, clientY: 50 });
+      on.dispatchEvent(event);
+      return event;
+    };
+    const rows = () => [...document.body.querySelectorAll<HTMLElement>('.nova-context-menu > div')];
+    const labelOf = (row: HTMLElement) => row.lastElementChild?.textContent;
+    const menuLabels = () => rows().filter((r) => r.lastElementChild).map(labelOf);
+    const choose = (label: string) => rows().find((r) => labelOf(r) === label)!.click();
+    const tabUrls = () => page.getChromeState().tabs.map((t) => t.url);
+
+    afterEach(() => { document.querySelectorAll('.nova-context-menu').forEach((el) => el.remove()); });
+
+    it('offers a link: relative addresses are resolved against the page, and it opens in a new tab', async () => {
+      await page.navigate('https://example.com/docs/index.html');
+      hitTest(anchor('/about', 'About us'));
+      const event = rightClick(renderedPage());
+      expect(event.defaultPrevented).toBe(true);
+      expect(menuLabels()).toEqual([
+        'Open link in new tab', 'Copy link address', 'Search Nova for “About us”', 'Ask Nova AI about “About us”',
+      ]);
+      choose('Open link in new tab');
+      expect(tabUrls()).toContain('https://example.com/about');
+    });
+
+    it('searches the default engine, or asks Nova AI, for the link text in a new tab', async () => {
+      hitTest(anchor('https://example.com/about', 'About us'));
+      rightClick(renderedPage());
+      choose('Search Nova for “About us”');
+      expect(tabUrls()).toContain('nova://search?q=About%20us');
+
+      rightClick(area().querySelector('canvas')!);
+      choose('Ask Nova AI about “About us”');
+      expect(tabUrls()).toContain('nova://research?q=About%20us');
+    });
+
+    it('follows the default engine named in Settings', async () => {
+      flags.defaultSearchEngine = 'google';
+      hitTest(anchor('https://example.com/about', 'About us'));
+      rightClick(renderedPage());
+      expect(menuLabels()).toContain('Search Google for “About us”');
+      choose('Search Google for “About us”');
+      expect(tabUrls()).toContain('https://www.google.com/search?q=About%20us');
+    });
+
+    it('copies the link address to the clipboard', () => {
+      const writeText = vi.fn(async () => undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      try {
+        hitTest(anchor('https://example.com/about', 'About us'));
+        rightClick(renderedPage());
+        choose('Copy link address');
+        expect(writeText).toHaveBeenCalledWith('https://example.com/about');
+      } finally {
+        Reflect.deleteProperty(navigator, 'clipboard');
+      }
+    });
+
+    it('offers an image, with reverse lookups for a public one', () => {
+      hitTest(picture('https://cdn.example.com/cat.png'));
+      rightClick(renderedPage());
+      expect(menuLabels()).toEqual([
+        'Open image in new tab', 'Copy image address',
+        'Search image with Google Lens', 'Search image with Bing Visual Search', 'Search image with TinEye',
+      ]);
+      choose('Search image with TinEye');
+      expect(tabUrls()).toContain(`https://tineye.com/search?url=${encodeURIComponent('https://cdn.example.com/cat.png')}`);
+    });
+
+    it('over plain page it offers navigation and find; Find in page opens the find bar', () => {
+      hitTest(null);
+      rightClick(renderedPage());
+      expect(menuLabels()).toEqual(['Back', 'Forward', 'Reload', 'Find in page…', 'Copy page address']);
+      choose('Find in page…');
+      expect(area().querySelector<HTMLElement>('.nova-find-bar')!.hidden).toBe(false);
+    });
+
+    it('does not take over right-clicks on built-in pages (real DOM, no page bitmap)', async () => {
+      await page.navigate('nova://settings');
+      const target = area().querySelector('.settings-page') ?? area();
+      expect(rightClick(target).defaultPrevented).toBe(false);
+      expect(rows()).toHaveLength(0);
+    });
+
+    it('is not installed in the mobile layout (Android has its own long-press menu)', async () => {
+      const width = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+      Object.defineProperty(window, 'innerWidth', { value: 500, configurable: true });
+      const mobileHost = document.createElement('div');
+      document.body.appendChild(mobileHost);
+      const mobile = new BrowserWindowPage();
+      try {
+        await mobile.mount(mobileHost);
+        const content = mobileHost.querySelector<HTMLElement>('.content-area') ?? mobileHost;
+        const canvas = addPageCanvas(content);
+        expect(rightClick(canvas).defaultPrevented).toBe(false);
+        expect(rows()).toHaveLength(0);
+      } finally {
+        await mobile.unmount();
+        mobileHost.remove();
+        if (width) Object.defineProperty(window, 'innerWidth', width);
+        else Reflect.deleteProperty(window, 'innerWidth');
+      }
+    });
+
+    it('stops listening once the window is unmounted', async () => {
+      hitTest(null);
+      const canvas = renderedPage();
+      const content = area();
+      await page.unmount();
+      expect(rightClick(canvas).defaultPrevented).toBe(false);
+      expect(content.isConnected).toBe(false);
+      await page.mount(container); // the afterEach hook unmounts again
+    });
+  });
+
   describe('personal archive', () => {
     const doc = () => new DomTree().buildFromHtml(new HtmlParser().parse(
       `<html><head><title>Quasar notes</title></head><body><h1>Quasar notes</h1><p>${'The quasar is a luminous galactic nucleus. '.repeat(12)}</p></body></html>`,
