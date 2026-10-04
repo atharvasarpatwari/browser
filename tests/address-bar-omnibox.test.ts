@@ -317,6 +317,143 @@ describe('AddressBarView — rich dropdown', () => {
     });
   });
 
+  describe('query-type badge', () => {
+    const badge = () => container.querySelector<HTMLElement>('.nova-addressbar-badge')!;
+
+    it('starts hidden, between the lock icon and the input', () => {
+      expect(badge().hidden).toBe(true);
+      expect([...container.children].slice(0, 3).map((c) => c.classList[0])).toEqual(['nova-security', 'nova-addressbar-badge', 'nova-addressbar-input']);
+    });
+
+    it('shows its text, kind and tooltip and marks the bar; null hides it again', () => {
+      view.setQueryBadge({ kind: 'bang', text: '!w', title: 'Search Wikipedia' });
+      expect(badge().hidden).toBe(false);
+      expect(badge().textContent).toBe('!w');
+      expect(badge().title).toBe('Search Wikipedia');
+      expect(badge().dataset.kind).toBe('bang');
+      expect(container.classList.contains('has-badge')).toBe(true);
+
+      view.setQueryBadge(null);
+      expect(badge().hidden).toBe(true);
+      expect(badge().textContent).toBe('');
+      expect(container.classList.contains('has-badge')).toBe(false);
+    });
+
+    it('treats badge text as text, never markup', () => {
+      view.setQueryBadge({ kind: 'search', text: '<img src=x onerror=alert(1)>', title: '"><b>' });
+      expect(badge().querySelector('img')).toBeNull();
+      expect(badge().textContent).toBe('<img src=x onerror=alert(1)>');
+    });
+
+    it('goes away when the input loses focus', () => {
+      view.setQueryBadge({ kind: 'search', text: '🔍', title: 'Search' });
+      input.blur();
+      expect(badge().hidden).toBe(true);
+      expect(container.classList.contains('has-badge')).toBe(false);
+    });
+
+    it('is harmless after the view is detached', () => {
+      view.detach();
+      expect(() => view.setQueryBadge({ kind: 'url', text: '🌐', title: 'Go' })).not.toThrow();
+    });
+  });
+
+  describe('row actions', () => {
+    const deletable = row({ type: 'history', text: 'GitHub', description: 'https://github.com/', url: 'https://github.com/', meta: { historyId: 'h1' } });
+    const bookmark = row({ type: 'bookmark', text: 'Docs', url: 'https://docs.test/' });
+    const actionsOf = (el: Element) => [...el.querySelectorAll<HTMLElement>('.nova-dropdown-item__action')].map((b) => b.dataset.action);
+    const buttonOf = (el: Element, action: string) => el.querySelector<HTMLButtonElement>(`.nova-dropdown-item__action[data-action="${action}"]`)!;
+    let onAction: ReturnType<typeof vi.fn<(action: 'copy' | 'delete', r: OmniboxResult) => void>>;
+
+    beforeEach(() => {
+      onAction = vi.fn();
+      view.setRowActionHandler(onAction);
+    });
+
+    it('adds no buttons until the view has a handler for them', () => {
+      const bare = new AddressBar();
+      const v = new AddressBarView(bare);
+      const c = document.createElement('div');
+      document.body.appendChild(c);
+      v.attach(c);
+      bare.setResults([deletable]);
+      expect(c.querySelector('.nova-dropdown-item__actions')).toBeNull();
+      v.dispose();
+      c.remove();
+    });
+
+    it('offers copy on page rows and remove only on history rows that carry an id', () => {
+      const idless = row({ type: 'history', text: 'Old page', url: 'https://old.test/' });
+      model.setResults([deletable, idless, bookmark, tab, search, answer, bang]);
+      const byText = (text: string) => items().find((el) => el.querySelector('.nova-dropdown-item__text')!.textContent === text)!;
+      expect(actionsOf(byText('GitHub'))).toEqual(['copy', 'delete']);   // history with an id
+      expect(actionsOf(byText('Old page'))).toEqual(['copy']);           // history without one cannot be removed
+      expect(actionsOf(byText('Docs'))).toEqual(['copy']);               // bookmark
+      expect(actionsOf(byText('GitHub – Issues'))).toEqual(['copy']);    // open tab
+      expect(actionsOf(byText('git'))).toEqual([]);                      // typed search: its URL is a generated query
+      expect(actionsOf(byText('4'))).toEqual([]);                        // instant answer
+      expect(actionsOf(byText('!g'))).toEqual([]);                       // bang completion
+    });
+
+    it('labels the buttons for assistive tech and keeps them out of the tab order', () => {
+      model.setResults([deletable]);
+      const del = buttonOf(items()[0]!, 'delete');
+      expect(del.getAttribute('aria-label')).toBe('Remove from history');
+      expect(buttonOf(items()[0]!, 'copy').getAttribute('aria-label')).toBe('Copy link');
+      expect(del.tabIndex).toBe(-1);
+      expect(del.type).toBe('button');
+    });
+
+    it('a click runs the action for its row and does not activate the row', () => {
+      model.setResults([deletable]);
+      buttonOf(items()[0]!, 'delete').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(onAction).toHaveBeenCalledWith('delete', deletable);
+      expect(onResult).not.toHaveBeenCalled();
+    });
+
+    it('a press is swallowed so neither the row nor the input blur sees it', () => {
+      model.setResults([deletable]);
+      const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+      buttonOf(items()[0]!, 'copy').dispatchEvent(press);
+      expect(press.defaultPrevented).toBe(true);
+      expect(onResult).not.toHaveBeenCalled();
+      expect(onAction).not.toHaveBeenCalled();
+    });
+
+    it('marks a copied row with a check', () => {
+      model.setResults([bookmark]);
+      const copy = buttonOf(items()[0]!, 'copy');
+      expect(copy.textContent).toBe('⧉');
+      copy.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(copy.textContent).toBe('✓');
+      expect(copy.title).toBe('Copied');
+    });
+
+    it('Shift+Delete asks to remove the highlighted history row, and only that', () => {
+      model.setResults([bookmark, deletable]);
+      const selected = () => items().findIndex((el) => el.classList.contains('nova-dropdown-item--selected'));
+      const moveTo = (type: string) => { while (selected() < items().findIndex((el) => el.dataset.type === type)) key('ArrowDown'); };
+
+      moveTo('bookmark');
+      expect(key('Delete', { shiftKey: true }).defaultPrevented).toBe(false); // a bookmark is not history
+      expect(onAction).not.toHaveBeenCalled();
+
+      moveTo('history');
+      expect(input.value).toBe('https://github.com/');                         // the highlighted row is previewed in the input
+      expect(key('Delete').defaultPrevented).toBe(false);                     // plain Delete edits the text
+      expect(onAction).not.toHaveBeenCalled();
+      expect(key('Delete', { shiftKey: true }).defaultPrevented).toBe(true);
+      expect(onAction).toHaveBeenCalledWith('delete', deletable);
+      expect(input.value).toBe('');                                           // …but not once that row is being removed
+    });
+
+    it('Shift+Delete with nothing highlighted does nothing', () => {
+      model.setResults([deletable]);
+      expect(key('Delete', { shiftKey: true }).defaultPrevented).toBe(false);
+      expect(onAction).not.toHaveBeenCalled();
+    });
+  });
+
   it('stops reacting to results after being detached', () => {
     view.detach();
     expect(() => model.setResults([history])).not.toThrow();

@@ -90,7 +90,7 @@ describe('SearchSubsystem — end to end through the real address bar', () => {
     dropdown = container.querySelector('.nova-dropdown')!;
     input.focus();
     const spy = (): Spy => vi.fn<(...args: unknown[]) => void>();
-    actions = { open: spy(), search: spy(), switchTab: spy(), runAction: spy(), research: spy(), copy: spy(), fill: spy() };
+    actions = { open: spy(), search: spy(), switchTab: spy(), runAction: spy(), research: spy(), copy: spy(), fill: spy(), deleteHistory: spy() };
     subsystem = new SearchSubsystem(deps());
     subsystem.attach(model, view, {
       ...actions,

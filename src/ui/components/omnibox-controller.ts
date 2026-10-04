@@ -1,7 +1,9 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { IAddressBar, AddressBarEventUnion } from './address-bar/address-bar';
 import { fillTextOf } from './address-bar/address-bar.view';
-import type { ActivationOptions, ResultHandler, SubmitInterceptor } from './address-bar/address-bar.view';
+import type {
+  ActivationOptions, QueryBadge, ResultHandler, RowAction, RowActionHandler, SubmitInterceptor,
+} from './address-bar/address-bar.view';
 import type { IOmnibox, OmniboxResult, OmniboxRoute } from '../../browser/omnibox/omnibox';
 import { classifyQuery } from '../../browser/omnibox/query-classifier';
 import type { ClassifiedQuery, QueryIntent } from '../../browser/omnibox/query-classifier';
@@ -20,11 +22,15 @@ interface OmniboxActions {
   copy(text: string): void;
   /** Put `text` in the address bar as if typed. */
   fill(text: string): void;
+  /** Removes one history entry (the ✕ on a history row). */
+  deleteHistory(historyId: string): void | Promise<void>;
 }
 
 interface OmniboxViewPort {
   setSubmitInterceptor(interceptor: SubmitInterceptor): void;
   setResultHandler(handler: ResultHandler): void;
+  setRowActionHandler?(handler: RowActionHandler): void;
+  setQueryBadge?(badge: QueryBadge | null): void;
 }
 
 interface OmniboxControllerDeps {
@@ -112,6 +118,7 @@ class OmniboxController implements IDisposable {
 
     deps.view.setSubmitInterceptor((value, selected, how) => this.submit(value, selected, how));
     deps.view.setResultHandler((result, how) => this.activate(result, how));
+    deps.view.setRowActionHandler?.((action, row) => { void this.rowAction(action, row); });
   }
 
   /** Called on Enter. Returns false only for empty input (the legacy path then does nothing). */
@@ -119,6 +126,7 @@ class OmniboxController implements IDisposable {
     const text = value.trim();
     if (!text) return false;
     this.suppress = true;
+    this.deps.view.setQueryBadge?.(null);
     if (selected) { this.activate(selected, how); return true; }
 
     const c = this.classify(text);
@@ -144,6 +152,7 @@ class OmniboxController implements IDisposable {
   /** Performs the action behind a chosen row. */
   activate(result: OmniboxResult, how: ActivationOptions): void {
     this.suppress = true;
+    this.deps.view.setQueryBadge?.(null); // a `fill` row types again below, which brings the badge back
     switch (result.action) {
       case 'navigate':
       case 'search':
@@ -187,13 +196,45 @@ class OmniboxController implements IDisposable {
     const text = value.trim();
     if (!text) {
       this.lastText = '';
+      this.deps.view.setQueryBadge?.(null);
       await this.deps.omnibox.onInputChanged('', this.maxResults); // emits an empty list → hides the dropdown
       return;
     }
     const c = this.classify(text);
     this.lastText = text;
     this.lastIntent = c.intent;
+    this.deps.view.setQueryBadge?.(this.badgeFor(c));
     await this.deps.omnibox.onInputChanged(text, this.maxResults, this.routeFor(c));
+  }
+
+  /** The badge for what was typed: the kind of thing Enter will do. Null while an `@scope` is still being typed. */
+  private badgeFor(c: ClassifiedQuery): QueryBadge | null {
+    switch (c.intent) {
+      case 'DIRECT_URL': return { kind: 'url', text: '🌐', title: 'Go to this address' };
+      case 'BANG_SEARCH': {
+        const name = this.deps.bangs.get(c.bang ?? '')?.name;
+        return { kind: 'bang', text: `!${c.bang}`, title: name ? `Search ${name}` : 'Search with a bang' };
+      }
+      case 'SCOPED_SEARCH':
+        if (!c.scope) return null;
+        if (c.scope === 'ai' || c.scope === 'research') return { kind: 'ai', text: '✨', title: 'Ask Nova AI' };
+        return { kind: 'scope', text: `@${c.scope}`, title: `Search ${c.scope}` };
+      case 'BROWSER_ACTION': return { kind: 'command', text: '⚡', title: 'Browser command' };
+      case 'CALCULATION_OR_CONVERSION': return { kind: 'calc', text: '🧮', title: 'Instant answer' };
+      default: return { kind: 'search', text: '🔍', title: 'Search' };
+    }
+  }
+
+  /** The copy / remove buttons on a dropdown row (or Shift+Delete). */
+  private async rowAction(action: RowAction, row: OmniboxResult): Promise<void> {
+    if (action === 'copy') {
+      if (row.url) this.deps.actions.copy(row.url);
+      return;
+    }
+    const id = row.meta?.historyId;
+    if (typeof id !== 'string') return;
+    try { await this.deps.actions.deleteHistory(id); } catch { /* the refresh below shows whether it is gone */ }
+    if (this.lastText && !this.suppress) await this.update(this.lastText); // so the removed row disappears (unless Enter already ended the typing)
   }
 
   private routeFor(c: ClassifiedQuery): OmniboxRoute {

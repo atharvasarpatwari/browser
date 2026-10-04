@@ -608,6 +608,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         const id = this.tabManager?.activeTabId;
         if (id) this.closeTab(id);
       },
+      deleteHistoryEntry: (id) => this.removeHistoryEntryExternal(id),
     });
     this.search.install();
     if (this.pageDocumentProvider) this.search.setPageDocumentProvider(this.pageDocumentProvider);

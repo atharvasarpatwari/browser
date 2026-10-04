@@ -535,6 +535,22 @@ input    { font-family:inherit; }
 .nova-security.danger  { color:var(--red-400); }
 .nova-security svg { width:13px; height:13px; }
 
+/* Query-type badge: what Enter will do with the typed text (🌐 address · !bang · @scope · ✨ ask · ⚡ command · 🧮 answer · 🔍 search). It replaces the lock icon while typing. */
+.nova-addressbar-badge {
+  flex-shrink:0; display:inline-flex; align-items:center;
+  height:18px; padding:0 var(--sp-2);
+  font-size:var(--sz-xs); line-height:1; color:var(--tx-secondary);
+  user-select:none; cursor:default;
+}
+.nova-addressbar-badge[hidden] { display:none; }
+.nova-addressbar-badge[data-kind="bang"],
+.nova-addressbar-badge[data-kind="scope"] {
+  padding:0 var(--sp-3); border-radius:var(--r-full);
+  font-family:var(--font-mono); font-weight:600;
+  color:var(--accent); background:var(--accent-dim);
+}
+.nova-addressbar.has-badge .nova-security { display:none; }
+
 .nova-addressbar-input {
   flex:1; background:transparent; border:none; outline:none;
   color:var(--tx-primary); font-family:var(--font-mono);
@@ -1454,6 +1470,21 @@ input    { font-family:inherit; }
 .nova-dropdown-item__hint { flex-shrink:0; font-size:var(--sz-xs); color:var(--tx-tertiary); }
 .nova-dropdown-item--selected .nova-dropdown-item__hint { color:var(--tx-secondary); }
 .nova-dropdown-match { font-weight:700; color:var(--accent); }
+
+/* Hover buttons on a row: copy link, remove from history. Hidden until the row is hovered or highlighted. */
+.nova-dropdown-item__actions {
+  flex-shrink:0; display:none; align-items:center; gap:var(--sp-1);
+}
+.nova-dropdown-item:hover .nova-dropdown-item__actions,
+.nova-dropdown-item--selected .nova-dropdown-item__actions { display:flex; }
+.nova-dropdown-item__action {
+  width:22px; height:22px; border:none; border-radius:var(--r-full);
+  background:transparent; color:var(--tx-tertiary); font-size:12px; line-height:1;
+  display:flex; align-items:center; justify-content:center; cursor:pointer;
+  transition:background var(--dur-fast), color var(--dur-fast);
+}
+.nova-dropdown-item__action:hover { background:var(--glass-300); color:var(--tx-primary); }
+.nova-dropdown-item__action[data-action="delete"]:hover { color:var(--red-400); }
 
 
 /* ============================================================================

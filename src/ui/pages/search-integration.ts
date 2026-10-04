@@ -43,6 +43,8 @@ interface SearchHost {
   switchTab(tabId: string): void;
   reload(): void;
   closeActiveTab(): void;
+  /** Removes one history entry by id (the ✕ on an address-bar history row). */
+  deleteHistoryEntry(id: string): void | Promise<void>;
   /** Suggestion transport; defaults to a credential-less `fetch`. */
   fetchJson?(url: string, signal: AbortSignal): Promise<unknown>;
   /** Warms the connection to a host (optional). */
@@ -211,6 +213,7 @@ class SearchIntegration implements IDisposable {
       research: (query) => this.host.open(buildResearchUrl(query), false),
       copy: (text) => { void navigator.clipboard?.writeText(text).catch(() => { /* clipboard unavailable */ }); },
       fill: (text) => this.host.addressBarView()?.fill(text),
+      deleteHistory: (id) => this.host.deleteHistoryEntry(id),
     };
   }
 

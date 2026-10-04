@@ -10,6 +10,24 @@ interface ActivationOptions {
 
 type ResultHandler = (result: OmniboxResult, how: ActivationOptions) => void;
 
+/** What the typed text was recognised as, shown at the left of the input while typing. */
+interface QueryBadge {
+  readonly kind: 'url' | 'bang' | 'scope' | 'ai' | 'command' | 'calc' | 'search';
+  /** A glyph, or pill text such as `!w` / `@tabs`. */
+  readonly text: string;
+  readonly title: string;
+}
+
+/** The buttons on a dropdown row: copy its link, or remove a history entry. */
+type RowAction = 'copy' | 'delete';
+type RowActionHandler = (action: RowAction, row: OmniboxResult) => void;
+
+/** A history row that carries the id needed to delete it. */
+const isDeletable = (row: OmniboxResult): boolean => row.type === 'history' && typeof row.meta?.historyId === 'string';
+
+/** Rows that stand for a page, so "copy link" makes sense (a search row's URL is just a generated query). */
+const COPYABLE_TYPES: ReadonlySet<OmniboxResult['type']> = new Set(['history', 'bookmark', 'tab', 'url', 'archive']);
+
 /**
  * Called on Enter before the legacy "treat the text as a URL or search" path. Return true when the
  * submission was handled (the legacy path is then skipped). `selected` is the row the user arrowed to.
@@ -47,6 +65,9 @@ interface IAddressBarView extends IDisposable {
   setEventHandler(handler: (event: AddressBarEventUnion) => void): void;
   setResultHandler(handler: ResultHandler): void;
   setSubmitInterceptor(interceptor: SubmitInterceptor): void;
+  setRowActionHandler(handler: RowActionHandler): void;
+  /** Shows (or, with null, hides) the query-type badge in front of the input. */
+  setQueryBadge(badge: QueryBadge | null): void;
   /** Replaces the input text as if typed (focuses it and refreshes suggestions). */
   fill(text: string): void;
   setNavigationCallbacks(callbacks: {
@@ -100,10 +121,12 @@ class AddressBarView implements IAddressBarView {
   private container: HTMLElement | null = null;
   private inputElement: HTMLInputElement | null = null;
   private securityIcon: HTMLElement | null = null;
+  private badgeElement: HTMLElement | null = null;
   private suggestionsContainer: HTMLElement | null = null;
   private refreshButton: HTMLElement | null = null;
   private eventHandler: ((event: AddressBarEventUnion) => void) | null = null;
   private resultHandler: ResultHandler | null = null;
+  private rowActionHandler: RowActionHandler | null = null;
   private submitInterceptor: SubmitInterceptor | null = null;
   /** Rich rows in display (flattened, grouped) order — index-aligned with the rows' DOM. */
   private rows: OmniboxResult[] = [];
@@ -155,6 +178,7 @@ class AddressBarView implements IAddressBarView {
     }
     this.inputElement = null;
     this.securityIcon = null;
+    this.badgeElement = null;
     this.suggestionsContainer = null;
     this.refreshButton = null;
     this.boundKeyHandler = null;
@@ -188,6 +212,20 @@ class AddressBarView implements IAddressBarView {
 
   setSubmitInterceptor(interceptor: SubmitInterceptor): void {
     this.submitInterceptor = interceptor;
+  }
+
+  setRowActionHandler(handler: RowActionHandler): void {
+    this.rowActionHandler = handler;
+  }
+
+  setQueryBadge(badge: QueryBadge | null): void {
+    const el = this.badgeElement;
+    if (!el) return;
+    el.hidden = !badge;
+    el.dataset.kind = badge?.kind ?? '';
+    el.textContent = badge?.text ?? '';
+    el.title = badge?.title ?? '';
+    this.container?.classList.toggle('has-badge', badge !== null); // the badge takes the lock icon's place
   }
 
   fill(text: string): void {
@@ -237,6 +275,11 @@ class AddressBarView implements IAddressBarView {
       this.container.appendChild(this.securityIcon);
     }
 
+    this.badgeElement = document.createElement('span');
+    this.badgeElement.className = 'nova-addressbar-badge';
+    this.badgeElement.hidden = true;
+    this.container.appendChild(this.badgeElement);
+
     this.inputElement = document.createElement('input');
     this.inputElement.type = 'text';
     this.inputElement.className = 'nova-addressbar-input';
@@ -260,6 +303,7 @@ class AddressBarView implements IAddressBarView {
 
     this.inputElement.addEventListener('blur', () => {
       this.container?.classList.remove('focused');
+      this.setQueryBadge(null); // Enter, Escape and choosing a row all end in a blur
       // Delay to allow suggestion click to register.
       setTimeout(() => this.hideSuggestions(), 150);
     });
@@ -382,6 +426,17 @@ class AddressBarView implements IAddressBarView {
             input.blur();
             this.hideSuggestions();
           }
+        }
+        break;
+      }
+
+      case 'Delete': {
+        // Shift+Delete on a highlighted history row removes that entry (the Chrome convention).
+        const selected = this.selectedRow();
+        if (e.shiftKey && selected && isDeletable(selected)) {
+          e.preventDefault();
+          input.value = this.typedValue; // the removed row's preview must not linger in the input
+          this.rowActionHandler?.('delete', selected);
         }
         break;
       }
@@ -585,12 +640,46 @@ class AddressBarView implements IAddressBarView {
       row.appendChild(hint);
     }
 
+    const actions = this.buildRowActions(result);
+    if (actions) row.appendChild(actions);
+
     // mousedown (not click) so the input's blur does not hide the row before it is chosen.
     row.addEventListener('mousedown', (e: MouseEvent) => {
       e.preventDefault();
       this.activateRow(index, { newTab: e.button === 1 || e.ctrlKey || e.metaKey });
     });
     return row;
+  }
+
+  /** The hover buttons of a row (copy link, remove from history); null when the row offers none. */
+  private buildRowActions(result: OmniboxResult): HTMLElement | null {
+    if (!this.rowActionHandler) return null;
+    const offered: Array<[RowAction, string, string]> = [];
+    if (result.url && COPYABLE_TYPES.has(result.type)) offered.push(['copy', '⧉', 'Copy link']);
+    if (isDeletable(result)) offered.push(['delete', '✕', 'Remove from history']);
+    if (offered.length === 0) return null;
+
+    const box = document.createElement('span');
+    box.className = 'nova-dropdown-item__actions';
+    for (const [action, glyph, label] of offered) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'nova-dropdown-item__action';
+      button.dataset.action = action;
+      button.textContent = glyph;
+      button.title = label;
+      button.setAttribute('aria-label', label);
+      button.tabIndex = -1; // keyboard users have Shift+Delete; the input keeps focus
+      // The row itself activates on mousedown, so the button must keep that (and the input's focus) to itself.
+      button.addEventListener('mousedown', (e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); });
+      button.addEventListener('click', (e: MouseEvent) => {
+        e.stopPropagation();
+        this.rowActionHandler?.(action, result);
+        if (action === 'copy') { button.textContent = '✓'; button.title = 'Copied'; }
+      });
+      box.appendChild(button);
+    }
+    return box;
   }
 
   private activateRow(index: number, how: ActivationOptions): void {
@@ -637,4 +726,4 @@ class AddressBarView implements IAddressBarView {
 }
 
 export { AddressBarView, DEFAULT_VIEW_CONFIG, fillTextOf, groupResults };
-export type { IAddressBarView, AddressBarViewConfig, ActivationOptions, ResultHandler, SubmitInterceptor };
+export type { IAddressBarView, AddressBarViewConfig, ActivationOptions, ResultHandler, SubmitInterceptor, QueryBadge, RowAction, RowActionHandler };

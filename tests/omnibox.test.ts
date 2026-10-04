@@ -334,6 +334,14 @@ describe('HistorySuggestionsProvider', () => {
     const results = await provider.getSuggestions('async');
     expect(results).toHaveLength(1);
   });
+
+  it('carries each entry\'s id so the address bar can offer to remove it', async () => {
+    provider.setQueryFn(() => [
+      { id: 'entry-42', url: 'https://example.com', title: 'Example', visitCount: 5, typedCount: 2, lastVisitTime: Date.now() },
+    ]);
+    const results = await provider.getSuggestions('example');
+    expect(results[0].meta).toEqual({ historyId: 'entry-42' });
+  });
 });
 
 describe('computeFrecency', () => {

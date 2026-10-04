@@ -67,6 +67,7 @@ class HistorySuggestionsProvider implements IHistorySuggestionsProvider {
         score,
         source: this.name,
         action: 'navigate',
+        meta: { historyId: entry.id }, // lets the address bar offer "remove from history"
       });
     }
 

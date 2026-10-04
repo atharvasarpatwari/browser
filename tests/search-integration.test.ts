@@ -14,6 +14,7 @@ import { HtmlParser } from '../src/browser/rendering/html-parser';
 import { DomTree } from '../src/browser/rendering/dom-tree';
 import { SettingsService } from '../src/browser/storage/settings-service';
 import { SettingsStore } from '../src/browser/storage/settings-store';
+import type { HistoryEntry } from '../src/browser/omnibox/history-suggestions';
 
 const TABS = [
   { id: 'tab-1', title: 'Docs home', url: 'https://example.com/docs', active: true },
@@ -63,11 +64,13 @@ describe('SearchIntegration (fake host)', () => {
   let flags: Record<string, boolean | string>;
   let engines: HostEngine[];
   let defaultEngine: HostEngine;
+  let historyEntries: HistoryEntry[];
   let host: SearchHost & {
     open: Mock<(url: string, newTab: boolean) => void>;
     switchTab: Mock<(id: string) => void>;
     reload: Mock<() => void>;
     closeActiveTab: Mock<() => void>;
+    deleteHistoryEntry: Mock<(id: string) => Promise<void>>;
   };
   let search: SearchIntegration;
 
@@ -87,6 +90,7 @@ describe('SearchIntegration (fake host)', () => {
     flags = { enableSearchSuggestions: false }; // no network in tests
     engines = [NOVA, GOOGLE, DDG];
     defaultEngine = NOVA;
+    historyEntries = [];
     bar = document.createElement('div');
     area = document.createElement('div');
     document.body.append(bar, area);
@@ -106,7 +110,11 @@ describe('SearchIntegration (fake host)', () => {
         getString: (k, f = '') => (typeof flags[k] === 'string' ? (flags[k] as string) : f),
         setValue: (k, v) => { flags[k] = v as boolean | string; },
       }),
-      history: () => null,
+      history: () => ({
+        query: async ({ query = '' }) => ({
+          entries: historyEntries.filter((e) => `${e.title} ${e.url}`.toLowerCase().includes(query.toLowerCase())),
+        }),
+      }),
       bookmarks: () => null,
       listTabs: () => TABS,
       isIncognito: () => false,
@@ -117,6 +125,7 @@ describe('SearchIntegration (fake host)', () => {
       switchTab: vi.fn<(id: string) => void>(),
       reload: vi.fn<() => void>(),
       closeActiveTab: vi.fn<() => void>(),
+      deleteHistoryEntry: vi.fn(async (id: string) => { historyEntries = historyEntries.filter((e) => e.id !== id); }),
       fetchJson: async () => [],
     };
     search = new SearchIntegration(host);
@@ -221,6 +230,171 @@ describe('SearchIntegration (fake host)', () => {
       row.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
       expect(host.switchTab).toHaveBeenCalledWith('tab-2');
       expect(host.open).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('query-type badge', () => {
+    const badge = () => bar.querySelector<HTMLElement>('.nova-addressbar-badge')!;
+
+    it.each([
+      ['hello world', 'search', '🔍', 'Search'],
+      ['example.com', 'url', '🌐', 'Go to this address'],
+      ['!g cats', 'bang', '!g', 'Search Google'],
+      ['!ddg', 'bang', '!ddg', 'Search DuckDuckGo'],
+      ['@tabs inbox', 'scope', '@tabs', 'Search tabs'],
+      ['@ai how do tides work', 'ai', '✨', 'Ask Nova AI'],
+      ['open settings', 'command', '⚡', 'Browser command'],
+      ['2+2', 'calc', '🧮', 'Instant answer'],
+    ])('shows what "%s" will do: %s %s', async (text, kind, glyph, title) => {
+      await type(text);
+      expect(badge().hidden).toBe(false);
+      expect(badge().dataset.kind).toBe(kind);
+      expect(badge().textContent).toBe(glyph);
+      expect(badge().title).toBe(title);
+      expect(bar.classList.contains('has-badge')).toBe(true); // the lock icon makes room for it
+    });
+
+    it('follows the text as it changes, and shows nothing for empty input or a half-typed @scope', async () => {
+      await type('example.com');
+      expect(badge().dataset.kind).toBe('url');
+      await type('example cats');
+      expect(badge().dataset.kind).toBe('search');
+      await type('@ta');
+      expect(badge().hidden).toBe(true);
+      expect(bar.classList.contains('has-badge')).toBe(false);
+      await type('!g cats');
+      expect(badge().hidden).toBe(false);
+      await type('');
+      expect(badge().hidden).toBe(true);
+    });
+
+    it('is gone once the text is submitted, and when Escape or a blur ends the typing', async () => {
+      await type('!g cats');
+      key('Enter');
+      await settle();
+      expect(badge().hidden).toBe(true);
+      expect(bar.classList.contains('has-badge')).toBe(false);
+
+      input.focus();
+      await type('hello');
+      expect(badge().hidden).toBe(false);
+      key('Escape');
+      expect(badge().hidden).toBe(true);
+
+      input.focus();
+      await type('hello');
+      input.blur();
+      expect(badge().hidden).toBe(true);
+    });
+
+    it('picks up an engine added later, so its !bang is badged with the engine name', async () => {
+      engines = [...engines, { name: 'Example', url: 'https://example.com/s?q=%s', keyword: 'ex' }];
+      search.onEnginesChanged();
+      await type('!ex cats');
+      expect(badge().textContent).toBe('!ex');
+      expect(badge().title).toBe('Search Example');
+    });
+  });
+
+  describe('dropdown row actions', () => {
+    const GITHUB: HistoryEntry = { id: 'h1', url: 'https://github.com/', title: 'GitHub', visitCount: 30, typedCount: 6, lastVisitTime: Date.now() };
+    const GITLAB: HistoryEntry = { id: 'h2', url: 'https://gitlab.com/', title: 'GitLab', visitCount: 12, typedCount: 2, lastVisitTime: Date.now() };
+    const rowOf = (type: string, text?: string) => [...dropdown.querySelectorAll<HTMLElement>(`.nova-dropdown-item[data-type="${type}"]`)]
+      .find((r) => text === undefined || r.querySelector('.nova-dropdown-item__text')!.textContent === text)!;
+    const button = (row: HTMLElement, action: string) => row.querySelector<HTMLButtonElement>(`.nova-dropdown-item__action[data-action="${action}"]`);
+    const rowTexts = () => [...dropdown.querySelectorAll('.nova-dropdown-item')].map((r) => r.querySelector('.nova-dropdown-item__text')!.textContent);
+    let writeText: Mock<(text: string) => Promise<void>>;
+
+    beforeEach(() => {
+      historyEntries = [GITHUB, GITLAB];
+      writeText = vi.fn(async () => undefined);
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    });
+    afterEach(() => { Reflect.deleteProperty(navigator, 'clipboard'); });
+
+    it('offers copy on page rows and remove only on history rows', async () => {
+      await type('git');
+      const gh = rowOf('history', 'GitHub');
+      expect(button(gh, 'copy')).not.toBeNull();
+      expect(button(gh, 'delete')).not.toBeNull();
+      const searchRow = rowOf('search');
+      expect(button(searchRow, 'copy')).toBeNull(); // its URL is only a generated query
+      expect(button(searchRow, 'delete')).toBeNull();
+    });
+
+    it('copies the row\'s link without activating the row or taking focus from the input', async () => {
+      await type('git');
+      button(rowOf('history', 'GitHub'), 'copy')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(writeText).toHaveBeenCalledWith('https://github.com/');
+      expect(host.open).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(input);
+      expect(dropdown.style.display).toBe('block');
+    });
+
+    it('a press on the button never reaches the row (rows activate on mousedown)', async () => {
+      await type('git');
+      const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+      button(rowOf('history', 'GitHub'), 'delete')!.dispatchEvent(press);
+      expect(press.defaultPrevented).toBe(true); // keeps the input from blurring
+      expect(host.open).not.toHaveBeenCalled();
+      expect(host.deleteHistoryEntry).not.toHaveBeenCalled(); // the click does the work, not the press
+    });
+
+    it('removes the history entry and the row disappears from the open dropdown', async () => {
+      await type('git');
+      expect(rowTexts()).toContain('GitHub');
+      button(rowOf('history', 'GitHub'), 'delete')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await settle();
+      expect(host.deleteHistoryEntry).toHaveBeenCalledWith('h1');
+      expect(rowTexts()).not.toContain('GitHub');
+      expect(rowTexts()).toContain('GitLab');
+      expect(host.open).not.toHaveBeenCalled();
+    });
+
+    const highlight = (text: string) => { // arrows down from wherever the highlight is (none → -1)
+      const current = [...dropdown.querySelectorAll('.nova-dropdown-item')].findIndex((r) => r.classList.contains('nova-dropdown-item--selected'));
+      for (let i = current; i < rowTexts().indexOf(text); i++) key('ArrowDown');
+    };
+    const pressDelete = (init: KeyboardEventInit) => {
+      const event = new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true, ...init });
+      input.dispatchEvent(event);
+      return event;
+    };
+
+    it('Shift+Delete removes the highlighted history row', async () => {
+      await type('git');
+      highlight('GitHub');
+      expect(input.value).toBe('https://github.com/'); // arrowing onto a row previews it in the input
+      const event = pressDelete({ shiftKey: true });
+      await settle();
+      expect(event.defaultPrevented).toBe(true);
+      expect(host.deleteHistoryEntry).toHaveBeenCalledWith('h1');
+      expect(rowTexts()).not.toContain('GitHub');
+      expect(input.value).toBe('git'); // …and once that row is gone the typed text is back
+    });
+
+    it('plain Delete still edits the text, and Shift+Delete on a row that is not history does nothing', async () => {
+      await type('git');
+      highlight('GitHub');
+      expect(pressDelete({}).defaultPrevented).toBe(false);
+      highlight('git'); // the typed-search row
+      expect(pressDelete({ shiftKey: true }).defaultPrevented).toBe(false);
+      await settle();
+      expect(host.deleteHistoryEntry).not.toHaveBeenCalled();
+    });
+
+    it('does not bring the dropdown back when Enter was pressed while the removal was in flight', async () => {
+      let finish!: () => void;
+      host.deleteHistoryEntry.mockImplementationOnce(() => new Promise<void>((resolve) => {
+        finish = () => { historyEntries = [GITLAB]; resolve(); };
+      }));
+      await type('git');
+      button(rowOf('history', 'GitHub'), 'delete')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      key('Enter');
+      await settle();
+      finish();
+      await settle();
+      expect(dropdown.style.display).toBe('none');
     });
   });
 

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { OmniboxController, pickDefault, arrangeResults } from '../src/ui/components/omnibox-controller';
 import { tierScore, tiered } from '../src/browser/omnibox/score-tiers';
 import type { OmniboxControllerDeps } from '../src/ui/components/omnibox-controller';
-import type { ActivationOptions } from '../src/ui/components/address-bar/address-bar.view';
+import type { ActivationOptions, QueryBadge, RowActionHandler } from '../src/ui/components/address-bar/address-bar.view';
 import { Omnibox } from '../src/browser/omnibox/omnibox';
 import type { OmniboxProvider, OmniboxResult } from '../src/browser/omnibox/omnibox';
 import { BangRegistry, BangSuggestionsProvider } from '../src/browser/omnibox/bangs';
@@ -127,9 +127,12 @@ describe('OmniboxController', () => {
     };
     let interceptor!: (value: string, selected: OmniboxResult | null, how: ActivationOptions) => boolean;
     let onResult!: (r: OmniboxResult, how: ActivationOptions) => void;
+    let onRowAction!: RowActionHandler;
     const view = {
       setSubmitInterceptor: (i: typeof interceptor) => { interceptor = i; },
       setResultHandler: (h: typeof onResult) => { onResult = h; },
+      setRowActionHandler: (h: RowActionHandler) => { onRowAction = h; },
+      setQueryBadge: vi.fn<(badge: QueryBadge | null) => void>(),
     };
 
     const calls: string[] = [];
@@ -149,6 +152,7 @@ describe('OmniboxController', () => {
 
     const actions = {
       open: vi.fn(), search: vi.fn(), switchTab: vi.fn(), runAction: vi.fn(), research: vi.fn(), copy: vi.fn(), fill: vi.fn(),
+      deleteHistory: vi.fn<(id: string) => void | Promise<void>>(),
     };
     const speculative = { consider: vi.fn() };
     const controller = new OmniboxController({
@@ -174,7 +178,14 @@ describe('OmniboxController', () => {
       const shown = addressBar.setResults.mock.calls;
       return shown.length > 0 ? shown[shown.length - 1]![0] : [];
     };
-    return { controller, omnibox, addressBar, actions, speculative, calls, type, flush, lastShown, interceptor: () => interceptor, onResult: () => onResult, handlers };
+    const badge = (): QueryBadge | null | undefined => {
+      const calls = view.setQueryBadge.mock.calls;
+      return calls[calls.length - 1]?.[0];
+    };
+    return {
+      controller, omnibox, addressBar, actions, speculative, calls, type, flush, lastShown, badge, view,
+      interceptor: () => interceptor, onResult: () => onResult, onRowAction: () => onRowAction, handlers,
+    };
   }
 
   describe('routing keystrokes', () => {
@@ -346,6 +357,119 @@ describe('OmniboxController', () => {
       const t = await setup();
       t.onResult()(tab('T', 'https://t.test/', 'tab-5'), no);
       expect(t.actions.switchTab).toHaveBeenCalledWith('tab-5');
+    });
+  });
+
+  describe('query-type badge', () => {
+    it.each([
+      ['hello world', { kind: 'search', text: '🔍' }],
+      ['example.com', { kind: 'url', text: '🌐' }],
+      ['!g cats', { kind: 'bang', text: '!g', title: 'Search Google' }],
+      ['!yt', { kind: 'bang', text: '!yt', title: 'Search YouTube' }],
+      ['@tabs foo', { kind: 'scope', text: '@tabs' }],
+      ['@history', { kind: 'scope', text: '@history' }],
+      ['@ai how do tides work', { kind: 'ai', text: '✨' }],
+      ['@research tides', { kind: 'ai', text: '✨' }],
+      ['open settings', { kind: 'command', text: '⚡' }],
+      ['2+2', { kind: 'calc', text: '🧮' }],
+    ])('badges "%s" as %j', async (text, expected) => {
+      const t = await setup();
+      await t.type(text);
+      expect(t.badge()).toMatchObject(expected);
+    });
+
+    it('has no badge for empty input or while an @scope is still being typed', async () => {
+      const t = await setup();
+      await t.type('@ta');
+      expect(t.badge()).toBeNull();
+      await t.type('@');
+      expect(t.badge()).toBeNull();
+      await t.type('hello');
+      expect(t.badge()).not.toBeNull();
+      await t.type('   ');
+      expect(t.badge()).toBeNull();
+    });
+
+    it('still badges a bang whose keyword is unknown to the registry as an ordinary search', async () => {
+      const t = await setup();
+      await t.type('!nosuchbang cats');
+      expect(t.badge()).toMatchObject({ kind: 'search' });
+    });
+
+    it('is cleared when the text is submitted or a row is chosen', async () => {
+      const t = await setup();
+      await t.type('hello');
+      expect(t.badge()).not.toBeNull();
+      t.interceptor()('hello', null, no);
+      expect(t.badge()).toBeNull();
+
+      await t.type('hello');
+      expect(t.badge()).not.toBeNull();
+      t.onResult()(tab('T', 'https://t.test/', 'tab-5'), no);
+      expect(t.badge()).toBeNull();
+    });
+
+    it('does not fail when the view has no badge (older view ports)', async () => {
+      const t = await setup();
+      delete (t.view as { setQueryBadge?: unknown }).setQueryBadge;
+      await t.type('hello');
+      expect(t.lastShown().length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('row actions (copy link, remove from history)', () => {
+    const gh = row({ type: 'history', text: 'GitHub', url: 'https://github.com/', meta: { historyId: 'h1' } });
+
+    it('copies the row\'s link', async () => {
+      const t = await setup();
+      t.onRowAction()('copy', gh);
+      expect(t.actions.copy).toHaveBeenCalledWith('https://github.com/');
+      t.onRowAction()('copy', row({ type: 'history', text: 'no url' }));
+      expect(t.actions.copy).toHaveBeenCalledTimes(1);
+    });
+
+    it('removes the entry, and only then runs the query again so the row is gone', async () => {
+      const t = await setup();
+      let finish!: () => void;
+      t.actions.deleteHistory.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+      await t.type('git');
+      t.calls.length = 0;
+
+      t.onRowAction()('delete', gh);
+      await t.flush();
+      expect(t.actions.deleteHistory).toHaveBeenCalledWith('h1');
+      expect(t.calls).toEqual([]); // not before the removal has finished
+      finish();
+      await t.flush();
+      expect(t.calls).toContain('history-suggestions:git');
+    });
+
+    it('refreshes even if the removal throws, and ignores a row that has no history id', async () => {
+      const t = await setup();
+      t.actions.deleteHistory.mockRejectedValueOnce(new Error('storage offline'));
+      await t.type('git');
+      t.calls.length = 0;
+      t.onRowAction()('delete', gh);
+      await t.flush();
+      expect(t.calls).toContain('history-suggestions:git');
+
+      t.actions.deleteHistory.mockClear();
+      t.onRowAction()('delete', row({ type: 'history', text: 'GitLab', url: 'https://gitlab.com/' }));
+      await t.flush();
+      expect(t.actions.deleteHistory).not.toHaveBeenCalled();
+    });
+
+    it('does not re-open the dropdown when the text was submitted while the removal was running', async () => {
+      const t = await setup();
+      let finish!: () => void;
+      t.actions.deleteHistory.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+      await t.type('git');
+      t.onRowAction()('delete', gh);
+      t.interceptor()('git', null, no);
+      const shown = t.addressBar.setResults.mock.calls.length;
+      finish();
+      await t.flush();
+      expect(t.addressBar.setResults.mock.calls.length).toBe(shown);
     });
   });
 
