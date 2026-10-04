@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
+import * as dns from 'node:dns';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  launchNova, startTestSite, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage, rightClickPage,
+  launchNova, startTestSite, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage, rightClickPage, readResolverEvents,
   LINK_AT, IMAGE_AT, EMPTY_AT,
 } from './helpers/electron-app';
 import type { NovaApp, TestSite } from './helpers/electron-app';
@@ -11,8 +12,8 @@ import type { NovaApp, TestSite } from './helpers/electron-app';
 /**
  * The search subsystem in the real shell (plan §6.4): the omnibox, `nova://search`, find-in-page, engine discovery,
  * row actions and the archive, driven through the packaged-style Electron app against a local web site.
- * Remote suggestions are never reached (nothing here types a query the provider would send to the network and
- * waits for it), and every page loaded comes from 127.0.0.1.
+ * `launchNova` switches online suggestions off, so nothing typed here leaves the machine, and every page loaded comes
+ * from 127.0.0.1 (the one exception is the DNS warm-up test, which looks up and fetches two public example hosts).
  */
 test.describe.configure({ mode: 'serial' });
 
@@ -169,6 +170,59 @@ test('the personal archive indexes visited pages and still finds them after a re
   await submitInOmnibox(page, 'nova://search?q=luminous');
   await expect(page.locator('.content-area h1')).toHaveText('Nova Search', { timeout: 30_000 });
   await expect(page.locator('.content-area article').first()).toContainText('Quasar notes', { timeout: 30_000 });
+});
+
+test('typing a very familiar site looks its address up ahead of time; the later load finds it in the resolver cache', async () => {
+  test.setTimeout(180_000);
+  const warmed = 'www.example.net';
+  const control = 'www.iana.org'; // never typed: its lookup shows what a cold load looks like in the log
+  const resolvable = await dns.promises.lookup(warmed).then(() => true, () => false);
+  nova = await launchNova(profile);
+  const { app, page } = nova;
+
+  // One site the user knows well (history is read at start-up, so reload), then record what Chromium's resolver does.
+  await page.evaluate((host) => {
+    const now = Date.now();
+    localStorage.setItem('nova-history', JSON.stringify([
+      { id: 'hist-1-1', url: `https://${host}/`, title: 'Example Net', visitTime: now, visitCount: 90, typedCount: 40, lastVisitTime: now },
+    ]));
+  }, warmed);
+  await page.reload();
+  await expect(omnibox(page)).toBeVisible({ timeout: 45_000 });
+  const netLog = path.join(profile, 'net-log.json');
+  await app.evaluate(({ netLog: log }, file) => log.startLogging(file), netLog);
+
+  await typeInOmnibox(page, 'examp'); // no Enter: only the hint, nothing is opened
+  await page.waitForTimeout(3_000);
+
+  // Now load both sites the way the engine loads pages (fetch from the app document), noting when that starts.
+  const fetchStarts = await page.evaluate(() => performance.timeOrigin + performance.now());
+  for (const host of [warmed, control]) {
+    await page.evaluate(async (h) => {
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), 8_000);
+      await fetch(`https://${h}/`, { mode: 'no-cors', signal: abort.signal }).catch(() => undefined);
+      clearTimeout(timer);
+    }, host);
+  }
+  await page.waitForTimeout(500);
+  await app.evaluate(({ netLog: log }) => log.stopLogging());
+
+  const events = readResolverEvents(netLog);
+  const forHost = (host: string) => events.filter((e) => e.host === `https://${host}`);
+  // The hint is what asked: a speculative request for exactly the `https://host` key the page load uses (and before the load).
+  const speculative = forHost(warmed).filter((e) => e.speculative);
+  expect(speculative.length).toBeGreaterThan(0);
+  expect(speculative[0]!.at).toBeLessThan(fetchStarts);
+  expect(events.filter((e) => e.speculative && e.host !== `https://${warmed}`)).toEqual([]); // nothing else was warmed
+
+  if (!resolvable) {
+    test.info().annotations.push({ type: 'dns', description: `${warmed} does not resolve on this machine; the load-time lookups were not asserted` });
+    return;
+  }
+  const lookupsDuringLoad = (host: string) => forHost(host).filter((e) => e.kind === 'job' && e.at >= fetchStarts);
+  expect(lookupsDuringLoad(control).length).toBeGreaterThan(0); // a cold host is looked up while loading — the log can see lookups
+  expect(lookupsDuringLoad(warmed)).toEqual([]); // a warmed one is not: it was already in the resolver's cache
 });
 
 test('right-clicking a rendered page offers its links, its images and the page itself', async () => {

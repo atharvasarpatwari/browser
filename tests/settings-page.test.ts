@@ -30,6 +30,16 @@ describe('SettingsPage (unit)', () => {
     expect(page.getSetting('enableCsp')).toBe(true);
   });
 
+  it('offers the speculative-loading switch under Privacy & Security, on by default (it makes a DNS query before the user commits)', () => {
+    const page = new SettingsPage();
+    const privacy = page.sections.find((s) => s.id === 'privacy')!;
+    const entry = privacy.settings.find((s) => s.key === 'speculativeLoading')!;
+    expect(entry).toMatchObject({ label: 'Prepare likely destinations', type: 'boolean', defaultValue: true });
+    expect(entry.description).toMatch(/DNS resolver/);
+    expect(entry.description).toMatch(/private browsing/);
+    expect(page.getSetting('speculativeLoading')).toBe(true);
+  });
+
   it('setSetting should update a value and emit event', () => {
     const page = new SettingsPage();
     const handler = vi.fn();

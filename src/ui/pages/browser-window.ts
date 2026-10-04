@@ -44,6 +44,7 @@ import { ContentRenderer } from '../components/content-renderer/content-renderer
 import { NavigationFetcher } from '../components/navigation-fetcher';
 import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
 import { PageContextMenuController } from '../components/context-menu/page-context-menu';
+import { dnsPrefetchHint } from '../../browser/search/speculative-loader';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
 import type { DomDocument, DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
@@ -639,6 +640,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.searchEngineManager.addEngine({ name: name.trim(), url: url.trim(), keyword: key }); // persists, refreshes Settings and the !bangs
         return true;
       },
+      warmHost: (host) => dnsPrefetchHint(host),
     });
     this.search.install();
     if (this.pageDocumentProvider) this.search.setPageDocumentProvider(this.pageDocumentProvider);

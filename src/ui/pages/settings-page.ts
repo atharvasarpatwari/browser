@@ -66,6 +66,7 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'enableSafeBrowsing', label: 'Safe Browsing', description: 'Warn about dangerous sites', type: 'boolean', defaultValue: true },
       { key: 'doNotTrack', label: 'Send Do Not Track', description: 'Request sites not to track you', type: 'boolean', defaultValue: false },
       { key: 'stripTrackingParams', label: 'Remove tracking parameters', description: 'Strip utm_*, fbclid and similar from the links you open', type: 'boolean', defaultValue: true },
+      { key: 'speculativeLoading', label: 'Prepare likely destinations', description: 'While you type, look up the address of the site you are very likely to open so it loads faster (this tells your DNS resolver the site name before you press Enter; never in private browsing)', type: 'boolean', defaultValue: true },
     ],
   },
   {

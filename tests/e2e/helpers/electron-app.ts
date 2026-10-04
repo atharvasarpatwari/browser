@@ -1,5 +1,6 @@
 import { _electron as electron, expect } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
+import * as fs from 'node:fs';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -78,7 +79,11 @@ interface NovaApp {
   readonly page: Page;
 }
 
-/** Starts Nova with its profile in `userDataDir` (reuse the directory to simulate a restart). */
+/**
+ * Starts Nova with its profile in `userDataDir` (reuse the directory to simulate a restart). The profile is made
+ * hermetic: online search suggestions are switched off, so typing in the address bar never queries the network —
+ * their late arrival re-rendered the dropdown in the middle of a test (hover state lost) and sent the typed text out.
+ */
 async function launchNova(userDataDir: string): Promise<NovaApp> {
   const app = await electron.launch({
     args: ['.', `--user-data-dir=${userDataDir}`],
@@ -88,6 +93,17 @@ async function launchNova(userDataDir: string): Promise<NovaApp> {
   const page = await app.firstWindow();
   await expect(page.locator('#browser-app')).toBeVisible({ timeout: 45_000 });
   await expect(page.locator('.nova-addressbar-input')).toBeVisible({ timeout: 45_000 });
+  const changed = await page.evaluate(() => { // the settings service reads localStorage once, at start-up: reload to apply
+    const settings = JSON.parse(localStorage.getItem('nova-settings') ?? '{}') as Record<string, unknown>;
+    if (settings.enableSearchSuggestions === false) return false;
+    settings.enableSearchSuggestions = false;
+    localStorage.setItem('nova-settings', JSON.stringify(settings));
+    return true;
+  });
+  if (changed) {
+    await page.reload();
+    await expect(page.locator('.nova-addressbar-input')).toBeVisible({ timeout: 45_000 });
+  }
   return { app, page };
 }
 
@@ -142,6 +158,36 @@ async function rightClickPage(page: Page, point: { x: number; y: number }): Prom
   await page.mouse.click(at.x, at.y, { button: 'right' });
 }
 
+/** One thing Chromium's host resolver did, from a net log: a request for `host`, or the job that really asks the DNS server. */
+interface ResolverEvent {
+  readonly at: number; // epoch milliseconds, comparable with `Date.now()` / `performance.timeOrigin + performance.now()`
+  readonly kind: 'request' | 'job';
+  readonly host: string; // as the resolver keys it: `https://www.example.net`
+  readonly speculative: boolean;
+}
+
+/**
+ * The resolver activity in a net log written by `netLog.startLogging(file)` (call `netLog.stopLogging()` first). A page
+ * load that finds its host already in the resolver's cache makes a request but no job; a cold one makes both.
+ */
+function readResolverEvents(logFile: string): ResolverEvent[] {
+  const log = JSON.parse(fs.readFileSync(logFile, 'utf8')) as {
+    constants: { logEventTypes: Record<string, number>; timeTickOffset: string | number };
+    events: Array<{ phase: number; time: string; type: number; params?: { host?: string; is_speculative?: boolean } }>;
+  };
+  const request = log.constants.logEventTypes.HOST_RESOLVER_MANAGER_REQUEST;
+  const job = log.constants.logEventTypes.HOST_RESOLVER_MANAGER_JOB;
+  const BEGIN = 1;
+  return log.events
+    .filter((e) => e.phase === BEGIN && (e.type === request || e.type === job))
+    .map((e) => ({
+      at: Number(log.constants.timeTickOffset) + Number(e.time),
+      kind: e.type === request ? 'request' as const : 'job' as const,
+      host: e.params?.host ?? '',
+      speculative: e.params?.is_speculative === true,
+    }));
+}
+
 /** Opens `url` through the address bar and waits until the engine has painted it. */
 async function openPage(page: Page, url: string): Promise<void> {
   await submitInOmnibox(page, url);
@@ -150,7 +196,7 @@ async function openPage(page: Page, url: string): Promise<void> {
 }
 
 export {
-  startTestSite, launchNova, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage,
+  startTestSite, launchNova, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage, readResolverEvents,
   LINK_AT, IMAGE_AT, EMPTY_AT, pagePointToClient, rightClickPage,
 };
-export type { TestSite, NovaApp };
+export type { TestSite, NovaApp, ResolverEvent };

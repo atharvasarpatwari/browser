@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { SpeculativeLoader, isWarmableHost } from '../src/browser/search/speculative-loader';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { SpeculativeLoader, isWarmableHost, dnsPrefetchHint } from '../src/browser/search/speculative-loader';
 import type { SpeculativeDeps, WarmCandidate } from '../src/browser/search/speculative-loader';
 
 const top = (url: string, score = 95, action = 'navigate'): WarmCandidate => ({ url, score, action });
@@ -114,5 +114,37 @@ describe('isWarmableHost', () => {
   });
   it.each(['localhost', 'intranet', '1.2.3.4', '::1', 'a.local', 'a.internal', 'x.', '', 'host.corp', 'a.home'])('rejects %j', (h) => {
     expect(isWarmableHost(h)).toBe(false);
+  });
+});
+
+describe('dnsPrefetchHint', () => {
+  const hints = () => [...document.head.querySelectorAll('link[rel="dns-prefetch"]')];
+  afterEach(() => { vi.useRealTimers(); hints().forEach((l) => l.remove()); });
+
+  it('adds a dns-prefetch hint to the document head for the host', () => {
+    dnsPrefetchHint('www.youtube.com');
+    expect(hints().map((l) => l.getAttribute('href'))).toEqual(['https://www.youtube.com']);
+  });
+
+  it('is an absolute https URL, never protocol-relative — the app page is file:, which would key the lookup under the wrong scheme', () => {
+    dnsPrefetchHint('example.com');
+    expect(hints()[0]!.getAttribute('href')).toMatch(/^https:\/\/example\.com$/);
+    expect(hints()[0]!.getAttribute('href')).not.toMatch(/^\/\//);
+  });
+
+  it('removes the hint once the browser has had time to act on it', () => {
+    vi.useFakeTimers();
+    dnsPrefetchHint('example.com');
+    vi.advanceTimersByTime(9_000);
+    expect(hints()).toHaveLength(1);
+    vi.advanceTimersByTime(2_000);
+    expect(hints()).toHaveLength(0);
+  });
+
+  it('hints in the document it is given', () => {
+    const other = document.implementation.createHTMLDocument('other');
+    dnsPrefetchHint('example.com', other);
+    expect(other.head.querySelectorAll('link[rel="dns-prefetch"]')).toHaveLength(1);
+    expect(hints()).toHaveLength(0);
   });
 });

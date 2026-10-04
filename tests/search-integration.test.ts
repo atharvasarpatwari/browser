@@ -1357,6 +1357,64 @@ describe('BrowserWindowPage — search wiring', () => {
     });
   });
 
+  describe('DNS warm-up of the site you are about to open', () => {
+    const GITHUB = { id: 'h1', url: 'https://github.com/', title: 'GitHub', visitCount: 90, typedCount: 40, lastVisitTime: Date.now() };
+    const hintLinks = () => [...document.head.querySelectorAll('link[rel="dns-prefetch"]')];
+    const remount = async () => {
+      await page.unmount();
+      page = new BrowserWindowPage();
+      page.setSettingsService(settingsService());
+      page.setHistoryService({
+        query: async () => ({ entries: [GITHUB], total: 1 }), on: () => undefined, off: () => undefined,
+      } as unknown as Parameters<BrowserWindowPage['setHistoryService']>[0]);
+      await page.mount(container);
+    };
+    const type = async (text: string) => {
+      const box = container.querySelector<HTMLInputElement>('.nova-addressbar-input')!;
+      box.focus();
+      box.value = text;
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await settle();
+    };
+    // Every window that types a confident match now hints its host into the shared document, so start each test clean.
+    beforeEach(() => { hintLinks().forEach((l) => l.remove()); });
+    afterEach(() => { hintLinks().forEach((l) => l.remove()); });
+
+    it('hints the host of a confident top result while you type — as the absolute https URL the page loader will look up', async () => {
+      await remount();
+      await type('git');
+      expect(hintLinks().map((l) => l.getAttribute('href'))).toEqual(['https://github.com']);
+    });
+
+    it('hints once, however many more keys are pressed on the way to the same site', async () => {
+      await remount();
+      await type('git');
+      await type('gith');
+      await type('githu');
+      expect(hintLinks()).toHaveLength(1);
+    });
+
+    it('does nothing when the user turned it off', async () => {
+      flags.speculativeLoading = false;
+      await remount();
+      await type('git');
+      expect(hintLinks()).toEqual([]);
+    });
+
+    it('does nothing in a private window', async () => {
+      await remount();
+      page.setIncognitoExternal(true);
+      await type('git');
+      expect(hintLinks()).toEqual([]);
+    });
+
+    it('does not warm anything for text that is not a confident match (a plain query)', async () => {
+      await remount();
+      await type('how do tides work');
+      expect(hintLinks()).toEqual([]);
+    });
+  });
+
   describe('page right-click menu', () => {
     const anchor = (href: string, text: string) => ({
       domId: 'a1', nodeType: 'element', tagName: 'A', attributes: new Map([['href', href]]), parent: null,
