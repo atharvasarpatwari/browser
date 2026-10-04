@@ -116,6 +116,17 @@ describe('parseOpenSearchDescription', () => {
     expect(kw('https://www.ab.example/?q={searchTerms}')).toBe('ab');
   });
 
+  it('derives the keyword of an engine on an IP address from its name (every self-hosted engine on a home network would be "192")', () => {
+    const kw = (name: string, url: string) => parseOpenSearchDescription(
+      desc(`<ShortName>${name}</ShortName><Url type="text/html" template="${url}"/>`), 'http://192.168.1.5/os.xml',
+    )!.keyword;
+    expect(kw('Home Search', 'http://192.168.1.5:8080/search?q={searchTerms}')).toBe('home');
+    expect(kw('SearXNG', 'http://127.0.0.1/?q={searchTerms}')).toBe('sear');
+    expect(kw('Local', 'http://[::1]:8080/?q={searchTerms}')).toBe('loca');
+    expect(kw('搜索', 'http://10.0.0.2/?q={searchTerms}')).toBe('se'); // nothing usable in the name either: the generic fallback
+    expect(kw('Brave', 'http://search.brave.com/?q={searchTerms}')).toBe('brav'); // a named host still wins over the name
+  });
+
   describe('rejects descriptors that are unusable or unsafe', () => {
     const tpl = (template: string, base = DESCRIPTOR_URL) =>
       parseOpenSearchDescription(desc(`<ShortName>T</ShortName><Url type="text/html" template="${template}"/>`), base);

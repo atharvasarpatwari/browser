@@ -854,6 +854,30 @@ describe('SearchIntegration (fake host)', () => {
     expect(area.querySelector('.nova-find-bar')).toBeNull();
   });
 
+  it('saves the archive as soon as the page is hidden or unloaded (its own save is debounced by 5 s, and closing the window never reaches dispose)', () => {
+    const flush = vi.spyOn(search.search!.archive, 'flush');
+    const visibility = (state: DocumentVisibilityState) => {
+      Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    try {
+      window.dispatchEvent(new Event('pagehide'));
+      expect(flush).toHaveBeenCalledTimes(1);
+      visibility('hidden');
+      expect(flush).toHaveBeenCalledTimes(2);
+      visibility('visible'); // coming back saves nothing
+      expect(flush).toHaveBeenCalledTimes(2);
+
+      search.dispose(); // dispose saves once itself, then stops listening
+      const afterDispose = flush.mock.calls.length;
+      window.dispatchEvent(new Event('pagehide'));
+      visibility('hidden');
+      expect(flush).toHaveBeenCalledTimes(afterDispose);
+    } finally {
+      Reflect.deleteProperty(document, 'visibilityState');
+    }
+  });
+
   it('does nothing without an address bar to attach to', () => {
     const lonely = new SearchIntegration({ ...host, addressBarView: () => null });
     lonely.install();

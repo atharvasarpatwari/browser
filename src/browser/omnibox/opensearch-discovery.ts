@@ -77,10 +77,15 @@ function attrOf(tagSource: string, name: string): string {
 
 const GENERIC_LABELS: ReadonlySet<string> = new Set(['www', 'search', 'find', 's', 'm', 'api', 'en', 'web']);
 
-/** First four letters of the host's most distinctive label: `search.brave.com` → `brav`. */
+const IP_LITERAL = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[.*\])$/;
+
+/**
+ * First four letters of the host's most distinctive label: `search.brave.com` → `brav`. An address has no such
+ * label (`192` would be the keyword of every self-hosted engine on a home network), so it falls back to the name.
+ */
 function deriveKeyword(name: string, host: string): string {
   const labels = host.toLowerCase().split('.');
-  const label = labels.find((l) => !GENERIC_LABELS.has(l)) ?? labels[0] ?? '';
+  const label = IP_LITERAL.test(host) ? '' : labels.find((l) => !GENERIC_LABELS.has(l)) ?? labels[0] ?? '';
   const base = (label || name).toLowerCase().replace(/[^a-z0-9]/g, '');
   return base.slice(0, 4) || 'se';
 }

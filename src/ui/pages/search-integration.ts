@@ -106,6 +106,7 @@ class SearchIntegration implements IDisposable {
   private pageDocument: () => DomDocument | null = () => null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
+  private flushOnHide: ((e: Event) => void) | null = null;
   /** Hosts whose search engine was already offered this session (each site is offered once). */
   private readonly offered = new Set<string>();
   /** Bumped whenever the offer chip is retired, so a slow download can no longer touch a newer chip. */
@@ -142,6 +143,15 @@ class SearchIntegration implements IDisposable {
 
     this.keyHandler = (e) => this.onKeyDown(e);
     document.addEventListener('keydown', this.keyHandler);
+
+    // The archive saves itself 5 s after its last change, and closing the window never reaches dispose():
+    // a page indexed in the last few seconds would be lost. Save as soon as the page is hidden or unloaded.
+    this.flushOnHide = (e) => {
+      if (e.type === 'visibilitychange' && document.visibilityState !== 'hidden') return;
+      void this.subsystem?.archive.flush();
+    };
+    window.addEventListener('pagehide', this.flushOnHide);
+    document.addEventListener('visibilitychange', this.flushOnHide);
   }
 
   /** The user added, removed or replaced search engines: their keywords are `!bangs` too. */
@@ -232,6 +242,11 @@ class SearchIntegration implements IDisposable {
   dispose(): void {
     if (this.keyHandler) document.removeEventListener('keydown', this.keyHandler);
     this.keyHandler = null;
+    if (this.flushOnHide) {
+      window.removeEventListener('pagehide', this.flushOnHide);
+      document.removeEventListener('visibilitychange', this.flushOnHide);
+    }
+    this.flushOnHide = null;
     this.offerAbort?.abort();
     this.retireOffer();
     this.teardownFind();
