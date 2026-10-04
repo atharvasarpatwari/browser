@@ -358,6 +358,78 @@ describe('AddressBarView — rich dropdown', () => {
     });
   });
 
+  describe('offer chip', () => {
+    const chip = () => container.querySelector<HTMLButtonElement>('.nova-addressbar-offer');
+    const actions = () => container.querySelector('.nova-addressbar-actions')!;
+
+    it('is added in front of the reload button, with its label, tooltip and state', () => {
+      const onAccept = vi.fn();
+      view.setOffer({ label: '＋ Add Wikipedia', title: 'Add Wikipedia as a search engine', onAccept });
+      expect(chip()!.textContent).toBe('＋ Add Wikipedia');
+      expect(chip()!.title).toBe('Add Wikipedia as a search engine');
+      expect(chip()!.dataset.state).toBe('idle');
+      expect(chip()!.disabled).toBe(false);
+      expect(actions().firstElementChild).toBe(chip());
+      expect(actions().querySelector('.nova-addrbar-btn')).not.toBeNull(); // the reload button is still there
+    });
+
+    it('calls the handler when clicked', () => {
+      const onAccept = vi.fn();
+      view.setOffer({ label: 'x', title: 'x', onAccept });
+      chip()!.click();
+      expect(onAccept).toHaveBeenCalledTimes(1);
+    });
+
+    it('is updated in place: one chip, the newest label, state and handler', () => {
+      const first = vi.fn();
+      const second = vi.fn();
+      view.setOffer({ label: 'one', title: 'one', onAccept: first });
+      const el = chip();
+      view.setOffer({ label: 'two', title: 'two', state: 'busy', onAccept: second });
+      expect(container.querySelectorAll('.nova-addressbar-offer')).toHaveLength(1);
+      expect(chip()).toBe(el);
+      expect(chip()!.textContent).toBe('two');
+      expect(chip()!.dataset.state).toBe('busy');
+      chip()!.click();
+      expect(first).not.toHaveBeenCalled();
+      expect(second).toHaveBeenCalledTimes(1);
+    });
+
+    it('is a disabled status chip without a handler', () => {
+      view.setOffer({ label: 'Added · !wiki', title: 'done', state: 'done' });
+      expect(chip()!.disabled).toBe(true);
+      expect(chip()!.dataset.state).toBe('done');
+    });
+
+    it('does not take focus from the input when pressed', () => {
+      view.setOffer({ label: 'x', title: 'x', onAccept: vi.fn() });
+      const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+      chip()!.dispatchEvent(press);
+      expect(press.defaultPrevented).toBe(true);
+    });
+
+    it('treats its label as text, never markup', () => {
+      view.setOffer({ label: '<img src=x onerror=alert(1)>', title: '"><b>', onAccept: vi.fn() });
+      expect(chip()!.querySelector('img')).toBeNull();
+    });
+
+    it('can be removed, and added again as a fresh chip; removing nothing is harmless', () => {
+      view.setOffer(null);
+      view.setOffer({ label: 'x', title: 'x', onAccept: vi.fn() });
+      view.setOffer(null);
+      expect(chip()).toBeNull();
+      const again = vi.fn();
+      view.setOffer({ label: 'y', title: 'y', onAccept: again });
+      chip()!.click();
+      expect(again).toHaveBeenCalledTimes(1);
+    });
+
+    it('is harmless after the view is detached', () => {
+      view.detach();
+      expect(() => { view.setOffer({ label: 'x', title: 'x' }); view.setOffer(null); }).not.toThrow();
+    });
+  });
+
   describe('row actions', () => {
     const deletable = row({ type: 'history', text: 'GitHub', description: 'https://github.com/', url: 'https://github.com/', meta: { historyId: 'h1' } });
     const bookmark = row({ type: 'bookmark', text: 'Docs', url: 'https://docs.test/' });

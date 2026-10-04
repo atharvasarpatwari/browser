@@ -274,7 +274,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
    */
   private readonly onBridgeNavState = (event: { kind: string; url?: string; error?: Error }): void => {
     const activeTabId = this.tabManager?.activeTabId ?? null;
-    if (event.kind === 'navigationStarted') this.search?.onContentReplaced();
+    if (event.kind === 'navigationStarted') this.search?.onPageLeaving();
     switch (event.kind) {
       case 'navigationStarted':
       case 'navigationCompleted':
@@ -506,7 +506,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
     this.tabManager.on('tabCreated', () => this.syncAll());
     this.tabManager.on('tabRemoved', () => this.syncAll());
-    this.tabManager.on('tabActivated', () => this.syncAll());
+    this.tabManager.on('tabActivated', () => { this.search?.onPageLeaving(); this.syncAll(); });
 
     // Use DI-provided NavigationController when available (wired to the engine,
     // history service and CSP guards); otherwise fall back to a local controller.
@@ -609,6 +609,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
         if (id) this.closeTab(id);
       },
       deleteHistoryEntry: (id) => this.removeHistoryEntryExternal(id),
+      addEngine: ({ name, url, keyword }) => {
+        const key = keyword.trim().toLowerCase();
+        if (this.validateNewEngine(name.trim(), url.trim(), key) !== null) return false;
+        this.searchEngineManager.addEngine({ name: name.trim(), url: url.trim(), keyword: key }); // persists, refreshes Settings and the !bangs
+        return true;
+      },
     });
     this.search.install();
     if (this.pageDocumentProvider) this.search.setPageDocumentProvider(this.pageDocumentProvider);
@@ -1536,19 +1542,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
       const keyword = keywordInput.value.trim().toLowerCase();
       const icon = iconInput.value.trim() || undefined;
 
-      const showError = (msg: string) => {
-        errorDiv.textContent = msg;
+      const problem = this.validateNewEngine(name, url, keyword);
+      if (problem) {
+        errorDiv.textContent = problem;
         errorDiv.style.display = 'block';
-      };
-
-      if (!name) return showError('Name is required.');
-      if (this.searchEngineManager.getEngines().some(e => engineSlug(e.name) === engineSlug(name))) {
-        return showError(`An engine named "${name}" already exists.`);
-      }
-      if (!url || !url.includes('%s')) return showError('URL must contain %s as the query placeholder.');
-      if (!keyword) return showError('Keyword is required.');
-      if (this.searchEngineManager.getEngineByKeyword(keyword)) {
-        return showError(`Keyword "!${keyword}" is already used by another engine.`);
+        return;
       }
 
       this.searchEngineManager.addEngine({ name, url, keyword, icon });
@@ -1556,6 +1554,20 @@ class BrowserWindowPage implements IBrowserWindowPage {
     form.appendChild(addBtn);
 
     container.appendChild(form);
+  }
+
+  /** Why `name`/`url`/`keyword` cannot be added to the engine list, or null when they can (Settings form and engine discovery share it). */
+  private validateNewEngine(name: string, url: string, keyword: string): string | null {
+    if (!name) return 'Name is required.';
+    if (this.searchEngineManager.getEngines().some(e => engineSlug(e.name) === engineSlug(name))) {
+      return `An engine named "${name}" already exists.`;
+    }
+    if (!url || !url.includes('%s')) return 'URL must contain %s as the query placeholder.';
+    if (!keyword) return 'Keyword is required.';
+    if (this.searchEngineManager.getEngineByKeyword(keyword)) {
+      return `Keyword "!${keyword}" is already used by another engine.`;
+    }
+    return null;
   }
 
   /** The engine the `defaultSearchEngine` setting names (Nova unless Settings says otherwise); the manager's own default if that engine was removed. */

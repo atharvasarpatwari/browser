@@ -1,7 +1,7 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { DomDocument } from '../../browser/rendering/dom-tree';
 import type { IAddressBar } from '../components/address-bar/address-bar';
-import type { AddressBarView } from '../components/address-bar/address-bar.view';
+import type { AddressBarOffer, AddressBarView } from '../components/address-bar/address-bar.view';
 import { SearchSubsystem } from '../components/search-subsystem';
 import type { BookmarkPort, HistoryPort, SearchEngineInfo, SettingsPort } from '../components/search-subsystem';
 import type { OmniboxActions } from '../components/omnibox-controller';
@@ -14,6 +14,7 @@ import { FindHighlightOverlay } from '../components/find-bar/find-overlay';
 import { DEFAULT_BROWSER_ACTIONS } from '../../browser/omnibox/browser-actions';
 import { expandSearchTemplate } from '../../browser/omnibox/search-template';
 import { buildResearchUrl } from '../../browser/omnibox/ai-research-provider';
+import { fetchTextWithGlobalFetch, findOpenSearchLinks, parseOpenSearchDescription } from '../../browser/omnibox/opensearch-discovery';
 import type { SwitchableTab } from '../../browser/omnibox/tab-switch-provider';
 
 /** One of the user's search engines (what `SearchEngineManager` holds); `url` is a template with `%s`. */
@@ -45,8 +46,12 @@ interface SearchHost {
   closeActiveTab(): void;
   /** Removes one history entry by id (the ✕ on an address-bar history row). */
   deleteHistoryEntry(id: string): void | Promise<void>;
+  /** Adds an engine to the user's list. False when it is refused (name or keyword taken, no `%s` in the URL). */
+  addEngine(engine: HostEngine): boolean;
   /** Suggestion transport; defaults to a credential-less `fetch`. */
   fetchJson?(url: string, signal: AbortSignal): Promise<unknown>;
+  /** Transport for OpenSearch descriptors (the "Add as search engine" offer); defaults to a credential-less `fetch`. */
+  fetchText?(url: string, signal: AbortSignal): Promise<string>;
   /** Warms the connection to a host (optional). */
   warmHost?(host: string): void | Promise<void>;
 }
@@ -64,6 +69,21 @@ const ACTION_PAGES: ReadonlyMap<string, string> = new Map([
 const HOST_ACTION_IDS: ReadonlySet<string> = new Set([...ACTION_PAGES.keys(), 'new-tab', 'close-tab', 'reload-page']);
 
 const REFRESH_INTERVAL_MS = 150;
+/** How long a descriptor download may take, and how long the "Added" / "Couldn't add" chip stays. */
+const DESCRIPTOR_TIMEOUT_MS = 8000;
+const OFFER_RESULT_MS = 2500;
+/** Survives `encodeURIComponent`, so it can stand in for the query while a template is rewritten. */
+const QUERY_MARK = 'NOVAQUERYMARK';
+
+/** An OpenSearch template (`{searchTerms}`, optional extras) as the engine list's `%s` form. */
+const toPercentS = (template: string): string =>
+  expandSearchTemplate(template, { searchTerms: QUERY_MARK }).split(QUERY_MARK).join('%s');
+
+const hostOf = (url: string): string => {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+};
+
+type OfferOutcome = { readonly ok: true; readonly keyword: string } | { readonly ok: false; readonly reason: 'exists' | 'failed' };
 
 /** Nova's own search page — what the search page's box always uses, whatever the default engine is. */
 const novaSearchUrl = (query: string): string => expandSearchTemplate('nova://search?q=%s', { searchTerms: query });
@@ -86,6 +106,12 @@ class SearchIntegration implements IDisposable {
   private pageDocument: () => DomDocument | null = () => null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
+  /** Hosts whose search engine was already offered this session (each site is offered once). */
+  private readonly offered = new Set<string>();
+  /** Bumped whenever the offer chip is retired, so a slow download can no longer touch a newer chip. */
+  private offerToken = 0;
+  private offerTimer: ReturnType<typeof setTimeout> | null = null;
+  private offerAbort: AbortController | null = null;
 
   constructor(private readonly host: SearchHost) {}
 
@@ -128,9 +154,10 @@ class SearchIntegration implements IDisposable {
     this.pageDocument = provider;
   }
 
-  /** A page finished loading: queue it for the personal archive (if the user opted in). */
+  /** A page finished loading: queue it for the personal archive (if the user opted in) and offer the engine it advertises. */
   onPageDocumentReady(url: string, doc: DomDocument): void {
     this.subsystem?.indexPage(url, doc);
+    this.offerEngine(url, doc);
   }
 
   /** The page was repainted in place: re-run the find query so matches follow the new layout. */
@@ -144,6 +171,16 @@ class SearchIntegration implements IDisposable {
 
   /** The content area is about to be (or was) redrawn with something else — find state no longer applies. */
   onContentReplaced(): void {
+    this.teardownFind();
+  }
+
+  /**
+   * The page being shown is going away (a navigation started, another tab was activated): its find state and
+   * its "add search engine" offer end. Not part of `onContentReplaced`, which fires after the new page's
+   * document is ready — the moment its own offer has just been shown.
+   */
+  onPageLeaving(): void {
+    this.retireOffer();
     this.teardownFind();
   }
 
@@ -195,6 +232,8 @@ class SearchIntegration implements IDisposable {
   dispose(): void {
     if (this.keyHandler) document.removeEventListener('keydown', this.keyHandler);
     this.keyHandler = null;
+    this.offerAbort?.abort();
+    this.retireOffer();
     this.teardownFind();
     this.disposeSearchPage();
     void this.subsystem?.archive.flush();
@@ -215,6 +254,81 @@ class SearchIntegration implements IDisposable {
       fill: (text) => this.host.addressBarView()?.fill(text),
       deleteHistory: (id) => this.host.deleteHistoryEntry(id),
     };
+  }
+
+  /** A page advertises a search engine the user does not have: offer to add it. No network until they accept. */
+  private offerEngine(pageUrl: string, doc: DomDocument): void {
+    const view = this.host.addressBarView();
+    if (!view || this.host.isIncognito() || !/^https?:/i.test(pageUrl)) return;
+    const site = hostOf(pageUrl);
+    const known = this.host.engines().some((e) => /^https?:/i.test(e.url) && hostOf(e.url.replace(/%s/g, 'x')) === site);
+    if (!site || known || this.offered.has(site)) return;
+    const link = findOpenSearchLinks(doc, pageUrl)[0];
+    if (!link) return;
+
+    this.offered.add(site);
+    this.retireOffer();
+    const token = this.offerToken;
+    const name = link.title || site;
+    view.setOffer({
+      label: `＋ Add ${name}`,
+      title: `Add ${name} as a search engine`,
+      onAccept: () => { void this.acceptOffer(link.href, name, token); },
+    });
+  }
+
+  /** The user took the offer: download the descriptor, add the engine, report the result for a moment. */
+  private async acceptOffer(descriptorUrl: string, name: string, token: number): Promise<void> {
+    const show = (offer: AddressBarOffer | null): void => {
+      if (token === this.offerToken) this.host.addressBarView()?.setOffer(offer);
+    };
+    show({ label: 'Adding…', title: `Adding ${name}`, state: 'busy' });
+    const outcome = await this.addDiscoveredEngine(descriptorUrl);
+    if (token !== this.offerToken) return; // the page changed meanwhile: the engine (if added) stays, the chip is gone
+    if (outcome.ok) {
+      show({ label: `Added · !${outcome.keyword}`, title: `${name} was added: type !${outcome.keyword} and a query to use it`, state: 'done' });
+    } else if (outcome.reason === 'exists') {
+      show({ label: 'Already added', title: `${name} is already in your search engines`, state: 'failed' });
+    } else {
+      show({ label: "Couldn't add", title: `The search description of ${name} could not be read`, state: 'failed' });
+    }
+    this.offerTimer = setTimeout(() => { this.offerTimer = null; show(null); }, OFFER_RESULT_MS);
+  }
+
+  private async addDiscoveredEngine(descriptorUrl: string): Promise<OfferOutcome> {
+    const abort = new AbortController();
+    this.offerAbort = abort;
+    const timeout = setTimeout(() => abort.abort(), DESCRIPTOR_TIMEOUT_MS);
+    try {
+      const xml = await (this.host.fetchText ?? fetchTextWithGlobalFetch)(descriptorUrl, abort.signal);
+      const found = parseOpenSearchDescription(xml, descriptorUrl);
+      if (!found) return { ok: false, reason: 'failed' };
+      const keyword = this.freeKeyword(found.keyword);
+      return this.host.addEngine({ name: found.name, url: toPercentS(found.searchUrl), keyword })
+        ? { ok: true, keyword }
+        : { ok: false, reason: 'exists' };
+    } catch {
+      return { ok: false, reason: 'failed' };
+    } finally {
+      clearTimeout(timeout);
+      if (this.offerAbort === abort) this.offerAbort = null;
+    }
+  }
+
+  /** `base`, or `base2`, `base3`… — the first keyword no engine and no built-in bang uses. */
+  private freeKeyword(base: string): string {
+    const taken = (k: string): boolean => this.host.engines().some((e) => e.keyword.toLowerCase() === k) || !!this.subsystem?.bangs.has(k);
+    let keyword = base;
+    for (let n = 2; taken(keyword); n++) keyword = `${base}${n}`;
+    return keyword;
+  }
+
+  /** Removes the offer chip and stops any acceptance in flight from updating it. */
+  private retireOffer(): void {
+    this.offerToken++;
+    if (this.offerTimer) clearTimeout(this.offerTimer);
+    this.offerTimer = null;
+    this.host.addressBarView()?.setOffer(null);
   }
 
   private runAction(id: string): void {

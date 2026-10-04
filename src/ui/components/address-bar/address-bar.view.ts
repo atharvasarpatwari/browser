@@ -18,6 +18,17 @@ interface QueryBadge {
   readonly title: string;
 }
 
+/**
+ * A one-click offer in the address bar's action area, e.g. "＋ Add Wikipedia". Without `onAccept` it is a
+ * status chip (the offer was taken: "Adding…", "Added · !wiki", "Couldn't add").
+ */
+interface AddressBarOffer {
+  readonly label: string;
+  readonly title: string;
+  readonly state?: 'busy' | 'done' | 'failed';
+  readonly onAccept?: () => void;
+}
+
 /** The buttons on a dropdown row: copy its link, or remove a history entry. */
 type RowAction = 'copy' | 'delete';
 type RowActionHandler = (action: RowAction, row: OmniboxResult) => void;
@@ -68,6 +79,8 @@ interface IAddressBarView extends IDisposable {
   setRowActionHandler(handler: RowActionHandler): void;
   /** Shows (or, with null, hides) the query-type badge in front of the input. */
   setQueryBadge(badge: QueryBadge | null): void;
+  /** Shows, updates or (with null) removes the offer chip next to the reload button. */
+  setOffer(offer: AddressBarOffer | null): void;
   /** Replaces the input text as if typed (focuses it and refreshes suggestions). */
   fill(text: string): void;
   setNavigationCallbacks(callbacks: {
@@ -122,6 +135,9 @@ class AddressBarView implements IAddressBarView {
   private inputElement: HTMLInputElement | null = null;
   private securityIcon: HTMLElement | null = null;
   private badgeElement: HTMLElement | null = null;
+  private actionsElement: HTMLElement | null = null;
+  private offerElement: HTMLButtonElement | null = null;
+  private offerHandler: (() => void) | null = null;
   private suggestionsContainer: HTMLElement | null = null;
   private refreshButton: HTMLElement | null = null;
   private eventHandler: ((event: AddressBarEventUnion) => void) | null = null;
@@ -179,6 +195,9 @@ class AddressBarView implements IAddressBarView {
     this.inputElement = null;
     this.securityIcon = null;
     this.badgeElement = null;
+    this.actionsElement = null;
+    this.offerElement = null;
+    this.offerHandler = null;
     this.suggestionsContainer = null;
     this.refreshButton = null;
     this.boundKeyHandler = null;
@@ -226,6 +245,32 @@ class AddressBarView implements IAddressBarView {
     el.textContent = badge?.text ?? '';
     el.title = badge?.title ?? '';
     this.container?.classList.toggle('has-badge', badge !== null); // the badge takes the lock icon's place
+  }
+
+  setOffer(offer: AddressBarOffer | null): void {
+    if (!offer) {
+      this.offerElement?.remove();
+      this.offerElement = null;
+      this.offerHandler = null;
+      return;
+    }
+    const actions = this.actionsElement;
+    if (!actions) return;
+    let el = this.offerElement;
+    if (!el) {
+      el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'nova-addressbar-offer';
+      el.addEventListener('mousedown', (e: MouseEvent) => e.preventDefault()); // keep focus where it is
+      el.addEventListener('click', () => this.offerHandler?.());
+      actions.prepend(el);
+      this.offerElement = el;
+    }
+    el.textContent = offer.label;
+    el.title = offer.title;
+    el.dataset.state = offer.state ?? 'idle';
+    el.disabled = !offer.onAccept;
+    this.offerHandler = offer.onAccept ?? null;
   }
 
   fill(text: string): void {
@@ -318,6 +363,7 @@ class AddressBarView implements IAddressBarView {
 
     const actions = document.createElement('div');
     actions.className = 'nova-addressbar-actions';
+    this.actionsElement = actions;
 
     if (this.config.showRefreshButton) {
       this.refreshButton = document.createElement('button');
@@ -726,4 +772,7 @@ class AddressBarView implements IAddressBarView {
 }
 
 export { AddressBarView, DEFAULT_VIEW_CONFIG, fillTextOf, groupResults };
-export type { IAddressBarView, AddressBarViewConfig, ActivationOptions, ResultHandler, SubmitInterceptor, QueryBadge, RowAction, RowActionHandler };
+export type {
+  IAddressBarView, AddressBarViewConfig, ActivationOptions, ResultHandler, SubmitInterceptor, QueryBadge, RowAction, RowActionHandler,
+  AddressBarOffer,
+};

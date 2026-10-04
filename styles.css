@@ -574,6 +574,21 @@ input    { font-family:inherit; }
 .nova-addrbar-btn:hover { background:var(--glass-300); color:var(--tx-primary); }
 .nova-addrbar-btn svg { width:13px; height:13px; }
 
+/* "＋ Add <site>" offer while a page advertises a search engine the user lacks; the same chip then reports the result. */
+.nova-addressbar-offer {
+  flex-shrink:1; min-width:0; max-width:190px; height:22px; padding:0 var(--sp-4);
+  border:1px solid var(--accent); border-radius:var(--r-full);
+  background:var(--accent-dim); color:var(--accent);
+  font-size:var(--sz-xs); line-height:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  cursor:pointer;
+  transition:background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+}
+.nova-addressbar-offer:hover:not(:disabled) { background:var(--accent); color:var(--tx-inverse); }
+.nova-addressbar-offer:disabled { cursor:default; }
+.nova-addressbar-offer[data-state="busy"] { opacity:.7; cursor:progress; }
+.nova-addressbar-offer[data-state="done"] { border-color:var(--green-400); color:var(--green-400); background:transparent; }
+.nova-addressbar-offer[data-state="failed"] { border-color:var(--amber-400); color:var(--amber-400); background:transparent; }
+
 .nova-star { color:var(--tx-tertiary); }
 .nova-star.active { color:var(--amber-400); }
 .nova-star.active svg { fill:var(--amber-400); }

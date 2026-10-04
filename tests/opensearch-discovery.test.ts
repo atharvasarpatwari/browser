@@ -1,9 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { HtmlParser } from '../src/browser/rendering/html-parser';
 import { DomTree } from '../src/browser/rendering/dom-tree';
 import type { DomDocument } from '../src/browser/rendering/dom-tree';
 import {
-  findOpenSearchLinks, parseOpenSearchDescription, discoverOpenSearchEngines, decodeEntities,
+  findOpenSearchLinks, parseOpenSearchDescription, discoverOpenSearchEngines, decodeEntities, fetchTextWithGlobalFetch,
 } from '../src/browser/omnibox/opensearch-discovery';
 
 const page = (head: string): DomDocument => new DomTree().buildFromHtml(new HtmlParser().parse(`<html><head>${head}</head><body></body></html>`).document);
@@ -181,5 +181,33 @@ describe('discoverOpenSearchEngines', () => {
     const fetchText = vi.fn();
     expect(await discoverOpenSearchEngines(page(''), 'https://example.com/', { fetchText })).toEqual([]);
     expect(fetchText).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchTextWithGlobalFetch', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const respond = (init: { ok: boolean; status?: number; body?: string }) => {
+    const fetchMock = vi.fn(async (_url: string, _options?: RequestInit) => ({
+      ok: init.ok, status: init.status ?? (init.ok ? 200 : 500), text: async () => init.body ?? '',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  };
+
+  it('reads the body with a credential-less, referrer-less, uncached GET', async () => {
+    const fetchMock = respond({ ok: true, body: FULL });
+    const signal = new AbortController().signal;
+    await expect(fetchTextWithGlobalFetch(DESCRIPTOR_URL, signal)).resolves.toBe(FULL);
+    expect(fetchMock).toHaveBeenCalledWith(DESCRIPTOR_URL, { signal, credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' });
+  });
+
+  it('rejects on an HTTP error, so the caller reports "couldn\'t add" instead of parsing an error page', async () => {
+    respond({ ok: false, status: 404, body: '<html>not found</html>' });
+    await expect(fetchTextWithGlobalFetch(DESCRIPTOR_URL, new AbortController().signal)).rejects.toThrow('descriptor HTTP 404');
+  });
+
+  it('rejects when the network call does', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    await expect(fetchTextWithGlobalFetch(DESCRIPTOR_URL, new AbortController().signal)).rejects.toThrow('Failed to fetch');
   });
 });

@@ -149,6 +149,13 @@ interface DiscoveryDeps {
   fetchText(url: string): Promise<string | null>;
 }
 
+/** Credential-less GET of a descriptor; rejects on any failure (HTTP error, network, abort). */
+async function fetchTextWithGlobalFetch(url: string, signal: AbortSignal): Promise<string> {
+  const res = await fetch(url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' });
+  if (!res.ok) throw new Error(`descriptor HTTP ${res.status}`);
+  return res.text();
+}
+
 /** Finds, fetches and parses the OpenSearch descriptors a page advertises. Failures are skipped. */
 async function discoverOpenSearchEngines(
   doc: DomDocument, pageUrl: string, deps: DiscoveryDeps,
@@ -164,5 +171,5 @@ async function discoverOpenSearchEngines(
   return found;
 }
 
-export { findOpenSearchLinks, parseOpenSearchDescription, discoverOpenSearchEngines, decodeEntities };
+export { findOpenSearchLinks, parseOpenSearchDescription, discoverOpenSearchEngines, decodeEntities, fetchTextWithGlobalFetch };
 export type { DiscoveredEngine, OpenSearchLink, DiscoveryDeps };

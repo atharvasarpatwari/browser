@@ -40,6 +40,25 @@ const NOVA: HostEngine = { name: 'Nova', url: 'nova://search?q=%s', keyword: 'no
 const GOOGLE: HostEngine = { name: 'Google', url: 'https://www.google.com/search?q=%s', keyword: 'g' };
 const DDG: HostEngine = { name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=%s', keyword: 'ddg' };
 
+/** A page whose <head> advertises OpenSearch descriptors (`links` are `[href, title?]`). */
+const pageAdvertising = (...links: Array<[string, string?]>) => new DomTree().buildFromHtml(new HtmlParser().parse(
+  `<html><head>${links.map(([href, title]) =>
+    `<link rel="search" type="application/opensearchdescription+xml" href="${href}"${title ? ` title="${title}"` : ''}>`).join('')}</head><body><p>hi</p></body></html>`,
+).document);
+
+const openSearchXml = (inner: string) =>
+  `<?xml version="1.0"?><OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">${inner}</OpenSearchDescription>`;
+
+const COOKING_PAGE = 'https://cooking.example.org/recipes';
+const COOKING_DESCRIPTOR = 'https://cooking.example.org/opensearch.xml';
+/** Uses a required (`{count}`) and an optional (`{startPage?}`) extra placeholder next to `{searchTerms}`. */
+const COOKING_XML = openSearchXml(
+  '<ShortName>Example Cooking</ShortName>'
+  + '<Url type="text/html" method="get" template="https://cooking.example.org/find?q={searchTerms}&amp;page={startPage?}&amp;n={count}"/>',
+);
+/** The engine the cooking descriptor becomes: `{searchTerms}` → `%s`, the extras at their OpenSearch defaults. */
+const COOKING_TEMPLATE = 'https://cooking.example.org/find?q=%s&page=&n=10';
+
 describe('novaSearchUrl / HOST_ACTION_IDS', () => {
   it('builds the Nova search page URL, encoding the query', () => {
     expect(novaSearchUrl('a b&c')).toBe('nova://search?q=a%20b%26c');
@@ -65,12 +84,17 @@ describe('SearchIntegration (fake host)', () => {
   let engines: HostEngine[];
   let defaultEngine: HostEngine;
   let historyEntries: HistoryEntry[];
+  let incognito: boolean;
+  /** What the fake network serves for a descriptor URL; anything else fails like a 404. */
+  let descriptors: Record<string, string>;
   let host: SearchHost & {
     open: Mock<(url: string, newTab: boolean) => void>;
     switchTab: Mock<(id: string) => void>;
     reload: Mock<() => void>;
     closeActiveTab: Mock<() => void>;
     deleteHistoryEntry: Mock<(id: string) => Promise<void>>;
+    addEngine: Mock<(engine: HostEngine) => boolean>;
+    fetchText: Mock<(url: string, signal: AbortSignal) => Promise<string>>;
   };
   let search: SearchIntegration;
 
@@ -91,6 +115,8 @@ describe('SearchIntegration (fake host)', () => {
     engines = [NOVA, GOOGLE, DDG];
     defaultEngine = NOVA;
     historyEntries = [];
+    incognito = false;
+    descriptors = {};
     bar = document.createElement('div');
     area = document.createElement('div');
     document.body.append(bar, area);
@@ -117,7 +143,7 @@ describe('SearchIntegration (fake host)', () => {
       }),
       bookmarks: () => null,
       listTabs: () => TABS,
-      isIncognito: () => false,
+      isIncognito: () => incognito,
       defaultEngine: () => defaultEngine,
       engines: () => engines,
       normalizeUrl: (raw) => (/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`),
@@ -126,7 +152,19 @@ describe('SearchIntegration (fake host)', () => {
       reload: vi.fn<() => void>(),
       closeActiveTab: vi.fn<() => void>(),
       deleteHistoryEntry: vi.fn(async (id: string) => { historyEntries = historyEntries.filter((e) => e.id !== id); }),
+      // Like the window: refuses a name or keyword that is taken, otherwise appends and tells the integration.
+      addEngine: vi.fn((engine: HostEngine) => {
+        if (engines.some((e) => e.name.toLowerCase() === engine.name.toLowerCase() || e.keyword === engine.keyword)) return false;
+        engines = [...engines, engine];
+        search.onEnginesChanged();
+        return true;
+      }),
       fetchJson: async () => [],
+      fetchText: vi.fn(async (url: string) => {
+        const xml = descriptors[url];
+        if (xml === undefined) throw new Error('descriptor HTTP 404');
+        return xml;
+      }),
     };
     search = new SearchIntegration(host);
     search.install();
@@ -395,6 +433,255 @@ describe('SearchIntegration (fake host)', () => {
       finish();
       await settle();
       expect(dropdown.style.display).toBe('none');
+    });
+  });
+
+  describe('"Add as search engine" offer', () => {
+    const chip = () => bar.querySelector<HTMLButtonElement>('.nova-addressbar-offer');
+    const advertise = (url = COOKING_PAGE, title: string | undefined = 'Example Cooking', href = '/opensearch.xml') =>
+      search.onPageDocumentReady(url, pageAdvertising([href, title]));
+    const accept = async () => { chip()!.click(); await settle(); };
+
+    beforeEach(() => { descriptors = { [COOKING_DESCRIPTOR]: COOKING_XML }; });
+
+    describe('offering', () => {
+      it('appears for a page that advertises an engine, in the action area, without touching the network', () => {
+        advertise();
+        expect(chip()!.textContent).toBe('＋ Add Example Cooking');
+        expect(chip()!.title).toBe('Add Example Cooking as a search engine');
+        expect(chip()!.disabled).toBe(false);
+        expect(bar.querySelector('.nova-addressbar-actions')!.firstElementChild).toBe(chip());
+        expect(host.fetchText).not.toHaveBeenCalled();
+      });
+
+      it('names the site when the link has no title', () => {
+        advertise('https://www.cooking.example.org/recipes', '');
+        expect(chip()!.textContent).toBe('＋ Add cooking.example.org');
+      });
+
+      it('offers the first descriptor when a page advertises several', () => {
+        search.onPageDocumentReady(COOKING_PAGE, pageAdvertising(['/a.xml', 'First'], ['/b.xml', 'Second']));
+        expect(chip()!.textContent).toBe('＋ Add First');
+      });
+
+      it('shows nothing for a page that advertises nothing', () => {
+        search.onPageDocumentReady(COOKING_PAGE, pageAdvertising());
+        expect(chip()).toBeNull();
+      });
+
+      it('shows nothing in a private window', () => {
+        incognito = true;
+        advertise();
+        expect(chip()).toBeNull();
+      });
+
+      it.each([['about:blank'], ['nova://settings'], ['file:///C:/pages/recipes.html'], ['data:text/html,x']])('shows nothing on %s', (url) => {
+        advertise(url);
+        expect(chip()).toBeNull();
+      });
+
+      it.each([
+        ['https://duckduckgo.com/about'],
+        ['https://www.google.com/'],
+        ['https://google.com/'], // the engine is on www.; the www. prefix does not make the site different
+      ])('shows nothing on %s, which the user already has an engine for', (url) => {
+        advertise(url);
+        expect(chip()).toBeNull();
+      });
+
+      it('offers each site once per session, however often it is visited', () => {
+        advertise();
+        expect(chip()).not.toBeNull();
+        search.onPageLeaving();
+        advertise();
+        expect(chip()).toBeNull();
+        advertise('https://cooking.example.org/other-page');
+        expect(chip()).toBeNull();
+        search.onPageDocumentReady('https://garden.example.org/', pageAdvertising(['/os.xml', 'Example Garden']));
+        expect(chip()!.textContent).toBe('＋ Add Example Garden');
+      });
+
+      it('lets a newly loaded page replace the previous page\'s offer', () => {
+        advertise();
+        search.onPageDocumentReady('https://garden.example.org/', pageAdvertising(['/os.xml', 'Example Garden']));
+        expect(bar.querySelectorAll('.nova-addressbar-offer')).toHaveLength(1);
+        expect(chip()!.textContent).toBe('＋ Add Example Garden');
+      });
+    });
+
+    describe('lifecycle', () => {
+      it('goes away when the page is left (a navigation starts or another tab is activated)', () => {
+        advertise();
+        search.onPageLeaving();
+        expect(chip()).toBeNull();
+      });
+
+      it('survives the content-replaced notice that follows the page\'s document-ready one', () => {
+        advertise();
+        search.onContentReplaced(); // the engine emits pageLoadReady right after onDocumentReady
+        expect(chip()).not.toBeNull();
+      });
+
+      it('also ends find-in-page when the page is left', () => {
+        addPageCanvas(area);
+        pressFind();
+        expect(area.querySelector('.nova-find-bar')).not.toBeNull();
+        search.onPageLeaving();
+        expect(area.querySelector('.nova-find-bar')).toBeNull();
+      });
+
+      it('is removed when the integration is disposed', () => {
+        advertise();
+        search.dispose();
+        expect(chip()).toBeNull();
+      });
+    });
+
+    describe('accepting', () => {
+      it('downloads the descriptor, adds the engine with a %s template and a free keyword, then reports it', async () => {
+        advertise();
+        chip()!.click();
+        expect(chip()!.textContent).toBe('Adding…');
+        expect(chip()!.dataset.state).toBe('busy');
+        expect(chip()!.disabled).toBe(true);
+        await settle();
+
+        expect(host.fetchText).toHaveBeenCalledWith(COOKING_DESCRIPTOR, expect.any(AbortSignal));
+        expect(host.addEngine).toHaveBeenCalledWith({ name: 'Example Cooking', url: COOKING_TEMPLATE, keyword: 'cook' });
+        expect(chip()!.textContent).toBe('Added · !cook');
+        expect(chip()!.dataset.state).toBe('done');
+        await settle(2500);
+        expect(chip()).toBeNull();
+      });
+
+      it('makes the keyword a !bang straight away', async () => {
+        advertise();
+        await accept();
+        await submit('!cook pasta');
+        expect(host.open).toHaveBeenLastCalledWith('https://cooking.example.org/find?q=pasta&page=&n=10', false);
+      });
+
+      it('does not offer the site again once its engine exists', async () => {
+        advertise();
+        await accept();
+        search.onPageLeaving();
+        advertise('https://cooking.example.org/again');
+        expect(chip()).toBeNull();
+      });
+
+      it('picks the next free keyword when the derived one is taken by an engine or by a built-in bang', async () => {
+        engines = [...engines, { name: 'Cookbook', url: 'https://cookbook.test/?q=%s', keyword: 'cook' }];
+        search.onEnginesChanged();
+        advertise();
+        await accept();
+        expect(host.addEngine).toHaveBeenLastCalledWith(expect.objectContaining({ keyword: 'cook2' }));
+
+        descriptors['https://yt.example.org/os.xml'] = openSearchXml(
+          '<ShortName>Why Tee</ShortName><Url type="text/html" template="https://yt.example.org/s?q={searchTerms}"/>',
+        );
+        search.onPageDocumentReady('https://yt.example.org/', pageAdvertising(['/os.xml', 'Why Tee']));
+        await accept();
+        expect(host.addEngine).toHaveBeenLastCalledWith(expect.objectContaining({ keyword: 'yt2' })); // `!yt` is YouTube's built-in bang
+      });
+
+      it('ignores the descriptor\'s icon and suggestion URL', async () => {
+        descriptors[COOKING_DESCRIPTOR] = openSearchXml(
+          '<ShortName>Example Cooking</ShortName><Image>https://cooking.example.org/favicon.ico</Image>'
+          + '<Url type="text/html" template="https://cooking.example.org/find?q={searchTerms}"/>'
+          + '<Url type="application/x-suggestions+json" template="https://cooking.example.org/suggest?q={searchTerms}"/>',
+        );
+        advertise();
+        await accept();
+        expect(host.addEngine).toHaveBeenCalledWith({ name: 'Example Cooking', url: 'https://cooking.example.org/find?q=%s', keyword: 'cook' });
+      });
+    });
+
+    describe('when it cannot be added', () => {
+      const failed = (label: string) => {
+        expect(chip()!.textContent).toBe(label);
+        expect(chip()!.dataset.state).toBe('failed');
+        expect(chip()!.disabled).toBe(true);
+        expect(host.addEngine).not.toHaveBeenCalled();
+      };
+
+      it("says so when the descriptor cannot be downloaded, and clears the message after a moment", async () => {
+        descriptors = {};
+        advertise();
+        await accept();
+        failed("Couldn't add");
+        await settle(2500);
+        expect(chip()).toBeNull();
+      });
+
+      it.each([
+        ['is not an OpenSearch document', '<html><body>404 Not Found</body></html>'],
+        ['has no GET text/html template', openSearchXml('<ShortName>Post only</ShortName><Url type="text/html" method="post" template="https://cooking.example.org/s?q={searchTerms}"/>')],
+        ['has no name', openSearchXml('<Url type="text/html" template="https://cooking.example.org/s?q={searchTerms}"/>')],
+      ])('says so when the descriptor %s', async (_why, xml) => {
+        descriptors[COOKING_DESCRIPTOR] = xml;
+        advertise();
+        await accept();
+        failed("Couldn't add");
+      });
+
+      it('gives up on a download that takes more than 8 seconds', async () => {
+        host.fetchText.mockImplementationOnce((_url, signal) => new Promise<string>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('aborted')));
+        }));
+        advertise();
+        chip()!.click();
+        await settle(7999);
+        expect(chip()!.textContent).toBe('Adding…');
+        await settle(2);
+        failed("Couldn't add");
+      });
+
+      it('says "Already added" when the engine list refuses it (the name is taken)', async () => {
+        engines = [...engines, { name: 'example cooking', url: 'https://old.example/?q=%s', keyword: 'old' }];
+        advertise();
+        await accept();
+        expect(chip()!.textContent).toBe('Already added');
+        expect(chip()!.dataset.state).toBe('failed');
+        expect(engines).toHaveLength(4); // nothing was added
+      });
+    });
+
+    describe('while the download is running', () => {
+      let release: (xml: string) => void;
+      let signal: AbortSignal;
+      beforeEach(() => {
+        host.fetchText.mockImplementationOnce((_url, s) => new Promise<string>((resolve) => { signal = s; release = resolve; }));
+      });
+
+      it('still adds the engine if the user moves on, without bringing the chip back', async () => {
+        advertise();
+        chip()!.click();
+        search.onPageLeaving();
+        expect(chip()).toBeNull();
+        release(COOKING_XML);
+        await settle(); // the download finished; a revived chip would show "Added" for the next 2.5 s
+        expect(host.addEngine).toHaveBeenCalledTimes(1);
+        expect(engines.map((e) => e.keyword)).toContain('cook');
+        expect(chip()).toBeNull();
+        await settle(3000);
+        expect(chip()).toBeNull();
+      });
+
+      it('does not let the finished download overwrite a newer page\'s offer', async () => {
+        advertise();
+        chip()!.click();
+        search.onPageDocumentReady('https://garden.example.org/', pageAdvertising(['/os.xml', 'Example Garden']));
+        release(COOKING_XML);
+        await settle();
+        expect(chip()!.textContent).toBe('＋ Add Example Garden');
+      });
+
+      it('is cancelled when the integration is disposed', async () => {
+        advertise();
+        chip()!.click();
+        search.dispose();
+        expect(signal.aborted).toBe(true);
+      });
     });
   });
 
@@ -897,6 +1184,93 @@ describe('BrowserWindowPage — search wiring', () => {
       await restart(store);
       await submitInAddressBar('!zz cats');
       expect(addressValue()).toBe('https://zed.example/?q=cats');
+    });
+
+    describe('an engine a page advertises', () => {
+      const chip = () => container.querySelector<HTMLButtonElement>('.nova-addressbar-offer');
+      const advertiseCooking = () => page.onPageDocumentReady(COOKING_PAGE, pageAdvertising(['/opensearch.xml', 'Example Cooking']));
+      let fetchSpy: Mock<(url: string, init?: RequestInit) => Promise<{ ok: boolean; text: () => Promise<string> }>>;
+
+      beforeEach(() => {
+        fetchSpy = vi.fn(async () => ({ ok: true, text: async () => COOKING_XML }));
+        vi.stubGlobal('fetch', fetchSpy);
+      });
+      afterEach(() => { vi.unstubAllGlobals(); });
+
+      it('is added with one click: it shows up in Settings, is saved, and works as a !bang', async () => {
+        const store = new SettingsStore();
+        await restart(store);
+
+        advertiseCooking();
+        expect(chip()!.textContent).toBe('＋ Add Example Cooking');
+        expect(fetchSpy).not.toHaveBeenCalled();
+        chip()!.click();
+        await settle();
+        expect(fetchSpy).toHaveBeenCalledWith(COOKING_DESCRIPTOR, expect.objectContaining({ credentials: 'omit' }));
+        expect(chip()!.textContent).toBe('Added · !cook');
+
+        expect(store.get('searchEngines')).toEqual(expect.arrayContaining([
+          expect.objectContaining({ name: 'Example Cooking', url: COOKING_TEMPLATE, keyword: 'cook' }),
+        ]));
+        await openEngineSettings();
+        const row = [...container.querySelectorAll<HTMLElement>('.search-engine-row')].find((r) => r.textContent?.includes('Example Cooking'));
+        expect(row?.textContent).toContain('!cook');
+
+        await submitInAddressBar('!cook pasta');
+        expect(addressValue()).toBe('https://cooking.example.org/find?q=pasta&page=&n=10');
+      });
+
+      it('is not added twice: an engine of the same name makes the offer say so', async () => {
+        await restart(new SettingsStore());
+        await openEngineSettings();
+        addEngine('Example Cooking', 'https://elsewhere.example/?q=%s', 'ec');
+        advertiseCooking();
+        chip()!.click();
+        await settle();
+        expect(chip()!.textContent).toBe('Already added');
+        expect([...container.querySelectorAll('.search-engine-row')].filter((r) => r.textContent?.includes('Example Cooking'))).toHaveLength(1);
+      });
+
+      it('is dropped when the user navigates elsewhere or switches tabs, and nothing is fetched for it', async () => {
+        await restart(new SettingsStore());
+        advertiseCooking();
+        expect(chip()).not.toBeNull();
+        await page.navigate('nova://search?q=x');
+        expect(chip()).toBeNull();
+
+        page.onPageDocumentReady('https://garden.example.org/', pageAdvertising(['/os.xml', 'Example Garden']));
+        expect(chip()).not.toBeNull();
+        const first = page.getChromeState().activeTabId!;
+        page.createTab('about:blank');
+        expect(chip()).toBeNull();
+
+        page.onPageDocumentReady('https://pets.example.org/', pageAdvertising(['/os.xml', 'Example Pets']));
+        expect(chip()).not.toBeNull();
+        page.activateTabExternal(first);
+        expect(chip()).toBeNull();
+        expect(fetchSpy).not.toHaveBeenCalled();
+      });
+
+      it('is not offered in a private window', async () => {
+        await restart(new SettingsStore());
+        page.setIncognitoExternal(true);
+        advertiseCooking();
+        expect(chip()).toBeNull();
+      });
+
+      it('keeps a markup-laden name from the descriptor as plain text in the engine list', async () => {
+        fetchSpy.mockResolvedValue({
+          ok: true,
+          text: async () => openSearchXml('<ShortName>&lt;img src=x onerror=alert(1)&gt;</ShortName><Url type="text/html" template="https://evil.example/?q={searchTerms}"/>'),
+        });
+        await restart(new SettingsStore());
+        page.onPageDocumentReady('https://evil.example/', pageAdvertising(['/os.xml', 'Evil']));
+        chip()!.click();
+        await settle();
+        await openEngineSettings();
+        expect(container.querySelector('.search-engine-row img')).toBeNull();
+        expect(container.querySelector('.search-engine-row')!.parentElement!.textContent).toContain('<img src=x onerror=alert(1)>');
+      });
     });
   });
 
