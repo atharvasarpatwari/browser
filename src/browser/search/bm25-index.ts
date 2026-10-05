@@ -32,6 +32,11 @@ interface SearchOptions {
   readonly limit?: number;
   /** Treat the last typed word as a prefix (as-you-type). Default true. */
   readonly prefix?: boolean;
+  /**
+   * Tolerate typos: a query word of 4+ letters that no page contains also matches words one typo away (a missing,
+   * extra, wrong or swapped letter; same first letter). Words that exist are never fuzzed. Default false.
+   */
+  readonly fuzzy?: boolean;
 }
 
 interface DocRecord {
@@ -41,6 +46,8 @@ interface DocRecord {
   length: number;
   visitedAt: number;
   hash: string;
+  /** Never reused, never renumbered (unlike the dense id): what persistence refers to a page by. */
+  seq: number;
   live: boolean;
 }
 
@@ -56,6 +63,18 @@ interface IndexSnapshot {
   readonly postings: Array<[term: string, ids: number[], tfs: number[]]>;
 }
 
+/** One page as persisted: its record plus its term vector (parallel `terms` / field-weighted `tfs`), so it is restored without tokenising. */
+type PersistedDoc = [
+  url: string, title: string, snippet: string, length: number, visitedAt: number, hash: string,
+  seq: number, terms: string[], tfs: number[],
+];
+
+/** What happened to the index, reported to the observer set with `observe()` (not for restores: `addPersisted` is silent). */
+type IndexMutation =
+  | { readonly type: 'add'; readonly doc: PersistedDoc }
+  | { readonly type: 'remove'; readonly seq: number }
+  | { readonly type: 'clear' };
+
 const K1 = 1.2;
 const B = 0.75;
 // Field weights are baked into the stored term frequencies at index time.
@@ -65,6 +84,10 @@ const SNIPPET_SOURCE_CHARS = 2000;
 const SNIPPET_LENGTH = 200;
 const MAX_PREFIX_EXPANSIONS = 20;
 const PREFIX_FACTOR = 0.6;
+const MIN_FUZZY_CHARS = 4;
+const MAX_FUZZY_EXPANSIONS = 5;
+/** Below a prefix match, so a page with the word as typed always outranks one with a near miss. */
+const FUZZY_FACTOR = 0.5;
 /** Terms are bucketed by their first characters, so a typed prefix scans one bucket instead of the whole vocabulary. */
 const PREFIX_BUCKET_CHARS = 2;
 /** Beyond this many results (or when they are a large share of the matches) sorting everything beats a bounded selection. */
@@ -78,6 +101,27 @@ function hashText(text: string): string {
     h = Math.imul(h, 0x01000193);
   }
   return (h >>> 0).toString(16);
+}
+
+function tailsEqual(a: string, i: number, b: string, j: number): boolean {
+  if (a.length - i !== b.length - j) return false;
+  for (; i < a.length; i++, j++) if (a.charCodeAt(i) !== b.charCodeAt(j)) return false;
+  return true;
+}
+
+/** True when `a` and `b` differ by exactly one inserted, missing or wrong letter, or two swapped neighbours. No allocation: it runs over a whole bucket of terms. */
+function oneEditApart(a: string, b: string): boolean {
+  const la = a.length;
+  const lb = b.length;
+  if (la - lb > 1 || lb - la > 1 || a === b) return false;
+  const min = la < lb ? la : lb;
+  let i = 0;
+  while (i < min && a.charCodeAt(i) === b.charCodeAt(i)) i++;
+  if (la === lb) {
+    return tailsEqual(a, i + 1, b, i + 1)
+      || (i + 1 < la && a.charCodeAt(i) === b.charCodeAt(i + 1) && a.charCodeAt(i + 1) === b.charCodeAt(i) && tailsEqual(a, i + 2, b, i + 2));
+  }
+  return la > lb ? tailsEqual(a, i + 1, b, i) : tailsEqual(a, i, b, i + 1);
 }
 
 function buildSnippet(
@@ -130,9 +174,19 @@ class Bm25Index {
   private totalLength = 0;
   private liveCount = 0;
   private tombstones = 0;
+  private seqCounter = 0;
+  private observer: ((mutation: IndexMutation) => void) | null = null;
 
   get size(): number { return this.liveCount; }
   get termCount(): number { return this.postings.size; }
+  /** The sequence number the next page will get; only ever grows. */
+  get nextSeq(): number { return this.seqCounter; }
+
+  /** Reports every later add / remove / clear (one observer; `null` stops). */
+  observe(observer: ((mutation: IndexMutation) => void) | null): void { this.observer = observer; }
+
+  /** Makes sure no page ever gets a sequence number below `next` (restoring pages that were since removed). */
+  reserveSeq(next: number): void { if (next > this.seqCounter) this.seqCounter = next; }
 
   has(url: string): boolean { return this.urlToId.has(canonicalUrl(url)); }
 
@@ -168,15 +222,17 @@ class Bm25Index {
 
     const id = this.docs.length;
     const lead = [doc.description, body].filter(Boolean).join(' ').replace(/\s+/g, ' ');
-    this.docs.push({
+    const record: DocRecord = {
       url: doc.url,
       title: doc.title,
       snippet: lead.slice(0, SNIPPET_SOURCE_CHARS),
       length,
       visitedAt: doc.visitedAt,
       hash: Bm25Index.hashOf(doc),
+      seq: this.seqCounter++,
       live: true,
-    });
+    };
+    this.docs.push(record);
     for (const [term, tf] of tfs) {
       let p = this.postings.get(term);
       if (!p) { p = { ids: [], tfs: [] }; this.postings.set(term, p); this.indexTerm(term); }
@@ -186,6 +242,10 @@ class Bm25Index {
     this.urlToId.set(canonicalUrl(doc.url), id);
     this.totalLength += length;
     this.liveCount++;
+    this.observer?.({
+      type: 'add',
+      doc: [record.url, record.title, record.snippet, length, record.visitedAt, record.hash, record.seq, [...tfs.keys()], [...tfs.values()]],
+    });
     return true;
   }
 
@@ -199,6 +259,7 @@ class Bm25Index {
     this.totalLength -= d.length;
     this.liveCount--;
     this.tombstones++;
+    this.observer?.({ type: 'remove', seq: d.seq });
     if (this.tombstones > Math.max(100, this.liveCount / 4)) this.compact();
     return true;
   }
@@ -218,6 +279,46 @@ class Bm25Index {
     this.totalLength = 0;
     this.liveCount = 0;
     this.tombstones = 0;
+    this.observer?.({ type: 'clear' });
+  }
+
+  /**
+   * Restores one persisted page without tokenising or reporting it. A page already present under the same address
+   * is replaced when this copy is newer and ignored otherwise. Returns whether the page was added.
+   */
+  addPersisted(page: PersistedDoc): boolean {
+    const [url, title, snippet, length, visitedAt, hash, seq, terms, tfs] = page;
+    const key = canonicalUrl(url);
+    const existing = this.urlToId.get(key);
+    if (existing !== undefined) {
+      if (this.docs[existing]!.seq >= seq) return false;
+      this.remove(url);
+    }
+    const id = this.docs.length;
+    this.docs.push({ url, title, snippet, length, visitedAt, hash, seq, live: true });
+    for (let i = 0; i < terms.length; i++) {
+      const term = terms[i]!;
+      let p = this.postings.get(term);
+      if (!p) { p = { ids: [], tfs: [] }; this.postings.set(term, p); this.indexTerm(term); }
+      p.ids.push(id);
+      p.tfs.push(tfs[i]!);
+    }
+    this.urlToId.set(key, id);
+    this.totalLength += length;
+    this.liveCount++;
+    this.reserveSeq(seq + 1);
+    return true;
+  }
+
+  /** Every page as a persisted record, its term vector rebuilt from the postings (O(postings): for a one-time migration). */
+  toPersisted(): PersistedDoc[] {
+    this.compact();
+    const terms: string[][] = this.docs.map(() => []);
+    const tfs: number[][] = this.docs.map(() => []);
+    for (const [term, p] of this.postings) {
+      for (let i = 0; i < p.ids.length; i++) { terms[p.ids[i]!]!.push(term); tfs[p.ids[i]!]!.push(p.tfs[i]!); }
+    }
+    return this.docs.map((d, id) => [d.url, d.title, d.snippet, d.length, d.visitedAt, d.hash, d.seq, terms[id]!, tfs[id]!]);
   }
 
   search(query: string, options: SearchOptions = {}): SearchHit[] {
@@ -237,6 +338,15 @@ class Bm25Index {
       }
       expansions.sort((a, b) => b[1] - a[1]);
       for (const [term] of expansions.slice(0, MAX_PREFIX_EXPANSIONS)) slot.push({ term, factor: PREFIX_FACTOR });
+    }
+
+    if (options.fuzzy) {
+      for (const slot of slots) {
+        const word = slot[0]!.term;
+        // Not a typo when the word exists, when it is a prefix of something (the as-you-type case), or when it is a number.
+        if (word.length < MIN_FUZZY_CHARS || slot.length > 1 || this.postings.has(word) || /\d/.test(word)) continue;
+        for (const near of this.termsOneEditFrom(word)) slot.push({ term: near, factor: FUZZY_FACTOR });
+      }
     }
 
     const n = this.liveCount;
@@ -306,6 +416,18 @@ class Bm25Index {
     });
   }
 
+  /** Vocabulary words one typo from `word` that start with the same letter, the most widespread first. */
+  private termsOneEditFrom(word: string): string[] {
+    const near: Array<[string, number]> = [];
+    const first = word.charCodeAt(0);
+    for (const [key, bucket] of this.prefixIndex) {
+      if (key.charCodeAt(0) !== first) continue;
+      for (const term of bucket) if (oneEditApart(word, term)) near.push([term, this.postings.get(term)!.ids.length]);
+    }
+    near.sort((a, b) => b[1] - a[1]);
+    return near.slice(0, MAX_FUZZY_EXPANSIONS).map(([term]) => term);
+  }
+
   private indexTerm(term: string): void {
     const key = term.slice(0, PREFIX_BUCKET_CHARS);
     const bucket = this.prefixIndex.get(key);
@@ -360,8 +482,9 @@ class Bm25Index {
     for (const t of snap.docs) {
       if (!Array.isArray(t) || typeof t[0] !== 'string' || typeof t[1] !== 'string' || typeof t[2] !== 'string'
         || typeof t[3] !== 'number' || typeof t[4] !== 'number' || typeof t[5] !== 'string') return new Bm25Index();
-      index.docs.push({ url: t[0], title: t[1], snippet: t[2], length: t[3], visitedAt: t[4], hash: t[5], live: true });
+      index.docs.push({ url: t[0], title: t[1], snippet: t[2], length: t[3], visitedAt: t[4], hash: t[5], seq: index.docs.length, live: true });
     }
+    index.seqCounter = index.docs.length;
     for (const entry of snap.postings) {
       if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !Array.isArray(entry[1]) || !Array.isArray(entry[2])
         || entry[1].length !== entry[2].length) return new Bm25Index();
@@ -378,5 +501,5 @@ class Bm25Index {
   }
 }
 
-export { Bm25Index, hashText, buildSnippet };
-export type { IndexableDocument, IndexableHeading, SearchHit, SearchOptions, IndexSnapshot };
+export { Bm25Index, hashText, buildSnippet, oneEditApart };
+export type { IndexableDocument, IndexableHeading, SearchHit, SearchOptions, IndexSnapshot, PersistedDoc, IndexMutation };

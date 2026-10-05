@@ -240,7 +240,7 @@ class SearchPage implements IDisposable {
       return s;
     }
 
-    const hits = this.deps.archive.search(this.query, { limit: MAX_ARCHIVE_HITS, prefix: false });
+    const hits = this.deps.archive.search(this.query, { limit: MAX_ARCHIVE_HITS, prefix: false, fuzzy: true });
     if (hits.length === 0) {
       note('No pages in your archive match.');
       return s;

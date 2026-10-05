@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  launchNova, startTestSite, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage, rightClickPage, readResolverEvents,
+  launchNova, startTestSite, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage, rightClickPage, readResolverEvents, archiveKeys, plantArchiveRecord,
   LINK_AT, IMAGE_AT, EMPTY_AT,
 } from './helpers/electron-app';
 import type { NovaApp, TestSite } from './helpers/electron-app';
@@ -170,6 +170,38 @@ test('the personal archive indexes visited pages and still finds them after a re
   await submitInOmnibox(page, 'nova://search?q=luminous');
   await expect(page.locator('.content-area h1')).toHaveText('Nova Search', { timeout: 30_000 });
   await expect(page.locator('.content-area article').first()).toContainText('Quasar notes', { timeout: 30_000 });
+});
+
+test('an archive saved before sharding is imported, rewritten as shards in real IndexedDB, and found again after a restart', async () => {
+  test.setTimeout(240_000);
+  nova = await launchNova(profile);
+  let { page } = nova;
+  // The old format: the whole index as one string under `snapshot` (one page about zeppelins).
+  const legacy = JSON.stringify({
+    v: 1,
+    docs: [['https://legacy.example.com/zeppelins', 'Zeppelins of old', 'A page about zeppelin airships, saved before the archive was sharded.', 6, 1000, 'abc123']],
+    postings: [['zeppelin', [0], [6]], ['airship', [0], [1]], ['old', [0], [5]]],
+  });
+  await plantArchiveRecord(page, 'snapshot', legacy);
+  expect(await archiveKeys(page)).toEqual(['snapshot']);
+  await page.reload();
+  await expect(omnibox(page)).toBeVisible({ timeout: 45_000 });
+
+  const searchFindsIt = async (): Promise<number> => {
+    await submitInOmnibox(page, 'nova://search?q=zeppelin');
+    await expect(page.locator('.content-area h1')).toHaveText('Nova Search');
+    return page.locator('.content-area article', { hasText: 'Zeppelins of old' }).count();
+  };
+  await expect.poll(searchFindsIt, { timeout: 60_000, intervals: [2_000] }).toBeGreaterThan(0); // searchable straight away
+
+  // The first save rewrites it as shards plus a meta record and drops the old snapshot, all in one transaction.
+  await expect.poll(() => archiveKeys(page), { timeout: 60_000, intervals: [2_000] }).toEqual(['snapshot/meta', 'snapshot/shard:00000']);
+
+  await nova.app.close();
+  nova = await launchNova(profile);
+  page = nova.page;
+  await expect.poll(searchFindsIt, { timeout: 60_000, intervals: [2_000] }).toBeGreaterThan(0); // restored from the shards
+  expect(await archiveKeys(page)).toEqual(['snapshot/meta', 'snapshot/shard:00000']);
 });
 
 test('typing a very familiar site looks its address up ahead of time; the later load finds it in the resolver cache', async () => {

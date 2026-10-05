@@ -1,22 +1,48 @@
-/** Where the serialised archive index lives. One opaque string blob under a single key. */
+/**
+ * Where the archive lives: a set of small records (see archive-shards.ts), changed in atomic batches. Earlier versions
+ * kept the whole index as one record; that snapshot is only ever read, once, to migrate it.
+ */
 interface IIndexStorage {
-  load(): Promise<string | null>;
-  save(data: string): Promise<void>;
+  /** The single-record snapshot written before the archive was sharded, or `null` when there is none. */
+  loadLegacy(): Promise<string | null>;
+  /** The ids of every record. */
+  list(): Promise<string[]>;
+  read(id: string): Promise<string | null>;
+  /**
+   * One atomic batch: a string writes the record, `null` deletes it. `dropLegacy` also deletes the legacy snapshot in
+   * the same batch, so a migration is all or nothing.
+   */
+  commit(changes: ReadonlyArray<readonly [id: string, data: string | null]>, dropLegacy?: boolean): Promise<void>;
+  /** Every record and the legacy snapshot. */
   clear(): Promise<void>;
 }
 
 class MemoryIndexStorage implements IIndexStorage {
-  data: string | null = null;
-  async load(): Promise<string | null> { return this.data; }
-  async save(data: string): Promise<void> { this.data = data; }
-  async clear(): Promise<void> { this.data = null; }
+  /** The legacy snapshot; assign it to stage an archive written before sharding. */
+  legacy: string | null = null;
+  readonly records = new Map<string, string>();
+
+  async loadLegacy(): Promise<string | null> { return this.legacy; }
+  async list(): Promise<string[]> { return [...this.records.keys()]; }
+  async read(id: string): Promise<string | null> { return this.records.get(id) ?? null; }
+  async commit(changes: ReadonlyArray<readonly [string, string | null]>, dropLegacy = false): Promise<void> {
+    for (const [id, data] of changes) {
+      if (data === null) this.records.delete(id);
+      else this.records.set(id, data);
+    }
+    if (dropLegacy) this.legacy = null;
+  }
+  async clear(): Promise<void> {
+    this.records.clear();
+    this.legacy = null;
+  }
 }
 
 const STORE = 'kv';
 
 /**
- * Persists the snapshot in IndexedDB (no practical size limit, unlike localStorage's ~5-10 MB).
- * A single record keeps the adapter trivial; see the archive service for save debouncing.
+ * Persists the archive in IndexedDB (no practical size limit, unlike localStorage's ~5-10 MB). One object store: the
+ * legacy snapshot lives under `key`, every record under `key/<id>`, so several archives can share a database.
  */
 class IndexedDbIndexStorage implements IIndexStorage {
   private db: Promise<IDBDatabase> | null = null;
@@ -42,35 +68,61 @@ class IndexedDbIndexStorage implements IIndexStorage {
     return this.db;
   }
 
-  async load(): Promise<string | null> {
+  private recordKey(id: string): string { return `${this.key}/${id}`; }
+
+  private async request<T>(make: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
     const db = await this.open();
-    return new Promise<string | null>((resolve, reject) => {
-      const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(this.key);
-      req.onsuccess = () => resolve(typeof req.result === 'string' ? req.result : null);
+    return new Promise<T>((resolve, reject) => {
+      const req = make(db.transaction(STORE, 'readonly').objectStore(STORE));
+      req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error ?? new Error('IndexedDB read failed'));
     });
   }
 
-  async save(data: string): Promise<void> {
+  async loadLegacy(): Promise<string | null> {
+    const value = await this.request((store) => store.get(this.key));
+    return typeof value === 'string' ? value : null;
+  }
+
+  async list(): Promise<string[]> {
+    const prefix = `${this.key}/`;
+    const keys = await this.request((store) => store.getAllKeys());
+    return keys.filter((k): k is string => typeof k === 'string' && k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+  }
+
+  async read(id: string): Promise<string | null> {
+    const value = await this.request((store) => store.get(this.recordKey(id)));
+    return typeof value === 'string' ? value : null;
+  }
+
+  private async write(work: (store: IDBObjectStore) => void, action: string): Promise<void> {
     const db = await this.open();
     return new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put(data, this.key);
+      work(tx.objectStore(STORE));
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error ?? new Error('IndexedDB write failed'));
-      tx.onabort = () => reject(tx.error ?? new Error('IndexedDB write aborted'));
+      tx.onerror = () => reject(tx.error ?? new Error(`IndexedDB ${action} failed`));
+      tx.onabort = () => reject(tx.error ?? new Error(`IndexedDB ${action} aborted`));
     });
   }
 
-  async clear(): Promise<void> {
-    const db = await this.open();
-    return new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).delete(this.key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error ?? new Error('IndexedDB delete failed'));
-      tx.onabort = () => reject(tx.error ?? new Error('IndexedDB delete aborted'));
-    });
+  commit(changes: ReadonlyArray<readonly [string, string | null]>, dropLegacy = false): Promise<void> {
+    return this.write((store) => {
+      for (const [id, data] of changes) {
+        if (data === null) store.delete(this.recordKey(id));
+        else store.put(data, this.recordKey(id));
+      }
+      if (dropLegacy) store.delete(this.key);
+    }, 'write');
+  }
+
+  clear(): Promise<void> {
+    const prefix = `${this.key}/`;
+    return this.write((store) => {
+      const keys = store.getAllKeys();
+      keys.onsuccess = () => { for (const k of keys.result) if (typeof k === 'string' && k.startsWith(prefix)) store.delete(k); };
+      store.delete(this.key);
+    }, 'delete');
   }
 }
 

@@ -113,7 +113,7 @@ describe('SearchPage', () => {
     mount('quasar');
     expect((container.querySelector('input[type="search"]') as HTMLInputElement).value).toBe('quasar');
     expect(texts('h2')).toEqual(['From your archive', 'Search the web', 'Search settings']);
-    expect(archiveSearch).toHaveBeenCalledWith('quasar', { limit: 20, prefix: false });
+    expect(archiveSearch).toHaveBeenCalledWith('quasar', { limit: 20, prefix: false, fuzzy: true });
   });
 
   describe('archive results', () => {

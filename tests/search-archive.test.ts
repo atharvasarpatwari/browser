@@ -132,7 +132,7 @@ describe('PersonalSearchArchive', () => {
       a.dispose();
       await vi.advanceTimersByTimeAsync(10_000);
       expect(a.stats().documents).toBe(0);
-      expect(storage.data).toBeNull();
+      expect(storage.records.size).toBe(0);
     });
   });
 
@@ -140,11 +140,11 @@ describe('PersonalSearchArchive', () => {
     it('saves after a debounce and restores into a fresh archive', async () => {
       const a = make({ saveDelayMs: 1000 });
       a.indexNow(doc('https://example.com/a', 'alpha content'));
-      expect(storage.data).toBeNull();
+      expect(storage.records.size).toBe(0);
       await vi.advanceTimersByTimeAsync(999);
-      expect(storage.data).toBeNull();
+      expect(storage.records.size).toBe(0);
       await vi.advanceTimersByTimeAsync(1);
-      expect(storage.data).not.toBeNull();
+      expect(storage.records.size).toBeGreaterThan(0);
       expect(a.stats().lastSavedAt).toBe(clock);
 
       const b = make();
@@ -155,7 +155,7 @@ describe('PersonalSearchArchive', () => {
     });
 
     it('coalesces bursts of changes into one save', async () => {
-      const spy = vi.spyOn(storage, 'save');
+      const spy = vi.spyOn(storage, 'commit');
       const a = make({ saveDelayMs: 1000 });
       for (let i = 0; i < 5; i++) {
         a.indexNow(doc(`https://example.com/${i}`, `content number${i}`));
@@ -166,7 +166,7 @@ describe('PersonalSearchArchive', () => {
     });
 
     it('flush() writes immediately and is a no-op when nothing changed', async () => {
-      const spy = vi.spyOn(storage, 'save');
+      const spy = vi.spyOn(storage, 'commit');
       const a = make();
       await a.flush();
       expect(spy).not.toHaveBeenCalled();
@@ -178,22 +178,19 @@ describe('PersonalSearchArchive', () => {
     });
 
     it('survives storage failures: reports the error, keeps the data dirty and retries later', async () => {
-      let failing = true;
-      const flaky: IIndexStorage = {
-        load: async () => null,
-        save: async (data) => { if (failing) throw new Error('disk full'); storage.data = data; },
-        clear: async () => { storage.data = null; },
-      };
-      const a = make({}, flaky);
+      vi.spyOn(storage, 'commit').mockRejectedValueOnce(new Error('disk full'));
+      const a = make();
       a.indexNow(doc('https://example.com/a', 'alpha content'));
       await a.flush();
       expect(a.stats().lastError).toBe('disk full');
       expect(a.search('alpha')).toHaveLength(1); // search is unaffected
-      failing = false;
+      expect(storage.records.size).toBe(0);
       a.indexNow(doc('https://example.com/b', 'bravo content'));
-      await a.flush();
+      await a.flush(); // the failed save's page is written now too
       expect(a.stats().lastError).toBeNull();
-      expect(storage.data).not.toBeNull();
+      const b = make();
+      await b.load();
+      expect(b.stats().documents).toBe(2);
     });
 
     it('starts empty on missing, corrupt or unreadable storage', async () => {
@@ -201,18 +198,19 @@ describe('PersonalSearchArchive', () => {
       await fresh.load();
       expect(fresh.stats()).toMatchObject({ documents: 0, loaded: true, lastError: null });
 
-      storage.data = '{not json';
+      storage.legacy = '{not json';
       const corrupt = make();
       await corrupt.load();
       expect(corrupt.stats()).toMatchObject({ documents: 0, loaded: true });
       expect(corrupt.stats().lastError).toBeTruthy();
 
-      storage.data = JSON.stringify({ v: 99, docs: [], postings: [] });
+      storage.legacy = JSON.stringify({ v: 99, docs: [], postings: [] });
       const wrongVersion = make();
       await wrongVersion.load();
       expect(wrongVersion.stats().documents).toBe(0);
 
-      const broken = make({}, { load: async () => { throw new Error('idb gone'); }, save: async () => {}, clear: async () => {} });
+      const gone = async (): Promise<never> => { throw new Error('idb gone'); };
+      const broken = make({}, { loadLegacy: gone, list: gone, read: gone, commit: gone, clear: gone });
       await broken.load();
       expect(broken.stats()).toMatchObject({ documents: 0, loaded: true, lastError: 'idb gone' });
     });
@@ -221,12 +219,12 @@ describe('PersonalSearchArchive', () => {
       const a = make({ saveDelayMs: 10 });
       a.indexNow(doc('https://example.com/a', 'alpha content'));
       await vi.advanceTimersByTimeAsync(10);
-      expect(storage.data).not.toBeNull();
+      expect(storage.records.size).toBeGreaterThan(0);
       await a.clear();
-      expect(storage.data).toBeNull();
+      expect(storage.records.size).toBe(0);
       expect(a.search('alpha')).toEqual([]);
       await vi.advanceTimersByTimeAsync(10_000); // a pending debounced save must not resurrect it
-      expect(storage.data).toBeNull();
+      expect(storage.records.size).toBe(0);
     });
 
     it('removing a page schedules a save too', async () => {

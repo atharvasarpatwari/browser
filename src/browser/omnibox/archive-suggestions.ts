@@ -21,13 +21,13 @@ class ArchiveSuggestionsProvider implements OmniboxProvider {
   getSuggestions(input: string, maxResults = 3): OmniboxResult[] {
     const query = input.trim();
     if (query.length < this.minChars || this.isIncognito()) return [];
-    return this.toResults(this.archive.search(query, { limit: maxResults * 3 }), maxResults, true);
+    return this.toResults(this.archive.search(query, { limit: maxResults * 3, fuzzy: true }), maxResults, true);
   }
 
   /** Scoped `@archive <query>`: partial matches allowed, larger limit. */
   search(query: string, limit = 10): OmniboxResult[] {
     if (!query.trim() || this.isIncognito()) return [];
-    return this.toResults(this.archive.search(query, { limit }), limit, false);
+    return this.toResults(this.archive.search(query, { limit, fuzzy: true }), limit, false);
   }
 
   private toResults(hits: SearchHit[], limit: number, requireAllTerms: boolean): OmniboxResult[] {

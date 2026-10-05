@@ -4,15 +4,17 @@ import { AddressBarView } from '../src/ui/components/address-bar/address-bar.vie
 import { benchAsync } from '../src/benchmark/runner';
 import type { BenchmarkResult, SuiteResult } from '../src/benchmark/runner';
 import {
-  CORPUS_SIZE, SEARCH_BUDGETS, SEARCH_GATES, VOCABULARY_SIZE,
-  buildSearchCorpus, buildVocabulary, createPipeline, searchSuite, seededRandom,
+  BENCH_NAMES, CORPUS_SIZE, SEARCH_BUDGETS, SEARCH_GATES, VOCABULARY_SIZE,
+  buildSearchCorpus, buildVocabulary, createPipeline, misspell, searchSuite, seededRandom, stageArchive,
 } from '../src/benchmark/suites/search';
 import type { SearchCorpus } from '../src/benchmark/suites/search';
+import { PersonalSearchArchive } from '../src/browser/search/search-archive';
 
 /**
  * The performance gates of the search-engine plan (§6): classify + rank under 2.5 ms, a keystroke through the local
- * omnibox under 16 ms (one frame), a query over a 10,000-page archive under 15 ms. `npm run benchmark:search` runs this
- * file and prints the table.
+ * omnibox under 16 ms (one frame), a query over a 10,000-page archive under 15 ms — with and without typo tolerance —
+ * saving one page into the archive under 50 ms and restoring one shard of it within a frame.
+ * `npm run benchmark:search` runs this file and prints the table.
  *
  * These run next to hundreds of other test files on shared workers, so a gate fails only when the median is over its
  * budget or the p95 is over twice its budget — and only after the whole measurement was repeated (up to three times).
@@ -24,7 +26,11 @@ const ms = (value: number): string => value.toFixed(3).padStart(8);
 
 const withinBudget = (b: BenchmarkResult, budgetMs: number): boolean =>
   b.medianMs < budgetMs * FACTOR && b.p95Ms < budgetMs * P95_SLACK * FACTOR;
-const gateMisses = (r: SuiteResult): number => SEARCH_GATES.filter((g) => !withinBudget(r.benchmarks.find((b) => b.name === g.bench)!, g.budgetMs)).length;
+const queryShapes = (r: SuiteResult): BenchmarkResult[] => r.benchmarks.filter((b) => b.name.startsWith('  Bm25Index.search'));
+/** Gates and per-shape query rows over their budget: a noisy shape makes the whole measurement run again, like a noisy gate. */
+const gateMisses = (r: SuiteResult): number =>
+  SEARCH_GATES.filter((g) => !withinBudget(r.benchmarks.find((b) => b.name === g.bench)!, g.budgetMs)).length
+  + queryShapes(r).filter((b) => !withinBudget(b, SEARCH_BUDGETS.indexQuery)).length;
 
 async function measure(): Promise<SuiteResult> {
   let best: SuiteResult | null = null;
@@ -70,6 +76,36 @@ describe('search performance', () => {
       expect(corpus.index.search(common.text)).toHaveLength(10); // a head term matches nearly every page
     });
 
+    it('misspells a word one way or another, keeping its first letter', () => {
+      expect(misspell('bacedifo', 'swap')).toBe('baecdifo');
+      expect(misspell('bacedifo', 'drop')).toBe('baedifo');
+      expect(misspell('bacedifo', 'replace')).toBe('bazedifo');
+      expect(misspell('bazedifo', 'replace')).toBe('babedifo');
+    });
+
+    it('has typo queries that are real typos: only fuzzy search finds pages for all their words', () => {
+      expect(new Set(corpus.typoQueries.map((q) => q.shape)).size).toBeGreaterThanOrEqual(4);
+      for (const q of corpus.typoQueries) {
+        const exact = corpus.index.search(q.text);
+        const fuzzy = corpus.index.search(q.text, { fuzzy: true });
+        expect(fuzzy.length, `${q.shape}: "${q.text}"`).toBeGreaterThan(0);
+        expect(fuzzy[0]!.matchedTerms, `${q.shape}: "${q.text}"`).toBeGreaterThan(exact[0]?.matchedTerms ?? 0);
+      }
+    });
+
+    it('stages the archive as the product stores it: restoring it gives back the same 10,000 pages', async () => {
+      const archive = new PersonalSearchArchive({ storage: stageArchive(corpus), isEnabled: () => true, isIncognito: () => false });
+      await archive.load();
+      try {
+        expect(archive.stats()).toMatchObject({ documents: CORPUS_SIZE, loaded: true, lastError: null });
+        for (const q of [corpus.queries[0]!, corpus.queries[20]!, corpus.queries[40]!]) {
+          expect(archive.search(q.text).map((h) => h.url), q.text).toEqual(corpus.index.search(q.text).map((h) => h.url));
+        }
+      } finally {
+        archive.dispose();
+      }
+    }, 60_000);
+
     it('shows rows for every keystroke of the typing script', async () => {
       const pipeline = await createPipeline(corpus);
       try {
@@ -94,9 +130,17 @@ describe('search performance', () => {
       expect(b.p95Ms, `p95 ${b.p95Ms.toFixed(2)} ms`).toBeLessThan(gate.budgetMs * P95_SLACK * FACTOR);
     });
 
+    it('measured the archive save over many real saves, and a whole load next to what the one-snapshot design cost', () => {
+      expect(named(BENCH_NAMES.archiveSave).times.length).toBeGreaterThanOrEqual(100);
+      const before = named(BENCH_NAMES.snapshotSave).medianMs;
+      expect(before, 'the old whole-snapshot save').toBeGreaterThan(named(BENCH_NAMES.archiveSave).medianMs);
+      expect(named(BENCH_NAMES.archiveLoadAll).medianMs).toBeGreaterThan(named(BENCH_NAMES.archiveDecodeShard).medianMs);
+      expect(named(BENCH_NAMES.archiveSave).medianMs, 'saves of real pages cost something').toBeGreaterThan(0.1);
+    });
+
     it('keeps every kind of index query within the index budget, not just the average of them', () => {
-      const shapes = result.benchmarks.filter((b) => b.name.startsWith('  Bm25Index.search'));
-      expect(shapes.length).toBeGreaterThanOrEqual(9);
+      const shapes = queryShapes(result);
+      expect(shapes.length).toBeGreaterThanOrEqual(13); // 9 exact shapes + 4 typo shapes
       for (const b of shapes) {
         expect(b.medianMs, `${b.name.trim()}: p50 ${b.medianMs.toFixed(2)} ms`).toBeLessThan(SEARCH_BUDGETS.indexQuery * FACTOR);
         expect(b.p95Ms, `${b.name.trim()}: p95 ${b.p95Ms.toFixed(2)} ms`).toBeLessThan(SEARCH_BUDGETS.indexQuery * P95_SLACK * FACTOR);

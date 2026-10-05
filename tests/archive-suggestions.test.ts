@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ArchiveSuggestionsProvider } from '../src/browser/omnibox/archive-suggestions';
 import type { ArchiveSource } from '../src/browser/omnibox/archive-suggestions';
+import { Bm25Index } from '../src/browser/search/bm25-index';
 import type { SearchHit } from '../src/browser/search/bm25-index';
 
 const hit = (url: string, score: number, over: Partial<SearchHit> = {}): SearchHit => ({
@@ -48,11 +49,20 @@ describe('ArchiveSuggestionsProvider', () => {
     expect(src.search).not.toHaveBeenCalled();
   });
 
+  it('tolerates a typo: the page is offered for a misspelled word, from a real index', () => {
+    const index = new Bm25Index();
+    index.upsert({ url: 'https://a.test/quasar', title: 'Quasar notes', headings: [], description: '', body: 'A luminous galactic nucleus', visitedAt: 1 });
+    const p = new ArchiveSuggestionsProvider(index);
+    expect(p.getSuggestions('quazar').map((r) => r.url)).toEqual(['https://a.test/quasar']); // the omnibox
+    expect(p.search('quazar').map((r) => r.url)).toEqual(['https://a.test/quasar']); // `@archive`
+    expect(index.search('quazar')).toEqual([]); // the index itself stays exact unless asked
+  });
+
   it('asks the archive for a few more hits than it shows, then caps the rows', () => {
     const src = source([hit('https://a', 5), hit('https://b', 4), hit('https://c', 3), hit('https://d', 2)]);
     const p = new ArchiveSuggestionsProvider(src);
     expect(p.getSuggestions('query', 2)).toHaveLength(2);
-    expect(src.search).toHaveBeenCalledWith('query', { limit: 6 });
+    expect(src.search).toHaveBeenCalledWith('query', { limit: 6, fuzzy: true });
   });
 
   describe('scoped @archive search', () => {
@@ -60,9 +70,9 @@ describe('ArchiveSuggestionsProvider', () => {
       const src = source([hit('https://all', 5), hit('https://some', 4, { matchedTerms: 1 })]);
       const p = new ArchiveSuggestionsProvider(src);
       expect(p.search('two words').map((r) => r.url)).toEqual(['https://all', 'https://some']);
-      expect(src.search).toHaveBeenCalledWith('two words', { limit: 10 });
+      expect(src.search).toHaveBeenCalledWith('two words', { limit: 10, fuzzy: true });
       expect(p.search('two words', 3)).toHaveLength(2);
-      expect(src.search).toHaveBeenLastCalledWith('two words', { limit: 3 });
+      expect(src.search).toHaveBeenLastCalledWith('two words', { limit: 3, fuzzy: true });
     });
 
     it('ignores empty queries and honours a custom minimum length', () => {

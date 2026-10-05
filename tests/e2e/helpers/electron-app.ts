@@ -158,6 +158,37 @@ async function rightClickPage(page: Page, point: { x: number; y: number }): Prom
   await page.mouse.click(at.x, at.y, { button: 'right' });
 }
 
+/**
+ * The personal archive's own IndexedDB (database `nova-search-archive`, object store `kv`): every key in it, and a way
+ * to plant a record — the archive written by a version before it was sharded is one string under `snapshot`.
+ */
+async function archiveKeys(page: Page): Promise<string[]> {
+  return page.evaluate(() => new Promise<string[]>((resolve, reject) => {
+    const open = indexedDB.open('nova-search-archive', 1);
+    open.onupgradeneeded = () => { if (!open.result.objectStoreNames.contains('kv')) open.result.createObjectStore('kv'); };
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const keys = open.result.transaction('kv', 'readonly').objectStore('kv').getAllKeys();
+      keys.onsuccess = () => { open.result.close(); resolve((keys.result as string[]).sort()); };
+      keys.onerror = () => reject(keys.error);
+    };
+  }));
+}
+
+async function plantArchiveRecord(page: Page, key: string, value: string): Promise<void> {
+  await page.evaluate(([k, v]) => new Promise<void>((resolve, reject) => {
+    const open = indexedDB.open('nova-search-archive', 1);
+    open.onupgradeneeded = () => { if (!open.result.objectStoreNames.contains('kv')) open.result.createObjectStore('kv'); };
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(v, k);
+      tx.oncomplete = () => { open.result.close(); resolve(); };
+      tx.onerror = () => reject(tx.error);
+    };
+  }), [key, value] as const);
+}
+
 /** One thing Chromium's host resolver did, from a net log: a request for `host`, or the job that really asks the DNS server. */
 interface ResolverEvent {
   readonly at: number; // epoch milliseconds, comparable with `Date.now()` / `performance.timeOrigin + performance.now()`
@@ -196,7 +227,7 @@ async function openPage(page: Page, url: string): Promise<void> {
 }
 
 export {
-  startTestSite, launchNova, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage, readResolverEvents,
+  startTestSite, launchNova, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage, readResolverEvents, archiveKeys, plantArchiveRecord,
   LINK_AT, IMAGE_AT, EMPTY_AT, pagePointToClient, rightClickPage,
 };
 export type { TestSite, NovaApp, ResolverEvent };
