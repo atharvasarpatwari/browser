@@ -109,6 +109,8 @@ interface PageContextMenuDeps {
   readonly actions: PageMenuActions;
   /** The text selected on the page when the client point is on it; asking also ends a selection the point is not on. */
   readonly selectionAt?: (clientX: number, clientY: number) => string;
+  /** How far the page is scrolled; hit-testing is in page coordinates. Default: not scrolled. */
+  readonly scrollY?: () => number;
 }
 
 /**
@@ -138,7 +140,7 @@ class PageContextMenuController implements IDisposable {
 
     const rect = canvas.getBoundingClientRect();
     const frame = { width: canvas.width, height: canvas.height };
-    const view = computeViewTransform({ width: rect.width, height: rect.height }, frame);
+    const view = computeViewTransform({ width: rect.width, height: rect.height }, frame, this.deps.scrollY?.() ?? 0);
     const point = pointToFrame({ x: e.clientX - rect.left, y: e.clientY - rect.top }, view, frame);
 
     let target: PageTarget | null = null;

@@ -175,13 +175,13 @@ describe('FindBarView', () => {
 
 describe('computeViewTransform / mapRect', () => {
   it('letterboxes like object-fit: contain', () => {
-    expect(computeViewTransform({ width: 400, height: 100 }, { width: 200, height: 100 })).toEqual({ scale: 1, offsetX: 100, offsetY: 0 });
-    expect(computeViewTransform({ width: 100, height: 400 }, { width: 200, height: 100 })).toEqual({ scale: 0.5, offsetX: 0, offsetY: 175 });
-    expect(computeViewTransform({ width: 200, height: 100 }, { width: 200, height: 100 })).toEqual({ scale: 1, offsetX: 0, offsetY: 0 });
+    expect(computeViewTransform({ width: 400, height: 100 }, { width: 200, height: 100 })).toEqual({ scale: 1, offsetX: 100, offsetY: 0, scrollY: 0 });
+    expect(computeViewTransform({ width: 100, height: 400 }, { width: 200, height: 100 })).toEqual({ scale: 0.5, offsetX: 0, offsetY: 175, scrollY: 0 });
+    expect(computeViewTransform({ width: 200, height: 100 }, { width: 200, height: 100 })).toEqual({ scale: 1, offsetX: 0, offsetY: 0, scrollY: 0 });
   });
 
   it('falls back to identity for degenerate sizes', () => {
-    const identity = { scale: 1, offsetX: 0, offsetY: 0 };
+    const identity = { scale: 1, offsetX: 0, offsetY: 0, scrollY: 0 };
     expect(computeViewTransform({ width: 0, height: 100 }, { width: 200, height: 100 })).toEqual(identity);
     expect(computeViewTransform({ width: 100, height: 100 }, { width: 0, height: 0 })).toEqual(identity);
   });

@@ -59,6 +59,18 @@ describe('PageSelectionController', () => {
     expect((area.querySelector('canvas.nova-selection-overlay') as HTMLElement).style.pointerEvents).toBe('none');
   });
 
+  it('selects the text under the pointer when the page is scrolled: runs are in page coordinates, the bitmap shows them from scrollY down', () => {
+    controller.dispose();
+    const tall: FindTextSource = { getBlocks: () => [block('Far down the page', 10, 2020)] };
+    controller = new PageSelectionController({ area, source: tall, scrollY: () => 2000 });
+    controller.attach();
+    drag(xOf(4), xOf(8), 20); // bitmap row 20 is page row 2020
+    expect(controller.text()).toBe('down');
+    controller.clear();
+    mouse('mousedown', page, xOf(0), 20, { detail: 2 });
+    expect(controller.text()).toBe('Far');
+  });
+
   it('follows the pointer while it is down, even outside the page', () => {
     mouse('mousedown', page, xOf(6), 14);
     mouse('mousemove', document, 5000, 5000); // far past the end of the page

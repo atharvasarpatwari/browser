@@ -44,6 +44,7 @@ import { ContentRenderer } from '../components/content-renderer/content-renderer
 import { NavigationFetcher } from '../components/navigation-fetcher';
 import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
 import { PageContextMenuController } from '../components/context-menu/page-context-menu';
+import { PageScrollController } from '../components/page-scroll/page-scroll-controller';
 import { dnsPrefetchHint } from '../../browser/search/speculative-loader';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
 import type { DomDocument, DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
@@ -267,7 +268,15 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private readonly enginePageHandler = (event: EngineEvent): void => {
     if (event.kind === 'pageLoadReady') this.search?.onContentReplaced();
     else if (event.kind === 'pageRepainted') this.search?.onPageRepainted();
+    if (event.kind === 'pageLoadReady' || event.kind === 'pageRepainted') this.pageScroll?.update();
   };
+
+  /** Scrolls the page on screen to `y` (the paint engine clamps it) and repaints; every scroll route ends here. */
+  private scrollPageTo(y: number): void {
+    if (!this.paintEngine) return;
+    this.paintEngine.setScroll(y);
+    this.browserEngine?.notifyPageRepainted();
+  }
 
   /**
    * Tracks navigation failure/success on the bridge so pushed ChromeStateSnapshot
@@ -312,6 +321,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private bookmarkEventHandler: ((event: { kind: string }) => void) | null = null;
   private contextMenu: ContextMenu | null = null;
   private pageContextMenu: PageContextMenuController | null = null;
+  private pageScroll: PageScrollController | null = null;
   private incognitoManager: IIncognitoManager | null = null;
   private tabSessionBridge: TabSessionBridge | null = null;
   private tabPersistence: TabPersistenceManager | null = null;
@@ -587,6 +597,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         menu: () => (this.contextMenu ??= new ContextMenu()),
         resolveTarget: (x, y) => this.resolveContextTarget(x, y),
         selectionAt: (x, y) => this.search?.selectionAt(x, y) ?? '',
+        scrollY: () => this.paintEngine?.getScroll().y ?? 0,
         context: () => {
           const state = this.getChromeState();
           return { pageUrl: state.addressValue, engineName: this.currentDefaultEngine().name, canGoBack: state.canGoBack, canGoForward: state.canGoForward };
@@ -604,6 +615,14 @@ class BrowserWindowPage implements IBrowserWindowPage {
       });
       this.pageContextMenu.attach();
       this.search?.enableSelection();
+
+      // Wheel, keys and a scrollbar for pages taller than the viewport (desktop only).
+      this.pageScroll = new PageScrollController({
+        area: areas.content,
+        scroll: () => this.paintEngine?.getScroll() ?? { y: 0, max: 0, viewportHeight: 0, documentHeight: 0 },
+        scrollTo: (y) => this.scrollPageTo(y),
+      });
+      this.pageScroll.attach();
     }
 
     this._mounted = true;
@@ -643,6 +662,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         return true;
       },
       warmHost: (host) => dnsPrefetchHint(host),
+      scroll: () => this.paintEngine?.getScroll() ?? { y: 0, documentHeight: 0 },
     });
     this.search.install();
     if (this.pageDocumentProvider) this.search.setPageDocumentProvider(this.pageDocumentProvider);
@@ -655,6 +675,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.search = null;
     this.pageContextMenu?.dispose();
     this.pageContextMenu = null;
+    this.pageScroll?.dispose();
+    this.pageScroll = null;
     this.cleanupSettingsPage();
     this.cleanupDownloadsPage();
     this.cleanupContentPanel();

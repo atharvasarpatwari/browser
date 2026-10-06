@@ -5,24 +5,35 @@ interface ViewTransform {
   readonly scale: number;
   readonly offsetX: number;
   readonly offsetY: number;
+  /** How far the page is scrolled: the bitmap shows the page from this row down. Page coordinates are document coordinates. */
+  readonly scrollY?: number;
 }
 
-/** Where a `frame`-sized image lands inside a `box` with CSS `object-fit: contain`. */
+/** The page's vertical scroll, as the overlays need it. */
+interface ScrollView {
+  readonly y: number;
+  /** The whole page's height (the bitmap shows one viewport of it). */
+  readonly documentHeight: number;
+}
+
+/** Where a `frame`-sized image lands inside a `box` with CSS `object-fit: contain`, showing the page scrolled to `scrollY`. */
 function computeViewTransform(
   box: { readonly width: number; readonly height: number },
   frame: { readonly width: number; readonly height: number },
+  scrollY = 0,
 ): ViewTransform {
-  if (frame.width <= 0 || frame.height <= 0 || box.width <= 0 || box.height <= 0) return { scale: 1, offsetX: 0, offsetY: 0 };
+  if (frame.width <= 0 || frame.height <= 0 || box.width <= 0 || box.height <= 0) return { scale: 1, offsetX: 0, offsetY: 0, scrollY };
   const scale = Math.min(box.width / frame.width, box.height / frame.height);
-  return { scale, offsetX: (box.width - frame.width * scale) / 2, offsetY: (box.height - frame.height * scale) / 2 };
+  return { scale, offsetX: (box.width - frame.width * scale) / 2, offsetY: (box.height - frame.height * scale) / 2, scrollY };
 }
 
+/** A page rectangle (document coordinates) in the box the bitmap is shown in. */
 function mapRect(r: FindRect, t: ViewTransform): FindRect {
-  return { x: r.x * t.scale + t.offsetX, y: r.y * t.scale + t.offsetY, width: r.width * t.scale, height: r.height * t.scale };
+  return { x: r.x * t.scale + t.offsetX, y: (r.y - (t.scrollY ?? 0)) * t.scale + t.offsetY, width: r.width * t.scale, height: r.height * t.scale };
 }
 
 /**
- * The inverse of the view transform: which pixel of the `frame`-sized bitmap lies under `point` (relative to the
+ * The inverse of the view transform: which point of the page (document coordinates) lies under `point` (relative to the
  * box the bitmap is shown in). Null for the margins `object-fit: contain` leaves around the image.
  */
 function pointToFrame(
@@ -32,7 +43,7 @@ function pointToFrame(
 ): { x: number; y: number } | null {
   const x = (point.x - t.offsetX) / t.scale;
   const y = (point.y - t.offsetY) / t.scale;
-  return x < 0 || y < 0 || x >= frame.width || y >= frame.height ? null : { x, y };
+  return x < 0 || y < 0 || x >= frame.width || y >= frame.height ? null : { x, y: y + (t.scrollY ?? 0) };
 }
 
 const COLOR_MATCH = 'rgba(255, 214, 0, 0.45)';
@@ -53,10 +64,11 @@ class FindHighlightOverlay implements IDisposable {
   private active = -1;
   private observer: ResizeObserver | null = null;
 
-  /** `frameSize` is the page bitmap's pixel size (what match coordinates are relative to). */
+  /** `frameSize` is the page bitmap's pixel size; match coordinates are page coordinates, shifted by `scroll` when drawn. */
   constructor(
     private readonly host: HTMLElement,
     private readonly frameSize: () => { readonly width: number; readonly height: number } | null,
+    private readonly scroll: () => ScrollView = () => ({ y: 0, documentHeight: 0 }),
   ) {}
 
   show(matches: readonly FindMatch[], activeIndex: number): void {
@@ -92,7 +104,9 @@ class FindHighlightOverlay implements IDisposable {
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    const t = computeViewTransform({ width: w, height: h }, frame);
+    const view = this.scroll();
+    const t = computeViewTransform({ width: w, height: h }, frame, view.y);
+    const pageHeight = Math.max(frame.height, view.documentHeight);
 
     this.matches.forEach((m, i) => {
       const isActive = i === this.active;
@@ -114,7 +128,7 @@ class FindHighlightOverlay implements IDisposable {
     for (const i of order) {
       const first = this.matches[i]!.rects[0];
       if (!first) continue;
-      const y = Math.min(h - TICK_HEIGHT, Math.max(0, (first.y / frame.height) * h));
+      const y = Math.min(h - TICK_HEIGHT, Math.max(0, (first.y / pageHeight) * h)); // down the whole page, not just the viewport
       ctx.fillStyle = i === this.active ? COLOR_TICK_ACTIVE : COLOR_TICK;
       ctx.fillRect(w - TICK_WIDTH, y, TICK_WIDTH, TICK_HEIGHT);
     }
@@ -147,4 +161,4 @@ class FindHighlightOverlay implements IDisposable {
 }
 
 export { FindHighlightOverlay, computeViewTransform, mapRect, pointToFrame };
-export type { ViewTransform };
+export type { ViewTransform, ScrollView };

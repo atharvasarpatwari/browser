@@ -12,6 +12,8 @@ interface PageSelectionDeps {
   readonly area: HTMLElement;
   /** The page's positioned text (the same source find-in-page searches). */
   readonly source: FindTextSource;
+  /** How far the page is scrolled (the bitmap shows the page from this row down). Default: not scrolled. */
+  readonly scrollY?: () => number;
 }
 
 /**
@@ -136,13 +138,16 @@ class PageSelectionController implements IDisposable {
     return canvas && canvas.width > 0 ? canvas : null;
   }
 
-  /** A client point in page-bitmap coordinates; null outside the bitmap unless `clamp` pins it to the nearest edge. */
+  /**
+   * A client point in page coordinates (the page is taller than its bitmap: the bitmap shows it from `scrollY` down);
+   * null outside the bitmap unless `clamp` pins it to the nearest edge of what is shown.
+   */
   private toPage(clientX: number, clientY: number, clamp: boolean): { x: number; y: number } | null {
     const canvas = this.pageCanvas();
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     const frame = { width: canvas.width, height: canvas.height };
-    const t = computeViewTransform({ width: rect.width, height: rect.height }, frame);
+    const t = computeViewTransform({ width: rect.width, height: rect.height }, frame, this.deps.scrollY?.() ?? 0);
     let x = (clientX - rect.left - t.offsetX) / t.scale;
     let y = (clientY - rect.top - t.offsetY) / t.scale;
     if (clamp) {
@@ -151,7 +156,7 @@ class PageSelectionController implements IDisposable {
     } else if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) {
       return null;
     }
-    return { x, y };
+    return { x, y: y + (t.scrollY ?? 0) };
   }
 
   private draw(): void {
@@ -175,7 +180,7 @@ class PageSelectionController implements IDisposable {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = COLOR;
-    const t = computeViewTransform({ width: w, height: h }, { width: canvas.width, height: canvas.height });
+    const t = computeViewTransform({ width: w, height: h }, { width: canvas.width, height: canvas.height }, this.deps.scrollY?.() ?? 0);
     for (const rect of rects) {
       const r = mapRect(rect, t);
       ctx.fillRect(r.x, r.y, r.width, r.height);

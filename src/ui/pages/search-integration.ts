@@ -11,6 +11,7 @@ import { FindInPage } from '../../browser/navigation-controls/find-in-page';
 import { createDomFindSource } from '../../browser/navigation-controls/find-page-source';
 import { FindBarView } from '../components/find-bar/find-bar.view';
 import { FindHighlightOverlay } from '../components/find-bar/find-overlay';
+import type { ScrollView } from '../components/find-bar/find-overlay';
 import { PageSelectionController } from '../components/page-selection/page-selection-controller';
 import { DEFAULT_BROWSER_ACTIONS } from '../../browser/omnibox/browser-actions';
 import { expandSearchTemplate } from '../../browser/omnibox/search-template';
@@ -55,6 +56,8 @@ interface SearchHost {
   fetchText?(url: string, signal: AbortSignal): Promise<string>;
   /** Warms the connection to a host (optional). */
   warmHost?(host: string): void | Promise<void>;
+  /** How far the page is scrolled and how tall it is; find highlights and selections are in page coordinates. */
+  scroll?(): ScrollView;
 }
 
 /** Omnibox commands that just open a built-in page ("clear browsing data" opens the settings that do it). */
@@ -175,6 +178,7 @@ class SearchIntegration implements IDisposable {
   /** The page was repainted in place: re-run the find query so matches follow the new layout. */
   onPageRepainted(): void {
     this.selection?.redraw();
+    this.findOverlay?.redraw(); // the page may have scrolled: highlights are in page coordinates
     if (!this.findBar?.isOpen || this.refreshTimer) return;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
@@ -203,7 +207,9 @@ class SearchIntegration implements IDisposable {
   enableSelection(): void {
     const area = this.host.contentArea();
     if (!area || this.selection) return;
-    this.selection = new PageSelectionController({ area, source: createDomFindSource(() => this.pageDocument()) });
+    this.selection = new PageSelectionController({
+      area, source: createDomFindSource(() => this.pageDocument()), scrollY: () => this.scrollView().y,
+    });
     this.selection.attach();
   }
 
@@ -266,7 +272,7 @@ class SearchIntegration implements IDisposable {
     if (!this.findBar) {
       if (getComputedStyle(area).position === 'static') area.style.position = 'relative';
       this.findEngine = new FindInPage(createDomFindSource(() => this.pageDocument()));
-      this.findOverlay = new FindHighlightOverlay(area, () => this.frameSize(area));
+      this.findOverlay = new FindHighlightOverlay(area, () => this.frameSize(area), () => this.scrollView());
       this.findBar = new FindBarView(this.findEngine, {
         onChange: (r) => this.findOverlay?.show(r.matches, r.activeIndex),
         onClose: () => this.findOverlay?.clear(),
@@ -416,6 +422,10 @@ class SearchIntegration implements IDisposable {
   private typingInField(): boolean {
     const el = document.activeElement;
     return el instanceof HTMLElement && (el.matches('input, textarea, select') || el.isContentEditable);
+  }
+
+  private scrollView(): ScrollView {
+    return this.host.scroll?.() ?? { y: 0, documentHeight: 0 };
   }
 
   /** The page bitmap's pixel size — match geometry is relative to it. Null when no page is rendered. */

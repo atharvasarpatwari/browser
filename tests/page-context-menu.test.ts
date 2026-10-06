@@ -186,6 +186,16 @@ describe('PageContextMenuController', () => {
     area.remove();
   });
 
+  it('hit-tests in page coordinates when the page is scrolled: the bitmap shows the page from scrollY down', () => {
+    controller.dispose();
+    controller = new PageContextMenuController({
+      area, menu: () => menu, resolveTarget, context: () => context(), actions: makeActions(), scrollY: () => 2500,
+    });
+    controller.attach();
+    rightClick(110, 70);
+    expect(resolveTarget).toHaveBeenCalledWith(200, 100 + 2500);
+  });
+
   it('hit-tests in bitmap coordinates (the canvas scales the page into the content area) and shows the menu at the pointer', () => {
     const event = rightClick(110, 70);
     expect(resolveTarget).toHaveBeenCalledWith(200, 100); // ((110 − 10) / 0.5, (70 − 20) / 0.5)

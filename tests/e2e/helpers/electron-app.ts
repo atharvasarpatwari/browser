@@ -58,6 +58,10 @@ async function startTestSite(): Promise<TestSite> {
           '<div style="height:300px">spacer</div>'
           + '<a href="/quasar" style="display:block;height:200px">Read about quasars</a>'
           + '<img src="/pixel.png" alt="a red pixel" style="display:block;width:300px;height:300px">'));
+      case '/tall': // a long page whose last 200 px are a red link: 3000 px of nothing, then the link at the very bottom
+        return send('text/html; charset=utf-8', html('Tall page',
+          '<div style="height:3000px">spacer</div>'
+          + '<a href="/quasar" style="display:block;height:200px;background:#ff0000">Read about quasars</a>'));
       case '/select': // one line of text below a spacer, in normal flow: roughly where it lands is known (see TEXT_AT)
         return send('text/html; charset=utf-8', html('Select me',
           '<div style="height:300px">spacer</div>'

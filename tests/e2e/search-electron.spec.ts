@@ -303,6 +303,75 @@ test('text on a rendered page can be selected, copied, and searched from the rig
   await expect(page.locator('canvas.nova-selection-overlay')).toHaveCount(0);
 });
 
+test('a long page scrolls with the wheel, the keys and the scrollbar; clicks land on what is shown; Back restores the place', async () => {
+  test.setTimeout(240_000);
+  nova = await launchNova(profile);
+  const { page } = nova;
+  const thumb = page.locator('.nova-page-scrollbar-thumb');
+  const thumbTop = async (): Promise<number> => parseFloat((await thumb.evaluate((el) => (el as HTMLElement).style.top)) || '0');
+  /** How many pixels of the page bitmap are red (the link block): none while the top is shown. */
+  const redPixels = () => page.evaluate(() => {
+    const canvas = document.querySelector('.content-area canvas') as HTMLCanvasElement;
+    const { data } = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height);
+    let n = 0;
+    for (let i = 0; i < data.length; i += 4) if (data[i]! > 200 && data[i + 1]! < 60 && data[i + 2]! < 60) n++;
+    return n;
+  });
+  const menu = page.locator('.nova-context-menu');
+
+  await openPage(page, `${site.origin}/tall`);
+  await expect(thumb).toBeVisible(); // the page is taller than the viewport
+  expect(await thumbTop()).toBe(0);
+  expect(await redPixels()).toBe(0); // the link is below the fold
+
+  // The wheel.
+  const middle = await pagePointToClient(page, { x: 960, y: 500 });
+  await page.mouse.move(middle.x, middle.y);
+  await page.mouse.wheel(0, 400);
+  await expect.poll(thumbTop).toBeGreaterThan(0);
+  const afterWheel = await thumbTop();
+
+  // The keyboard: PageDown moves further, Home returns, End reaches the bottom where the link is.
+  await page.locator('.content-area').click({ position: { x: 5, y: 5 } }); // focus the page, not the address bar
+  await page.keyboard.press('PageDown');
+  await expect.poll(thumbTop).toBeGreaterThan(afterWheel);
+  await page.keyboard.press('Home');
+  await expect.poll(thumbTop).toBe(0);
+  await page.keyboard.press('End');
+  await expect.poll(redPixels, { timeout: 15_000 }).toBeGreaterThan(50_000);
+
+  // Clicks land on what is shown: the link, at the bottom of the page, is found by a right-click there.
+  const onLink = await pagePointToClient(page, { x: 400, y: 1000 });
+  await page.mouse.click(onLink.x, onLink.y, { button: 'right' });
+  await expect(menu.getByText('Open link in new tab', { exact: true })).toBeVisible(); // found at its scrolled position
+  await expect(menu.getByText(/^Search Nova for “Read about quasars”/)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+
+  // The scrollbar: dragging the thumb to the middle of the track.
+  const box = (await thumb.boundingBox())!;
+  const track = (await page.locator('.nova-page-scrollbar').boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, track.y + track.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(thumbTop).toBeLessThan(80);
+  expect(await thumbTop()).toBeGreaterThan(20);
+
+  // Back / Forward return to the same place.
+  await page.keyboard.press('End');
+  await expect.poll(redPixels).toBeGreaterThan(50_000);
+  const bottom = await thumbTop();
+  await openPage(page, `${site.origin}/quasar`);
+  await expect(thumb).toBeHidden(); // a short page: no scrollbar
+  await rightClickPage(page, EMPTY_AT);
+  await menu.getByText('Back', { exact: true }).click();
+  await expect(omnibox(page)).toHaveValue(`${site.origin}/tall`, { timeout: 30_000 });
+  await expect(thumb).toBeVisible({ timeout: 30_000 });
+  await expect.poll(redPixels, { timeout: 15_000 }).toBeGreaterThan(50_000); // still at the bottom, not back at the top
+  expect(Math.abs((await thumbTop()) - bottom)).toBeLessThan(1);
+});
+
 test('right-clicking a rendered page offers its links, its images and the page itself', async () => {
   test.setTimeout(180_000);
   nova = await launchNova(profile);
