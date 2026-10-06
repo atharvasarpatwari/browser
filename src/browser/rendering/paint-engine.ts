@@ -580,7 +580,7 @@ class PaintEngine implements IPaintEngine {
           commands.push({ type: 'setFont', params: [`${weight} ${run.fontSize}px ${run.fontFamily}`] });
           commands.push({
             type: 'fillText',
-            params: [run.text, run.x, run.y],
+            params: run.width !== undefined ? [run.text, run.x, run.y, run.width] : [run.text, run.x, run.y],
           });
         }
       }
