@@ -249,4 +249,48 @@ describe('PageContextMenuController', () => {
     expect(rightClick(110, 70).defaultPrevented).toBe(false);
     expect(menu.show).toHaveBeenCalledTimes(1);
   });
+
+  it('asks for the selection at the click, and puts it in the menu', () => {
+    controller.dispose();
+    const selectionAt = vi.fn((_x: number, _y: number) => 'quasar notes');
+    controller = new PageContextMenuController({ area, menu: () => menu, resolveTarget: () => null, context: () => context(), actions: makeActions(), selectionAt });
+    controller.attach();
+    rightClick(110, 70);
+    expect(selectionAt).toHaveBeenCalledWith(110, 70);
+    expect(labels(shown()).slice(0, 3)).toEqual(['Copy', 'Search Nova for “quasar notes”', 'Ask Nova AI about “quasar notes”']);
+  });
+});
+
+describe('page menu with selected text', () => {
+  it('leads with copy, search and ask for the selection', () => {
+    const actions = makeActions();
+    const items = buildPageContextMenu(null, context({ selection: '  quasar\n  notes ' }), actions);
+    expect(labels(items).slice(0, 3)).toEqual(['Copy', 'Search Nova for “quasar notes”', 'Ask Nova AI about “quasar notes”']);
+    item(items, 'Copy').action!();
+    expect(actions.copy).toHaveBeenCalledWith('quasar\n  notes'); // the text as selected, trimmed — not the one-line label
+    item(items, 'Search Nova for “quasar notes”').action!();
+    expect(actions.searchFor).toHaveBeenCalledWith('quasar notes');
+    item(items, 'Ask Nova AI about “quasar notes”').action!();
+    expect(actions.askAi).toHaveBeenCalledWith('quasar notes');
+  });
+
+  it('keeps the page navigation items below it when nothing else is under the pointer', () => {
+    expect(labels(buildPageContextMenu(null, context({ selection: 'text' }), makeActions()))).toEqual([
+      'Copy', 'Search Nova for “text”', 'Ask Nova AI about “text”',
+      '—', 'Back', 'Forward', 'Reload', '—', 'Find in page…', 'Copy page address',
+    ]);
+  });
+
+  it('comes first over a link too, with the link items after it', () => {
+    const l = labels(buildPageContextMenu(link(), context({ selection: 'text' }), makeActions()));
+    expect(l.slice(0, 4)).toEqual(['Copy', 'Search Nova for “text”', 'Ask Nova AI about “text”', '—']);
+    expect(l).toContain('Open link in new tab');
+    expect(l).not.toContain('Back');
+  });
+
+  it('is absent for an empty or blank selection', () => {
+    for (const selection of [undefined, '', '  \n ']) {
+      expect(labels(buildPageContextMenu(null, context({ selection }), makeActions()))[0]).toBe('Back');
+    }
+  });
 });

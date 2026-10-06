@@ -17,6 +17,8 @@ interface PageMenuContext {
   readonly engineName: string;
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
+  /** The text selected on the page, when the pointer is on it. */
+  readonly selection?: string;
 }
 
 interface PageMenuActions {
@@ -48,6 +50,15 @@ function buildPageContextMenu(target: PageTarget | null, context: PageMenuContex
   const link = target?.linkUrl ?? null;
   const image = target?.imageUrl ?? null;
 
+  const selected = context.selection?.replace(/\s+/g, ' ').trim();
+  if (selected) {
+    groups.push([
+      { label: 'Copy', icon: '⧉', action: () => actions.copy(context.selection!.trim()) },
+      { label: `Search ${context.engineName} for ${quoted(selected)}`, icon: '🔍', action: () => actions.searchFor(selected) },
+      { label: `Ask Nova AI about ${quoted(selected)}`, icon: '✨', action: () => actions.askAi(selected) },
+    ]);
+  }
+
   if (link) {
     const group: ContextMenuItem[] = [
       { label: 'Open link in new tab', icon: '↗', action: () => actions.openInNewTab(link) },
@@ -72,7 +83,7 @@ function buildPageContextMenu(target: PageTarget | null, context: PageMenuContex
     ]);
   }
 
-  if (groups.length === 0) {
+  if (!link && !image) {
     groups.push(
       [
         { label: 'Back', icon: '←', disabled: !context.canGoBack, action: () => actions.back() },
@@ -96,6 +107,8 @@ interface PageContextMenuDeps {
   readonly resolveTarget: (x: number, y: number) => PageTarget | null;
   readonly context: () => PageMenuContext;
   readonly actions: PageMenuActions;
+  /** The text selected on the page when the client point is on it; asking also ends a selection the point is not on. */
+  readonly selectionAt?: (clientX: number, clientY: number) => string;
 }
 
 /**
@@ -138,7 +151,8 @@ class PageContextMenuController implements IDisposable {
       }
     }
     e.preventDefault();
-    this.deps.menu().show(e.clientX, e.clientY, buildPageContextMenu(target, this.deps.context(), this.deps.actions));
+    const selection = this.deps.selectionAt?.(e.clientX, e.clientY) ?? '';
+    this.deps.menu().show(e.clientX, e.clientY, buildPageContextMenu(target, { ...this.deps.context(), selection }, this.deps.actions));
   }
 }
 

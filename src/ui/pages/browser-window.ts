@@ -586,6 +586,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         area: areas.content,
         menu: () => (this.contextMenu ??= new ContextMenu()),
         resolveTarget: (x, y) => this.resolveContextTarget(x, y),
+        selectionAt: (x, y) => this.search?.selectionAt(x, y) ?? '',
         context: () => {
           const state = this.getChromeState();
           return { pageUrl: state.addressValue, engineName: this.currentDefaultEngine().name, canGoBack: state.canGoBack, canGoForward: state.canGoForward };
@@ -602,6 +603,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         },
       });
       this.pageContextMenu.attach();
+      this.search?.enableSelection();
     }
 
     this._mounted = true;

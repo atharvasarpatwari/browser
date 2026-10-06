@@ -58,6 +58,10 @@ async function startTestSite(): Promise<TestSite> {
           '<div style="height:300px">spacer</div>'
           + '<a href="/quasar" style="display:block;height:200px">Read about quasars</a>'
           + '<img src="/pixel.png" alt="a red pixel" style="display:block;width:300px;height:300px">'));
+      case '/select': // one line of text below a spacer, in normal flow: roughly where it lands is known (see TEXT_AT)
+        return send('text/html; charset=utf-8', html('Select me',
+          '<div style="height:300px">spacer</div>'
+          + '<p style="font-size:32px;line-height:48px;margin:0">Alpha bravo charlie delta echo foxtrot golf hotel</p>'));
       case '/pixel.png':
         return send('image/png', PIXEL_PNG);
       default:
@@ -133,6 +137,9 @@ async function submitInOmnibox(page: Page, text: string): Promise<void> {
  * and the 300 px spacer put the link at about y 390–590 and the image at about 590–890 (generous: ±60 px of slack).
  */
 const LINK_AT = { x: 400, y: 490 };
+/** On the first word ("Alpha") of the `/select` page's line of text; a point far to the right of that line is past its end. */
+const TEXT_AT = { x: 40, y: 452 };
+const PAST_TEXT_END = { x: 1800, y: 452 };
 const IMAGE_AT = { x: 150, y: 740 };
 /** A page point nothing is at. */
 const EMPTY_AT = { x: 1500, y: 900 };
@@ -228,6 +235,6 @@ async function openPage(page: Page, url: string): Promise<void> {
 
 export {
   startTestSite, launchNova, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage, readResolverEvents, archiveKeys, plantArchiveRecord,
-  LINK_AT, IMAGE_AT, EMPTY_AT, pagePointToClient, rightClickPage,
+  LINK_AT, IMAGE_AT, EMPTY_AT, TEXT_AT, PAST_TEXT_END, pagePointToClient, rightClickPage,
 };
 export type { TestSite, NovaApp, ResolverEvent };

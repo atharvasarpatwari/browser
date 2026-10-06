@@ -134,12 +134,14 @@ function buildPattern(query: string, options: FindOptions): RegExp {
   return new RegExp(body, options.caseSensitive ? 'gu' : 'giu');
 }
 
+const runWidth = (run: FindRun): number => run.width ?? run.text.length * run.fontSize * ESTIMATED_CHAR_WIDTH;
+
 function rectOf(seg: Segment, start: number, end: number): FindRect {
   const { run } = seg;
   const from = Math.max(start, seg.start) - seg.start;
   const to = Math.min(end, seg.end) - seg.start;
   const length = run.text.length;
-  const width = run.width ?? length * run.fontSize * ESTIMATED_CHAR_WIDTH;
+  const width = runWidth(run);
   return {
     x: run.x + (from / length) * width,
     y: run.y - run.fontSize * ASCENT,
@@ -305,8 +307,8 @@ class FindInPage implements IFindInPage {
   }
 }
 
-export { FindInPage };
+export { FindInPage, buildCorpus, rectOf, runWidth, ASCENT, LINE_HEIGHT };
 export type {
   IFindInPage, FindMatch, FindOptions, FindResult, FindEvent, FindEventKind, FindEventHandler,
-  FindRect, FindRun, FindBlock, FindTextSource,
+  FindRect, FindRun, FindBlock, FindTextSource, Segment,
 };

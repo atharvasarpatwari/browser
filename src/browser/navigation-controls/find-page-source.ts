@@ -10,7 +10,9 @@ function toFindRuns(runs: readonly TextRun[]): FindRun[] {
   return runs.map((r, i) => {
     const next = runs[i + 1];
     const sameLine = next !== undefined && Math.abs(next.y - r.y) < r.fontSize * 0.5 && next.x > r.x;
-    return { text: r.text, x: r.x, y: r.y, fontSize: r.fontSize, ...(sameLine ? { width: next.x - r.x } : {}) };
+    // The width layout gave the run, when it recorded one; otherwise the distance to the next run on the line.
+    const width = r.width ?? (sameLine ? next.x - r.x : undefined);
+    return { text: r.text, x: r.x, y: r.y, fontSize: r.fontSize, ...(width !== undefined ? { width } : {}) };
   });
 }
 

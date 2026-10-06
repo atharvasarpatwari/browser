@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   launchNova, startTestSite, omnibox, dropdown, typeInOmnibox, submitInOmnibox, openPage, rightClickPage, readResolverEvents, archiveKeys, plantArchiveRecord,
-  LINK_AT, IMAGE_AT, EMPTY_AT,
+  LINK_AT, IMAGE_AT, EMPTY_AT, TEXT_AT, PAST_TEXT_END, pagePointToClient,
 } from './helpers/electron-app';
 import type { NovaApp, TestSite } from './helpers/electron-app';
 
@@ -255,6 +255,52 @@ test('typing a very familiar site looks its address up ahead of time; the later 
   const lookupsDuringLoad = (host: string) => forHost(host).filter((e) => e.kind === 'job' && e.at >= fetchStarts);
   expect(lookupsDuringLoad(control).length).toBeGreaterThan(0); // a cold host is looked up while loading — the log can see lookups
   expect(lookupsDuringLoad(warmed)).toEqual([]); // a warmed one is not: it was already in the resolver's cache
+});
+
+test('text on a rendered page can be selected, copied, and searched from the right-click menu', async () => {
+  test.setTimeout(180_000);
+  nova = await launchNova(profile);
+  const { app, page } = nova;
+  const clipboard = () => app.evaluate(({ clipboard: c }) => c.readText());
+  const menu = page.locator('.nova-context-menu');
+  await openPage(page, `${site.origin}/select`);
+  const at = async (p: { x: number; y: number }) => pagePointToClient(page, p);
+
+  // Double-click a word: it is highlighted over the page, and Ctrl+C puts it on the OS clipboard.
+  const word = await at(TEXT_AT);
+  await page.mouse.dblclick(word.x, word.y);
+  await expect(page.locator('canvas.nova-selection-overlay')).toHaveCount(1);
+  await page.keyboard.press('Control+c');
+  await expect.poll(clipboard).toBe('Alpha');
+
+  // Drag from the start of the line past its end: the whole line.
+  const from = await at({ x: 1, y: TEXT_AT.y }); // left of the first letter (the body has a small margin)
+  const to = await at(PAST_TEXT_END);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move((from.x + to.x) / 2, to.y, { steps: 5 });
+  await page.mouse.move(to.x, to.y, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.press('Control+c');
+  await expect.poll(clipboard).toBe('Alpha bravo charlie delta echo foxtrot golf hotel');
+
+  // Right-click on the selection: the menu leads with copy / search / ask for it; "Search" opens a new tab.
+  const on = await at({ x: 100, y: TEXT_AT.y });
+  await page.mouse.click(on.x, on.y, { button: 'right' });
+  await expect(menu.getByText('Copy', { exact: true }).first()).toBeVisible();
+  await expect(menu.getByText(/^Ask Nova AI about “Alpha bravo charlie/)).toBeVisible();
+  await menu.getByText(/^Search Nova for “Alpha bravo charlie/).click();
+  await expect(page.locator('.nova-tab')).toHaveCount(2);
+  await expect(omnibox(page)).toHaveValue(/^nova:\/\/search\?q=Alpha%20bravo/, { timeout: 30_000 });
+
+  // Back on the first tab, a click elsewhere ends the selection; Ctrl+A selects the whole page's text.
+  await page.locator('.nova-tab').first().click();
+  await expect(omnibox(page)).toHaveValue(`${site.origin}/select`, { timeout: 30_000 });
+  await page.keyboard.press('Control+a');
+  await expect(page.locator('canvas.nova-selection-overlay')).toHaveCount(1);
+  const blank = await at(EMPTY_AT);
+  await page.mouse.click(blank.x, blank.y);
+  await expect(page.locator('canvas.nova-selection-overlay')).toHaveCount(0);
 });
 
 test('right-clicking a rendered page offers its links, its images and the page itself', async () => {

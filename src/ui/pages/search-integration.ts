@@ -11,6 +11,7 @@ import { FindInPage } from '../../browser/navigation-controls/find-in-page';
 import { createDomFindSource } from '../../browser/navigation-controls/find-page-source';
 import { FindBarView } from '../components/find-bar/find-bar.view';
 import { FindHighlightOverlay } from '../components/find-bar/find-overlay';
+import { PageSelectionController } from '../components/page-selection/page-selection-controller';
 import { DEFAULT_BROWSER_ACTIONS } from '../../browser/omnibox/browser-actions';
 import { expandSearchTemplate } from '../../browser/omnibox/search-template';
 import { buildResearchUrl } from '../../browser/omnibox/ai-research-provider';
@@ -103,6 +104,7 @@ class SearchIntegration implements IDisposable {
   private findEngine: FindInPage | null = null;
   private findBar: FindBarView | null = null;
   private findOverlay: FindHighlightOverlay | null = null;
+  private selection: PageSelectionController | null = null;
   private pageDocument: () => DomDocument | null = () => null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -172,6 +174,7 @@ class SearchIntegration implements IDisposable {
 
   /** The page was repainted in place: re-run the find query so matches follow the new layout. */
   onPageRepainted(): void {
+    this.selection?.redraw();
     if (!this.findBar?.isOpen || this.refreshTimer) return;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = null;
@@ -182,6 +185,7 @@ class SearchIntegration implements IDisposable {
   /** The content area is about to be (or was) redrawn with something else — find state no longer applies. */
   onContentReplaced(): void {
     this.teardownFind();
+    this.selection?.clear();
   }
 
   /**
@@ -192,6 +196,26 @@ class SearchIntegration implements IDisposable {
   onPageLeaving(): void {
     this.retireOffer();
     this.teardownFind();
+    this.selection?.clear();
+  }
+
+  /** Lets the user select text on rendered pages (drag, double/triple-click, Ctrl+A, Ctrl+C). Desktop layout only. */
+  enableSelection(): void {
+    const area = this.host.contentArea();
+    if (!area || this.selection) return;
+    this.selection = new PageSelectionController({ area, source: createDomFindSource(() => this.pageDocument()) });
+    this.selection.attach();
+  }
+
+  /**
+   * The selected text when `clientX/Y` is on it (the right-click menu offers to search it). A right-click anywhere
+   * else ends the selection, like a browser's.
+   */
+  selectionAt(clientX: number, clientY: number): string {
+    if (!this.selection?.hasSelection) return '';
+    if (this.selection.containsClientPoint(clientX, clientY)) return this.selection.text();
+    this.selection.clear();
+    return '';
   }
 
   /** Mounts `nova://search?q=…` into `container` (replacing any previous instance). */
@@ -264,6 +288,8 @@ class SearchIntegration implements IDisposable {
     this.offerAbort?.abort();
     this.retireOffer();
     this.teardownFind();
+    this.selection?.dispose();
+    this.selection = null;
     this.disposeSearchPage();
     void this.subsystem?.archive.flush();
     this.subsystem?.dispose();
@@ -375,12 +401,26 @@ class SearchIntegration implements IDisposable {
       e.preventDefault();
       if (e.shiftKey) this.findEngine?.findPrevious();
       else this.findEngine?.findNext();
+    } else if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !this.typingInField()) {
+      const key = e.key.toLowerCase();
+      if (key === 'a' && this.selection?.selectAll()) {
+        e.preventDefault();
+      } else if (key === 'c' && this.selection?.hasSelection) {
+        this.copyText(this.selection.text());
+        e.preventDefault();
+      }
     }
+  }
+
+  /** Focus is in a text field (the address bar, the find box…): its own Ctrl+A / Ctrl+C apply, not the page's. */
+  private typingInField(): boolean {
+    const el = document.activeElement;
+    return el instanceof HTMLElement && (el.matches('input, textarea, select') || el.isContentEditable);
   }
 
   /** The page bitmap's pixel size — match geometry is relative to it. Null when no page is rendered. */
   private frameSize(area: HTMLElement): { width: number; height: number } | null {
-    const canvas = area.querySelector<HTMLCanvasElement>('canvas:not(.nova-find-overlay)');
+    const canvas = area.querySelector<HTMLCanvasElement>('canvas:not(.nova-find-overlay):not(.nova-selection-overlay)');
     return canvas && canvas.width > 0 ? { width: canvas.width, height: canvas.height } : null;
   }
 
