@@ -72,7 +72,11 @@ describe('NavigationFetcher: the page bitmap never replaces a built-in page', ()
       renderError: vi.fn<(...args: unknown[]) => void>(),
       renderLoading: vi.fn<(...args: unknown[]) => void>(),
     };
-    const paint = { rasterize: () => ({ width: 4, height: 4, data: new Uint8ClampedArray(64) }) } as unknown as IPaintEngine;
+    const paint = {
+      rasterize: () => ({ width: 4, height: 4, data: new Uint8ClampedArray(64) }),
+      setScroll: () => 0,
+      getScroll: () => ({ y: 0, max: 0, viewportHeight: 4, documentHeight: 4 }),
+    } as unknown as IPaintEngine;
     const fetcher = new NavigationFetcher(
       { on, off } as unknown as IBrowserEngine,
       renderer as unknown as IContentRenderer,

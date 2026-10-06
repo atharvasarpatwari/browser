@@ -1006,7 +1006,11 @@ describe('BrowserWindowPage — search wiring', () => {
         on: (type: string, h: Handler) => { (handlers[type] ??= []).push(h); },
         off: (type: string, h: Handler) => { handlers[type] = (handlers[type] ?? []).filter((x) => x !== h); },
       } as unknown as Parameters<BrowserWindowPage['setBrowserEngine']>[0];
-      const paint = { rasterize: () => ({ width: 4, height: 4, data: new Uint8ClampedArray(64) }) } as unknown as Parameters<BrowserWindowPage['setPaintEngine']>[0];
+      const paint = {
+        rasterize: () => ({ width: 4, height: 4, data: new Uint8ClampedArray(64) }),
+        setScroll: () => 0,
+        getScroll: () => ({ y: 0, max: 0, viewportHeight: 4, documentHeight: 4 }),
+      } as unknown as Parameters<BrowserWindowPage['setPaintEngine']>[0];
       page.setBrowserEngine(engine);
       page.setPaintEngine(paint);
       const ready = (type: RouteType, url: string) => {

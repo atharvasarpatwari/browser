@@ -72,6 +72,9 @@ interface FrameCompositedEvent extends PaintEvent {
 
 type PaintEventUnion = LayerPaintedEvent | FrameCompositedEvent;
 
+/** The tallest page rasterised (rows): 1920 × 16,384 × 4 bytes ≈ 126 MB. Content below it cannot be scrolled to. */
+const MAX_PAGE_HEIGHT = 16_384;
+
 interface PaintConfig {
   readonly width: number;
   readonly height: number;
@@ -79,6 +82,15 @@ interface PaintConfig {
   readonly backgroundColor: string;
   readonly showDebugBorders: boolean;
   readonly hardwareAcceleration: boolean;
+}
+
+/** The page's vertical scroll: the bitmap shows `viewportHeight` rows of a `documentHeight` tall page, starting at `y`. */
+interface PageScroll {
+  readonly y: number;
+  /** The largest `y` the page can scroll to. */
+  readonly max: number;
+  readonly viewportHeight: number;
+  readonly documentHeight: number;
 }
 
 const DEFAULT_PAINT_CONFIG: PaintConfig = {
@@ -99,6 +111,9 @@ interface IPaintEngine extends IDisposable {
   rasterize(): ImageData;
   rasterizeAsync(): Promise<ImageData>;
   resize(width: number, height: number): void;
+  /** Scrolls the page to `y` (clamped to the document); returns where it ended up. Takes effect on the next `rasterize()`. */
+  setScroll(y: number): number;
+  getScroll(): PageScroll;
   getConfig(): PaintConfig;
   updateConfig(config: Partial<PaintConfig>): void;
   on(type: PaintEventType, handler: (event: PaintEventUnion) => void): void;
@@ -120,6 +135,12 @@ class PaintEngine implements IPaintEngine {
   private renderTree: RenderObject | null = null;
   private readonly elementCommands = new Map<DomElement, PaintCommand[]>();
   private rasterizer: Rasterizer | GpuRasterizer;
+  private scrollY = 0;
+  private documentHeight = 0;
+  /** A page taller than the viewport is rasterised whole, once, into this (scrolling then only crops it). */
+  private tall: { readonly rasterizer: Rasterizer | GpuRasterizer; readonly height: number } | null = null;
+  private fullFrame: ImageData | null = null;
+  private fullFrameStale = true;
 
   // Compositing layer system
   private layerCompositor: LayerCompositor | null = null;
@@ -148,6 +169,8 @@ class PaintEngine implements IPaintEngine {
 
     this.stackingTree = buildStackingContextTree(root, this.stackingBuildOptions());
     this.renderTree = buildRenderObject(root);
+    this.documentHeight = measureDocumentHeight(document);
+    this.fullFrameStale = true;
 
     // Build compositing layer tree from stacking context
     if (this.layerCompositor) {
@@ -187,6 +210,8 @@ class PaintEngine implements IPaintEngine {
 
     this.stackingTree = buildStackingContextTree(root, this.stackingBuildOptions());
     this.renderTree = buildRenderObject(root);
+    this.documentHeight = measureDocumentHeight(document);
+    this.fullFrameStale = true;
 
     const allElements: DomElement[] = [];
     this.collectElements(root, allElements);
@@ -266,10 +291,11 @@ class PaintEngine implements IPaintEngine {
   }
 
   compositeFrame(): PaintCommand[] {
+    const height = this.rasterHeight();
     const allCommands: PaintCommand[] = [
-      { type: 'clearRect', params: [0, 0, this.config.width, this.config.height] },
+      { type: 'clearRect', params: [0, 0, this.config.width, height] },
       { type: 'setFillStyle', params: [this.config.backgroundColor] },
-      { type: 'fillRect', params: [0, 0, this.config.width, this.config.height] },
+      { type: 'fillRect', params: [0, 0, this.config.width, height] },
     ];
 
     if (this.stackingTree) {
@@ -306,9 +332,29 @@ class PaintEngine implements IPaintEngine {
     return allCommands;
   }
 
+  /**
+   * The bitmap of the page as scrolled: the viewport-sized frame. A page taller than the viewport is rasterised whole
+   * (up to MAX_PAGE_HEIGHT rows) the first time and after each change; scrolling only crops a window out of it, so a
+   * scroll tick costs a copy, not a repaint. The software rasteriser draws in absolute pixels, which is why the page
+   * is not simply shifted.
+   */
   rasterize(): ImageData {
-    const commands = this.compositeFrame();
-    return this.rasterizer.rasterize(commands);
+    const height = this.rasterHeight();
+    if (height <= this.config.height) return this.rasterizer.rasterize(this.compositeFrame());
+
+    if (this.fullFrameStale || !this.fullFrame || this.fullFrame.height !== height) {
+      if (this.tall?.height !== height) this.tall = { rasterizer: this.createRasterizer(height), height };
+      this.fullFrame = this.tall!.rasterizer.rasterize(this.compositeFrame());
+      this.fullFrameStale = false;
+    }
+    const { width } = this.fullFrame;
+    const from = this.getScroll().y * width * 4;
+    return new ImageData(this.fullFrame.data.slice(from, from + this.config.height * width * 4), width, this.config.height);
+  }
+
+  /** Rows rasterised: the document's height, at least the viewport and at most MAX_PAGE_HEIGHT. */
+  private rasterHeight(): number {
+    return Math.min(MAX_PAGE_HEIGHT, Math.max(this.config.height, Math.ceil(this.documentHeight)));
   }
 
   async rasterizeAsync(): Promise<ImageData> {
@@ -319,6 +365,22 @@ class PaintEngine implements IPaintEngine {
   resize(width: number, height: number): void {
     this.config = { ...this.config, width, height };
     this.rasterizer = this.createRasterizer();
+    this.tall = null;
+    this.fullFrameStale = true;
+  }
+
+  setScroll(y: number): number {
+    this.scrollY = Math.max(0, Math.min(Number.isFinite(y) ? Math.round(y) : 0, this.maxScroll()));
+    return this.scrollY;
+  }
+
+  getScroll(): PageScroll {
+    const max = this.maxScroll();
+    return { y: Math.min(this.scrollY, max), max, viewportHeight: this.config.height, documentHeight: this.documentHeight };
+  }
+
+  private maxScroll(): number {
+    return this.rasterHeight() - this.config.height;
   }
 
   getConfig(): PaintConfig {
@@ -327,23 +389,25 @@ class PaintEngine implements IPaintEngine {
 
   updateConfig(config: Partial<PaintConfig>): void {
     this.config = { ...this.config, ...config };
+    this.fullFrameStale = true;
     if ('hardwareAcceleration' in config || 'width' in config || 'height' in config) {
       this.rasterizer = this.createRasterizer();
+      this.tall = null;
     }
   }
 
-  private createRasterizer(): Rasterizer | GpuRasterizer {
+  private createRasterizer(height: number = this.config.height): Rasterizer | GpuRasterizer {
     if (this.config.hardwareAcceleration) {
       return new GpuRasterizer({
         width: this.config.width,
-        height: this.config.height,
+        height,
         devicePixelRatio: this.config.devicePixelRatio,
         backgroundColor: this.config.backgroundColor,
       });
     }
     return new Rasterizer({
       width: this.config.width,
-      height: this.config.height,
+      height,
       devicePixelRatio: this.config.devicePixelRatio,
       backgroundColor: this.config.backgroundColor,
     });
@@ -824,6 +888,16 @@ class PaintEngine implements IPaintEngine {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
+/** The bottom edge of the laid-out document: the root or body box, whichever reaches further. */
+function measureDocumentHeight(document: DomDocument): number {
+  let bottom = 0;
+  for (const el of [document.htmlElement, document.bodyElement]) {
+    const box = el?.layoutBox;
+    if (box) bottom = Math.max(bottom, box.y + box.height);
+  }
+  return bottom;
+}
+
 function getZIndex(element: DomElement): number {
   const style = element.computedStyle ?? new Map();
   const zRaw = style.get('z-index');
@@ -838,4 +912,4 @@ function colorToString(c: { r: number; g: number; b: number; a: number }): strin
 }
 
 export { PaintEngine, DEFAULT_PAINT_CONFIG };
-export type { IPaintEngine, PaintLayer, PaintCommand, PaintCommandType, PaintConfig, PaintEventUnion, PaintEventType };
+export type { IPaintEngine, PaintLayer, PaintCommand, PaintCommandType, PaintConfig, PaintEventUnion, PaintEventType, PageScroll };
