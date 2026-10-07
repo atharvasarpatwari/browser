@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PageScrollController } from '../src/ui/components/page-scroll/page-scroll-controller';
 import type { PageScrollState } from '../src/ui/components/page-scroll/page-scroll-controller';
-import { computeViewTransform, mapRect, pointToFrame } from '../src/ui/components/find-bar/find-overlay';
+import { computeViewTransform, mapRect, pointToFrame, scrollToReveal } from '../src/ui/components/find-bar/find-overlay';
 
 // A 1920x1080 bitmap shown at half size (960x540) in the content area; the page is 5000 px tall.
 const SCALE = 0.5;
@@ -208,6 +208,29 @@ describe('PageScrollController', () => {
       controller.dispose();
       expect(bar()).toBeNull();
     });
+  });
+});
+
+describe('scrollToReveal', () => {
+  const view = (y: number) => ({ y, documentHeight: 5000, viewportHeight: 1000 });
+  const rect = (y: number, height = 40) => ({ x: 10, y, width: 100, height });
+
+  it('does nothing for a match that is already in view, with a margin of a tenth of the viewport', () => {
+    expect(scrollToReveal(rect(500), view(0))).toBeNull();
+    expect(scrollToReveal(rect(100), view(0))).toBeNull(); // just inside the margin
+    expect(scrollToReveal(rect(900 - 40), view(0))).toBeNull(); // its bottom edge exactly at the margin
+  });
+
+  it('centres a match below the view, above it, or right at an edge', () => {
+    expect(scrollToReveal(rect(3000), view(0))).toBe(3000 + 20 - 500);
+    expect(scrollToReveal(rect(1200), view(2000))).toBe(1200 + 20 - 500);
+    expect(scrollToReveal(rect(990), view(0))).toBe(990 + 20 - 500); // inside the bottom margin
+    expect(scrollToReveal(rect(10), view(500))).toBe(0); // near the top: cannot centre, stops at the top
+  });
+
+  it('leaves pages that do not scroll, and an unknown viewport, alone', () => {
+    expect(scrollToReveal(rect(3000), { y: 0, documentHeight: 900, viewportHeight: 1000 })).toBeNull();
+    expect(scrollToReveal(rect(3000), { y: 0, documentHeight: 5000 })).toBeNull();
   });
 });
 

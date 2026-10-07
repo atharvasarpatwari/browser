@@ -1,9 +1,12 @@
 import type { IDisposable } from '../../../app/dependency-container';
-import type { FindOptions, FindResult, IFindInPage } from '../../../browser/navigation-controls/find-in-page';
+import type { FindEventKind, FindOptions, FindResult, IFindInPage } from '../../../browser/navigation-controls/find-in-page';
 
 interface FindBarHooks {
-  /** Fired after every search/navigation/clear with the engine's latest state. */
-  onChange?(result: FindResult): void;
+  /**
+   * Fired after every search/navigation/clear with the engine's latest state. `kind`: a new search (also a re-run
+   * after a repaint), a step to another match, or the search ended.
+   */
+  onChange?(result: FindResult, kind: FindEventKind): void;
   onClose?(): void;
 }
 
@@ -78,7 +81,7 @@ class FindBarView implements IDisposable {
     this.count = count;
     this.off = this.engine.onEvent((e) => {
       this.render(e.result);
-      this.hooks.onChange?.(e.result);
+      this.hooks.onChange?.(e.result, e.kind);
     });
   }
 

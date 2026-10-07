@@ -14,6 +14,20 @@ interface ScrollView {
   readonly y: number;
   /** The whole page's height (the bitmap shows one viewport of it). */
   readonly documentHeight: number;
+  /** Rows of the page the bitmap shows. */
+  readonly viewportHeight?: number;
+}
+
+/**
+ * Where to scroll so `rect` (page coordinates) can be seen: null when it already is (with a margin of a tenth of the
+ * viewport), otherwise the offset that centres it. Null as well for a page that does not scroll.
+ */
+function scrollToReveal(rect: FindRect, view: ScrollView): number | null {
+  const viewport = view.viewportHeight ?? 0;
+  if (viewport <= 0 || view.documentHeight <= viewport) return null;
+  const margin = viewport * 0.1;
+  if (rect.y >= view.y + margin && rect.y + rect.height <= view.y + viewport - margin) return null;
+  return Math.max(0, rect.y + rect.height / 2 - viewport / 2);
 }
 
 /** Where a `frame`-sized image lands inside a `box` with CSS `object-fit: contain`, showing the page scrolled to `scrollY`. */
@@ -160,5 +174,5 @@ class FindHighlightOverlay implements IDisposable {
   }
 }
 
-export { FindHighlightOverlay, computeViewTransform, mapRect, pointToFrame };
+export { FindHighlightOverlay, computeViewTransform, mapRect, pointToFrame, scrollToReveal };
 export type { ViewTransform, ScrollView };

@@ -71,6 +71,82 @@ describe('PageSelectionController', () => {
     expect(controller.text()).toBe('Far');
   });
 
+  describe('dragging at the edge of the content area', () => {
+    // The 800x600 bitmap shows a page whose second line is at page row 700: out of view until the page scrolls.
+    const TWO_SCREENS: FindTextSource = { getBlocks: () => [block('First line here', 10, 20), block('Second line there', 10, 700)] };
+    let scrolled: number;
+    let scrollBy: ReturnType<typeof vi.fn<(dy: number) => void>>;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      scrolled = 0;
+      scrollBy = vi.fn((dy: number) => { scrolled += dy; });
+      area.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300, x: 0, y: 0, toJSON: () => ({}) });
+      controller.dispose();
+      controller = new PageSelectionController({ area, source: TWO_SCREENS, scrollY: () => scrolled, scrollBy });
+      controller.attach();
+    });
+    afterEach(() => { vi.useRealTimers(); });
+
+    const pointerAt = (clientY: number): void => { document.dispatchEvent(new MouseEvent('mousemove', { clientX: 100, clientY })); };
+
+    it('scrolls the page while the pointer is held near the bottom edge, and keeps extending the selection into the new rows', () => {
+      mouse('mousedown', page, xOf(0), 14);
+      pointerAt(295);
+      expect(scrollBy).not.toHaveBeenCalled(); // the first tick is a moment away
+      vi.advanceTimersByTime(30);
+      expect(scrollBy).toHaveBeenCalled();
+      expect(scrollBy.mock.calls[0]![0]).toBeGreaterThan(0);
+      vi.advanceTimersByTime(300);
+      expect(scrolled).toBeGreaterThan(200);
+      expect(controller.text()).toContain('First line here\nSecond');
+      mouse('mouseup', document, 0, 0);
+    });
+
+    it('scrolls up near the top edge, faster the further into the edge the pointer is', () => {
+      scrolled = 1000;
+      mouse('mousedown', page, xOf(0), 14);
+      pointerAt(26); // 2 px into the edge zone
+      vi.advanceTimersByTime(30);
+      const slow = scrollBy.mock.calls[0]![0];
+      scrollBy.mockClear();
+      pointerAt(-200); // far past the top
+      vi.advanceTimersByTime(30);
+      const fast = scrollBy.mock.calls[0]![0];
+      expect(slow).toBeLessThan(0);
+      expect(fast).toBeLessThan(slow); // more negative: faster
+      mouse('mouseup', document, 0, 0);
+    });
+
+    it('stops when the pointer leaves the edge, and when the button is released', () => {
+      mouse('mousedown', page, xOf(0), 14);
+      pointerAt(295);
+      vi.advanceTimersByTime(60);
+      pointerAt(150); // back in the middle
+      scrollBy.mockClear();
+      vi.advanceTimersByTime(300);
+      expect(scrollBy).not.toHaveBeenCalled();
+      pointerAt(295);
+      vi.advanceTimersByTime(30);
+      expect(scrollBy).toHaveBeenCalledTimes(1);
+      mouse('mouseup', document, 0, 0);
+      scrollBy.mockClear();
+      vi.advanceTimersByTime(300);
+      expect(scrollBy).not.toHaveBeenCalled();
+    });
+
+    it('does not scroll when nothing can scroll the page (no scrollBy)', () => {
+      controller.dispose();
+      controller = new PageSelectionController({ area, source: TWO_SCREENS, scrollY: () => scrolled });
+      controller.attach();
+      mouse('mousedown', page, xOf(0), 14);
+      pointerAt(295);
+      vi.advanceTimersByTime(300);
+      expect(scrolled).toBe(0);
+      mouse('mouseup', document, 0, 0);
+    });
+  });
+
   it('follows the pointer while it is down, even outside the page', () => {
     mouse('mousedown', page, xOf(6), 14);
     mouse('mousemove', document, 5000, 5000); // far past the end of the page

@@ -372,6 +372,48 @@ test('a long page scrolls with the wheel, the keys and the scrollbar; clicks lan
   expect(Math.abs((await thumbTop()) - bottom)).toBeLessThan(1);
 });
 
+test('Ctrl+F scrolls to a match below the fold, and a drag held at the bottom edge scrolls and keeps selecting', async () => {
+  test.setTimeout(240_000);
+  nova = await launchNova(profile);
+  const { page } = nova;
+  const thumb = page.locator('.nova-page-scrollbar-thumb');
+  const thumbTop = async (): Promise<number> => parseFloat((await thumb.evaluate((el) => (el as HTMLElement).style.top)) || '0');
+  await openPage(page, `${site.origin}/tall`); // the only text besides the heading is "Read about quasars", 3,000 px down
+  await expect(thumb).toBeVisible();
+  expect(await thumbTop()).toBe(0);
+
+  // Find: a new query scrolls to its match; scrolling away is not undone by the re-search that follows; Enter steps back to it.
+  await page.keyboard.press('Control+f');
+  const find = page.locator('.nova-find-bar input[type="search"]');
+  await find.fill('quasars');
+  await expect(page.locator('.nova-find-bar-count')).toContainText(/1\s*(of|\/)\s*1/, { timeout: 15_000 });
+  await expect.poll(thumbTop).toBeGreaterThan(50);
+  await expect(page.locator('canvas.nova-find-overlay')).toHaveCount(1);
+  const middle = await pagePointToClient(page, { x: 960, y: 500 });
+  await page.mouse.move(middle.x, middle.y);
+  await page.mouse.wheel(0, -5000);
+  await expect.poll(thumbTop).toBe(0);
+  await page.waitForTimeout(1_000); // longer than the re-search interval
+  expect(await thumbTop()).toBe(0);
+  await find.press('Enter');
+  await expect.poll(thumbTop).toBeGreaterThan(50);
+  await find.press('Escape');
+
+  // Drag-select from the heading down to the bottom edge and hold: the page scrolls on its own.
+  await page.mouse.move(middle.x, middle.y);
+  await page.mouse.wheel(0, -5000);
+  await expect.poll(thumbTop).toBe(0);
+  const from = await pagePointToClient(page, { x: 20, y: 50 });
+  const area = (await page.locator('.content-area').boundingBox())!;
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 200, area.y + area.height - 6, { steps: 6 });
+  await expect.poll(thumbTop, { timeout: 15_000 }).toBeGreaterThan(30); // scrolling by itself, the button still down
+  await expect(page.locator('canvas.nova-selection-overlay')).toHaveCount(1);
+  await page.mouse.up();
+  await expect(page.locator('canvas.nova-selection-overlay')).toHaveCount(1); // the selection stays
+});
+
 test('right-clicking a rendered page offers its links, its images and the page itself', async () => {
   test.setTimeout(180_000);
   nova = await launchNova(profile);

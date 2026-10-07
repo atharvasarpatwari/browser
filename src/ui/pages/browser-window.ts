@@ -663,6 +663,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
       },
       warmHost: (host) => dnsPrefetchHint(host),
       scroll: () => this.paintEngine?.getScroll() ?? { y: 0, documentHeight: 0 },
+      scrollTo: (y) => this.scrollPageTo(y),
     });
     this.search.install();
     if (this.pageDocumentProvider) this.search.setPageDocumentProvider(this.pageDocumentProvider);

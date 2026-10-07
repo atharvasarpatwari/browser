@@ -7,11 +7,12 @@ import type { BookmarkPort, HistoryPort, SearchEngineInfo, SettingsPort } from '
 import type { OmniboxActions } from '../components/omnibox-controller';
 import { SearchPage } from './search-page';
 import type { SettingsWritePort } from './search-page';
-import { FindInPage } from '../../browser/navigation-controls/find-in-page';
-import { createDomFindSource } from '../../browser/navigation-controls/find-page-source';
+import { FindInPage } from '../../browser/navigation-controls/find-in-page';import { createDomFindSource } from '../../browser/navigation-controls/find-page-source';
 import { FindBarView } from '../components/find-bar/find-bar.view';
 import { FindHighlightOverlay } from '../components/find-bar/find-overlay';
+import { scrollToReveal } from '../components/find-bar/find-overlay';
 import type { ScrollView } from '../components/find-bar/find-overlay';
+import type { FindEventKind, FindResult } from '../../browser/navigation-controls/find-in-page';
 import { PageSelectionController } from '../components/page-selection/page-selection-controller';
 import { DEFAULT_BROWSER_ACTIONS } from '../../browser/omnibox/browser-actions';
 import { expandSearchTemplate } from '../../browser/omnibox/search-template';
@@ -58,6 +59,8 @@ interface SearchHost {
   warmHost?(host: string): void | Promise<void>;
   /** How far the page is scrolled and how tall it is; find highlights and selections are in page coordinates. */
   scroll?(): ScrollView;
+  /** Scrolls the page to `y` (clamped by the window). */
+  scrollTo?(y: number): void;
 }
 
 /** Omnibox commands that just open a built-in page ("clear browsing data" opens the settings that do it). */
@@ -108,6 +111,8 @@ class SearchIntegration implements IDisposable {
   private findBar: FindBarView | null = null;
   private findOverlay: FindHighlightOverlay | null = null;
   private selection: PageSelectionController | null = null;
+  /** The query whose first match was last brought into view. */
+  private revealedQuery = '';
   private pageDocument: () => DomDocument | null = () => null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -208,7 +213,10 @@ class SearchIntegration implements IDisposable {
     const area = this.host.contentArea();
     if (!area || this.selection) return;
     this.selection = new PageSelectionController({
-      area, source: createDomFindSource(() => this.pageDocument()), scrollY: () => this.scrollView().y,
+      area,
+      source: createDomFindSource(() => this.pageDocument()),
+      scrollY: () => this.scrollView().y,
+      scrollBy: (dy) => this.host.scrollTo?.(this.scrollView().y + dy),
     });
     this.selection.attach();
   }
@@ -274,8 +282,11 @@ class SearchIntegration implements IDisposable {
       this.findEngine = new FindInPage(createDomFindSource(() => this.pageDocument()));
       this.findOverlay = new FindHighlightOverlay(area, () => this.frameSize(area), () => this.scrollView());
       this.findBar = new FindBarView(this.findEngine, {
-        onChange: (r) => this.findOverlay?.show(r.matches, r.activeIndex),
-        onClose: () => this.findOverlay?.clear(),
+        onChange: (r, kind) => {
+          this.findOverlay?.show(r.matches, r.activeIndex);
+          this.revealActiveMatch(r, kind);
+        },
+        onClose: () => { this.findOverlay?.clear(); this.revealedQuery = ''; },
       });
       this.findBar.mount(area);
     }
@@ -422,6 +433,19 @@ class SearchIntegration implements IDisposable {
   private typingInField(): boolean {
     const el = document.activeElement;
     return el instanceof HTMLElement && (el.matches('input, textarea, select') || el.isContentEditable);
+  }
+
+  /**
+   * Brings the active match into view when the user asked for it: a new query, or a step to the next / previous match.
+   * The re-search that follows every repaint (and every scroll) names the same query and must not pull the page back.
+   */
+  private revealActiveMatch(result: FindResult, kind: FindEventKind): void {
+    const isNewQuery = kind === 'search' && result.query !== this.revealedQuery;
+    this.revealedQuery = kind === 'cleared' ? '' : result.query;
+    if (kind !== 'navigated' && !isNewQuery) return;
+    const rect = result.matches[result.activeIndex]?.rects[0];
+    const to = rect ? scrollToReveal(rect, this.scrollView()) : null;
+    if (to !== null) this.host.scrollTo?.(to);
   }
 
   private scrollView(): ScrollView {

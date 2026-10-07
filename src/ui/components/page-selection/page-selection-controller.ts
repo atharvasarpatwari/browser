@@ -14,7 +14,16 @@ interface PageSelectionDeps {
   readonly source: FindTextSource;
   /** How far the page is scrolled (the bitmap shows the page from this row down). Default: not scrolled. */
   readonly scrollY?: () => number;
+  /** Scrolls the page by `dy` page pixels (positive: down). Without it a drag does not scroll the page. */
+  readonly scrollBy?: (dy: number) => void;
 }
+
+/** A drag within this many screen pixels of the top or bottom edge of the content area scrolls the page. */
+const EDGE_PX = 28;
+const AUTOSCROLL_INTERVAL_MS = 30;
+/** Screen pixels scrolled per tick: faster the further the pointer is into (or past) the edge, at most MAX. */
+const AUTOSCROLL_MIN_PX = 6;
+const AUTOSCROLL_MAX_PX = 60;
 
 /**
  * Text selection on a rendered page: drag, double-click (word), triple-click (block), Shift-click, Select all. The page
@@ -26,6 +35,9 @@ class PageSelectionController implements IDisposable {
   private overlay: HTMLCanvasElement | null = null;
   private observer: ResizeObserver | null = null;
   private suppressClick = false;
+  /** Where the pointer last was during a drag (client coordinates), and the timer that scrolls while it is at an edge. */
+  private pointer: { readonly x: number; readonly y: number } | null = null;
+  private autoScrollTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly deps: PageSelectionDeps) {
     this.model = new PageSelection(deps.source);
@@ -105,12 +117,60 @@ class PageSelectionController implements IDisposable {
   };
 
   private readonly onMouseMove = (e: MouseEvent): void => {
-    const point = this.toPage(e.clientX, e.clientY, true);
+    this.pointer = { x: e.clientX, y: e.clientY };
+    this.extendToPointer();
+    this.updateAutoScroll();
+  };
+
+  /** Extends the selection to the text under the pointer's last position (the page may have scrolled under it). */
+  private extendToPointer(): void {
+    if (!this.pointer) return;
+    const point = this.toPage(this.pointer.x, this.pointer.y, true);
     const offset = point ? this.model.caretAt(point.x, point.y) : null;
     if (offset === null) return;
     this.model.extendTo(offset);
     this.draw();
-  };
+  }
+
+  /** While the pointer is held at the top or bottom edge, scroll the page and keep extending the selection. */
+  private updateAutoScroll(): void {
+    const direction = this.edgeDirection();
+    if (direction === 0 || !this.deps.scrollBy) { this.stopAutoScroll(); return; }
+    this.autoScrollTimer ??= setInterval(() => {
+      const dir = this.edgeDirection();
+      if (dir === 0) { this.stopAutoScroll(); return; }
+      const canvas = this.pageCanvas();
+      const scale = canvas ? this.screenPerPagePixel(canvas) : 1;
+      this.deps.scrollBy?.((dir * this.autoScrollSpeed()) / scale);
+      this.extendToPointer();
+    }, AUTOSCROLL_INTERVAL_MS);
+  }
+
+  /** -1 near the top edge, +1 near the bottom edge, 0 elsewhere (past an edge counts as at it). */
+  private edgeDirection(): -1 | 0 | 1 {
+    if (!this.pointer) return 0;
+    const rect = this.deps.area.getBoundingClientRect();
+    if (this.pointer.y < rect.top + EDGE_PX) return -1;
+    if (this.pointer.y > rect.bottom - EDGE_PX) return 1;
+    return 0;
+  }
+
+  private autoScrollSpeed(): number {
+    if (!this.pointer) return 0;
+    const rect = this.deps.area.getBoundingClientRect();
+    const into = this.pointer.y < rect.top + rect.height / 2 ? rect.top + EDGE_PX - this.pointer.y : this.pointer.y - (rect.bottom - EDGE_PX);
+    return Math.min(AUTOSCROLL_MAX_PX, AUTOSCROLL_MIN_PX + into / 2);
+  }
+
+  private screenPerPagePixel(canvas: HTMLCanvasElement): number {
+    const rect = canvas.getBoundingClientRect();
+    return computeViewTransform({ width: rect.width, height: rect.height }, { width: canvas.width, height: canvas.height }).scale || 1;
+  }
+
+  private stopAutoScroll(): void {
+    if (this.autoScrollTimer !== null) clearInterval(this.autoScrollTimer);
+    this.autoScrollTimer = null;
+  }
 
   private readonly onMouseUp = (): void => {
     this.stopDragging();
@@ -129,6 +189,8 @@ class PageSelectionController implements IDisposable {
   };
 
   private stopDragging(): void {
+    this.stopAutoScroll();
+    this.pointer = null;
     document.removeEventListener('mousemove', this.onMouseMove);
     document.removeEventListener('mouseup', this.onMouseUp);
   }
