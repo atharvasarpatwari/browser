@@ -414,6 +414,24 @@ test('Ctrl+F scrolls to a match below the fold, and a drag held at the bottom ed
   await expect(page.locator('canvas.nova-selection-overlay')).toHaveCount(1); // the selection stays
 });
 
+test('the + button and Ctrl+T open a new tab showing the New Tab page', async () => {
+  test.setTimeout(120_000);
+  nova = await launchNova(profile);
+  const { page } = nova;
+  await expect(page.locator('.nova-tab')).toHaveCount(1);
+
+  await page.locator('.nova-new-tab').click();
+  await expect(page.locator('.nova-tab')).toHaveCount(2);
+  await expect(omnibox(page)).toHaveValue('about:newtab');
+  await expect(page.getByText('Nova Browser', { exact: true }).first()).toBeVisible({ timeout: 15_000 }); // the page, not a spinner
+  await expect(page.getByText('Loading', { exact: false })).toHaveCount(0);
+
+  await page.locator('.content-area').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('Control+t');
+  await expect(page.locator('.nova-tab')).toHaveCount(3);
+  await expect(omnibox(page)).toHaveValue('about:newtab');
+});
+
 test('right-clicking a rendered page offers its links, its images and the page itself', async () => {
   test.setTimeout(180_000);
   nova = await launchNova(profile);

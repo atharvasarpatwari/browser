@@ -470,8 +470,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
               this.syncAll();
               break;
             case 'newTabRequested':
-              this.tabManager?.createTab();
-              this.syncAll();
+              this.openNewTab();
               break;
             case 'contextMenu':
               this.showTabContextMenu(e.tabId, e.x, e.y);
@@ -559,8 +558,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.tabKeyHandler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 't') {
         e.preventDefault();
-        this.tabManager?.createTab();
-        this.syncAll();
+        this.openNewTab();
       }
     };
     document.addEventListener('keydown', this.tabKeyHandler);
@@ -1219,7 +1217,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (!tab) return;
 
     const items: ContextMenuItem[] = [
-      { label: 'New Tab', icon: '＋', action: () => { this.tabManager?.createTab(); this.syncAll(); } },
+      { label: 'New Tab', icon: '＋', action: () => { this.openNewTab(); } },
       { separator: true },
       { label: tab.pinned ? 'Unpin Tab' : 'Pin Tab', icon: tab.pinned ? '🔓' : '📌', action: () => {
         this.tabManager?.setTabPinned(tabId, !tab.pinned);
@@ -1633,6 +1631,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
   /** The default engine's `%s` search URL template. */
   private getSearchTemplate(): string {
     return this.currentDefaultEngine().url;
+  }
+
+  /** The + button, Ctrl+T and the tab menu: a new tab showing the New Tab page. */
+  private openNewTab(): void {
+    this.createTab('about:newtab');
   }
 
   createTab(url?: string): string {
