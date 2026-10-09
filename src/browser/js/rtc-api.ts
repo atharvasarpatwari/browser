@@ -1,28 +1,32 @@
 /**
  * @file src/browser/js/rtc-api.ts
  *
- * WebRTC — Phase 1: `RTCPeerConnection` + `RTCDataChannel`, real ICE/STUN
- * candidate gathering and connectivity over real UDP sockets (see
- * ../networking/ice-agent.ts, ../networking/stun-client.ts), exposed to page
- * JavaScript as `window.RTCPeerConnection` for the first time — the previous
- * `src/browser/media/webrtc.ts` was a fully simulated stand-in never wired
- * into the JS VM's global scope.
+ * WebRTC — `RTCPeerConnection` + `RTCDataChannel`, exposed to page JavaScript
+ * as `window.RTCPeerConnection`. Real ICE/STUN candidate gathering and
+ * connectivity over real UDP sockets (../networking/ice-agent.ts), real DTLS
+ * 1.2 (../networking/dtls/) for the encrypted record layer, and real SCTP
+ * (../networking/sctp-transport.ts) for the reliable multiplexed stream
+ * transport DCEP (RFC 8832) negotiates data channels over — replacing the
+ * Phase 1 `ReliableChannel` (unencrypted, Nova-specific stop-and-wait, one
+ * channel only, `m=NOVA/DATACHANNEL`).
  *
  * HONEST SCOPE — read before assuming this interoperates with a real browser:
  *   - ICE candidate gathering/exchange and connectivity checks are real STUN
  *     over real UDP (RFC 5389/8445 subset — see ice-agent.ts for exactly
  *     what's simplified: single component, no TURN, no STUN
  *     message-integrity/authentication).
- *   - The data channel is NOT real SCTP-over-DTLS. It's a small
- *     Nova-specific reliable-framing protocol (see ReliableChannel below)
- *     layered directly over the UDP pair ICE selects. Two Nova instances can
- *     talk to each other. **A real browser (Chrome/Firefox/etc.) cannot
- *     negotiate a data channel with Nova today** — that needs DTLS + real
- *     SCTP, which is Phase 2 (see doc/webrtc-implementation-plan.md).
+ *   - DTLS is real RFC 6347/RFC 5288 (ECDHE-ECDSA-AES128-GCM-SHA256 only);
+ *     SCTP is real RFC 4960 (see sctp-transport.ts for its own documented
+ *     simplifications: no fast-retransmit, no congestion control, no chunk
+ *     bundling). Two Nova instances negotiate and exchange data over this
+ *     real stack today. Real-browser interop (Chrome/Firefox/etc.) is the
+ *     Phase 2.4 gate — not yet run.
  *   - No audio/video. `getUserMedia`/`MediaStream`/SRTP are not implemented
  *     — this file is data-channel only.
  *   - No TURN relay — only host + server-reflexive candidates, so peers
  *     behind symmetric NAT with no STUN-friendly path won't connect.
+ *   - No RFC 6525 stream reset — closing a data channel is local-only
+ *     bookkeeping; the SCTP stream itself is never formally torn down.
  *
  * Follows the JS-global registration pattern from websocket-api.ts: a
  * constructor built via createObject(null)/callable:true/nativeFn, wired
@@ -40,6 +44,10 @@ import {
   parseCandidateSdp,
   type IceCandidate,
 } from '../networking/ice-agent';
+import { writeUInt16BE, readUInt16BE, decodeUtf8, encodeUtf8 } from '../networking/byte-codecs';
+import { DtlsEndpoint, type DtlsRole } from '../networking/dtls/dtls-handshake';
+import { generateSelfSignedP256Cert, type SelfSignedCert } from '../networking/dtls/x509-der';
+import { SctpAssociation, PPID_DCEP, PPID_WEBRTC_STRING, type SctpRole } from '../networking/sctp-transport';
 
 // ── Small local helpers (mirrors websocket-api.ts's own copies) ────────────
 
@@ -91,11 +99,11 @@ function emitHandlerEvent(obj: JSObject, handlerMap: Map<string, Set<JSFunction>
   }
 }
 
-// ── SDP (Nova-specific — see the HONEST SCOPE note above) ──────────────────
+// ── SDP (real UDP/DTLS/SCTP media line — RFC 8839/RFC 8841-shaped) ─────────
 
 let _sessionCounter = 1;
 
-function buildSdp(type: 'offer' | 'answer', candidates: readonly IceCandidate[], label: string | null): string {
+function buildSdp(type: 'offer' | 'answer', candidates: readonly IceCandidate[], fingerprintSha256: string, setup: 'actpass' | 'active'): string {
   const sessionId = _sessionCounter++;
   const port = candidates[0]?.port ?? 9;
   const lines = [
@@ -103,13 +111,14 @@ function buildSdp(type: 'offer' | 'answer', candidates: readonly IceCandidate[],
     `o=- ${sessionId} 2 IN IP4 127.0.0.1`,
     's=-',
     't=0 0',
-    // NOVA/DATACHANNEL is a deliberately non-standard protocol token — this
-    // is NOT "UDP/DTLS/SCTP" because it isn't; see the HONEST SCOPE note.
-    `m=application ${port} NOVA/DATACHANNEL`,
+    `m=application ${port} UDP/DTLS/SCTP webrtc-datachannel`,
     'c=IN IP4 0.0.0.0',
     'a=mid:0',
+    `a=setup:${setup}`,
+    `a=fingerprint:sha-256 ${fingerprintSha256}`,
+    'a=sctp-port:5000',
+    'a=max-message-size:262144',
   ];
-  if (label !== null) lines.push(`a=label:${label}`);
   for (const c of candidates) lines.push(`a=candidate:${formatCandidateSdp(c).replace(/^candidate:/, '')}`);
   lines.push('a=end-of-candidates');
   return lines.join('\r\n') + '\r\n';
@@ -126,124 +135,36 @@ function parseSdpCandidates(sdp: string): IceCandidate[] {
   return out;
 }
 
-function parseSdpLabel(sdp: string): string | null {
-  const match = sdp.match(/^a=label:(.+)$/m);
+function parseSdpFingerprint(sdp: string): string | null {
+  const match = sdp.match(/^a=fingerprint:sha-256 (.+)$/im);
   return match ? match[1]!.trim() : null;
 }
 
-// ── ReliableChannel — Nova's data-channel framing over the ICE-selected UDP pair ──
+// ── DCEP (RFC 8832) — in-band data-channel open/ack over SCTP stream 0..N ──
 
-const FRAME_DATA = 0x01;
-const FRAME_ACK = 0x02;
-const RETRANSMIT_MS = 200;
-const MAX_RETRIES = 5;
+const DCEP_DATA_CHANNEL_ACK = 0x02;
+const DCEP_DATA_CHANNEL_OPEN = 0x03;
+const DCEP_CHANNEL_TYPE_RELIABLE = 0x00;
 
-class ReliableChannel {
-  private readonly ice: IceAgent;
-  private sendSeq = 0;
-  private recvSeq = 0;
-  private pendingSend: { resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout>; attempts: number; frame: Buffer } | null = null;
-  private sendQueue: Array<{ payload: Buffer; resolve: () => void; reject: (err: Error) => void }> = [];
-  onMessage: ((payload: Buffer) => void) | null = null;
+function buildDcepOpen(label: string): Uint8Array {
+  const labelBytes = encodeUtf8(label);
+  const out = new Uint8Array(12 + labelBytes.length);
+  out[0] = DCEP_DATA_CHANNEL_OPEN;
+  out[1] = DCEP_CHANNEL_TYPE_RELIABLE;
+  // bytes 2-3 Priority, 4-7 Reliability Parameter — left zero (unused for a reliable, ordered channel)
+  writeUInt16BE(out, labelBytes.length, 8);
+  writeUInt16BE(out, 0, 10); // Protocol Length — no subprotocol
+  out.set(labelBytes, 12);
+  return out;
+}
 
-  constructor(ice: IceAgent) {
-    this.ice = ice;
-    this.ice.onData((msg) => this.handleIncoming(Buffer.from(msg)));
-  }
+function parseDcepOpenLabel(data: Uint8Array): string {
+  const labelLen = readUInt16BE(data, 8);
+  return decodeUtf8(data.subarray(12, 12 + labelLen));
+}
 
-  send(payload: Buffer): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.sendQueue.push({ payload, resolve, reject });
-      this.pump();
-    });
-  }
-
-  private pump(): void {
-    if (this.pendingSend || this.sendQueue.length === 0) return;
-    const { payload, resolve, reject } = this.sendQueue.shift()!;
-    const seq = this.sendSeq;
-    const frame = Buffer.alloc(7 + payload.length);
-    frame.writeUInt8(FRAME_DATA, 0);
-    frame.writeUInt32BE(seq, 1);
-    frame.writeUInt16BE(payload.length, 5);
-    payload.copy(frame, 7);
-
-    const attempt = (attempts: number) => {
-      try {
-        this.ice.send(frame);
-      } catch (err) {
-        this.pendingSend = null;
-        reject(err instanceof Error ? err : new Error(String(err)));
-        this.pump();
-        return;
-      }
-      const timer = setTimeout(() => {
-        if (!this.pendingSend) return;
-        if (attempts >= MAX_RETRIES) {
-          this.pendingSend = null;
-          reject(new Error(`RTCDataChannel: no ACK for message after ${MAX_RETRIES} retries`));
-          this.pump();
-        } else {
-          attempt(attempts + 1);
-        }
-      }, RETRANSMIT_MS);
-      this.pendingSend = { resolve, reject, timer, attempts, frame };
-    };
-    attempt(0);
-    this.sendSeq++;
-  }
-
-  private handleIncoming(msg: Buffer): void {
-    if (msg.length < 1) return;
-    const type = msg.readUInt8(0);
-
-    if (type === FRAME_ACK && msg.length >= 5) {
-      const ackSeq = msg.readUInt32BE(1);
-      // Match against the seq of the frame currently in flight (stop-and-wait
-      // means only one is outstanding at a time), not a value derived from the
-      // send counter — self-documenting and robust if this ever grows into
-      // multiple in-flight frames.
-      if (this.pendingSend && this.pendingSend.frame.readUInt32BE(1) === ackSeq) {
-        clearTimeout(this.pendingSend.timer);
-        const { resolve } = this.pendingSend;
-        this.pendingSend = null;
-        resolve();
-        this.pump();
-      }
-      return;
-    }
-
-    if (type === FRAME_DATA && msg.length >= 7) {
-      const seq = msg.readUInt32BE(1);
-      const len = msg.readUInt16BE(5);
-      const payload = msg.subarray(7, 7 + len);
-
-      // Always ACK — including duplicates, since a lost ACK is what causes
-      // the sender to retransmit a frame we already delivered.
-      const ack = Buffer.alloc(5);
-      ack.writeUInt8(FRAME_ACK, 0);
-      ack.writeUInt32BE(seq, 1);
-      try { this.ice.send(ack); } catch { /* peer may already be gone */ }
-
-      if (seq === this.recvSeq) {
-        this.recvSeq++;
-        if (this.onMessage) this.onMessage(Buffer.from(payload));
-      }
-      // seq < recvSeq: duplicate, already delivered, ACK re-sent above.
-      // seq > recvSeq: out-of-order — dropped in this Phase 1 stop-and-wait
-      // scheme (documented limitation; the sender will retransmit).
-    }
-  }
-
-  dispose(): void {
-    if (this.pendingSend) {
-      clearTimeout(this.pendingSend.timer);
-      this.pendingSend.reject(new Error('RTCDataChannel closed'));
-      this.pendingSend = null;
-    }
-    for (const q of this.sendQueue) q.reject(new Error('RTCDataChannel closed'));
-    this.sendQueue = [];
-  }
+function buildDcepAck(): Uint8Array {
+  return new Uint8Array([DCEP_DATA_CHANNEL_ACK]);
 }
 
 // ── RTCDataChannel (JS-visible object) ──────────────────────────────────────
@@ -252,15 +173,17 @@ interface DataChannelInternal {
   __dcLabel: string;
   __dcState: 'connecting' | 'open' | 'closing' | 'closed';
   __dcHandlers: Map<string, Set<JSFunction>>;
-  __dcChannel: ReliableChannel | null;
+  __dcSend: ((text: string) => void) | null;
 }
 
-function createDataChannelBundle(eventLoop: EventLoop, label: string): {
+interface DataChannelBundle {
   jsObject: JSObject & DataChannelInternal;
-  markOpen: (channel: ReliableChannel) => void;
+  markOpen: (sendFn: (text: string) => void) => void;
   markClosed: () => void;
   deliverMessage: (data: string | ArrayBuffer) => void;
-} {
+}
+
+function createDataChannelBundle(eventLoop: EventLoop, label: string): DataChannelBundle {
   const proto = createObject(null);
 
   proto.properties.set('addEventListener', {
@@ -279,8 +202,7 @@ function createDataChannelBundle(eventLoop: EventLoop, label: string): {
     value: createNativeFunction('removeEventListener', (_this, args) => {
       const dc = _this as JSObject & DataChannelInternal;
       const type = toString(args[0]);
-      const fn = args[1];
-      dc.__dcHandlers.get(type)?.delete(fn as JSFunction);
+      dc.__dcHandlers.get(type)?.delete(args[1] as JSFunction);
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -288,16 +210,18 @@ function createDataChannelBundle(eventLoop: EventLoop, label: string): {
   proto.properties.set('send', {
     value: createNativeFunction('send', (_this, args) => {
       const dc = _this as JSObject & DataChannelInternal;
-      if (dc.__dcState !== 'open' || !dc.__dcChannel) {
+      if (dc.__dcState !== 'open' || !dc.__dcSend) {
         throw new DOMException("Failed to execute 'send' on 'RTCDataChannel': the channel is not open.", 'InvalidStateError');
       }
       const data = args[0];
       const text = typeof data === 'string' ? data : toString(data);
-      dc.__dcChannel.send(Buffer.from(text, 'utf8')).catch((err) => {
+      try {
+        dc.__dcSend(text);
+      } catch (err) {
         eventLoop.enqueueMicrotask(() => {
-          emitHandlerEvent(dc, dc.__dcHandlers, 'error', createEventObject('error', { message: err.message }));
+          emitHandlerEvent(dc, dc.__dcHandlers, 'error', createEventObject('error', { message: err instanceof Error ? err.message : String(err) }));
         });
-      });
+      }
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -308,7 +232,7 @@ function createDataChannelBundle(eventLoop: EventLoop, label: string): {
       if (dc.__dcState === 'closed' || dc.__dcState === 'closing') return undefined;
       dc.__dcState = 'closing';
       setProp(dc, 'readyState', 'closing', false, false);
-      dc.__dcChannel?.dispose();
+      dc.__dcSend = null;
       dc.__dcState = 'closed';
       setProp(dc, 'readyState', 'closed', false, false);
       eventLoop.enqueueMicrotask(() => emitHandlerEvent(dc, dc.__dcHandlers, 'close', createEventObject('close')));
@@ -321,7 +245,7 @@ function createDataChannelBundle(eventLoop: EventLoop, label: string): {
   dc.__dcLabel = label;
   dc.__dcState = 'connecting';
   dc.__dcHandlers = new Map();
-  dc.__dcChannel = null;
+  dc.__dcSend = null;
   setProp(dc, 'label', label, false, false);
   setProp(dc, 'ordered', true, false, false);
   setProp(dc, 'readyState', 'connecting', false, false);
@@ -333,8 +257,8 @@ function createDataChannelBundle(eventLoop: EventLoop, label: string): {
 
   return {
     jsObject: dc,
-    markOpen: (channel: ReliableChannel) => {
-      dc.__dcChannel = channel;
+    markOpen: (sendFn: (text: string) => void) => {
+      dc.__dcSend = sendFn;
       dc.__dcState = 'open';
       setProp(dc, 'readyState', 'open', false, false);
       eventLoop.enqueueMicrotask(() => emitHandlerEvent(dc, dc.__dcHandlers, 'open', createEventObject('open')));
@@ -400,6 +324,10 @@ type SignalingState = 'stable' | 'have-local-offer' | 'have-remote-offer' | 'clo
 type IceGatheringState = 'new' | 'gathering' | 'complete';
 type IceConnectionState = 'new' | 'checking' | 'connected' | 'failed' | 'closed';
 
+interface PendingLocalChannel {
+  bundle: DataChannelBundle;
+}
+
 interface PeerConnectionInternal {
   __pcIce: IceAgent;
   __pcHandlers: Map<string, Set<JSFunction>>;
@@ -411,8 +339,15 @@ interface PeerConnectionInternal {
   __pcGathered: boolean;
   __pcLocalCandidates: IceCandidate[];
   __pcRemoteCandidates: IceCandidate[];
-  __pcLocalChannel: { jsObject: JSObject & DataChannelInternal; markOpen: (c: ReliableChannel) => void; markClosed: () => void; deliverMessage: (d: string | ArrayBuffer) => void } | null;
   __pcConnectivityStarted: boolean;
+  __pcIsOfferer: boolean;
+  __pcCertPromise: Promise<SelfSignedCert>;
+  __pcRemoteFingerprint: string | null;
+  __pcDtls: DtlsEndpoint | null;
+  __pcSctp: SctpAssociation | null;
+  __pcNextLocalStreamId: number;
+  __pcChannelsByStream: Map<number, DataChannelBundle>;
+  __pcPendingLocalChannels: PendingLocalChannel[];
 }
 
 export interface RtcApiOptions {
@@ -482,6 +417,41 @@ export function createRTCPeerConnectionClass(eventLoop: EventLoop, options: RtcA
     });
   }
 
+  /** Opens a locally-created channel over SCTP once the association exists: assigns a stream id and sends the DCEP OPEN. The channel itself transitions to 'open' only once the peer's DCEP ACK arrives. */
+  function openLocalChannel(pc: JSObject & PeerConnectionInternal, pending: PendingLocalChannel): void {
+    const streamId = pc.__pcNextLocalStreamId;
+    pc.__pcNextLocalStreamId += 2;
+    pc.__pcChannelsByStream.set(streamId, pending.bundle);
+    pc.__pcSctp!.sendMessage(streamId, PPID_DCEP, buildDcepOpen(pending.bundle.jsObject.__dcLabel));
+  }
+
+  function handleSctpMessage(pc: JSObject & PeerConnectionInternal, streamId: number, ppid: number, data: Uint8Array): void {
+    if (ppid === PPID_DCEP) {
+      const msgType = data[0];
+      if (msgType === DCEP_DATA_CHANNEL_OPEN) {
+        const label = parseDcepOpenLabel(data);
+        const bundle = createDataChannelBundle(eventLoop, label);
+        pc.__pcChannelsByStream.set(streamId, bundle);
+        pc.__pcSctp!.sendMessage(streamId, PPID_DCEP, buildDcepAck());
+        // Dispatch 'datachannel' first (inside a microtask, since callJSFunction can
+        // only run a page handler from the interpreter context) and only THEN
+        // markOpen() — markOpen enqueues its own 'open' microtask, so the page's
+        // ondatachannel handler gets a chance to attach onopen before 'open' fires.
+        eventLoop.enqueueMicrotask(() => {
+          emitHandlerEvent(pc, pc.__pcHandlers, 'datachannel', createEventObject('datachannel', { channel: bundle.jsObject }));
+          bundle.markOpen((text) => pc.__pcSctp!.sendMessage(streamId, PPID_WEBRTC_STRING, encodeUtf8(text)));
+        });
+      } else if (msgType === DCEP_DATA_CHANNEL_ACK) {
+        const bundle = pc.__pcChannelsByStream.get(streamId);
+        bundle?.markOpen((text) => pc.__pcSctp!.sendMessage(streamId, PPID_WEBRTC_STRING, encodeUtf8(text)));
+      }
+      return;
+    }
+    if (ppid === PPID_WEBRTC_STRING) {
+      pc.__pcChannelsByStream.get(streamId)?.deliverMessage(decodeUtf8(data));
+    }
+  }
+
   function maybeStartConnectivityChecks(pc: JSObject & PeerConnectionInternal): void {
     if (pc.__pcConnectivityStarted) return;
     if (pc.__pcSignalingState !== 'stable') return;
@@ -491,31 +461,48 @@ export function createRTCPeerConnectionClass(eventLoop: EventLoop, options: RtcA
 
     setIceConnectionState(pc, 'checking');
     pc.__pcIce.checkConnectivity(pc.__pcRemoteCandidates).then(
-      () => {
+      async () => {
         setIceConnectionState(pc, 'connected');
-        const reliable = new ReliableChannel(pc.__pcIce);
 
-        if (pc.__pcLocalChannel) {
-          // We called createDataChannel() ourselves — bring it up.
-          reliable.onMessage = (payload) => pc.__pcLocalChannel!.deliverMessage(payload.toString('utf8'));
-          pc.__pcLocalChannel.markOpen(reliable);
-        } else {
-          // The remote side created the channel — announce it via 'datachannel'.
-          const remoteSdp = toString(getProp(pc.__pcRemoteDescription!, 'sdp') ?? '');
-          const label = parseSdpLabel(remoteSdp) ?? 'data';
-          const bundle = createDataChannelBundle(eventLoop, label);
-          reliable.onMessage = (payload) => bundle.deliverMessage(payload.toString('utf8'));
-          // Dispatch 'datachannel' (inside a microtask, since callJSFunction can
-          // only run a page handler from the interpreter context) and only THEN
-          // markOpen() — markOpen enqueues the 'open' event as a subsequent
-          // microtask, so the ondatachannel handler can attach onopen before
-          // 'open' fires. Ordering these the other way makes B's channel never
-          // appear open to the page.
-          eventLoop.enqueueMicrotask(() => {
-            emitHandlerEvent(pc, pc.__pcHandlers, 'datachannel', createEventObject('datachannel', { channel: bundle.jsObject }));
-            bundle.markOpen(reliable);
-          });
+        // The other peer's own connectivity check can resolve before this side's does and
+        // start sending its first DTLS ClientHello/HelloVerifyRequest immediately — IceAgent
+        // itself buffers any datagram that arrives before `onData` installs a real handler
+        // (see ice-agent.ts), so nothing is lost in the gap while the (async-generated) cert
+        // and DtlsEndpoint are still being constructed below.
+        const dtlsRole: DtlsRole = pc.__pcIsOfferer ? 'server' : 'client';
+        const cert = await pc.__pcCertPromise;
+        const dtls = new DtlsEndpoint({ role: dtlsRole, cert, send: (bytes) => pc.__pcIce.send(bytes) });
+        pc.__pcDtls = dtls;
+        pc.__pcIce.onData((bytes) => dtls.onReceive(bytes));
+
+        let dtlsResult;
+        try {
+          dtlsResult = await dtls.handshakeDone;
+        } catch (err) {
+          setIceConnectionState(pc, 'failed');
+          console.error('[RTCPeerConnection] DTLS handshake failed:', err instanceof Error ? err.message : err);
+          return;
         }
+        if (pc.__pcRemoteFingerprint && dtlsResult.peerFingerprintSha256 !== pc.__pcRemoteFingerprint) {
+          setIceConnectionState(pc, 'failed');
+          console.error(
+            `[RTCPeerConnection] DTLS fingerprint mismatch: SDP declared ${pc.__pcRemoteFingerprint}, peer presented ${dtlsResult.peerFingerprintSha256}`,
+          );
+          return;
+        }
+
+        const sctpRole: SctpRole = dtlsRole;
+        const sctp = new SctpAssociation({
+          role: sctpRole,
+          send: (bytes) => { void dtls.sendApplicationData(bytes); },
+          onMessage: (streamId, ppid, data) => handleSctpMessage(pc, streamId, ppid, data),
+        });
+        dtls.onApplicationData = (bytes) => sctp.onReceive(bytes);
+        pc.__pcSctp = sctp;
+        pc.__pcNextLocalStreamId = sctpRole === 'client' ? 0 : 1;
+
+        await sctp.associationEstablished;
+        for (const pending of pc.__pcPendingLocalChannels.splice(0)) openLocalChannel(pc, pending);
       },
       (err: unknown) => {
         setIceConnectionState(pc, 'failed');
@@ -554,12 +541,13 @@ export function createRTCPeerConnectionClass(eventLoop: EventLoop, options: RtcA
       if (pc.__pcSignalingState === 'closed') {
         throw new DOMException("Failed to execute 'createDataChannel' on 'RTCPeerConnection': the connection is closed.", 'InvalidStateError');
       }
-      if (pc.__pcLocalChannel) {
-        throw new DOMException('Nova Phase 1 supports exactly one RTCDataChannel per connection.', 'NotSupportedError');
-      }
       const label = args[0] !== undefined ? toString(args[0]) : '';
       const bundle = createDataChannelBundle(eventLoop, label);
-      pc.__pcLocalChannel = bundle;
+      if (pc.__pcSctp) {
+        openLocalChannel(pc, { bundle });
+      } else {
+        pc.__pcPendingLocalChannels.push({ bundle });
+      }
       return bundle.jsObject;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -569,11 +557,11 @@ export function createRTCPeerConnectionClass(eventLoop: EventLoop, options: RtcA
   proto.properties.set('createOffer', {
     value: createNativeFunction('createOffer', (_this) => {
       const pc = _this as JSObject & PeerConnectionInternal;
+      pc.__pcIsOfferer = true;
       const p = createWiredPromise(eventLoop);
-      ensureGathered(pc).then(
-        () => {
-          const label = pc.__pcLocalChannel ? toString(getProp(pc.__pcLocalChannel.jsObject, 'label') ?? '') : null;
-          const sdp = buildSdp('offer', pc.__pcLocalCandidates, label);
+      Promise.all([ensureGathered(pc), pc.__pcCertPromise]).then(
+        ([, cert]) => {
+          const sdp = buildSdp('offer', pc.__pcLocalCandidates, cert.fingerprintSha256, 'actpass');
           const desc = createObject(null);
           setProp(desc, 'type', 'offer', false, true);
           setProp(desc, 'sdp', sdp, false, true);
@@ -595,10 +583,9 @@ export function createRTCPeerConnectionClass(eventLoop: EventLoop, options: RtcA
         rejectPromise(p, new DOMException("Failed to execute 'createAnswer': no remote offer is set.", 'InvalidStateError') as unknown as JSValue);
         return p;
       }
-      ensureGathered(pc).then(
-        () => {
-          const label = pc.__pcLocalChannel ? toString(getProp(pc.__pcLocalChannel.jsObject, 'label') ?? '') : null;
-          const sdp = buildSdp('answer', pc.__pcLocalCandidates, label);
+      Promise.all([ensureGathered(pc), pc.__pcCertPromise]).then(
+        ([, cert]) => {
+          const sdp = buildSdp('answer', pc.__pcLocalCandidates, cert.fingerprintSha256, 'active');
           const desc = createObject(null);
           setProp(desc, 'type', 'answer', false, true);
           setProp(desc, 'sdp', sdp, false, true);
@@ -649,6 +636,7 @@ export function createRTCPeerConnectionClass(eventLoop: EventLoop, options: RtcA
       pc.__pcRemoteDescription = descInit;
       setProp(pc, 'remoteDescription', descInit, false, false);
       pc.__pcRemoteCandidates = parseSdpCandidates(sdp);
+      pc.__pcRemoteFingerprint = parseSdpFingerprint(sdp);
       setSignalingState(pc, type === 'answer' ? 'stable' : 'have-remote-offer');
       fulfillPromise(p, undefined);
       maybeStartConnectivityChecks(pc);
@@ -670,7 +658,7 @@ export function createRTCPeerConnectionClass(eventLoop: EventLoop, options: RtcA
       }
       fulfillPromise(p, undefined);
       // Trickle candidates arriving after checks have already started aren't
-      // retried against in Phase 1 — documented limitation.
+      // retried against — documented limitation (unchanged from Phase 1).
       maybeStartConnectivityChecks(pc);
       return p;
     }),
@@ -682,7 +670,9 @@ export function createRTCPeerConnectionClass(eventLoop: EventLoop, options: RtcA
     value: createNativeFunction('close', (_this) => {
       const pc = _this as JSObject & PeerConnectionInternal;
       if (pc.__pcSignalingState === 'closed') return undefined;
-      pc.__pcLocalChannel?.markClosed();
+      for (const bundle of pc.__pcChannelsByStream.values()) bundle.markClosed();
+      for (const pending of pc.__pcPendingLocalChannels) pending.bundle.markClosed();
+      pc.__pcSctp?.close();
       pc.__pcIce.close();
       setIceConnectionState(pc, 'closed');
       setSignalingState(pc, 'closed');
@@ -707,8 +697,15 @@ export function createRTCPeerConnectionClass(eventLoop: EventLoop, options: RtcA
     pc.__pcGathered = false;
     pc.__pcLocalCandidates = [];
     pc.__pcRemoteCandidates = [];
-    pc.__pcLocalChannel = null;
     pc.__pcConnectivityStarted = false;
+    pc.__pcIsOfferer = false;
+    pc.__pcCertPromise = generateSelfSignedP256Cert();
+    pc.__pcRemoteFingerprint = null;
+    pc.__pcDtls = null;
+    pc.__pcSctp = null;
+    pc.__pcNextLocalStreamId = 0;
+    pc.__pcChannelsByStream = new Map();
+    pc.__pcPendingLocalChannels = [];
 
     setProp(pc, 'signalingState', 'stable', false, false);
     setProp(pc, 'iceGatheringState', 'new', false, false);
