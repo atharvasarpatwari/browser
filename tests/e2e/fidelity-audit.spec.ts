@@ -1,6 +1,7 @@
 import { test, expect, _electron as electron, type Page } from '@playwright/test';
 import * as http from 'node:http';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 
@@ -427,7 +428,8 @@ test('Nova fidelity audit over crafted fixtures', async () => {
     resolve();
   }));
 
-  const app = await electron.launch({ args: ['.'] });
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-fidelity-')); // a throw-away profile, never the user's
+  const app = await electron.launch({ args: ['.', `--user-data-dir=${profile}`], env: { ...process.env, NOVA_HEALTH_LOG: '0' } });
   let page = await app.firstWindow();
 
   const results: FixtureResult[] = [];
@@ -443,7 +445,7 @@ test('Nova fidelity audit over crafted fixtures', async () => {
 
   try {
     await page.locator('#browser-app').waitFor({ state: 'visible', timeout: 30_000 });
-    const input = page.locator('.address-input');
+    const input = page.locator('.nova-addressbar-input');
     await input.waitFor({ state: 'visible', timeout: 30_000 });
 
     for (const fixture of FIXTURES) {

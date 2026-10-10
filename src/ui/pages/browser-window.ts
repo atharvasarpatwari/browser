@@ -9,7 +9,7 @@ import type { IStatusBar } from '../components/status-bar/status-bar';
 import type { IToolbar } from '../components/toolbar/toolbar';
 import type { ITrackerBlocker } from '../../browser/security/tracker-blocker';
 import type { IAdBlocker } from '../../browser/security/ad-blocker';
-import type { IUrlParser } from '../../browser/navigation/url-parser';
+import type { IUrlParser, ParsedUrl } from '../../browser/navigation/url-parser';
 import type { IContentRenderer } from '../components/content-renderer/content-renderer';
 import type { INavigationBridge } from '../components/navigation-bridge';
 import type { IBrowserEngine, EngineEvent } from '../../browser/engine/browser-engine';
@@ -43,18 +43,28 @@ import { NavigationBridge } from '../components/navigation-bridge';
 import { ContentRenderer } from '../components/content-renderer/content-renderer';
 import { NavigationFetcher } from '../components/navigation-fetcher';
 import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
+import { PageContextMenuController } from '../components/context-menu/page-context-menu';
+import { PageScrollController } from '../components/page-scroll/page-scroll-controller';
+import { dnsPrefetchHint } from '../../browser/search/speculative-loader';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
-import type { DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
+import type { DomDocument, DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
+import type { NavigationEvent } from '../../browser/navigation/navigation-controller';
+import { parseResearchUrl } from '../../browser/omnibox/ai-research-provider';
 import { SettingsPage } from './settings-page';
 import { DownloadsPage } from './downloads-page';
 import { NewTabPage } from './new-tab-page';
 import { ResearchPage } from './research-page';
+import { SearchIntegration } from './search-integration';
 import type { ISettingsPage } from './settings-page';
 import type { IResearchPage } from './research-page';
 import type { ISettingsService } from '../../browser/storage/settings-service';
 import type { IBrowserName } from '../../browser/config/browser-name';
 import type { IResearchService } from '../../browser/research/research-types';
+import { SearchEngineManager } from '../../browser/omnibox/search-engine';
+import type { ISearchEngineManager, SearchEngine } from '../../browser/omnibox/search-engine';
+import { DEFAULT_SECTIONS } from './settings-page';
+import type { SettingsSection } from './settings-page';
 
 interface BrowserWindowPageConfig {
   readonly containerId: string;
@@ -82,12 +92,10 @@ const DEFAULT_PAGE_CONFIG: BrowserWindowPageConfig = {
   hideChromeUI: false,
 };
 
-/** Search-URL templates keyed by the `defaultSearchEngine` setting value. */
-const SEARCH_URL_TEMPLATES: Record<string, string> = {
-  google: 'https://www.google.com/search?q=%s',
-  bing: 'https://www.bing.com/search?q=%s',
-  duckduckgo: 'https://duckduckgo.com/?q=%s',
-};
+/** Maps a SearchEngine's display name onto the string persisted for `defaultSearchEngine`. */
+function engineSlug(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, '');
+}
 
 /** Serializable snapshot pushed to onChromeState() listeners (e.g. a native host bridge). */
 interface ChromeStateSnapshot {
@@ -145,6 +153,10 @@ interface IBrowserWindowPage extends IDisposable {
   setAdBlocker(blocker: IAdBlocker): void;
   setBrowserName(name: IBrowserName): void;
   setResearchService(service: IResearchService): void;
+  /** Where the loaded page's DOM comes from (find-in-page searches its laid-out text). */
+  setPageDocumentProvider(provider: () => DomDocument | null): void;
+  /** A page finished loading — feeds the personal search archive (when the user opted in). */
+  onPageDocumentReady(url: string, doc: DomDocument): void;
 
   // ── External chrome bridge (native shells driving this page's tabs/nav) ────
   /** Push-based state: fires on every syncAll() (tab created/removed/activated, url changed, etc). */
@@ -197,10 +209,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private _mounted = false;
 
   private readonly parser: IUrlParser;
+  private readonly searchEngineManager: ISearchEngineManager = new SearchEngineManager();
   private contentRenderer: IContentRenderer | null = null;
   private contentArea: HTMLElement | null = null;
   private currentUrl = '';
   private contentNavigateHandler: ((e: Event) => void) | null = null;
+  private tabKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   private activeSettingsPage: ISettingsPage | null = null;
   private activeDownloadsPage: DownloadsPage | null = null;
   private activeNewTabPage: NewTabPage | null = null;
@@ -211,7 +225,21 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private navigationFetcher: NavigationFetcher | null = null;
   private pipelineController: INavigationController | null = null;
   private localController: INavigationController | null = null;
+  private search: SearchIntegration | null = null;
+  private pageDocumentProvider: (() => DomDocument | null) | null = null;
   private readonly onBridgeUrlNavigated = () => { this.syncAll(); };
+
+  /**
+   * Every committed navigation (typed URL, back/forward, reload, new or switched tab) lands here:
+   * built-in pages (nova://, about:) are drawn by this window; anything else is the engine's job,
+   * so only the previous built-in page's widgets are released.
+   */
+  private readonly onNavigationCommitted = (event: NavigationEvent): void => {
+    if (event.kind !== 'navigationCommitted') return;
+    const parsed = event.entry.parsedUrl;
+    if (this.drawnOnCommit(parsed)) this.handleContentForUrl(event.entry.url);
+    else if (!parsed.isSpecialPage) this.cleanupContentPanel();
+  };
 
   /** Per-tab load errors (keyed by tab id) recorded from navigationFailed bridge events. */
   private readonly tabErrors = new Map<string, { code: string; description: string; url: string }>();
@@ -219,6 +247,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   /** Engine-bus handlers (unregistered on re-set so a long-lived page leaks no subscriptions). */
   private readonly engineLoadErrorHandler = (event: EngineEvent): void => {
     if (event.kind !== 'pageLoadError') return;
+    this.search?.onContentReplaced();
     const activeTabId = this.tabManager?.activeTabId ?? null;
     if (activeTabId) {
       this.tabErrors.set(activeTabId, {
@@ -235,6 +264,19 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (activeTabId) this.tabErrors.delete(activeTabId);
     this.syncAll();
   };
+  /** A new page bitmap replaces the content area; an in-place repaint only moves the text around. */
+  private readonly enginePageHandler = (event: EngineEvent): void => {
+    if (event.kind === 'pageLoadReady') this.search?.onContentReplaced();
+    else if (event.kind === 'pageRepainted') this.search?.onPageRepainted();
+    if (event.kind === 'pageLoadReady' || event.kind === 'pageRepainted') this.pageScroll?.update();
+  };
+
+  /** Scrolls the page on screen to `y` (the paint engine clamps it) and repaints; every scroll route ends here. */
+  private scrollPageTo(y: number): void {
+    if (!this.paintEngine) return;
+    this.paintEngine.setScroll(y);
+    this.browserEngine?.notifyPageRepainted();
+  }
 
   /**
    * Tracks navigation failure/success on the bridge so pushed ChromeStateSnapshot
@@ -243,6 +285,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
    */
   private readonly onBridgeNavState = (event: { kind: string; url?: string; error?: Error }): void => {
     const activeTabId = this.tabManager?.activeTabId ?? null;
+    if (event.kind === 'navigationStarted') this.search?.onPageLeaving();
     switch (event.kind) {
       case 'navigationStarted':
       case 'navigationCompleted':
@@ -277,6 +320,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private historyEventHandler: ((event: { kind: string }) => void) | null = null;
   private bookmarkEventHandler: ((event: { kind: string }) => void) | null = null;
   private contextMenu: ContextMenu | null = null;
+  private pageContextMenu: PageContextMenuController | null = null;
+  private pageScroll: PageScrollController | null = null;
   private incognitoManager: IIncognitoManager | null = null;
   private tabSessionBridge: TabSessionBridge | null = null;
   private tabPersistence: TabPersistenceManager | null = null;
@@ -287,6 +332,43 @@ class BrowserWindowPage implements IBrowserWindowPage {
   constructor(config?: Partial<BrowserWindowPageConfig>) {
     this.config = { ...DEFAULT_PAGE_CONFIG, ...config };
     this.parser = new UrlParser();
+    this.searchEngineManager.onEvent((e) => {
+      if (e.kind === 'defaultChanged') {
+        this.settingsService?.setValue('defaultSearchEngine', engineSlug(e.engine.name));
+      }
+      if (e.kind === 'added' || e.kind === 'removed') {
+        this.persistSearchEngines();
+      }
+      this.refreshSettingsEngineUI();
+      this.search?.onEnginesChanged(); // engine keywords are `!bangs` in the address bar
+    });
+  }
+
+  private syncSearchEngineManagerFromSettings(): void {
+    const id = this.settingsService?.getString('defaultSearchEngine', 'nova') || 'nova';
+    const match = this.searchEngineManager.getEngines().find(e => engineSlug(e.name) === id.toLowerCase());
+    if (match) this.searchEngineManager.setDefaultEngine(match.id);
+  }
+
+  /** Persists the full ordered engine list (sans unstable `.id`/`.isDefault`) so add/remove/reorder survive a restart. */
+  private persistSearchEngines(): void {
+    this.settingsService?.setValue(
+      'searchEngines',
+      this.searchEngineManager.getEngines().map(({ id, isDefault, ...rest }) => rest),
+    );
+  }
+
+  /** Loads a previously-persisted engine list, if any, before the built-in defaults would otherwise apply. */
+  private loadPersistedSearchEngines(): void {
+    const raw = this.settingsService?.getValue<Array<Omit<SearchEngine, 'id' | 'isDefault'>>>('searchEngines');
+    if (Array.isArray(raw) && raw.length > 0 && raw.every(e => typeof e?.name === 'string' && typeof e?.url === 'string' && typeof e?.keyword === 'string')) {
+      this.searchEngineManager.replaceEngines(raw);
+    }
+  }
+
+  /** Re-renders the active Settings panel (if open) so the engine list / General dropdown reflect current state. */
+  private refreshSettingsEngineUI(): void {
+    this.activeSettingsPage?.updateSections(this.buildSettingsSections());
   }
 
   get isMounted(): boolean { return this._mounted; }
@@ -388,8 +470,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
               this.syncAll();
               break;
             case 'newTabRequested':
-              this.tabManager?.createTab();
-              this.syncAll();
+              this.openNewTab();
               break;
             case 'contextMenu':
               this.showTabContextMenu(e.tabId, e.x, e.y);
@@ -437,7 +518,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
     this.tabManager.on('tabCreated', () => this.syncAll());
     this.tabManager.on('tabRemoved', () => this.syncAll());
-    this.tabManager.on('tabActivated', () => this.syncAll());
+    this.tabManager.on('tabActivated', () => { this.search?.onPageLeaving(); this.syncAll(); });
 
     // Use DI-provided NavigationController when available (wired to the engine,
     // history service and CSP guards); otherwise fall back to a local controller.
@@ -471,6 +552,17 @@ class BrowserWindowPage implements IBrowserWindowPage {
       onStop: () => this.stop(),
     });
 
+    this.installSearch();
+
+    // Ctrl+T / Cmd+T: open a new tab from anywhere in the window.
+    this.tabKeyHandler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 't') {
+        e.preventDefault();
+        this.openNewTab();
+      }
+    };
+    document.addEventListener('keydown', this.tabKeyHandler);
+
     if (!savedTabs) this.tabManager.createTab();
 
     if (areas.content) {
@@ -496,13 +588,94 @@ class BrowserWindowPage implements IBrowserWindowPage {
         }
       };
       areas.content.addEventListener('nova-navigate', this.contentNavigateHandler);
+
+      // Right-click on a rendered page: links, images, or the page itself (desktop only — Android has its own long-press menu).
+      this.pageContextMenu = new PageContextMenuController({
+        area: areas.content,
+        menu: () => (this.contextMenu ??= new ContextMenu()),
+        resolveTarget: (x, y) => this.resolveContextTarget(x, y),
+        selectionAt: (x, y) => this.search?.selectionAt(x, y) ?? '',
+        scrollY: () => this.paintEngine?.getScroll().y ?? 0,
+        context: () => {
+          const state = this.getChromeState();
+          return { pageUrl: state.addressValue, engineName: this.currentDefaultEngine().name, canGoBack: state.canGoBack, canGoForward: state.canGoForward };
+        },
+        actions: {
+          openInNewTab: (url) => { this.createTab(url); },
+          copy: (text) => this.search?.copyText(text),
+          searchFor: (text) => this.search?.searchFor(text),
+          askAi: (text) => this.search?.askAi(text),
+          back: () => this.goBack(),
+          forward: () => this.goForward(),
+          reload: () => this.reload(),
+          find: () => { this.search?.openFindBar(); },
+        },
+      });
+      this.pageContextMenu.attach();
+      this.search?.enableSelection();
+
+      // Wheel, keys and a scrollbar for pages taller than the viewport (desktop only).
+      this.pageScroll = new PageScrollController({
+        area: areas.content,
+        scroll: () => this.paintEngine?.getScroll() ?? { y: 0, max: 0, viewportHeight: 0, documentHeight: 0 },
+        scrollTo: (y) => this.scrollPageTo(y),
+      });
+      this.pageScroll.attach();
     }
 
     this._mounted = true;
   }
 
+  /** Omnibox, nova://search, find-in-page and the personal archive, wired to this window's tabs and services. */
+  private installSearch(): void {
+    this.search = new SearchIntegration({
+      addressBar: () => this.addressBar,
+      addressBarView: () => this.addressBarView,
+      contentArea: () => this.contentArea,
+      settings: () => this.settingsService,
+      history: () => this.historyService,
+      bookmarks: () => this.bookmarkService,
+      listTabs: () => (this.tabManager?.tabs ?? []).map((t) => ({
+        id: t.id, title: t.title || t.url, url: t.url, active: t.id === this.tabManager?.activeTabId,
+      })),
+      isIncognito: () => this.isIncognito(),
+      defaultEngine: () => this.currentDefaultEngine(),
+      engines: () => this.searchEngineManager.getEngines(),
+      normalizeUrl: (raw) => this.parser.normalize(raw),
+      open: (url, newTab) => {
+        if (newTab) this.createTab(url);
+        else void this.navigate(url);
+      },
+      switchTab: (id) => { this.activateTabExternal(id); },
+      reload: () => this.reload(),
+      closeActiveTab: () => {
+        const id = this.tabManager?.activeTabId;
+        if (id) this.closeTab(id);
+      },
+      deleteHistoryEntry: (id) => this.removeHistoryEntryExternal(id),
+      addEngine: ({ name, url, keyword }) => {
+        const key = keyword.trim().toLowerCase();
+        if (this.validateNewEngine(name.trim(), url.trim(), key) !== null) return false;
+        this.searchEngineManager.addEngine({ name: name.trim(), url: url.trim(), keyword: key }); // persists, refreshes Settings and the !bangs
+        return true;
+      },
+      warmHost: (host) => dnsPrefetchHint(host),
+      scroll: () => this.paintEngine?.getScroll() ?? { y: 0, documentHeight: 0 },
+      scrollTo: (y) => this.scrollPageTo(y),
+    });
+    this.search.install();
+    if (this.pageDocumentProvider) this.search.setPageDocumentProvider(this.pageDocumentProvider);
+  }
+
   async unmount(): Promise<void> {
     this.navigationFetcher?.dispose();
+    this.pipelineController?.off('navigationCommitted', this.onNavigationCommitted);
+    this.search?.dispose();
+    this.search = null;
+    this.pageContextMenu?.dispose();
+    this.pageContextMenu = null;
+    this.pageScroll?.dispose();
+    this.pageScroll = null;
     this.cleanupSettingsPage();
     this.cleanupDownloadsPage();
     this.cleanupContentPanel();
@@ -521,6 +694,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.contentRenderer?.dispose();
     if (this.contentArea && this.contentNavigateHandler) {
       this.contentArea.removeEventListener('nova-navigate', this.contentNavigateHandler);
+    }
+    if (this.tabKeyHandler) {
+      document.removeEventListener('keydown', this.tabKeyHandler);
     }
     this.layout?.dispose();
     if (this.container) {
@@ -542,6 +718,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.contentRenderer = null;
     this.contentArea = null;
     this.contentNavigateHandler = null;
+    this.tabKeyHandler = null;
     this.layout = null;
     this._mounted = false;
   }
@@ -549,13 +726,31 @@ class BrowserWindowPage implements IBrowserWindowPage {
   async navigate(url: string): Promise<void> {
     if (this.navigationBridge) {
       await this.navigationBridge.navigate(url);
+      // Built-in pages were already drawn when the navigation committed (onNavigationCommitted).
       const currentUrl = this.navigationBridge.currentUrl;
-      if (currentUrl) {
+      if (currentUrl && !this.drawnOnCommit(this.parseOrNull(currentUrl))) {
         this.handleContentForUrl(currentUrl);
       }
       this.syncAll();
       return;
     }
+  }
+
+  private parseOrNull(url: string): ParsedUrl | null {
+    try {
+      return this.parser.parse(url);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Built-in pages are drawn the moment their navigation commits. `about:blank` is the exception:
+   * it is what a tab starts as, and committing it must not wipe the start screen — only an explicit
+   * navigate('about:blank') clears the content.
+   */
+  private drawnOnCommit(parsed: ParsedUrl | null): boolean {
+    return !!parsed && parsed.isSpecialPage && parsed.normalized !== 'about:blank';
   }
 
   /**
@@ -640,10 +835,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
    */
   private renderSpecialPage(page: string, url: string): void {
     this.cleanupContentPanel();
+    this.contentRenderer?.clear(); // drop whatever the previous page left in the content area
 
-    switch (page) {
+    // `nova://search?q=x` → `nova://search`: pages that take parameters read them from `url`.
+    switch (page.replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase()) {
       case 'about:blank':
-        this.contentRenderer?.clear();
         break;
 
       case 'about:newtab':
@@ -661,7 +857,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
         break;
 
       case 'nova://research':
-        this.renderResearchPanel();
+        this.renderResearchPanel(parseResearchUrl(url));
+        break;
+
+      case 'nova://search':
+        this.renderSearchPanel(url);
         break;
 
       case 'nova://history':
@@ -693,7 +893,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     container.style.cssText = 'width:100%;height:100%;';
     this.contentArea.appendChild(container);
     this.activeContentPanel = container;
-    this.activeSettingsPage = new SettingsPage();
+    this.activeSettingsPage = new SettingsPage(this.buildSettingsSections());
     this.activeSettingsPage.mount(container);
     if (this.settingsService) {
       this.settingsService.init(this.activeSettingsPage);
@@ -708,9 +908,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.contentArea.appendChild(container);
     this.activeContentPanel = container;
     this.activeNewTabPage = new NewTabPage();
-
-    const searchEngine = this.settingsService?.getString('defaultSearchEngine', 'google') ?? 'google';
-    this.activeNewTabPage.setSearchEngine(searchEngine);
+    this.syncSearchEngineManagerFromSettings();
+    this.activeNewTabPage.setSearchEngineManager(this.searchEngineManager);
 
     this.activeNewTabPage.mount(container);
 
@@ -724,12 +923,6 @@ class BrowserWindowPage implements IBrowserWindowPage {
       } else if (event.action === 'remove' && event.url && this.bookmarkService) {
         const bm = await this.bookmarkService.getBookmarkByUrl(event.url);
         if (bm) await this.bookmarkService.removeBookmark(bm.id);
-      }
-    });
-
-    this.activeNewTabPage.on('searchEngineChanged', (event) => {
-      if (event.engine) {
-        this.settingsService?.setValue('defaultSearchEngine', event.engine);
       }
     });
 
@@ -787,7 +980,18 @@ class BrowserWindowPage implements IBrowserWindowPage {
     });
   }
 
-  private renderResearchPanel(): void {
+  private renderSearchPanel(url: string): void {
+    if (!this.contentArea || !this.search) return;
+    this.cleanupContentPanel();
+    const container = document.createElement('div');
+    container.style.cssText = 'width:100%;height:100%;';
+    this.contentArea.appendChild(container);
+    this.activeContentPanel = container;
+    this.search.renderSearchPage(container, url);
+  }
+
+  /** `query` (from `nova://research?q=…`) starts the research as soon as the page is up. */
+  private renderResearchPanel(query: string | null = null): void {
     if (!this.contentArea) return;
     this.cleanupContentPanel();
     const container = document.createElement('div');
@@ -813,6 +1017,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.activeResearchPage.on('externalNavigation', (event) => {
       if (event.url) this.navigate(event.url);
     });
+
+    if (query) this.activeResearchPage.submitQuery(query);
   }
 
   private renderHistoryPanel(): void {
@@ -1011,7 +1217,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (!tab) return;
 
     const items: ContextMenuItem[] = [
-      { label: 'New Tab', icon: '＋', action: () => { this.tabManager?.createTab(); this.syncAll(); } },
+      { label: 'New Tab', icon: '＋', action: () => { this.openNewTab(); } },
       { separator: true },
       { label: tab.pinned ? 'Unpin Tab' : 'Pin Tab', icon: tab.pinned ? '🔓' : '📌', action: () => {
         this.tabManager?.setTabPinned(tabId, !tab.pinned);
@@ -1257,10 +1463,179 @@ class BrowserWindowPage implements IBrowserWindowPage {
     return this.settingsService?.getString('homePage', 'about:newtab') || 'about:newtab';
   }
 
-  /** Resolves the `defaultSearchEngine` setting into a `%s` search URL template. */
+  /** Widens the settings page's `defaultSearchEngine` select and appends the dedicated management section. */
+  private buildSettingsSections(): SettingsSection[] {
+    const options = this.searchEngineManager.getEngines()
+      .map(e => ({ label: e.name, value: engineSlug(e.name) }));
+    const sections = DEFAULT_SECTIONS.map(section => section.id !== 'general' ? section : {
+      ...section,
+      settings: section.settings.map(s => s.key !== 'defaultSearchEngine' ? s : { ...s, options }),
+    });
+    sections.push({
+      id: 'search-engines', title: 'Search Engines', icon: '🔎',
+      settings: [],
+      renderExtra: ({ container }) => this.renderSearchEngineManager(container),
+    });
+    return sections;
+  }
+
+  /** Builds the add/remove/reorder/set-default search-engine management UI for the Settings page. */
+  private renderSearchEngineManager(container: HTMLElement): void {
+    const engines = this.searchEngineManager.getEngines();
+
+    const list = document.createElement('div');
+    list.className = 'search-engine-list';
+    list.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-bottom:20px;';
+
+    engines.forEach((engine, index) => {
+      const row = document.createElement('div');
+      row.className = 'search-engine-row';
+      row.dataset.engineId = engine.id;
+      row.draggable = true;
+      row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border-subtle,rgba(255,255,255,.06));border-radius:var(--radius-sm,4px);background:var(--bg-surface,#161618);cursor:grab;';
+
+      const icon = document.createElement('span');
+      icon.textContent = engine.icon ?? '🔍';
+      icon.style.cssText = 'font-size:16px;flex-shrink:0;';
+      row.appendChild(icon);
+
+      const info = document.createElement('div');
+      info.style.cssText = 'flex:1;min-width:0;';
+      const nameRow = document.createElement('div');
+      nameRow.style.cssText = 'font-size:13px;font-weight:600;color:var(--text-primary,#e0e0e0);';
+      nameRow.textContent = `${engine.name}  !${engine.keyword}`;
+      const urlRow = document.createElement('div');
+      urlRow.style.cssText = 'font-size:11px;color:var(--text-tertiary,#6a6a68);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      urlRow.textContent = engine.url;
+      info.appendChild(nameRow);
+      info.appendChild(urlRow);
+      row.appendChild(info);
+
+      const defaultBtn = document.createElement('button');
+      defaultBtn.type = 'button';
+      defaultBtn.className = 'search-engine-default-btn';
+      defaultBtn.textContent = engine.isDefault ? '★ Default' : '☆ Set default';
+      defaultBtn.style.cssText = `padding:5px 10px;border-radius:var(--radius-sm,4px);font-size:12px;cursor:${engine.isDefault ? 'default' : 'pointer'};border:1px solid var(--border-default,rgba(255,255,255,.1));background:${engine.isDefault ? 'var(--accent-dim,rgba(124,156,245,.12))' : 'var(--bg-elevated,#1c1c1e)'};color:${engine.isDefault ? 'var(--accent,#7c9cf5)' : 'var(--text-secondary,#a0a098)'};flex-shrink:0;`;
+      if (!engine.isDefault) {
+        defaultBtn.addEventListener('click', () => this.searchEngineManager.setDefaultEngine(engine.id));
+      }
+      row.appendChild(defaultBtn);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'search-engine-remove-btn';
+      removeBtn.textContent = '🗑';
+      const canRemove = engines.length > 1;
+      removeBtn.disabled = !canRemove;
+      removeBtn.style.cssText = `padding:5px 9px;border-radius:var(--radius-sm,4px);font-size:12px;border:1px solid var(--border-default,rgba(255,255,255,.1));background:var(--bg-elevated,#1c1c1e);color:var(--text-secondary,#a0a098);cursor:${canRemove ? 'pointer' : 'not-allowed'};opacity:${canRemove ? '1' : '.4'};flex-shrink:0;`;
+      if (canRemove) {
+        removeBtn.addEventListener('click', () => this.searchEngineManager.removeEngine(engine.id));
+      }
+      row.appendChild(removeBtn);
+
+      row.addEventListener('dragstart', (e) => {
+        e.dataTransfer?.setData('text/plain', engine.id);
+      });
+      row.addEventListener('dragover', (e) => e.preventDefault());
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const draggedId = e.dataTransfer?.getData('text/plain');
+        if (!draggedId || draggedId === engine.id) return;
+        this.searchEngineManager.reorderEngine(draggedId, index);
+        this.persistSearchEngines();
+        this.refreshSettingsEngineUI();
+      });
+
+      list.appendChild(row);
+    });
+
+    container.appendChild(list);
+
+    // Add-engine form
+    const form = document.createElement('div');
+    form.style.cssText = 'padding:14px;border:1px solid var(--border-subtle,rgba(255,255,255,.06));border-radius:var(--radius-md,6px);background:var(--bg-surface,#161618);display:flex;flex-direction:column;gap:8px;';
+
+    const formTitle = document.createElement('div');
+    formTitle.textContent = 'Add a search engine';
+    formTitle.style.cssText = 'font-size:13px;font-weight:600;color:var(--text-primary,#e0e0e0);margin-bottom:2px;';
+    form.appendChild(formTitle);
+
+    const mkInput = (placeholder: string, className: string): HTMLInputElement => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = className;
+      input.placeholder = placeholder;
+      input.style.cssText = 'width:100%;padding:7px 10px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);outline:none;box-sizing:border-box;';
+      return input;
+    };
+    const nameInput = mkInput('Name (e.g. My Search)', 'search-engine-name-input');
+    const urlInput = mkInput('URL template with %s (e.g. https://example.com/search?q=%s)', 'search-engine-url-input');
+    const keywordInput = mkInput('Keyword (e.g. ex)', 'search-engine-keyword-input');
+    const iconInput = mkInput('Icon (optional, e.g. 🔎)', 'search-engine-icon-input');
+    form.appendChild(nameInput);
+    form.appendChild(urlInput);
+    form.appendChild(keywordInput);
+    form.appendChild(iconInput);
+
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'search-engine-error';
+    errorDiv.style.cssText = 'font-size:12px;color:#e05a5a;display:none;';
+    form.appendChild(errorDiv);
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'search-engine-add-btn';
+    addBtn.textContent = 'Add engine';
+    addBtn.style.cssText = 'align-self:flex-start;padding:7px 16px;border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:var(--radius-sm,4px);background:var(--accent,#7c9cf5);color:#fff;font-size:13px;font-weight:600;cursor:pointer;';
+    addBtn.addEventListener('click', () => {
+      const name = nameInput.value.trim();
+      const url = urlInput.value.trim();
+      const keyword = keywordInput.value.trim().toLowerCase();
+      const icon = iconInput.value.trim() || undefined;
+
+      const problem = this.validateNewEngine(name, url, keyword);
+      if (problem) {
+        errorDiv.textContent = problem;
+        errorDiv.style.display = 'block';
+        return;
+      }
+
+      this.searchEngineManager.addEngine({ name, url, keyword, icon });
+    });
+    form.appendChild(addBtn);
+
+    container.appendChild(form);
+  }
+
+  /** Why `name`/`url`/`keyword` cannot be added to the engine list, or null when they can (Settings form and engine discovery share it). */
+  private validateNewEngine(name: string, url: string, keyword: string): string | null {
+    if (!name) return 'Name is required.';
+    if (this.searchEngineManager.getEngines().some(e => engineSlug(e.name) === engineSlug(name))) {
+      return `An engine named "${name}" already exists.`;
+    }
+    if (!url || !url.includes('%s')) return 'URL must contain %s as the query placeholder.';
+    if (!keyword) return 'Keyword is required.';
+    if (this.searchEngineManager.getEngineByKeyword(keyword)) {
+      return `Keyword "!${keyword}" is already used by another engine.`;
+    }
+    return null;
+  }
+
+  /** The engine the `defaultSearchEngine` setting names (Nova unless Settings says otherwise); the manager's own default if that engine was removed. */
+  private currentDefaultEngine(): SearchEngine {
+    const id = this.settingsService?.getString('defaultSearchEngine', 'nova') || 'nova';
+    return this.searchEngineManager.getEngines().find(e => engineSlug(e.name) === id.toLowerCase())
+      ?? this.searchEngineManager.getDefaultEngine();
+  }
+
+  /** The default engine's `%s` search URL template. */
   private getSearchTemplate(): string {
-    const id = this.settingsService?.getString('defaultSearchEngine', 'google') || 'google';
-    return SEARCH_URL_TEMPLATES[id] ?? SEARCH_URL_TEMPLATES.google;
+    return this.currentDefaultEngine().url;
+  }
+
+  /** The + button, Ctrl+T and the tab menu: a new tab showing the New Tab page. */
+  private openNewTab(): void {
+    this.createTab('about:newtab');
   }
 
   createTab(url?: string): string {
@@ -1311,7 +1686,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     let node: DomElement | null = hit;
     let guard = 0;
     while (node && guard++ < 64) {
-      const tag = node.tagName.toLowerCase();
+      // The top of the chain is the document node, which has no tag name.
+      const tag = typeof node.tagName === 'string' ? node.tagName.toLowerCase() : '';
       if (tag === 'a' && node.attributes.has('href')) link ??= node;
       if (tag === 'img' && node.attributes.has('src')) image ??= node;
       node = node.parent as DomElement | null;
@@ -1326,9 +1702,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     };
   }
 
+  /** Resolves a link/image address against the page it is on (relative `href="/about"` is the usual case). */
   private resolveContextUrl(raw: string): string {
     try {
-      return new URL(raw, this.currentUrl || undefined).href;
+      return new URL(raw, this.navigationBridge?.currentUrl || undefined).href;
     } catch {
       return raw;
     }
@@ -1357,6 +1734,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setSettingsService(service: ISettingsService): void {
     this.settingsService = service;
+    this.loadPersistedSearchEngines();
+    this.syncSearchEngineManagerFromSettings();
+    this.search?.onEnginesChanged(); // the saved list replaced the built-in one
   }
 
   setBrowserEngine(engine: IBrowserEngine): void {
@@ -1364,10 +1744,23 @@ class BrowserWindowPage implements IBrowserWindowPage {
     // chaining keeps the call robust to hit-test-only fakes in tests.
     this.browserEngine?.off?.('pageLoadError', this.engineLoadErrorHandler);
     this.browserEngine?.off?.('pageLoadStarted', this.engineLoadStartedHandler);
+    this.browserEngine?.off?.('pageLoadReady', this.enginePageHandler);
+    this.browserEngine?.off?.('pageRepainted', this.enginePageHandler);
     this.browserEngine = engine;
     engine.on?.('pageLoadError', this.engineLoadErrorHandler);
     engine.on?.('pageLoadStarted', this.engineLoadStartedHandler);
+    engine.on?.('pageLoadReady', this.enginePageHandler);
+    engine.on?.('pageRepainted', this.enginePageHandler);
     this.syncNavigationPipeline();
+  }
+
+  setPageDocumentProvider(provider: () => DomDocument | null): void {
+    this.pageDocumentProvider = provider;
+    this.search?.setPageDocumentProvider(provider);
+  }
+
+  onPageDocumentReady(url: string, doc: DomDocument): void {
+    this.search?.onPageDocumentReady(url, doc);
   }
 
   setNavigationController(controller: INavigationController): void {
@@ -1415,7 +1808,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.navigationFetcher = null;
     this.navigationBridge?.dispose();
     this.navigationBridge = null;
+    this.pipelineController?.off('navigationCommitted', this.onNavigationCommitted);
     this.pipelineController = controller;
+    controller.on('navigationCommitted', this.onNavigationCommitted);
 
     if (this.tabManager && this.addressBar && this.toolbar) {
       this.navigationBridge = new NavigationBridge(
@@ -1424,6 +1819,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.addressBar,
         this.toolbar,
         this.statusBar,
+        { searchEngineManager: this.searchEngineManager },
       );
       // Re-render tab strip / toolbar / address bar after every successful
       // navigation (bridge-driven navigations bypass tabManager events).
@@ -1592,6 +1988,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.cleanupDownloadsPage();
     this.cleanupNewTabPage();
     this.cleanupResearchPage();
+    this.search?.disposeSearchPage();
     if (this.activeContentPanel) {
       this.activeContentPanel.remove();
       this.activeContentPanel = null;

@@ -3,6 +3,7 @@ import type { IBrowserEngine, EngineEvent, PageLoadSession } from '../../browser
 import type { IContentRenderer } from './content-renderer/content-renderer';
 import type { IPaintEngine } from '../../browser/rendering/paint-engine';
 import type { INavigationController, NavigationEvent } from '../../browser/navigation/navigation-controller';
+import { isEngineRendered } from '../../browser/navigation/router';
 
 interface INavigationFetcher extends IDisposable {
   start(): void;
@@ -15,6 +16,9 @@ class NavigationFetcher implements INavigationFetcher {
   private readonly paintEngine: IPaintEngine;
   private readonly navController: INavigationController;
   private disposed = false;
+  /** Where each history entry was scrolled to when it was left, so Back / Forward return to the same place. */
+  private readonly scrolls = new Map<string, number>();
+  private shownEntryId: string | null = null;
 
   private readonly engineHandler: (e: EngineEvent) => void;
   private readonly navHandler: (e: NavigationEvent) => void;
@@ -57,12 +61,16 @@ class NavigationFetcher implements INavigationFetcher {
     switch (e.kind) {
       case 'pageLoadReady':
         // A navigation commits a new page: replace the content canvas.
-        this.renderFromEngine(e.session, true);
+        if (this.rendersBitmap(e.session)) {
+          this.paintEngine.setScroll(this.scrolls.get(e.session.entry.id) ?? 0); // a new page starts at the top
+          this.shownEntryId = e.session.entry.id;
+          this.renderFromEngine(e.session, true);
+        }
         break;
       case 'pageRepainted':
         // In-place repaint (animation frames, async image loads): update the
         // existing canvas so the DOM element stays stable while animating.
-        if (e.session) this.renderFromEngine(e.session, false);
+        if (e.session && this.rendersBitmap(e.session)) this.renderFromEngine(e.session, false);
         break;
       case 'pageLoadError':
         this.contentRenderer.renderError(
@@ -79,9 +87,19 @@ class NavigationFetcher implements INavigationFetcher {
   private handleNavEvent(e: NavigationEvent): void {
     switch (e.kind) {
       case 'navigationStarted':
+        // The page on screen is about to be left (the engine still holds it): remember where it was scrolled to.
+        if (this.shownEntryId !== null) this.scrolls.set(this.shownEntryId, this.paintEngine.getScroll().y);
         this.contentRenderer.renderLoading(e.request.url);
         break;
     }
+  }
+
+  /**
+   * Built-in pages (nova://, about:) have no engine-rendered document — the window draws them —
+   * so the engine's page bitmap (blank, or the previous page) must not replace them.
+   */
+  private rendersBitmap(session: PageLoadSession): boolean {
+    return !session.routeResult || isEngineRendered(session.routeResult.type);
   }
 
   private renderFromEngine(session: PageLoadSession, freshCanvas: boolean): void {
