@@ -1,3 +1,6 @@
+//! N-API wrapper around `nova_net::http`, which is not currently called from
+//! anywhere in `src/` — see the module doc on `nova-net/src/http.rs`.
+
 use std::collections::HashMap;
 
 use napi::bindgen_prelude::*;

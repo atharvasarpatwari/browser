@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use rustls::client::ClientConfig;
-use rustls::pki_types::{ServerName, InvalidServerErrorName};
+use rustls::pki_types::{ServerName, InvalidDnsNameError};
 use rustls::{ClientConnection, StreamOwned, RootCertStore};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -108,7 +108,7 @@ pub fn connect_tls(
 
     let tls_config = create_tls_config(config)?;
 
-    let server_name = ServerName::try_from(host.to_string()).map_err(|e: InvalidServerErrorName| {
+    let server_name = ServerName::try_from(host.to_string()).map_err(|e: InvalidDnsNameError| {
         TlsError::InvalidServerName(e.to_string())
     })?;
 
