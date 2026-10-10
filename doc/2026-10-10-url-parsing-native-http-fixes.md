@@ -66,3 +66,24 @@ npx vitest run
 - Probed `dns.promises.resolve4/resolve6/lookup('localhost')` directly to measure the ~28s `resolve6` `ETIMEOUT` versus the 4ms `resolve4` success, confirming the `Promise.allSettled` root cause before patching.
 - Probed `fetch_simple("https://example.com", "NOT A METHOD", ...)` directly (temporary test, removed after use) and confirmed it returned `Ok(status=400)`, confirming the missing-validation root cause before patching.
 - Re-ran full native (`cargo test -p nova-net --features http`) and full TS (`npx vitest run`) suites after each fix to confirm no regressions.
+
+## Addendum (same day): flagged the native HTTP client as unwired
+
+While scoping further networking hardening, confirmed via a repo-wide search that nothing in `src/` imports `src/native/index.ts`'s `httpFetch`/`resolveDns`/`tlsConnect` wrappers — the Rust HTTP client just fixed above is not on the live request path. The browser's actual networking stack is the pure-TypeScript `src/browser/networking/raw-socket-http-client.ts` + `redirect-handler.ts` + `request-manager.ts`, which already implements redirect-following and chunked transfer-encoding — both absent from the Rust client.
+
+This matters for anyone evaluating the Rust client's remaining gaps (no redirects, no chunked encoding, no connection reuse, http/https-only scheme support, `dns.rs` querying only A records with a hardcoded TTL, `tls.rs` reporting placeholder protocol/cipher strings): none of it is live-traffic-affecting today. Per explicit direction, no feature work was done to close those gaps — only a doc-comment was added to `native/nova-net/src/http.rs` and `native/nova-bindings/src/http.rs` stating the unwired status plainly, so it isn't mistaken for a settled design later. If this module is ever wired in (e.g. as part of the context-isolation socket-proxy work already scoped in `doc/socket-proxy-design.md` / `doc/buffer-safe-networking-plan.md`), chunked-encoding and redirect support are the two gaps that would need closing first.
+
+### Files Modified (addendum)
+| File | Change |
+|------|--------|
+| `native/nova-net/src/http.rs` | Added module doc-comment flagging unwired status (no behavior change) |
+| `native/nova-bindings/src/http.rs` | Added module doc-comment pointing to the same note (no behavior change) |
+| `doc/analytics.html` | Backfilled 2 pre-existing docs missing from the `DOCS` dataset (`2026-09-13-security-enforcement-wiring.md`, `2026-09-14-webrtc-phase2-dtls-sctp-plan.md`); recomputed stat-line/KPI totals to 256 docs / 45 days / 9,289 tests / 478 root causes / 1,358 files |
+
+### Verification (addendum)
+```
+cargo test -p nova-net --features http  → 11 passed; 0 failed (lib)
+git diff native/nova-net/src/http.rs native/nova-bindings/src/http.rs → comment-only (verified)
+node --check on extracted analytics.html <script>  → syntax OK
+DOCS array validation → 256 entries, 0 duplicates, 0 missing/extra vs disk
+```

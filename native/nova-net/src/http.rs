@@ -1,3 +1,12 @@
+//! Not currently wired into the running browser. Nothing in `src/` imports
+//! `src/native/index.ts`'s `httpFetch`/`resolveDns`/`tlsConnect` wrappers — the
+//! live networking path is the pure-TypeScript stack in
+//! `src/browser/networking/raw-socket-http-client.ts` +
+//! `redirect-handler.ts`, which already handles redirects and chunked
+//! transfer-encoding. This module lacks both (and connection reuse) as a
+//! result of being unintegrated, not by deliberate scope — don't treat the
+//! gaps as a settled design until this gets wired in.
+
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
