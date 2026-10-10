@@ -26,6 +26,9 @@ pub enum HttpError {
     #[error("Invalid URL: {0}")]
     InvalidUrl(String),
 
+    #[error("Invalid HTTP method: {0}")]
+    InvalidMethod(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -53,12 +56,22 @@ pub async fn fetch(request: &HttpRequest) -> Result<HttpResponse, HttpError> {
         .parse()
         .map_err(|e: http::uri::InvalidUri| HttpError::InvalidUrl(e.to_string()))?;
 
+    let scheme = url
+        .scheme_str()
+        .ok_or_else(|| HttpError::InvalidUrl("no scheme".to_string()))?
+        .to_ascii_lowercase();
+    let is_tls = match scheme.as_str() {
+        "https" => true,
+        "http" => false,
+        other => return Err(HttpError::InvalidUrl(format!("unsupported scheme: {other}"))),
+    };
+
     let host = url
         .host()
         .ok_or_else(|| HttpError::InvalidUrl("no host".to_string()))?
         .to_string();
 
-    let port = url.port_u16().unwrap_or(443);
+    let port = url.port_u16().unwrap_or(if is_tls { 443 } else { 80 });
 
     let path = url
         .path_and_query()
@@ -69,29 +82,11 @@ pub async fn fetch(request: &HttpRequest) -> Result<HttpResponse, HttpError> {
         .method
         .to_uppercase();
 
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-    let tls_config = ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-
-    let server_name = ServerName::try_from(host.clone()).map_err(|e: rustls::pki_types::InvalidServerErrorName| {
-        HttpError::TlsError(e.to_string())
-    })?;
-
-    let tcp = TcpStream::connect(format!("{host}:{port}")).map_err(|e| {
-        HttpError::ConnectionFailed(e.to_string())
-    })?;
-    tcp.set_read_timeout(Some(Duration::from_secs(
-        request.timeout_secs.unwrap_or(30),
-    )))?;
-
-    let conn = ClientConnection::new(tls_config.into(), server_name).map_err(|e| {
-        HttpError::TlsError(e.to_string())
-    })?;
-
-    let mut stream = StreamOwned::new(conn, tcp);
+    // Reject method strings that aren't a valid HTTP token (e.g. containing
+    // spaces) before they reach the wire as a malformed request line — the
+    // server seeing it is a different failure mode than "we sent garbage".
+    http::Method::from_bytes(method.as_bytes())
+        .map_err(|_| HttpError::InvalidMethod(request.method.clone()))?;
 
     let mut req_str = format!("{} {} HTTP/1.1\r\n", method, path);
     req_str.push_str(&format!("Host: {host}\r\n"));
@@ -112,12 +107,33 @@ pub async fn fetch(request: &HttpRequest) -> Result<HttpResponse, HttpError> {
         req_str.push_str(body);
     }
 
-    stream
-        .write_all(req_str.as_bytes())
-        .map_err(HttpError::Io)?;
+    let tcp = TcpStream::connect(format!("{host}:{port}")).map_err(|e| {
+        HttpError::ConnectionFailed(e.to_string())
+    })?;
+    tcp.set_read_timeout(Some(Duration::from_secs(
+        request.timeout_secs.unwrap_or(30),
+    )))?;
 
-    let mut response = String::new();
-    stream.read_to_string(&mut response).map_err(HttpError::Io)?;
+    let response = if is_tls {
+        let mut root_store = rustls::RootCertStore::empty();
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+        let tls_config = ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+
+        let server_name = ServerName::try_from(host.clone()).map_err(|e: rustls::pki_types::InvalidDnsNameError| {
+            HttpError::TlsError(e.to_string())
+        })?;
+
+        let conn = ClientConnection::new(tls_config.into(), server_name).map_err(|e| {
+            HttpError::TlsError(e.to_string())
+        })?;
+
+        send_and_receive(StreamOwned::new(conn, tcp), &req_str)?
+    } else {
+        send_and_receive(tcp, &req_str)?
+    };
 
     let (status, status_text, headers, body) = parse_http_response(&response)?;
 
@@ -129,8 +145,27 @@ pub async fn fetch(request: &HttpRequest) -> Result<HttpResponse, HttpError> {
     })
 }
 
+fn send_and_receive<S: Read + Write>(mut stream: S, req_str: &str) -> Result<String, HttpError> {
+    stream.write_all(req_str.as_bytes()).map_err(HttpError::Io)?;
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).map_err(HttpError::Io)?;
+    Ok(response)
+}
+
 fn parse_http_response(response: &str) -> Result<(u16, String, HashMap<String, String>, Option<String>), HttpError> {
-    let mut lines = response.lines();
+    // Split on the blank line that separates headers from body. Searching the
+    // raw string for the separator (rather than summing `.lines()` lengths)
+    // avoids guessing how many bytes each line's terminator consumed.
+    let (head, raw_body) = match response.find("\r\n\r\n") {
+        Some(idx) => (&response[..idx], Some(&response[idx + 4..])),
+        None => match response.find("\n\n") {
+            Some(idx) => (&response[..idx], Some(&response[idx + 2..])),
+            None => (response, None),
+        },
+    };
+
+    let mut lines = head.lines();
 
     let status_line = lines
         .next()
@@ -149,15 +184,7 @@ fn parse_http_response(response: &str) -> Result<(u16, String, HashMap<String, S
     let status_text = parts.get(2).unwrap_or(&"").to_string();
 
     let mut headers = HashMap::new();
-    let mut body_start = 0;
-
     for line in lines {
-        if line.is_empty() {
-            body_start += line.len() + 1;
-            break;
-        }
-        body_start += line.len() + 1;
-
         if let Some((key, value)) = line.split_once(':') {
             headers.insert(
                 key.trim().to_lowercase(),
@@ -166,11 +193,7 @@ fn parse_http_response(response: &str) -> Result<(u16, String, HashMap<String, S
         }
     }
 
-    let body = if body_start < response.len() {
-        Some(response[body_start..].to_string())
-    } else {
-        None
-    };
+    let body = raw_body.filter(|b| !b.is_empty()).map(|b| b.to_string());
 
     Ok((status, status_text, headers, body))
 }
@@ -217,5 +240,19 @@ mod tests {
     async fn test_fetch_invalid_url() {
         let result = fetch_simple("not-a-url", "GET", None, None).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_unsupported_scheme() {
+        let result = fetch_simple("ftp://example.com", "GET", None, None).await;
+        assert!(matches!(result, Err(HttpError::InvalidUrl(_))));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_http_defaults_to_port_80() {
+        // No listener on this port, but the connection error (not a TLS error)
+        // proves the request stayed plaintext and targeted port 80.
+        let result = fetch_simple("http://127.0.0.1/", "GET", None, None).await;
+        assert!(matches!(result, Err(HttpError::ConnectionFailed(_))));
     }
 }

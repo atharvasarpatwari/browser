@@ -149,6 +149,24 @@ class DnsNotFoundError extends DnsError {
  *   native DNS API.
  * - Test: Inject a deterministic stub via the constructor.
  */
+/**
+ * Per-query cap for the resolve4/resolve6 race below.
+ *
+ * resolve4 and resolve6 are independent DNS lookups — a network with no
+ * reachable IPv6 resolver can leave resolve6 hanging until the OS-level
+ * query times out (tens of seconds), which would otherwise stall a perfectly
+ * good resolve4 answer. Racing each against this timeout keeps one slow
+ * query from blocking the other's result.
+ */
+const SYSTEM_QUERY_TIMEOUT_MS = 2_000;
+
+function withFallback<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 async function defaultSystemResolver(hostname: string): Promise<readonly string[]> {
   const addresses: string[] = [];
 
@@ -159,8 +177,8 @@ async function defaultSystemResolver(hostname: string): Promise<readonly string[
       if (!dnsModule) throw new Error('node:dns unavailable');
       const dns = dnsModule.promises;
       const [v4, v6] = await Promise.allSettled([
-        dns.resolve4(hostname).catch(() => []),
-        dns.resolve6(hostname).catch(() => []),
+        withFallback(dns.resolve4(hostname).catch(() => []), SYSTEM_QUERY_TIMEOUT_MS, []),
+        withFallback(dns.resolve6(hostname).catch(() => []), SYSTEM_QUERY_TIMEOUT_MS, []),
       ]);
       if (v4.status === 'fulfilled') addresses.push(...v4.value);
       if (v6.status === 'fulfilled') addresses.push(...v6.value);
