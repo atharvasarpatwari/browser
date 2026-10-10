@@ -15,8 +15,13 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
+# SCCACHE_GHA_ENABLED/RUSTC_WRAPPER are intentionally NOT set here. Setting
+# them workflow-wide wraps dtolnay/rust-toolchain's own internal `rustc -vV`
+# fingerprint call (which runs before the "Run sccache" step below even
+# starts the server), so a GitHub Actions cache-service outage fails the
+# job during toolchain install, before any real compilation. Each build/test
+# step below sets them itself, scoped to just that step, after checking the
+# cache backend is actually reachable.
 
 jobs:
   # ── Rust tests ─────────────────────────────────────────────────────────────
@@ -42,6 +47,7 @@ jobs:
 
       - name: Run sccache
         uses: Mozilla-Actions/sccache-action@v0.0.7
+        continue-on-error: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -59,7 +65,17 @@ jobs:
 
       - name: Run tests
         working-directory: .
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: |
+          # sccache's GHA backend connects at server startup, not lazily, so
+          # a GitHub Actions cache-service outage fails even a no-op probe —
+          # cheaper to check that here than to lose the whole build to it.
+          if ! sccache --show-stats >/dev/null 2>&1; then
+            echo "::warning::sccache cache backend unreachable — building without it (slower, but not blocked)"
+            unset RUSTC_WRAPPER
+          fi
           cargo test \
             --workspace \
             --manifest-path native/Cargo.toml \
@@ -69,6 +85,7 @@ jobs:
 
       - name: Print sccache stats
         if: always()
+        continue-on-error: true
         run: sccache --show-stats
 
   # ── Build native .node binaries ────────────────────────────────────────────
@@ -86,6 +103,7 @@ jobs:
 
       - name: Run sccache
         uses: Mozilla-Actions/sccache-action@v0.0.7
+        continue-on-error: true
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -101,7 +119,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cmake pkg-config libssl-dev
 
       - name: Build release
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: |
+          # See the "Run tests" job for why this check exists: sccache's GHA
+          # backend connects at server startup, so a cache-service outage
+          # would otherwise fail the whole build before compilation starts.
+          if ! sccache --show-stats >/dev/null 2>&1; then
+            echo "::warning::sccache cache backend unreachable — building without it (slower, but not blocked)"
+            unset RUSTC_WRAPPER
+          fi
           cargo build \
             --release \
             --lib \
@@ -129,6 +157,7 @@ jobs:
 
       - name: Print sccache stats
         if: always()
+        continue-on-error: true
         run: sccache --show-stats
 
   # ── Build matrix (future platforms) ────────────────────────────────────────
