@@ -108,16 +108,16 @@ describe('SettingsPage (mount)', () => {
     const container = createDomContainer();
     page.mount(container);
     expect(page.isMounted).toBe(true);
-    expect(container.className).toContain('settings-page');
-    expect(container.querySelector('.settings-sidebar')).not.toBeNull();
-    expect(container.querySelector('.settings-content')).not.toBeNull();
+    expect(container.className).toContain('nova-settings');
+    expect(container.querySelector('.nova-settings-nav')).not.toBeNull();
+    expect(container.querySelector('.nova-settings-content')).not.toBeNull();
   });
 
   it('mount should set CSS classes', () => {
     const page = new SettingsPage();
     const container = createDomContainer();
     page.mount(container);
-    expect(container.className).toContain('settings-page');
+    expect(container.className).toContain('nova-settings');
   });
 
   it('unmount should clean up the container', () => {

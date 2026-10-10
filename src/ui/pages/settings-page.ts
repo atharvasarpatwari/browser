@@ -142,30 +142,15 @@ class SettingsPage implements ISettingsPage {
 
   mount(container: HTMLElement): void {
     this.container = container;
-    this.container.className = 'settings-page';
-    this.container.style.cssText = 'display:flex;height:100%;font-family:system-ui,-apple-system,sans-serif;background:var(--bg-body,#0f0f0f);color:var(--text-primary,#e0e0e0);';
+    this.container.className = 'nova-settings';
 
     const sidebar = document.createElement('nav');
-    sidebar.className = 'settings-sidebar';
-    sidebar.style.cssText = 'width:210px;border-right:1px solid var(--border-subtle,rgba(255,255,255,.06));padding:12px 0;overflow-y:auto;flex-shrink:0;background:var(--bg-surface,#161618);';
+    sidebar.className = 'nova-settings-nav';
 
     for (const section of this.sections) {
       const item = document.createElement('div');
-      item.className = `settings-nav-item${section.id === this._activeSection ? ' active' : ''}`;
+      item.className = `nova-settings-nav-item${section.id === this._activeSection ? ' active' : ''}`;
       item.textContent = `${section.icon}  ${section.title}`;
-      item.style.cssText = 'padding:9px 16px;cursor:pointer;font-size:13px;border-left:3px solid transparent;color:var(--text-secondary,#a0a098);transition:all .12s;';
-      if (section.id === this._activeSection) {
-        item.style.borderLeftColor = 'var(--accent,#7c9cf5)';
-        item.style.background = 'var(--bg-overlay,rgba(255,255,255,.04))';
-        item.style.color = 'var(--text-primary,#e0e0e0)';
-        item.style.fontWeight = '600';
-      }
-      item.addEventListener('mouseenter', () => {
-        if (section.id !== this._activeSection) item.style.background = 'var(--bg-overlay,rgba(255,255,255,.03))';
-      });
-      item.addEventListener('mouseleave', () => {
-        if (section.id !== this._activeSection) item.style.background = 'none';
-      });
       item.addEventListener('click', () => {
         this.setActiveSection(section.id);
         this.render();
@@ -175,8 +160,7 @@ class SettingsPage implements ISettingsPage {
     this.container.appendChild(sidebar);
 
     const content = document.createElement('div');
-    content.className = 'settings-content';
-    content.style.cssText = 'flex:1;padding:24px 32px;overflow-y:auto;';
+    content.className = 'nova-settings-content';
     this.container.appendChild(content);
 
     this._mounted = true;
@@ -236,7 +220,7 @@ class SettingsPage implements ISettingsPage {
   private render(): void {
     if (!this.container) return;
 
-    const content = this.container.querySelector('.settings-content');
+    const content = this.container.querySelector('.nova-settings-content');
     if (!content) return;
 
     const section = this.sections.find(s => s.id === this._activeSection);
@@ -244,24 +228,30 @@ class SettingsPage implements ISettingsPage {
 
     content.innerHTML = '';
 
+    const sectionEl = document.createElement('div');
+    sectionEl.className = 'nova-settings-section';
+
     const title = document.createElement('h2');
+    title.className = 'nova-settings-section-title';
     title.textContent = `${section.icon}  ${section.title}`;
-    title.style.cssText = 'margin:0 0 20px;font-size:20px;font-weight:600;color:var(--text-primary,#e0e0e0);';
-    content.appendChild(title);
+    sectionEl.appendChild(title);
 
     for (const setting of section.settings) {
       const row = document.createElement('div');
-      row.style.cssText = 'margin-bottom:12px;padding:12px 14px;border:1px solid var(--border-subtle,rgba(255,255,255,.06));border-radius:var(--radius-md,6px);background:var(--bg-surface,#161618);';
+      row.className = 'nova-settings-row';
 
       const label = document.createElement('div');
-      label.style.cssText = 'font-weight:600;font-size:13px;margin-bottom:2px;color:var(--text-primary,#e0e0e0);';
-      label.textContent = setting.label;
+      label.className = 'nova-settings-label';
+      const labelStrong = document.createElement('strong');
+      labelStrong.textContent = setting.label;
+      const labelSpan = document.createElement('span');
+      labelSpan.textContent = setting.description;
+      label.appendChild(labelStrong);
+      label.appendChild(labelSpan);
       row.appendChild(label);
 
-      const desc = document.createElement('div');
-      desc.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin-bottom:8px;';
-      desc.textContent = setting.description;
-      row.appendChild(desc);
+      const control = document.createElement('div');
+      control.className = 'nova-settings-control';
 
       const currentValue = this.values.get(setting.key) ?? setting.defaultValue;
 
@@ -269,39 +259,29 @@ class SettingsPage implements ISettingsPage {
         case 'text': {
           const input = document.createElement('input');
           input.type = 'text';
+          input.className = 'nova-input';
           input.value = String(currentValue);
-          input.style.cssText = 'width:100%;padding:7px 10px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);outline:none;transition:border .15s;';
-          input.addEventListener('focus', () => { input.style.borderColor = 'var(--border-accent,rgba(124,156,245,.4))'; });
-          input.addEventListener('blur', () => { input.style.borderColor = 'var(--border-default,rgba(255,255,255,.1))'; });
           input.addEventListener('change', () => this.setSetting(setting.key, input.value));
-          row.appendChild(input);
+          control.appendChild(input);
           break;
         }
         case 'boolean': {
-          const toggleWrap = document.createElement('div');
-          toggleWrap.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;';
-          const toggle = document.createElement('div');
-          const isOn = currentValue === true;
-          toggle.style.cssText = `width:36px;height:20px;border-radius:10px;position:relative;transition:background .2s;cursor:pointer;background:${isOn ? 'var(--toggle-on-bg,#3a7afd)' : 'var(--toggle-off-bg,#555568)'};`;
-          const knob = document.createElement('div');
-          knob.style.cssText = `width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;transition:left .2s;left:${isOn ? '18px' : '2px'};`;
-          toggle.appendChild(knob);
-          const toggleLabel = document.createElement('span');
-          toggleLabel.style.cssText = 'font-size:12px;';
-          toggleLabel.textContent = isOn ? 'On' : 'Off';
-          toggleLabel.style.color = isOn ? 'var(--toggle-on-bg,#3a7afd)' : 'var(--text-tertiary,#6a6a68)';
-          toggleWrap.appendChild(toggle);
-          toggleWrap.appendChild(toggleLabel);
-          toggleWrap.addEventListener('click', () => {
-            const newVal = !(this.values.get(setting.key) ?? setting.defaultValue);
-            this.setSetting(setting.key, newVal);
-          });
-          row.appendChild(toggleWrap);
+          const toggle = document.createElement('label');
+          toggle.className = 'nova-toggle';
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = currentValue === true;
+          checkbox.addEventListener('change', () => this.setSetting(setting.key, checkbox.checked));
+          toggle.appendChild(checkbox);
+          const track = document.createElement('span');
+          track.className = 'nova-toggle-track';
+          toggle.appendChild(track);
+          control.appendChild(toggle);
           break;
         }
         case 'select': {
           const select = document.createElement('select');
-          select.style.cssText = 'padding:7px 10px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);outline:none;cursor:pointer;';
+          select.className = 'nova-select';
           for (const opt of setting.options ?? []) {
             const option = document.createElement('option');
             option.value = opt.value;
@@ -310,7 +290,7 @@ class SettingsPage implements ISettingsPage {
             select.appendChild(option);
           }
           select.addEventListener('change', () => this.setSetting(setting.key, select.value));
-          row.appendChild(select);
+          control.appendChild(select);
           break;
         }
         case 'range': {
@@ -322,44 +302,45 @@ class SettingsPage implements ISettingsPage {
           slider.max = String(setting.max ?? 100);
           slider.step = String(setting.step ?? 1);
           slider.value = String(currentValue);
-          slider.style.cssText = 'flex:1;accent-color:var(--accent,#7c9cf5);';
+          slider.style.cssText = 'flex:1;accent-color:var(--accent);';
           slider.addEventListener('input', () => this.setSetting(setting.key, Number(slider.value)));
           rangeContainer.appendChild(slider);
           const valueLabel = document.createElement('span');
-          valueLabel.style.cssText = 'font-size:12px;min-width:30px;color:var(--text-secondary,#a0a098);';
+          valueLabel.style.cssText = 'font-size:var(--sz-sm);min-width:30px;color:var(--tx-secondary);';
           valueLabel.textContent = String(currentValue);
           rangeContainer.appendChild(valueLabel);
-          row.appendChild(rangeContainer);
+          control.appendChild(rangeContainer);
           break;
         }
       }
 
-      content.appendChild(row);
+      row.appendChild(control);
+      sectionEl.appendChild(row);
     }
 
     // Add preview button for the menu section
     if (section.id === 'menu') {
       const previewRow = document.createElement('div');
-      previewRow.style.cssText = 'margin-top:20px;padding:16px;border:1px solid var(--border-accent,rgba(124,156,245,.3));border-radius:var(--radius-md,6px);background:var(--accent-dim,rgba(124,156,245,.08));';
+      previewRow.style.cssText = 'margin-top:var(--sp-8);padding:var(--sp-8);border:1px solid var(--bd-accent);border-radius:var(--r-4);background:var(--accent-dim);';
       const previewLabel = document.createElement('div');
-      previewLabel.style.cssText = 'font-size:13px;color:var(--text-primary,#e0e0e0);margin-bottom:8px;font-weight:600;';
+      previewLabel.style.cssText = 'font-size:var(--sz-base);color:var(--tx-primary);margin-bottom:var(--sp-4);font-weight:var(--w-semi);';
       previewLabel.textContent = '☰  Preview Browser Menu';
       previewRow.appendChild(previewLabel);
       const previewDesc = document.createElement('div');
-      previewDesc.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin-bottom:12px;';
+      previewDesc.style.cssText = 'font-size:var(--sz-xs);color:var(--tx-tertiary);margin-bottom:var(--sp-6);';
       previewDesc.textContent = 'See how the browser dropdown menu looks with your current settings. Click below to open the preview.';
       previewRow.appendChild(previewDesc);
       const previewBtn = document.createElement('button');
+      previewBtn.className = 'nova-btn nova-btn-primary';
       previewBtn.textContent = 'Open Menu Preview';
-      previewBtn.style.cssText = 'padding:8px 20px;border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:var(--radius-sm,4px);background:var(--accent,#7c9cf5);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;';
-      previewBtn.addEventListener('mouseenter', () => { previewBtn.style.background = 'var(--accent-hover,#9bb5ff)'; });
-      previewBtn.addEventListener('mouseleave', () => { previewBtn.style.background = 'var(--accent,#7c9cf5)'; });
       previewBtn.addEventListener('click', () => {
         window.open('../ui/browser-menu.html', '_blank', 'width=340,height=700');
       });
       previewRow.appendChild(previewBtn);
-      content.appendChild(previewRow);
+      sectionEl.appendChild(previewRow);
     }
+
+    content.appendChild(sectionEl);
   }
 
   dispose(): void {
