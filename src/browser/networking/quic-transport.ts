@@ -214,14 +214,29 @@ class QuicConnection implements IQuicConnection {
     return stream;
   }
 
+  // Keeps each UDP datagram comfortably under every OS's minimum default
+  // max datagram size (macOS's is the tightest in practice) and under the
+  // QUIC spec's 1200-byte minimum path MTU, leaving room for the stream
+  // frame's own type/offset/length varints plus the packet header.
+  private static readonly MAX_STREAM_CHUNK_SIZE = 1100;
+
   async sendStreamData(streamId: number, data: Uint8Array): Promise<void> {
     const stream = this.streams.get(streamId);
     if (!stream || stream.state === 'closed') {
       throw new QuicStreamClosedError(streamId);
     }
 
-    const frame = this.buildStreamFrame(streamId, data, false);
-    await this.sendPacket(QuicLongHeaderType.OneRtt, frame);
+    // ponytail: fragments send in order, awaited sequentially, with no
+    // out-of-order reassembly on receipt — fine for this single in-order
+    // transport; a real multi-path/reordering network would need the
+    // decode side to place chunks by streamOffset instead of push order.
+    let offset = 0;
+    do {
+      const chunk = data.subarray(offset, offset + QuicConnection.MAX_STREAM_CHUNK_SIZE);
+      const frame = this.buildStreamFrame(streamId, chunk, false, offset);
+      await this.sendPacket(QuicLongHeaderType.OneRtt, frame);
+      offset += QuicConnection.MAX_STREAM_CHUNK_SIZE;
+    } while (offset < data.length);
   }
 
   async readStream(streamId: number): Promise<Uint8Array> {
@@ -268,13 +283,13 @@ class QuicConnection implements IQuicConnection {
     });
   }
 
-  private buildStreamFrame(streamId: number, data: Uint8Array, fin: boolean): Uint8Array {
+  private buildStreamFrame(streamId: number, data: Uint8Array, fin: boolean, offset: number = 0): Uint8Array {
     const type = QuicFrameType.Stream | (fin ? 0x01 : 0x00) | 0x04 | 0x02;
 
     return concatBytes([
       new Uint8Array([type]),
       encodeVarInt(streamId),
-      encodeVarInt(0),
+      encodeVarInt(offset),
       encodeVarInt(data.length),
       data,
     ]);
