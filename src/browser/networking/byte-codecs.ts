@@ -138,6 +138,11 @@ export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
+/** Copy a `Uint8Array`'s bytes into a plain `ArrayBuffer` — Web Crypto's `BufferSource` types want `ArrayBuffer`-backed views, not the wider `ArrayBufferLike` a `Uint8Array` is typed with. */
+export function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return (bytes.buffer as ArrayBuffer).slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
 /** Concatenate byte arrays into one flat `Uint8Array`. */
 export function concatBytes(parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
   let total = 0;

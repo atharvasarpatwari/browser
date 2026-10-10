@@ -75,13 +75,15 @@ describe('RTCPeerConnection — API surface (synchronous)', () => {
     expect(r.value).toBe('chat|connecting|0');
   });
 
-  it('rejects a second createDataChannel on the same connection (Phase 1 limitation)', () => {
+  it('allows multiple data channels on the same connection (Phase 2.3: real SCTP streams, no single-channel cap)', () => {
     const r = runInEnv(`
       var pc = new RTCPeerConnection();
-      pc.createDataChannel('a');
-      pc.createDataChannel('b');
+      var a = pc.createDataChannel('a');
+      var b = pc.createDataChannel('b');
+      a.label + '|' + a.readyState + '|' + b.label + '|' + b.readyState;
     `, env, eventLoop);
-    expect(r.error?.message).toContain('one RTCDataChannel');
+    expect(r.error).toBeUndefined();
+    expect(r.value).toBe('a|connecting|b|connecting');
   });
 
   it('RTCSessionDescription and RTCIceCandidate constructors exist and store their fields', () => {
@@ -137,12 +139,14 @@ describe('RTCPeerConnection — full offer/answer/ICE/data-channel over real loo
     `, env, eventLoop);
 
     // Real work happens here: ICE gathering (host candidates, no STUN server
-    // configured so no network round trip needed), then a real STUN
-    // Binding Request/Response over loopback UDP for the connectivity
-    // check, then the data channel's open handshake. Generous but bounded
-    // real-time budget, pumped in steps so both real timers and the
+    // configured so no network round trip needed), a real STUN Binding
+    // Request/Response over loopback UDP for the connectivity check, then a
+    // real DTLS 1.2 handshake (cookie round trip, ECDHE, mutual certs), a
+    // real SCTP association handshake (INIT/INIT-ACK/COOKIE-ECHO/COOKIE-ACK),
+    // and finally the DCEP open/ack for the data channel. Generous but
+    // bounded real-time budget, pumped in steps so both real timers and the
     // engine's own microtask queue get to run.
-    await pump(eventLoop, 1200, 6);
+    await pump(eventLoop, 2500, 10);
 
     const negErr = runInEnv(`negotiationError;`, env, eventLoop);
     expect(negErr.value).toBe('');
@@ -158,7 +162,60 @@ describe('RTCPeerConnection — full offer/answer/ICE/data-channel over real loo
 
     const received = runInEnv(`receivedOnB;`, env, eventLoop);
     expect(received.value).toBe('hello from A');
-  }, 8000);
+  }, 12000);
+
+  it('negotiates two data channels on one connection, each exchanging messages independently over its own SCTP stream', async () => {
+    runInEnv(`
+      var pcA = new RTCPeerConnection();
+      var pcB = new RTCPeerConnection();
+      var chatA = pcA.createDataChannel('chat');
+      var filesA = pcA.createDataChannel('files');
+      var remoteChannels = {};
+      var opened = {};
+      var received = {};
+      var negotiationError = '';
+
+      chatA.onopen = function() { opened['chatA'] = true; };
+      filesA.onopen = function() { opened['filesA'] = true; };
+      pcB.ondatachannel = function(ev) {
+        var ch = ev.channel;
+        remoteChannels[ch.label] = ch;
+        ch.onopen = function() { opened[ch.label + 'B'] = true; };
+        ch.onmessage = function(msgEv) { received[ch.label] = msgEv.data; };
+      };
+
+      pcA.createOffer().then(function(offer) {
+        pcA.setLocalDescription(offer).then(function() {
+          pcB.setRemoteDescription(offer).then(function() {
+            pcB.createAnswer().then(function(answer) {
+              pcB.setLocalDescription(answer).then(function() {
+                pcA.setRemoteDescription(answer).catch(function(e) { negotiationError = String(e); });
+              }).catch(function(e) { negotiationError = String(e); });
+            }).catch(function(e) { negotiationError = String(e); });
+          }).catch(function(e) { negotiationError = String(e); });
+        }).catch(function(e) { negotiationError = String(e); });
+      }).catch(function(e) { negotiationError = String(e); });
+      false;
+    `, env, eventLoop);
+
+    await pump(eventLoop, 2500, 10);
+
+    const negErr = runInEnv(`negotiationError;`, env, eventLoop);
+    expect(negErr.value).toBe('');
+
+    const opened = runInEnv(`opened['chatA'] + '|' + opened['filesA'] + '|' + opened['chatB'] + '|' + opened['filesB'];`, env, eventLoop);
+    expect(opened.value).toBe('true|true|true|true');
+
+    runInEnv(`chatA.send('hi over chat'); filesA.send('hi over files');`, env, eventLoop);
+    await pump(eventLoop, 400, 3);
+
+    const receivedMsgs = runInEnv(`received['chat'] + '|' + received['files'];`, env, eventLoop);
+    expect(receivedMsgs.value).toBe('hi over chat|hi over files');
+
+    // Independent streams: each channel's message must land on its own label, never the other's.
+    const crossTalk = runInEnv(`received['chat'] === received['files'];`, env, eventLoop);
+    expect(crossTalk.value).toBe(false);
+  }, 12000);
 
   it('fires icecandidate events with real candidate strings during setLocalDescription', async () => {
     runInEnv(`

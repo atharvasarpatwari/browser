@@ -121,6 +121,16 @@ export class IceAgent {
   private dataHandler: IceDataHandler | null = null;
   private closed = false;
 
+  /**
+   * Non-STUN datagrams that arrived before a data handler was installed.
+   * A caller normally only wires up a real handler once ITS OWN connectivity
+   * check resolves — but the *other* peer's check can resolve first and start
+   * sending application data (e.g. a DTLS ClientHello) before that. Nothing
+   * above this layer retransmits a first packet that fell on the floor here,
+   * so buffer rather than drop, and flush in order the moment a handler is set.
+   */
+  private readonly preHandlerBuffer: Uint8Array[] = [];
+
   constructor(options: IceAgentOptions = {}) {
     this.options = options;
   }
@@ -128,6 +138,10 @@ export class IceAgent {
   /** Set the handler for non-STUN datagrams received after a pair is selected — this is how rtc-api.ts's RTCDataChannel receives bytes. */
   onData(handler: IceDataHandler | null): void {
     this.dataHandler = handler;
+    if (handler && this.preHandlerBuffer.length > 0) {
+      const buffered = this.preHandlerBuffer.splice(0);
+      for (const msg of buffered) handler(msg);
+    }
   }
 
   get boundPort(): number | null {
@@ -276,6 +290,7 @@ export class IceAgent {
       return;
     }
     if (this.dataHandler) this.dataHandler(msg);
+    else this.preHandlerBuffer.push(msg);
   }
 
   close(): void {
