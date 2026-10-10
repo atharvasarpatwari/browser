@@ -15,6 +15,15 @@ const DEFAULT_VIEW_CONFIG: AddressBarViewConfig = {
   maxSuggestions: 6,
 };
 
+const ICON_LOCKED =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6" rx="2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>';
+const ICON_UNLOCKED =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6" rx="2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0"/></svg>';
+const ICON_RELOAD =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13 2.2v3.3h-3.3"/></svg>';
+const ICON_SEARCH =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>';
+
 interface IAddressBarView extends IDisposable {
   readonly element: HTMLElement | null;
   attach(container: HTMLElement): void;
@@ -89,8 +98,8 @@ class AddressBarView implements IAddressBarView {
     }
 
     if (this.securityIcon) {
-      this.securityIcon.textContent = state.secure ? '🔒' : '🔓';
-      this.securityIcon.className = `nova-security ${state.secure ? 'secure' : 'warn'}`;
+      this.securityIcon.className = state.secure ? 'nova-security secure' : 'nova-security warn';
+      this.securityIcon.innerHTML = state.secure ? ICON_LOCKED : ICON_UNLOCKED;
     }
 
     this.renderSuggestions(state.suggestions);
@@ -129,12 +138,12 @@ class AddressBarView implements IAddressBarView {
     if (!this.container) return;
 
     this.container.innerHTML = '';
-    this.container.className = 'nova-addressbar';
 
     if (this.config.showSecurityIcon) {
       this.securityIcon = document.createElement('span');
-      this.securityIcon.className = 'nova-security warn';
-      this.securityIcon.textContent = '🔓';
+      this.securityIcon.className = 'nova-security';
+      this.securityIcon.innerHTML = ICON_UNLOCKED;
+      this.securityIcon.title = 'Connection security';
       this.container.appendChild(this.securityIcon);
     }
 
@@ -170,16 +179,22 @@ class AddressBarView implements IAddressBarView {
 
     this.container.appendChild(this.inputElement);
 
+    const actions = document.createElement('div');
+    actions.className = 'nova-addressbar-actions';
+
     if (this.config.showRefreshButton) {
       this.refreshButton = document.createElement('button');
+      this.refreshButton.setAttribute('type', 'button');
       this.refreshButton.className = 'nova-addrbar-btn';
-      this.refreshButton.textContent = '↻';
+      this.refreshButton.innerHTML = ICON_RELOAD;
       this.refreshButton.title = 'Reload current page';
       this.refreshButton.addEventListener('click', () => {
         this.dispatchEvent({ kind: 'reload' });
       });
-      this.container.appendChild(this.refreshButton);
+      actions.appendChild(this.refreshButton);
     }
+
+    this.container.appendChild(actions);
 
     this.suggestionsContainer = document.createElement('div');
     this.suggestionsContainer.className = 'nova-dropdown';
@@ -273,16 +288,12 @@ class AddressBarView implements IAddressBarView {
   private highlightSuggestion(items: NodeListOf<Element>): void {
     items.forEach((item, i) => {
       const el = item as HTMLElement;
-      if (i === this.selectedSuggestionIndex) {
-        el.classList.add('nova-dropdown-item--selected');
-        el.setAttribute('aria-selected', 'true');
-        // Update input value to the selected suggestion.
-        if (this.inputElement) {
-          this.inputElement.value = el.textContent ?? '';
-        }
-      } else {
-        el.classList.remove('nova-dropdown-item--selected');
-        el.setAttribute('aria-selected', 'false');
+      const selected = i === this.selectedSuggestionIndex;
+      el.classList.toggle('nova-dropdown-item--selected', selected);
+      el.setAttribute('aria-selected', selected ? 'true' : 'false');
+      // Update input value to the selected suggestion.
+      if (selected && this.inputElement) {
+        this.inputElement.value = el.textContent ?? '';
       }
     });
   }

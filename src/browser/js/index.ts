@@ -29,6 +29,8 @@ import {
 } from './web-apis';
 import type { CspResourceEnforcer } from '../security/csp-resource-enforcer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
+import type { ICorsEngine } from '../security/cors';
+import { isSecureContextUrl } from '../security/secure-context';
 
 export { Lexer } from './lexer';
 export { Parser } from './parser';
@@ -73,8 +75,10 @@ export interface RunJSOptions {
   resourceEnforcer?: CspResourceEnforcer;
   /** Optional CSP script enforcer for eval()/timer-string checks. */
   scriptEnforcer?: CspScriptEnforcer;
-  /** Optional page origin for CSP enforcement. */
+  /** Optional page origin for CSP enforcement (scheme://host[:port]). */
   pageOrigin?: string;
+  /** Optional CORS engine — enforces Access-Control-Allow-Origin on fetch()/XHR. */
+  corsEngine?: ICorsEngine;
   /** Optional HtmlParser for document.write()/document.open() support. */
   htmlParser?: IHtmlParser;
   /** Optional base directory for persistent web storage (localStorage/IndexedDB). */
@@ -97,7 +101,7 @@ export interface RunJSResult {
  * It lexes, parses, and executes the source with full DOM bindings.
  */
 export function runJS(source: string, options: RunJSOptions): RunJSResult {
-  const { document: doc, domTree, eventLoop = new EventLoop(), globalEnv, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin, htmlParser, storageDir } = options;
+  const { document: doc, domTree, eventLoop = new EventLoop(), globalEnv, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin, corsEngine, htmlParser, storageDir } = options;
 
   try {
     // 1. Lex (lazy — parser pulls tokens on demand for template interpolation support)
@@ -108,7 +112,7 @@ export function runJS(source: string, options: RunJSOptions): RunJSResult {
     const program = parser.parse();
 
     // 3. Execute
-    const env = globalEnv ?? createGlobalEnv(doc, domTree, eventLoop, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin, htmlParser, storageDir);
+    const env = globalEnv ?? createGlobalEnv(doc, domTree, eventLoop, controller, platformFetch, resourceEnforcer, scriptEnforcer, pageOrigin, htmlParser, storageDir, corsEngine);
     const interpreter = new Interpreter(env, eventLoop);
     const value = interpreter.run(program);
 
@@ -133,6 +137,7 @@ export function createGlobalEnv(
   pageOrigin?: string,
   htmlParser?: IHtmlParser,
   storageDir?: string,
+  corsEngine?: ICorsEngine,
 ): Environment {
   const env = new Environment(null);
 
@@ -1706,6 +1711,12 @@ export function createGlobalEnv(
   // performance (full API — mark, measure, getEntries)
   env.setLocal('performance', createPerformanceObject());
 
+  // isSecureContext — whether the current page is a trustworthy context.
+  // Powerful APIs (geolocation, notifications, clipboard, media) may only be
+  // exposed/used when this is true (https / wss / file / localhost / nova:).
+  const isSecureContext = isSecureContextUrl(pageOrigin ?? '');
+  env.setLocal('isSecureContext', isSecureContext);
+
   // navigator (minimal)
   const navObj = createObject(null);
   navObj.properties.set('userAgent', { value: 'NovaBrowser/1.0', writable: false, enumerable: true, configurable: false });
@@ -1760,6 +1771,9 @@ export function createGlobalEnv(
   // window — the global scope object (like browser window)
   const windowObj = createObject(null);
   env.setLocal('window', windowObj);
+  windowObj.properties.set('isSecureContext', {
+    value: isSecureContext, writable: false, enumerable: true, configurable: false,
+  });
 
   // Wire window-level event listeners (addEventListener/removeEventListener/dispatchEvent)
   bindWindowEvents(windowObj);
@@ -1792,10 +1806,10 @@ export function createGlobalEnv(
   env.setLocal('Response', createResponseClass(eventLoop));
   env.setLocal('Request', createRequestClass(eventLoop));
   env.setLocal('AbortController', createAbortControllerClass(eventLoop));
-  env.setLocal('fetch', createFetchFn(eventLoop, platformFetch, resourceEnforcer, pageOrigin));
+  env.setLocal('fetch', createFetchFn(eventLoop, platformFetch, resourceEnforcer, pageOrigin, corsEngine));
 
   // XMLHttpRequest
-  env.setLocal('XMLHttpRequest', createXMLHttpRequestClass(eventLoop));
+  env.setLocal('XMLHttpRequest', createXMLHttpRequestClass(eventLoop, corsEngine, pageOrigin));
 
   // WebSocket
   env.setLocal('WebSocket', createWebSocketClass(eventLoop, resourceEnforcer, pageOrigin));

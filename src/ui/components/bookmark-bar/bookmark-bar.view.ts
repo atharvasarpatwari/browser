@@ -23,6 +23,9 @@ interface IBookmarkBarView extends IDisposable {
   setEventHandler(handler: (event: BookmarkBarEventUnion) => void): void;
 }
 
+const ICON_FOLDER =
+  '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.5A1.5 1.5 0 0 1 3 2h3.2a1.5 1.5 0 0 1 1.06.44L8.5 3.7h4.5a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5h-10a1.5 1.5 0 0 1-1.5-1.5z"/></svg>';
+
 class BookmarkBarView implements IBookmarkBarView {
   private readonly config: BookmarkBarViewConfig;
   private readonly model: IBookmarkBar;
@@ -67,11 +70,11 @@ class BookmarkBarView implements IBookmarkBarView {
   private build(): void {
     if (!this.container) return;
     this.container.innerHTML = '';
-    this.container.className = 'nova-bookbar';
 
     if (this.config.showBackButton) {
       this.backButton = document.createElement('button');
-      this.backButton.className = 'nova-new-tab';
+      this.backButton.setAttribute('type', 'button');
+      this.backButton.className = 'nova-bk-item';
       this.backButton.textContent = '←';
       this.backButton.title = 'Back to parent folder';
       this.backButton.style.display = 'none';
@@ -83,12 +86,14 @@ class BookmarkBarView implements IBookmarkBarView {
     }
 
     this.itemsContainer = document.createElement('div');
-    this.itemsContainer.style.cssText = 'display:flex;align-items:center;gap:2px;flex:1;overflow-x:auto;min-width:0;';
+    this.itemsContainer.className = 'nova-bookbar-items';
+    this.itemsContainer.style.cssText = 'display:flex;align-items:center;gap:var(--sp-1);flex:1;min-width:0;overflow:hidden;';
     this.container.appendChild(this.itemsContainer);
 
     if (this.config.showAddButton) {
       this.addButton = document.createElement('button');
-      this.addButton.className = 'nova-new-tab';
+      this.addButton.setAttribute('type', 'button');
+      this.addButton.className = 'nova-bk-item';
       this.addButton.textContent = '+';
       this.addButton.title = 'Add bookmark';
       this.addButton.addEventListener('click', () => {
@@ -116,7 +121,11 @@ class BookmarkBarView implements IBookmarkBarView {
       if (item.folder) {
         const folderEl = document.createElement('div');
         folderEl.className = 'nova-bk-folder';
-        folderEl.textContent = `📁 ${item.title}`;
+        folderEl.title = item.title;
+        folderEl.innerHTML = ICON_FOLDER;
+        const span = document.createElement('span');
+        span.textContent = item.title;
+        folderEl.appendChild(span);
         folderEl.addEventListener('click', async () => {
           this.dispatchEvent({ kind: 'folderClicked', folder: item });
           await this.model.navigateIntoFolder(item.id);
@@ -136,13 +145,6 @@ class BookmarkBarView implements IBookmarkBarView {
           }
         });
         this.itemsContainer.appendChild(bmEl);
-      }
-
-      if (items.indexOf(item) < items.length - 1) {
-        const sep = document.createElement('div');
-        sep.className = 'nova-toolbar-divider';
-        sep.style.margin = '0 3px';
-        this.itemsContainer.appendChild(sep);
       }
     }
   }

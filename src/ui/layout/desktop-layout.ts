@@ -8,6 +8,8 @@ interface DesktopLayoutConfig {
   readonly defaultHeight: number;
   readonly minWidth: number;
   readonly minHeight: number;
+  /** Brand name shown in the window title bar (centered label). */
+  readonly brandName?: string;
 }
 
 const DEFAULT_DESKTOP_CONFIG: DesktopLayoutConfig = {
@@ -18,10 +20,11 @@ const DEFAULT_DESKTOP_CONFIG: DesktopLayoutConfig = {
   defaultHeight: 720,
   minWidth: 400,
   minHeight: 300,
+  brandName: 'Nova Browser',
 };
 
 interface DesktopLayoutAreas {
-  readonly menuBar: HTMLElement | null;
+  readonly titleBar: HTMLElement | null;
   readonly toolbar: HTMLElement | null;
   readonly tabBar: HTMLElement | null;
   readonly bookmarkBar: HTMLElement | null;
@@ -86,7 +89,7 @@ class DesktopLayout implements IDesktopLayout {
   private readonly bus = new DesktopLayoutEventBus();
   private container: HTMLElement | null = null;
 
-  private _menuBar: HTMLElement | null = null;
+  private _titleBar: HTMLElement | null = null;
   private _toolbar: HTMLElement | null = null;
   private _tabBar: HTMLElement | null = null;
   private _bookmarkBar: HTMLElement | null = null;
@@ -103,7 +106,7 @@ class DesktopLayout implements IDesktopLayout {
 
   get areas(): DesktopLayoutAreas {
     return {
-      menuBar: this._menuBar,
+      titleBar: this._titleBar,
       toolbar: this._toolbar,
       tabBar: this._tabBar,
       bookmarkBar: this._bookmarkBar,
@@ -128,7 +131,7 @@ class DesktopLayout implements IDesktopLayout {
       this.container.innerHTML = '';
       this.container = null;
     }
-    this._menuBar = null;
+    this._titleBar = null;
     this._toolbar = null;
     this._tabBar = null;
     this._bookmarkBar = null;
@@ -141,7 +144,7 @@ class DesktopLayout implements IDesktopLayout {
   toggleSidebar(): void {
     this._sidebarOpen = !this._sidebarOpen;
     if (this._sidebar) {
-      this._sidebar.style.display = this._sidebarOpen ? 'flex' : 'none';
+      this._sidebar.classList.toggle('open', this._sidebarOpen);
     }
     this.bus.emit({ kind: 'sidebarToggled', data: { open: this._sidebarOpen } });
   }
@@ -181,25 +184,28 @@ class DesktopLayout implements IDesktopLayout {
   private build(): void {
     if (!this.container) return;
 
-    if (this.config.showMenuBar) {
-      this._menuBar = this.createSection('menu-bar');
-    }
+    const chrome = document.createElement('div');
+    chrome.className = 'nova-chrome';
 
-    this._toolbar = this.createSection('title-bar');
+    this._titleBar = this.createChildSection('nova-titlebar', chrome);
+    this.buildTitleBar(this._titleBar);
 
-    this._tabBar = this.createSection('tab-bar');
+    this._tabBar = this.createChildSection('nova-tabbar', chrome);
+
+    this._toolbar = this.createChildSection('nova-navbar', chrome);
 
     if (this.config.showBookmarkBar) {
-      this._bookmarkBar = this.createSection('bookmark-bar');
+      this._bookmarkBar = this.createChildSection('nova-bookbar', chrome);
     }
 
-    const mainArea = document.createElement('div');
-    mainArea.className = 'main-area';
-    mainArea.style.cssText = 'display:flex;flex:1;overflow:hidden;';
+    this.container.appendChild(chrome);
 
-    this._sidebar = this.createSection('sidebar');
-    this._sidebar.style.display = 'none';
-    this._sidebar.style.width = '250px';
+    const mainArea = document.createElement('div');
+    mainArea.className = 'nova-content-area';
+    mainArea.style.cssText = 'display:flex;flex:1;overflow:hidden;position:relative;';
+
+    this._sidebar = document.createElement('div');
+    this._sidebar.className = 'nova-sidebar';
     mainArea.appendChild(this._sidebar);
 
     this._content = document.createElement('div');
@@ -209,19 +215,45 @@ class DesktopLayout implements IDesktopLayout {
 
     this.container.appendChild(mainArea);
 
-    this._devtools = this.createSection('devtools');
-    this._devtools.style.display = 'none';
-    this._devtools.style.height = '300px';
+    this._devtools = document.createElement('div');
+    this._devtools.className = 'devtools';
+    this._devtools.style.cssText = 'display:none;height:300px;flex-shrink:0;';
 
     if (this.config.showStatusBar) {
-      this._statusBar = this.createSection('status-bar');
+      this._statusBar = this.createSection('nova-statusbar');
     }
+  }
+
+  /** Window chrome (title bar) built by the layout — no view model needed. */
+  private buildTitleBar(el: HTMLElement): void {
+    const wc = document.createElement('div');
+    wc.className = 'nova-wc';
+    for (const name of ['close', 'minimize', 'maximize']) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `nova-wc-btn nova-wc-${name}`;
+      btn.title = name === 'close' ? 'Close' : name === 'minimize' ? 'Minimize' : 'Maximize';
+      wc.appendChild(btn);
+    }
+    el.appendChild(wc);
+
+    const label = document.createElement('div');
+    label.className = 'nova-titlebar-label';
+    label.textContent = this.config.brandName ?? 'Nova Browser';
+    el.appendChild(label);
   }
 
   private createSection(className: string): HTMLElement {
     const el = document.createElement('div');
     el.className = className;
     this.container?.appendChild(el);
+    return el;
+  }
+
+  private createChildSection(className: string, parent: HTMLElement): HTMLElement {
+    const el = document.createElement('div');
+    el.className = className;
+    parent.appendChild(el);
     return el;
   }
 

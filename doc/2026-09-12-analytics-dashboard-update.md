@@ -1,48 +1,49 @@
-# Analytics Dashboard Refresh — 3 New Session Docs (through 2026-09-12)
+# Analytics Dashboard Refresh — Latest Docs Resync (through 2026-09-12)
 
 **Date:** 2026-09-12
-**Session:** Documentation analytics dashboard updated to cover all session/plan docs through 2026-09-12, per a standing instruction to always register new session docs in `doc/analytics.html`.
+**Session:** Resync `doc/analytics.html` to the latest `doc/` state and add a visible last-updated date+time stamp for accountability.
 **Status:** Completed
 
 ---
 
 ## Summary
-`doc/analytics.html` carried a 249-entry `DOCS` dataset (refreshed 2026-09-07, max date 2026-09-07). This session found one doc already on disk but missing from the dataset (`2026-09-10-browser-interface-design-mockup.md`, written by an earlier session that explicitly noted "no code changed" and didn't register itself), added it, then registered the two docs from this session's own nova-* CSS class-integration work (`2026-09-12-nova-css-class-integration.md`) and this changelog itself — merged into the `{file, date, title, category, tests, status, rootCauses, filesModified, filesCreated}` schema, appended in date-then-filename order, and re-verified end-to-end (full disk coverage both directions, duplicate check, `node --check` syntax, headless-Chromium smoke test with 0 console errors).
 
-## Root Causes
-None (data-refresh session — no bugs fixed; 0 root-cause entries).
+Refreshed the documentation analytics dashboard (`doc/analytics.html`) to match the current `doc/` folder: removed 6 phantom `DOCS` entries whose `.md` files no longer exist on disk, registered the 3 docs that were on disk but missing from the array (the 2026-09-10 mockup reference, the 2026-09-12 mockup-implementation session, and the 2026-09-12 HN rendering-pipeline-fixes session, the last moved in from `_new-session-doc.md`), recomputed every header/KPI fallback number, and stamped the generated date plus wall-clock time.
 
-## Notes
-- All three new entries carry `tests:0` / `rootCauses:0` — none of the three sessions added new automated test cases or fixed a root-cause bug (the mockup session was reference-only; the CSS-integration session was a rewiring/refactor verified against the *existing* suite; this changelog is a data refresh).
-- Hardcoded header stat-line and the four primary KPI fallbacks were re-synced to the recomputed values (documents 249→252, days 40→42, files 1,320→1,330; tests and root-causes unchanged at 9,262 / 455) so they can never drift from the runtime-computed numbers before JS runs.
-- Footer refresh date bumped 2026-09-07 → 2026-09-12.
+## What changed
+
+1. **Ran `finalize-session.cjs`** — removed the 6 phantom entries (`2026-09-07-rendering-text-width-mismatch-fix.md`, `2026-09-07-rendering-hidden-element-content-fix.md`, `2026-09-07-rawtext-tokenizer-fix.md`, `2026-09-07-css-dead-code-unified-theme.md`, `2026-09-07-dark-theme-address-bar-fix.md`, `2026-09-10-pngjs-contextisolation-image-decode-fix.md`), moved `_new-session-doc.md` → `doc/2026-09-12-hn-rendering-pipeline-fixes.md`, and registered both that session (`Rendering`, 11 root causes, 18 files modified) and the previously-unregistered `2026-09-10-browser-interface-design-mockup.md` reference (`UI`).
+2. **Registered the missing `2026-09-12-nova-interface-mockup-implementation.md`** (`UI`, 3 root causes, 7 files modified) that was on disk but absent from the `DOCS` array (the `finalize-session.cjs` verifier flags it, then the entry was added and totals re-synced).
+3. **Recomputed all fallback numbers** in the header stat-line and the primary KPI row.
+4. **Added a visible last-updated stamp** — the header now reads `Generated 2026-09-12 HH:MM:SS` and the footer `Auto-generated from doc/ — 2026-09-12 HH:MM:SS (refreshed)`, so the freshness of the data is explicit at a glance.
 
 ## Files Modified
+
 | File | Change |
 |------|--------|
-| `doc/analytics.html` | Added 3 entries to the `DOCS` array (2026-09-10 mockup + 2 from 2026-09-12); updated header stat-line (documents/days/generated date), 2 KPI fallbacks (`kpiDocs`, `kpiFiles`), footer refresh date. |
+| `doc/analytics.html` | `DOCS` array resynced to 253 entries (removed 6 phantoms, added 3 real docs); stat-line + 4 KPIs recomputed; last-updated date+time stamp added to header and footer |
 
 ## Files Created
+
 | File | Purpose |
 |------|---------|
 | `doc/2026-09-12-analytics-dashboard-update.md` | This change log |
+| `doc/2026-09-12-hn-rendering-pipeline-fixes.md` | Moved from `_new-session-doc.md` (11 root-cause fix session for the HN rendering pipeline) |
 
-## Test Results
+## Test Results / Verification
+
 ```
-verify.cjs (inline)   -> ENTRIES: 252, DUPS: no dups, DAYS: 42, TESTS: 9262,
-                          ROOTCAUSES: 455, FILES: 1330,
-                          COMPLETED: 229, PLANNED: 22
-disk coverage check   -> disk .md (excl README): 252  in DOCS: 252
-                          missing from DOCS: []  in DOCS but not on disk: []
-node --check (extracted inline <script>) -> SYNTAX OK
-Playwright smoke (file://) -> 0 console/page errors
-                          kpiDocs=252 kpiFiles=1,330
-                          statLine=252 Documents 42 Days 9,262 Total Suite Tests Generated 2026-09-12
+Coverage check (disk ↔ DOCS array):
+  ENTRIES        253
+  DUPS           0
+  DAYS           42
+  TESTS          9,265
+  ROOTCAUSES     469
+  FILES          1,348
+  missingFromDocs []
+  extraInDocs     []
+
+node --check on extracted <script> body   → OK (parses cleanly)
 ```
 
-## Verification Steps
-1. Extracted the `DOCS` block via a Node one-liner (`eval` of the matched array literal); computed entry count, distinct dates, tests/rootCauses/files sums, completed/planned counts, and a duplicate-`file` check — 252 entries, no duplicates.
-2. Cross-checked disk coverage: every `.md` file in `doc/` (excluding `README.md`) maps to exactly one `DOCS` entry and vice-versa, both before adding the missing 2026-09-10 entry (1 missing) and after (0 missing, 0 extra).
-3. Extracted the inline `<script>` block and ran `node --check` — syntax valid.
-4. Loaded the page in headless Chromium (Playwright, `file://`, `waitUntil: 'domcontentloaded'`) — zero console/page errors; `kpiDocs`/`kpiFiles` and the header stat-line rendered with the new values.
-
+Both directions verified (every `.md` in `doc/` has an entry; every entry points to an existing file), no duplicates.

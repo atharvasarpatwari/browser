@@ -3,7 +3,6 @@ import type { IToolbar, ToolbarState, ToolbarEventUnion } from './toolbar';
 
 interface ToolbarViewConfig {
   readonly containerId: string;
-  readonly showTrafficLights: boolean;
   readonly showShieldButton: boolean;
   readonly showBookmarkButton: boolean;
   readonly brandName?: string;
@@ -11,7 +10,6 @@ interface ToolbarViewConfig {
 
 const DEFAULT_VIEW_CONFIG: ToolbarViewConfig = {
   containerId: 'toolbar',
-  showTrafficLights: true,
   showShieldButton: true,
   showBookmarkButton: true,
 };
@@ -24,6 +22,17 @@ interface IToolbarView extends IDisposable {
   setEventHandler(handler: (event: ToolbarEventUnion) => void): void;
 }
 
+const ICON_BACK =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg>';
+const ICON_FORWARD =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5l4.5 4.5L6 12.5"/></svg>';
+const ICON_RELOAD =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13 2.2v3.3h-3.3"/></svg>';
+const ICON_STAR =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 0.7 4.3L8 11.1l-3.8 2 0.7-4.3-3.1-3 4.3-.6z"/></svg>';
+const ICON_SHIELD =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5l5.5 2.5v4.3c0 3.2-2.3 5.4-5.5 6.2-3.2-.8-5.5-3-5.5-6.2V4z"/></svg>';
+
 class ToolbarView implements IToolbarView {
   private readonly config: ToolbarViewConfig;
   private readonly model: IToolbar;
@@ -31,7 +40,7 @@ class ToolbarView implements IToolbarView {
   private backBtn: HTMLButtonElement | null = null;
   private fwdBtn: HTMLButtonElement | null = null;
   private reloadBtn: HTMLButtonElement | null = null;
-  private shieldBtn: HTMLElement | null = null;
+  private shieldBtn: HTMLButtonElement | null = null;
   private bookmarkBtn: HTMLElement | null = null;
   private eventHandler: ((event: ToolbarEventUnion) => void) | null = null;
 
@@ -65,12 +74,10 @@ class ToolbarView implements IToolbarView {
     if (this.backBtn) this.backBtn.disabled = !state.canGoBack;
     if (this.fwdBtn) this.fwdBtn.disabled = !state.canGoForward;
     if (this.reloadBtn) {
-      this.reloadBtn.textContent = state.loading ? '×' : '↻';
+      this.reloadBtn.classList.toggle('loading', state.loading);
       this.reloadBtn.title = state.loading ? 'Stop' : 'Reload';
     }
-    if (this.shieldBtn) {
-      this.shieldBtn.style.color = state.shieldEnabled ? 'var(--green-400)' : '';
-    }
+    this.updateShield(state.shieldEnabled);
   }
 
   setEventHandler(handler: (event: ToolbarEventUnion) => void): void {
@@ -80,28 +87,16 @@ class ToolbarView implements IToolbarView {
   private build(): void {
     if (!this.container) return;
     this.container.innerHTML = '';
-    this.container.className = 'nova-navbar';
 
-    if (this.config.showTrafficLights) {
-      const trafficLights = document.createElement('div');
-      trafficLights.className = 'nova-wc';
-      for (const cls of ['nova-wc-close', 'nova-wc-minimize', 'nova-wc-maximize']) {
-        const dot = document.createElement('span');
-        dot.className = `nova-wc-btn ${cls}`;
-        trafficLights.appendChild(dot);
-      }
-      this.container.appendChild(trafficLights);
-    }
-
-    this.backBtn = this.createNavButton('◀', 'Back', !this.model.state.canGoBack);
+    this.backBtn = this.createNavButton(ICON_BACK, 'Back', !this.model.state.canGoBack);
     this.backBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'back' }));
     this.container.appendChild(this.backBtn);
 
-    this.fwdBtn = this.createNavButton('▶', 'Forward', !this.model.state.canGoForward);
+    this.fwdBtn = this.createNavButton(ICON_FORWARD, 'Forward', !this.model.state.canGoForward);
     this.fwdBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'forward' }));
     this.container.appendChild(this.fwdBtn);
 
-    this.reloadBtn = this.createNavButton('↻', 'Reload', false);
+    this.reloadBtn = this.createNavButton(ICON_RELOAD, 'Reload', false);
     this.reloadBtn.addEventListener('click', () => {
       if (this.model.state.loading) {
         this.dispatchEvent({ kind: 'stop' });
@@ -111,32 +106,59 @@ class ToolbarView implements IToolbarView {
     });
     this.container.appendChild(this.reloadBtn);
 
-    const addressBarArea = document.createElement('div');
-    addressBarArea.className = 'address-bar-slot';
-    addressBarArea.style.cssText = 'flex:1;min-width:0;';
-    this.container.appendChild(addressBarArea);
+    const addressSlot = document.createElement('div');
+    addressSlot.className = 'address-bar-slot nova-addressbar';
+    addressSlot.style.cssText = 'flex:1;min-width:0;';
+    this.container.appendChild(addressSlot);
 
     if (this.config.showBookmarkButton) {
-      this.bookmarkBtn = this.createNavButton('☆', 'Bookmark this page', false);
+      this.bookmarkBtn = document.createElement('button');
+      this.bookmarkBtn.setAttribute('type', 'button');
+      this.bookmarkBtn.className = 'nova-star';
+      this.bookmarkBtn.innerHTML = ICON_STAR;
+      this.bookmarkBtn.title = 'Bookmark this page';
       this.bookmarkBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'bookmarkAdd' }));
       this.container.appendChild(this.bookmarkBtn);
     }
 
+    const divider = document.createElement('div');
+    divider.className = 'nova-toolbar-divider';
+    this.container.appendChild(divider);
+
     if (this.config.showShieldButton) {
-      this.shieldBtn = this.createNavButton('🛡️', `${this.config.brandName ?? 'Nova'} Shield`, false);
-      this.shieldBtn.style.color = this.model.state.shieldEnabled ? 'var(--green-400)' : '';
-      this.shieldBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'shieldToggle', enabled: !this.model.state.shieldEnabled }));
+      this.shieldBtn = this.createNavButton(ICON_SHIELD, `${this.config.brandName ?? 'Nova'} Shield`, false);
+      this.updateShield(this.model.state.shieldEnabled);
+      this.shieldBtn.addEventListener('click', () => {
+        this.dispatchEvent({ kind: 'shieldToggle', enabled: !this.model.state.shieldEnabled });
+      });
       this.container.appendChild(this.shieldBtn);
     }
+
+    const menuBtn = document.createElement('button');
+    menuBtn.type = 'button';
+    menuBtn.className = 'nova-menu-btn nova-nav-btn';
+    menuBtn.title = 'Menu';
+    for (let i = 0; i < 3; i++) {
+      menuBtn.appendChild(document.createElement('span'));
+    }
+    menuBtn.addEventListener('click', () => this.dispatchEvent({ kind: 'menuClick' }));
+    this.container.appendChild(menuBtn);
   }
 
-  private createNavButton(text: string, title: string, disabled: boolean): HTMLButtonElement {
+  private createNavButton(svg: string, title: string, disabled: boolean): HTMLButtonElement {
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'nova-nav-btn';
-    btn.textContent = text;
     btn.title = title;
     btn.disabled = disabled;
+    btn.innerHTML = svg;
     return btn;
+  }
+
+  private updateShield(enabled: boolean): void {
+    if (this.shieldBtn) {
+      this.shieldBtn.style.color = enabled ? 'var(--green-400)' : '';
+    }
   }
 
   private dispatchEvent(event: ToolbarEventUnion): void {

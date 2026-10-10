@@ -433,6 +433,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun navigate(url: String) {
         val resolved = resolveInput(url)
+        if (resolved.isEmpty()) return
         addressBarText.value = resolved
         callEngine("window.novaNative && window.novaNative.navigate(${jsString(resolved)});")
     }
@@ -505,16 +506,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
      * Normalizes address-bar text into a navigable URL: adds scheme, or builds a
      * search query through the engine's configured default search engine
      * (searchTemplate, e.g. "https://duckduckgo.com/?q=%s").
+     *
+     * Delegates to [UrlInputResolver], which mirrors the engine's canonical
+     * UrlParser normalization rules (localhost/IPv4/single-label hosts, bare
+     * domains, explicit-scheme pass-through, search fallback).
      */
-    fun resolveInput(input: String): String {
-        val trimmed = input.trim()
-        val looksLikeUrl = trimmed.contains(".") && !trimmed.contains(" ")
-        return when {
-            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
-            looksLikeUrl -> "https://$trimmed"
-            else -> searchTemplate.value.replace("%s", java.net.URLEncoder.encode(trimmed, "UTF-8"))
-        }
-    }
+    fun resolveInput(input: String): String = UrlInputResolver.resolve(input, searchTemplate.value)
 
     companion object {
         private const val TAG = "BrowserViewModel"
