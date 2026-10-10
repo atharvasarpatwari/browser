@@ -69,10 +69,13 @@ jobs:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
         run: |
-          # sccache's GHA backend connects at server startup, not lazily, so
-          # a GitHub Actions cache-service outage fails even a no-op probe —
-          # cheaper to check that here than to lose the whole build to it.
-          if ! sccache --show-stats >/dev/null 2>&1; then
+          # `sccache --show-stats` only reads the daemon's local counters —
+          # it doesn't round-trip to the GHA cache backend, so it reports
+          # healthy even when that backend is down. Wrapping a real rustc
+          # call is what actually exercises the connection (the same thing
+          # that fails below if the backend is unreachable), so probe with
+          # that instead.
+          if ! sccache rustc -vV >/dev/null 2>&1; then
             echo "::warning::sccache cache backend unreachable — building without it (slower, but not blocked)"
             unset RUSTC_WRAPPER
           fi
@@ -123,10 +126,11 @@ jobs:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
         run: |
-          # See the "Run tests" job for why this check exists: sccache's GHA
-          # backend connects at server startup, so a cache-service outage
-          # would otherwise fail the whole build before compilation starts.
-          if ! sccache --show-stats >/dev/null 2>&1; then
+          # See the "Run tests" job for why this probes with `sccache rustc
+          # -vV` specifically, not `sccache --show-stats` (which never
+          # round-trips to the GHA backend and would report healthy even
+          # during an outage).
+          if ! sccache rustc -vV >/dev/null 2>&1; then
             echo "::warning::sccache cache backend unreachable — building without it (slower, but not blocked)"
             unset RUSTC_WRAPPER
           fi
