@@ -12,7 +12,12 @@ files:
   - electron/**
   - dist/index.html
   - dist/assets/**
+  - dist-main/**
   - "!node_modules/**"
+# NOTE: node-sqlite3-wasm (runtime dep of dist-main/browser/crawler/*) is excluded by
+# "!node_modules/**" above like everything else in node_modules. Not yet verified whether
+# electron-builder's own production-dependency walk re-includes it despite this glob —
+# needs a real packaged-build smoke test before shipping the crawler feature.
 asar: true
 npmRebuild: false
 win:

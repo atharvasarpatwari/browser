@@ -65,6 +65,16 @@ const ipcBridge = Object.freeze({
 })
 
 /* -------------------------------------------------------------------------- */
+/*  crawler — nova:crawler control channel (electron/crawler-service.cjs)     */
+/* -------------------------------------------------------------------------- */
+
+const crawlerBridge = Object.freeze({
+  request(payload) {
+    return ipcRenderer.invoke('nova:crawler', payload)
+  },
+})
+
+/* -------------------------------------------------------------------------- */
 /*  process — frozen diagnostics snapshot, no event-surface                   */
 /* -------------------------------------------------------------------------- */
 
@@ -87,6 +97,7 @@ const processSnapshot = Object.freeze({
 
 contextBridge.exposeInMainWorld('nova', {
   ipc: ipcBridge,
+  crawler: crawlerBridge,
   require: safeRequire,
   process: processSnapshot,
 })

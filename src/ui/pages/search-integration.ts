@@ -19,6 +19,8 @@ import { expandSearchTemplate } from '../../browser/omnibox/search-template';
 import { buildResearchUrl } from '../../browser/omnibox/ai-research-provider';
 import { fetchTextWithGlobalFetch, findOpenSearchLinks, parseOpenSearchDescription } from '../../browser/omnibox/opensearch-discovery';
 import type { SwitchableTab } from '../../browser/omnibox/tab-switch-provider';
+import { WebIndexPort } from '../../browser/crawler/web-index-port';
+import { isCrawlerAvailable } from '../../browser/crawler/crawler-client';
 
 /** One of the user's search engines (what `SearchEngineManager` holds); `url` is a template with `%s`. */
 interface HostEngine {
@@ -123,6 +125,8 @@ class SearchIntegration implements IDisposable {
   private offerToken = 0;
   private offerTimer: ReturnType<typeof setTimeout> | null = null;
   private offerAbort: AbortController | null = null;
+  /** One instance per window, reused across `renderSearchPage()` calls so its cache survives navigation. */
+  private readonly webIndexPort = new WebIndexPort();
 
   constructor(private readonly host: SearchHost) {}
 
@@ -243,6 +247,7 @@ class SearchIntegration implements IDisposable {
 
     this.searchPage = new SearchPage({
       archive: subsystem.archive,
+      webIndex: isCrawlerAvailable() ? this.webIndexPort : undefined,
       settings: () => this.host.settings() as SettingsWritePort | null,
       // Nova's own engine is the page you are on; the rest are one-click ways to take the query to the web.
       webEngines: () => this.host.engines().filter((e) => !e.url.startsWith('nova:')).map(toEngineInfo),

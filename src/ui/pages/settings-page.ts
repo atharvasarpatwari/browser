@@ -1,4 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
+import { addSeed, startCrawl, stopCrawl, getStats, isCrawlerAvailable } from '../../browser/crawler/crawler-client';
 
 interface SettingDefinition {
   readonly key: string;
@@ -146,6 +147,87 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       });
       previewRow.appendChild(previewBtn);
       container.appendChild(previewRow);
+    },
+  },
+  {
+    id: 'web-index', title: 'Web Index', icon: '🕸',
+    settings: [
+      { key: 'webIndexMaxPages', label: 'Page cap per crawl', description: 'Stop once this many pages have been fetched', type: 'range', defaultValue: 500, min: 50, max: 5000, step: 50 },
+      { key: 'webIndexConcurrency', label: 'Concurrent fetches', description: 'How many pages to fetch at once, across different sites', type: 'range', defaultValue: 4, min: 1, max: 16, step: 1 },
+    ],
+    renderExtra: ({ container }) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-top:20px;';
+
+      if (!isCrawlerAvailable()) {
+        const unavailable = document.createElement('p');
+        unavailable.style.cssText = 'font-size:12px;color:var(--text-tertiary,#6a6a68);';
+        unavailable.textContent = 'The web crawler is only available when running inside the Nova Browser app.';
+        wrap.appendChild(unavailable);
+        container.appendChild(wrap);
+        return;
+      }
+
+      const note = document.createElement('p');
+      note.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin:0 0 14px;';
+      note.textContent = 'Nova only crawls the sites you add below (and the links it finds on them) — never the open web. '
+        + 'You are responsible for only adding sites you have the right to crawl. Each request identifies itself as NovaCrawler/1.0.';
+      wrap.appendChild(note);
+
+      const addRow = document.createElement('div');
+      addRow.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'https://example.com';
+      input.style.cssText = 'flex:1;padding:8px 10px;border:1px solid var(--border-subtle,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);background:var(--bg-body,#0f0f0f);color:var(--text-primary,#e0e0e0);font-size:13px;';
+      const addBtn = document.createElement('button');
+      addBtn.textContent = 'Add site';
+      addBtn.style.cssText = 'padding:8px 16px;border:1px solid var(--border-subtle,rgba(255,255,255,.12));border-radius:var(--radius-sm,4px);background:var(--bg-surface,#161618);color:var(--text-primary,#e0e0e0);font-size:13px;cursor:pointer;';
+      const statusLine = document.createElement('div');
+      statusLine.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin-bottom:14px;min-height:14px;';
+
+      addBtn.addEventListener('click', () => {
+        const raw = input.value.trim();
+        if (!raw) return;
+        void addSeed(raw).then(() => {
+          input.value = '';
+          statusLine.textContent = `Added ${raw} — start the crawl below to index it.`;
+          refreshStats();
+        }, (err: unknown) => {
+          statusLine.textContent = `Could not add that site: ${err instanceof Error ? err.message : String(err)}`;
+        });
+      });
+      addRow.append(input, addBtn);
+      wrap.append(addRow, statusLine);
+
+      const controlRow = document.createElement('div');
+      controlRow.style.cssText = 'display:flex;gap:8px;margin-bottom:14px;';
+      const startBtn = document.createElement('button');
+      startBtn.textContent = 'Start crawl';
+      startBtn.style.cssText = addBtn.style.cssText;
+      const stopBtn = document.createElement('button');
+      stopBtn.textContent = 'Stop crawl';
+      stopBtn.style.cssText = addBtn.style.cssText;
+      startBtn.addEventListener('click', () => { void startCrawl().then(refreshStats); });
+      stopBtn.addEventListener('click', () => { void stopCrawl().then(refreshStats); });
+      controlRow.append(startBtn, stopBtn);
+      wrap.appendChild(controlRow);
+
+      const statsBox = document.createElement('div');
+      statsBox.style.cssText = 'font-size:12.5px;color:var(--text-secondary,#a0a098);padding:10px 12px;border:1px solid var(--border-subtle,rgba(255,255,255,.06));border-radius:var(--radius-sm,4px);background:var(--bg-surface,#161618);';
+      statsBox.textContent = 'Loading…';
+      wrap.appendChild(statsBox);
+
+      function refreshStats(): void {
+        void getStats().then((stats) => {
+          const domains = stats.allowedDomains.length > 0 ? stats.allowedDomains.join(', ') : 'none yet';
+          statsBox.textContent = `${stats.running ? 'Crawling' : 'Idle'} · ${stats.documentCount} pages indexed · `
+            + `${stats.frontierSize} queued · sites: ${domains}`;
+        }, () => { statsBox.textContent = 'Could not reach the crawler.'; });
+      }
+      refreshStats();
+
+      container.appendChild(wrap);
     },
   },
 ];

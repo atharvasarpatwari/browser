@@ -18,12 +18,28 @@ interface ArchivePort {
   onChange(handler: () => void): () => void;
 }
 
+interface WebIndexStats {
+  readonly documentCount: number;
+  readonly frontierSize: number;
+  readonly pagesFetched: number;
+  readonly running: boolean;
+}
+
+/** The crawler's web index — same shape as `ArchivePort` minus `clear()`, since the crawler owns its own lifecycle. */
+interface WebIndexPort {
+  search(query: string): SearchHit[];
+  stats(): WebIndexStats;
+  onChange(handler: () => void): () => void;
+}
+
 interface SettingsWritePort extends SettingsPort {
   setValue(key: string, value: unknown): void;
 }
 
 interface SearchPageDeps {
   readonly archive: ArchivePort;
+  /** The curated-seed-list web crawler's index. Omit where no crawler is wired up (e.g. web preview). */
+  readonly webIndex?: WebIndexPort;
   readonly settings: () => SettingsWritePort | null;
   /** Engines offered as "search the web with…" buttons. */
   readonly webEngines: () => readonly SearchPageEngine[];
@@ -84,6 +100,7 @@ class SearchPage implements IDisposable {
   private statusEl: HTMLElement | null = null;
   private query = '';
   private unsubscribe: (() => void) | null = null;
+  private unsubscribeWebIndex: (() => void) | null = null;
   private clearArmed = false;
   private readonly now: () => number;
 
@@ -125,6 +142,7 @@ class SearchPage implements IDisposable {
     container.append(header, this.main);
     this.input = input;
     this.unsubscribe = this.deps.archive.onChange(() => this.renderStatus());
+    this.unsubscribeWebIndex = this.deps.webIndex?.onChange(() => this.render()) ?? null;
     this.render();
   }
 
@@ -137,6 +155,8 @@ class SearchPage implements IDisposable {
   dispose(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.unsubscribeWebIndex?.();
+    this.unsubscribeWebIndex = null;
     if (this.container) this.container.innerHTML = '';
     this.container = null;
     this.input = null;
@@ -158,6 +178,7 @@ class SearchPage implements IDisposable {
       const answer = detectInstantAnswer(this.query);
       if (answer) main.appendChild(this.answerCard(answer.value, answer.detail));
       main.appendChild(this.archiveSection());
+      if (this.deps.webIndex) main.appendChild(this.webIndexSection());
       main.appendChild(this.webSection());
     }
     main.appendChild(this.settingsSection());
@@ -250,7 +271,36 @@ class SearchPage implements IDisposable {
     return s;
   }
 
-  private hit(hit: SearchHit, now: number): HTMLElement {
+  private webIndexSection(): HTMLElement {
+    const s = this.section('From the web (crawled)');
+    const webIndex = this.deps.webIndex;
+    if (!webIndex) return s;
+    const note = (text: string): void => {
+      const p = document.createElement('p');
+      p.style.cssText = STYLE.muted;
+      p.textContent = text;
+      s.appendChild(p);
+    };
+
+    const stats = webIndex.stats();
+    if (stats.documentCount === 0) {
+      note(stats.running
+        ? 'Crawling your added sites — results will appear here as pages are indexed.'
+        : 'No sites have been crawled yet. Add seed sites in Settings to search them here.');
+      return s;
+    }
+
+    const hits = webIndex.search(this.query);
+    if (hits.length === 0) {
+      note('No crawled pages match.');
+      return s;
+    }
+    const now = this.now();
+    for (const hit of hits) s.appendChild(this.hit(hit, now, 'Crawled'));
+    return s;
+  }
+
+  private hit(hit: SearchHit, now: number, label = 'Visited'): HTMLElement {
     const el = document.createElement('article');
     el.style.cssText = 'margin:0 0 16px;';
 
@@ -275,7 +325,7 @@ class SearchPage implements IDisposable {
     appendRanges(snippet, hit.snippet, hit.highlights);
 
     const meta = document.createElement('span');
-    meta.textContent = `Visited ${formatAgo(hit.visitedAt, now)}`;
+    meta.textContent = `${label} ${formatAgo(hit.visitedAt, now)}`;
     meta.style.cssText = STYLE.hitMeta;
 
     el.append(link, url, snippet, meta);
@@ -380,4 +430,4 @@ class SearchPage implements IDisposable {
 }
 
 export { SearchPage, formatAgo, displayUrl, SUGGESTION_PROVIDERS };
-export type { SearchPageDeps, SearchPageEngine, ArchivePort, SettingsWritePort };
+export type { SearchPageDeps, SearchPageEngine, ArchivePort, SettingsWritePort, WebIndexPort, WebIndexStats };

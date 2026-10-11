@@ -12,6 +12,11 @@ const {
   __novaNetProbe,
 } = require('./socket-owner.cjs')
 
+const {
+  initNovaCrawlerService,
+  disposeNovaCrawlerService,
+} = require('./crawler-service.cjs')
+
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 const APP_TITLE = 'Nova Browser'
 
@@ -406,6 +411,7 @@ app.setName(APP_TITLE)
 app.whenReady().then(() => {
   installApplicationMenu()
   initNovaSocketOwner()
+  initNovaCrawlerService()
   writeHealthLog(`SOCKET_OWNER_READY probe=${JSON.stringify(__novaNetProbe())}`)
   if (REMOTE_DEBUG_PORT) writeHealthLog(`REMOTE_DEBUGGING_ENABLED port=${REMOTE_DEBUG_PORT}`)
   mainWindow = createWindow()
@@ -437,5 +443,6 @@ app.on('before-quit', () => {
   quitting = true
   stopWatchdog()
   disposeNovaSocketOwner()
+  disposeNovaCrawlerService()
   writeHealthLog('APP_QUIT')
 })

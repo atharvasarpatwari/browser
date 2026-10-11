@@ -280,3 +280,87 @@ describe('SearchPage', () => {
     expect(() => page.setQuery('again')).not.toThrow();
   });
 });
+
+describe('SearchPage web index section', () => {
+  let container: HTMLElement;
+  let page: SearchPage;
+  let webIndexSearch: Mock<(query: string) => SearchHit[]>;
+  let webIndexListeners: Array<() => void>;
+  let webIndexStats: { documentCount: number; frontierSize: number; pagesFetched: number; running: boolean };
+
+  const mountWithWebIndex = (query: string): SearchPage => {
+    const archive: ArchivePort = {
+      search: () => [], stats: () => ({ documents: 0, terms: 0, pending: 0, loaded: true, lastSavedAt: null, lastError: null }),
+      clear: async () => {}, onChange: () => () => {},
+    };
+    const settings: SettingsWritePort = { getBoolean: (_k, f = false) => f, getString: (_k, f = '') => f, setValue: () => {} };
+    const deps: SearchPageDeps = {
+      archive,
+      webIndex: {
+        search: webIndexSearch,
+        stats: () => webIndexStats,
+        onChange: (h) => { webIndexListeners.push(h); return () => { webIndexListeners.splice(webIndexListeners.indexOf(h), 1); }; },
+      },
+      settings: () => settings,
+      webEngines: () => [],
+      navigate: vi.fn(),
+      search: vi.fn(),
+      research: vi.fn(),
+      now: () => NOW,
+    };
+    page = new SearchPage(deps);
+    page.mount(container);
+    page.setQuery(query);
+    return page;
+  };
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    webIndexListeners = [];
+    webIndexStats = { documentCount: 0, frontierSize: 0, pagesFetched: 0, running: false };
+    webIndexSearch = vi.fn(() => []);
+  });
+
+  afterEach(() => {
+    page?.dispose();
+    container.remove();
+  });
+
+  it('is omitted entirely when no webIndex dep is supplied', () => {
+    expect([...document.querySelectorAll('h2')].some((h) => h.textContent?.includes('crawled'))).toBe(false);
+  });
+
+  it('shows a not-yet-crawled message when the index is empty and idle', () => {
+    mountWithWebIndex('x');
+    expect(container.textContent).toContain('No sites have been crawled yet');
+  });
+
+  it('shows a crawling-in-progress message when the index is empty but running', () => {
+    webIndexStats = { ...webIndexStats, running: true };
+    mountWithWebIndex('x');
+    expect(container.textContent).toContain('Crawling your added sites');
+  });
+
+  it('renders hits from the web index with a "Crawled" label, not "Visited"', () => {
+    webIndexStats = { ...webIndexStats, documentCount: 1 };
+    webIndexSearch = vi.fn(() => [
+      { url: 'https://docs.example.com/guide', title: 'Guide', snippet: 'a crawled snippet', highlights: [], score: 1, visitedAt: NOW - 86_400_000, matchedTerms: 1, totalTerms: 1 },
+    ]);
+    mountWithWebIndex('x');
+    expect(container.textContent).toContain('Crawled 1 d ago');
+    expect(container.textContent).not.toContain('Visited 1 d ago');
+  });
+
+  it('re-renders when the web index fires onChange (async result arrived)', () => {
+    webIndexStats = { ...webIndexStats, documentCount: 1 };
+    mountWithWebIndex('x');
+    expect(container.textContent).toContain('No crawled pages match');
+
+    webIndexSearch.mockImplementation(() => [
+      { url: 'https://docs.example.com/guide', title: 'Guide', snippet: 'found it', highlights: [], score: 1, visitedAt: NOW, matchedTerms: 1, totalTerms: 1 },
+    ]);
+    webIndexListeners.forEach((l) => l());
+    expect(container.textContent).toContain('found it');
+  });
+});
