@@ -182,16 +182,20 @@ async function fallbackHttpFetch(request: HttpRequest): Promise<HttpResponse> {
     };
 
     const req = mod(options, (res: any) => {
-      let body = '';
-      res.on('data', (chunk: any) => {
-        body += chunk;
+      // Collect raw chunks instead of concatenating as a string, so a
+      // binary body (image/font/media) survives intact — matching the
+      // native path's contract, which also returns raw bytes.
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
       });
       res.on('end', () => {
+        const body = chunks.length > 0 ? Buffer.concat(chunks) : null;
         resolve({
           status: res.statusCode,
           statusText: res.statusMessage || '',
           headers: res.headers as Record<string, string>,
-          body: body || null,
+          body,
         });
       });
     });
