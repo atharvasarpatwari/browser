@@ -74,8 +74,10 @@ jobs:
           # healthy even when that backend is down. Wrapping a real rustc
           # call is what actually exercises the connection (the same thing
           # that fails below if the backend is unreachable), so probe with
-          # that instead.
-          if ! sccache rustc -vV >/dev/null 2>&1; then
+          # that instead — bounded by `timeout`, since a degraded backend
+          # can hang rather than error, and an unbounded probe would just
+          # trade a fast failure for a slow one.
+          if ! timeout 20 sccache rustc -vV >/dev/null 2>&1; then
             echo "::warning::sccache cache backend unreachable — building without it (slower, but not blocked)"
             unset RUSTC_WRAPPER
           fi
@@ -89,6 +91,9 @@ jobs:
       - name: Print sccache stats
         if: always()
         continue-on-error: true
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: sccache --show-stats
 
   # ── Build native .node binaries ────────────────────────────────────────────
@@ -130,7 +135,7 @@ jobs:
           # -vV` specifically, not `sccache --show-stats` (which never
           # round-trips to the GHA backend and would report healthy even
           # during an outage).
-          if ! sccache rustc -vV >/dev/null 2>&1; then
+          if ! timeout 20 sccache rustc -vV >/dev/null 2>&1; then
             echo "::warning::sccache cache backend unreachable — building without it (slower, but not blocked)"
             unset RUSTC_WRAPPER
           fi
@@ -162,6 +167,9 @@ jobs:
       - name: Print sccache stats
         if: always()
         continue-on-error: true
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: sccache --show-stats
 
   # ── Build matrix (future platforms) ────────────────────────────────────────
