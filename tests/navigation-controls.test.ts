@@ -14,6 +14,7 @@ import { ReaderMode } from '../src/browser/navigation-controls/reader-mode';
 import { PrintManager } from '../src/browser/navigation-controls/print';
 import { ZoomManager, DEFAULT_ZOOM, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '../src/browser/navigation-controls/zoom';
 import { FindInPage } from '../src/browser/navigation-controls/find-in-page';
+import type { FindTextSource } from '../src/browser/navigation-controls/find-in-page';
 
 /* ============================================================
    1. MultiTabs
@@ -757,8 +758,14 @@ describe('ZoomManager', () => {
 describe('FindInPage', () => {
   let find: FindInPage;
 
+  // The engine no longer ships built-in sample text: callers supply the page text source.
+  const SAMPLE_TEXT = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. The quick brown fox jumps over the lazy dog. Hello world.';
+  const sampleSource: FindTextSource = {
+    getBlocks: () => [{ runs: [{ text: SAMPLE_TEXT, x: 0, y: 12.8, fontSize: 16 }] }],
+  };
+
   beforeEach(() => {
-    find = new FindInPage();
+    find = new FindInPage(sampleSource);
   });
 
   it('find returns empty for empty query', () => {

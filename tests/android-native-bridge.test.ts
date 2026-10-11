@@ -7,6 +7,28 @@ import { HistoryService } from '../src/browser/history/history-service';
 import { NavigationController } from '../src/browser/navigation/navigation-controller';
 import { UrlParser } from '../src/browser/navigation/url-parser';
 import { isNativeHostPresent, installAndroidNativeBridge } from '../src/app/android-native-bridge';
+import { SettingsService } from '../src/browser/storage/settings-service';
+import { SettingsStore } from '../src/browser/storage/settings-store';
+import type { ISettingsStore } from '../src/browser/storage/settings-store';
+import { BUILT_IN_ENGINES } from '../src/browser/omnibox/search-engine';
+
+function fakeDataTransfer() {
+  const data: Record<string, string> = {};
+  return {
+    setData: (type: string, value: string) => { data[type] = value; },
+    getData: (type: string) => data[type] ?? '',
+  };
+}
+
+function dragRow(from: HTMLElement, to: HTMLElement): void {
+  const dt = fakeDataTransfer();
+  const dragStart = new Event('dragstart', { bubbles: true, cancelable: true }) as Event & { dataTransfer?: unknown };
+  dragStart.dataTransfer = dt;
+  from.dispatchEvent(dragStart);
+  const drop = new Event('drop', { bubbles: true, cancelable: true }) as Event & { dataTransfer?: unknown };
+  drop.dataTransfer = dt;
+  to.dispatchEvent(drop);
+}
 
 describe('BrowserWindowPage — native chrome bridge', () => {
   let container: HTMLElement;
@@ -81,7 +103,8 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     // launch (no homePage setting yet) shows the real New Tab Page instead
     // of a blank page — see getHomeUrl() in browser-window.ts.
     expect(state.homeUrl).toBe('about:newtab');
-    expect(state.searchTemplate).toBe('https://www.google.com/search?q=%s');
+    // Nova's own search is the default engine (nova://search renders in the window).
+    expect(state.searchTemplate).toBe('nova://search?q=%s');
   });
 
   it('getChromeState() reflects the settingsService home page and default search engine', async () => {
@@ -92,11 +115,164 @@ describe('BrowserWindowPage — native chrome bridge', () => {
         if (key === 'defaultSearchEngine') return 'duckduckgo';
         return fallback;
       },
+      getValue: () => undefined,
     } as unknown as Parameters<typeof page.setSettingsService>[0]);
     await page.mount(container);
     const state = page.getChromeState();
     expect(state.homeUrl).toBe('https://example.com/home');
     expect(state.searchTemplate).toBe('https://duckduckgo.com/?q=%s');
+  });
+
+  it('navigate(\'nova://settings\') lists every search engine in the defaultSearchEngine select, not just 3', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    await page.navigate('nova://settings');
+    const settingsPage = (page as BrowserWindowPage).getActiveSettingsPage();
+    const searchSetting = settingsPage?.sections
+      .find((s) => s.id === 'general')
+      ?.settings.find((s) => s.key === 'defaultSearchEngine');
+    expect(searchSetting?.options?.length).toBe(BUILT_IN_ENGINES.length);
+    expect(searchSetting?.options?.map((o) => o.value)).toEqual(expect.arrayContaining(['nova', 'github']));
+  });
+
+  describe('Search Engines management section', () => {
+    async function openSearchEngines(store: ISettingsStore = new SettingsStore()) {
+      page = new BrowserWindowPage({ hideChromeUI: true });
+      const settingsService = new SettingsService(store);
+      page.setSettingsService(settingsService);
+      await page.mount(container);
+      await page.navigate('nova://settings');
+      (page as BrowserWindowPage).getActiveSettingsPage()?.setActiveSection('search-engines');
+      (page as BrowserWindowPage).getActiveSettingsPage()?.updateSections(
+        (page as BrowserWindowPage).getActiveSettingsPage()!.sections,
+      );
+      return { settingsService, store };
+    }
+
+    function rows(): HTMLElement[] {
+      return Array.from(container.querySelectorAll<HTMLElement>('.search-engine-row'));
+    }
+
+    function fillForm(name: string, url: string, keyword: string): void {
+      (container.querySelector('.search-engine-name-input') as HTMLInputElement).value = name;
+      (container.querySelector('.search-engine-url-input') as HTMLInputElement).value = url;
+      (container.querySelector('.search-engine-keyword-input') as HTMLInputElement).value = keyword;
+    }
+
+    function clickAdd(): void {
+      (container.querySelector('.search-engine-add-btn') as HTMLElement).click();
+    }
+
+    function errorText(): string {
+      return (container.querySelector('.search-engine-error') as HTMLElement).textContent ?? '';
+    }
+
+    it('renders every built-in engine as a row, Nova first', async () => {
+      await openSearchEngines();
+      expect(rows()).toHaveLength(BUILT_IN_ENGINES.length);
+      expect(rows()[0]!.textContent).toContain('Nova');
+    });
+
+    it('rejects a URL without %s', async () => {
+      await openSearchEngines();
+      fillForm('Ex', 'https://example.com/search?q=hello', 'ex');
+      clickAdd();
+      expect(errorText()).toMatch(/%s/);
+      expect(rows()).toHaveLength(BUILT_IN_ENGINES.length);
+    });
+
+    it('rejects a duplicate keyword', async () => {
+      await openSearchEngines();
+      fillForm('Ex', 'https://example.com/search?q=%s', 'g');
+      clickAdd();
+      expect(errorText()).toMatch(/already used/);
+      expect(rows()).toHaveLength(BUILT_IN_ENGINES.length);
+    });
+
+    it('rejects a name colliding with an existing engine', async () => {
+      await openSearchEngines();
+      fillForm('google', 'https://example.com/search?q=%s', 'ex');
+      clickAdd();
+      expect(errorText()).toMatch(/already exists/);
+      expect(rows()).toHaveLength(BUILT_IN_ENGINES.length);
+    });
+
+    it('successfully adds an engine, which appears in the list without leaving Settings', async () => {
+      const { store } = await openSearchEngines();
+      fillForm('Ex', 'https://example.com/search?q=%s', 'ex');
+      clickAdd();
+      expect(rows()).toHaveLength(BUILT_IN_ENGINES.length + 1);
+      expect(rows().some(r => r.textContent?.includes('Ex') && r.textContent?.includes('!ex'))).toBe(true);
+      expect(store.get('searchEngines')).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'Ex', keyword: 'ex' })]),
+      );
+    });
+
+    it('remove button removes a row and persists the change; disables at 1 remaining', async () => {
+      const { store } = await openSearchEngines();
+      // Remove down to exactly one engine.
+      while (rows().length > 1) {
+        (rows()[0].querySelector('.search-engine-remove-btn') as HTMLButtonElement).click();
+      }
+      expect(rows()).toHaveLength(1);
+      const lastRemoveBtn = rows()[0].querySelector('.search-engine-remove-btn') as HTMLButtonElement;
+      expect(lastRemoveBtn.disabled).toBe(true);
+      const persisted = store.get('searchEngines') as Array<{ name: string }>;
+      expect(persisted).toHaveLength(1);
+    });
+
+    it('"Set default" updates defaultSearchEngine, reflected in the General section\'s resolved value after switching', async () => {
+      const { store } = await openSearchEngines();
+      const githubRow = rows().find(r => r.textContent?.includes('GitHub'))!;
+      (githubRow.querySelector('.search-engine-default-btn') as HTMLButtonElement).click();
+      expect(store.get('defaultSearchEngine')).toBe('github');
+
+      const settingsPage = (page as BrowserWindowPage).getActiveSettingsPage()!;
+      settingsPage.setActiveSection('general');
+      settingsPage.updateSections(settingsPage.sections);
+      // Note: asserting via settingsPage.getSetting() rather than the rendered <select>'s
+      // DOM .value/.selected — happy-dom has a known bug misapplying <option selected>
+      // during appendChild, so the DOM reflection is unreliable in this test environment
+      // even though the underlying value (and real-browser rendering) is correct.
+      expect(settingsPage.getSetting('defaultSearchEngine')).toBe('github');
+      const select = container.querySelector('select') as HTMLSelectElement;
+      expect(Array.from(select.options).map(o => o.value)).toContain('github');
+    });
+
+    it('adding an engine in Search Engines then switching to General shows it in the select', async () => {
+      await openSearchEngines();
+      fillForm('Ex', 'https://example.com/search?q=%s', 'ex');
+      clickAdd();
+
+      const settingsPage = (page as BrowserWindowPage).getActiveSettingsPage()!;
+      settingsPage.setActiveSection('general');
+      settingsPage.updateSections(settingsPage.sections);
+      const select = container.querySelector('select') as HTMLSelectElement;
+      const values = Array.from(select.options).map(o => o.value);
+      expect(values).toContain('ex');
+    });
+
+    it('reorder via drag-drop persists the new order across a reload', async () => {
+      const store = new SettingsStore();
+      await openSearchEngines(store);
+      const before = rows();
+      const ddg = before.find(r => r.textContent?.includes('DuckDuckGo'))!;
+      const google = before.find(r => r.textContent?.includes('Google'))!;
+      dragRow(ddg, google);
+      await page.unmount();
+
+      // Simulate a fresh app launch reading from the same underlying store.
+      page = new BrowserWindowPage({ hideChromeUI: true });
+      page.setSettingsService(new SettingsService(store));
+      await page.mount(container);
+      await page.navigate('nova://settings');
+      (page as BrowserWindowPage).getActiveSettingsPage()?.setActiveSection('search-engines');
+      (page as BrowserWindowPage).getActiveSettingsPage()?.updateSections(
+        (page as BrowserWindowPage).getActiveSettingsPage()!.sections,
+      );
+      const names = rows().map(r => r.textContent?.includes('Google') ? 'Google' : r.textContent?.includes('DuckDuckGo') ? 'DuckDuckGo' : '?');
+      expect(names.indexOf('Google')).toBeLessThan(names.indexOf('DuckDuckGo'));
+    });
   });
 
   it('createTab() adds a tab and returns its id', async () => {
@@ -345,6 +521,32 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     expect(target!.linkUrl).toBe('https://example.com/gallery');
     expect(target!.imageUrl).toBe('https://cdn.example.com/pic.png');
     expect(target!.imageAlt).toBe('A picture');
+  });
+
+  it('resolveContextTarget() finds a link in a real tree, whose chain of ancestors ends in the document node (it has no tag name)', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+
+    // The shape the layout engine really returns: lower-case tag names, up to a document node with no `tagName`.
+    // (It used to throw "Cannot read properties of undefined (reading 'toLowerCase')" on the way up, so every
+    // link and image in a real page resolved to nothing.)
+    const documentNode = { domId: 'doc', nodeType: 'document', parent: null, children: [] };
+    const body = { domId: 'b1', nodeType: 'element', tagName: 'body', attributes: new Map(), parent: documentNode, children: [] };
+    const anchor = {
+      domId: 'a1',
+      nodeType: 'element',
+      tagName: 'a',
+      attributes: new Map([['href', 'https://example.com/about']]),
+      parent: body,
+      children: [{ domId: 't1', nodeType: 'text', text: 'About us', parent: null, children: [] }],
+    } as unknown as DomElement;
+
+    page.setBrowserEngine({
+      getPageLayoutEngine: () => ({ getElementAtPoint: () => anchor }),
+    } as unknown as Parameters<typeof page.setBrowserEngine>[0]);
+    expect(page.resolveContextTarget(10, 10)).toEqual({
+      linkUrl: 'https://example.com/about', linkText: 'About us', imageUrl: null, imageAlt: null,
+    });
   });
 
   it('resolveContextTarget() returns null when nothing is hit and when hit has no link/image', async () => {

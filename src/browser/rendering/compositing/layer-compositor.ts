@@ -509,7 +509,7 @@ export class LayerCompositor {
         }
         out.push({ type: 'setFillStyle', params: [run.color] });
         out.push({ type: 'setFont', params: [`${weight} ${run.fontSize}px ${run.fontFamily}`] });
-        out.push({ type: 'fillText', params: [run.text, run.x, run.y] });
+        out.push({ type: 'fillText', params: run.width !== undefined ? [run.text, run.x, run.y, run.width] : [run.text, run.x, run.y] });
       }
     }
 

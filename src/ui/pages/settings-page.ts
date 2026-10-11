@@ -1,4 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
+import { addSeed, startCrawl, stopCrawl, getStats, isCrawlerAvailable } from '../../browser/crawler/crawler-client';
 
 interface SettingDefinition {
   readonly key: string;
@@ -17,6 +18,8 @@ interface SettingsSection {
   readonly title: string;
   readonly icon: string;
   readonly settings: readonly SettingDefinition[];
+  /** Renders additional, non-generic content after this section's setting rows (e.g. a management UI). */
+  readonly renderExtra?: (ctx: { container: HTMLElement; page: ISettingsPage }) => void;
 }
 
 type SettingsPageEventType = 'settingChanged' | 'sectionChanged';
@@ -37,6 +40,7 @@ interface ISettingsPage extends IDisposable {
   resetToDefaults(): void;
   getActiveSection(): string;
   setActiveSection(sectionId: string): void;
+  updateSections(sections: readonly SettingsSection[]): void;
   on(type: SettingsPageEventType, handler: (event: SettingsPageEvent) => void): void;
   off(type: SettingsPageEventType, handler: (event: SettingsPageEvent) => void): void;
 }
@@ -48,7 +52,10 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
     id: 'general', title: 'General', icon: '⚙',
     settings: [
       { key: 'homePage', label: 'Home page', description: 'Page shown on new tab', type: 'text', defaultValue: 'about:newtab' },
-      { key: 'defaultSearchEngine', label: 'Search engine', description: 'Default search provider', type: 'select', defaultValue: 'google', options: [{ label: 'Google', value: 'google' }, { label: 'Bing', value: 'bing' }, { label: 'DuckDuckGo', value: 'duckduckgo' }] },
+      { key: 'defaultSearchEngine', label: 'Search engine', description: 'Default search provider', type: 'select', defaultValue: 'nova', options: [{ label: 'Nova', value: 'nova' }, { label: 'Google', value: 'google' }, { label: 'Bing', value: 'bing' }, { label: 'DuckDuckGo', value: 'duckduckgo' }] },
+      { key: 'enableSearchSuggestions', label: 'Search suggestions', description: 'Send what you type in the address bar to the suggestions provider below (never in private browsing)', type: 'boolean', defaultValue: true },
+      { key: 'suggestionsEngine', label: 'Suggestions provider', description: 'Who receives your typing for suggestions', type: 'select', defaultValue: 'duckduckgo', options: [{ label: 'DuckDuckGo', value: 'duckduckgo' }, { label: 'Google', value: 'google' }, { label: 'Bing', value: 'bing' }, { label: 'Brave', value: 'brave' }] },
+      { key: 'archiveEnabled', label: 'Personal search archive', description: 'Index the pages you visit on this device so you can search them later (private pages are never indexed)', type: 'boolean', defaultValue: false },
       { key: 'restoreSession', label: 'Restore last session', description: 'Reopen tabs from last session on startup', type: 'boolean', defaultValue: true },
     ],
   },
@@ -59,6 +66,8 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'blockPopups', label: 'Block pop-ups', description: 'Block automatic pop-up windows', type: 'boolean', defaultValue: true },
       { key: 'enableSafeBrowsing', label: 'Safe Browsing', description: 'Warn about dangerous sites', type: 'boolean', defaultValue: true },
       { key: 'doNotTrack', label: 'Send Do Not Track', description: 'Request sites not to track you', type: 'boolean', defaultValue: false },
+      { key: 'stripTrackingParams', label: 'Remove tracking parameters', description: 'Strip utm_*, fbclid and similar from the links you open', type: 'boolean', defaultValue: true },
+      { key: 'speculativeLoading', label: 'Prepare likely destinations', description: 'While you type, look up the address of the site you are very likely to open so it loads faster (this tells your DNS resolver the site name before you press Enter; never in private browsing)', type: 'boolean', defaultValue: true },
     ],
   },
   {
@@ -117,6 +126,109 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'menuShowMoreTools', label: 'More tools', description: 'Show more tools submenu in menu', type: 'boolean', defaultValue: true },
       { key: 'menuShowHelp', label: 'Help', description: 'Show help in menu', type: 'boolean', defaultValue: true },
     ],
+    renderExtra: ({ container }) => {
+      const previewRow = document.createElement('div');
+      previewRow.style.cssText = 'margin-top:20px;padding:16px;border:1px solid var(--border-accent,rgba(124,156,245,.3));border-radius:var(--radius-md,6px);background:var(--accent-dim,rgba(124,156,245,.08));';
+      const previewLabel = document.createElement('div');
+      previewLabel.style.cssText = 'font-size:13px;color:var(--text-primary,#e0e0e0);margin-bottom:8px;font-weight:600;';
+      previewLabel.textContent = '☰  Preview Browser Menu';
+      previewRow.appendChild(previewLabel);
+      const previewDesc = document.createElement('div');
+      previewDesc.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin-bottom:12px;';
+      previewDesc.textContent = 'See how the browser dropdown menu looks with your current settings. Click below to open the preview.';
+      previewRow.appendChild(previewDesc);
+      const previewBtn = document.createElement('button');
+      previewBtn.textContent = 'Open Menu Preview';
+      previewBtn.style.cssText = 'padding:8px 20px;border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:var(--radius-sm,4px);background:var(--accent,#7c9cf5);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;';
+      previewBtn.addEventListener('mouseenter', () => { previewBtn.style.background = 'var(--accent-hover,#9bb5ff)'; });
+      previewBtn.addEventListener('mouseleave', () => { previewBtn.style.background = 'var(--accent,#7c9cf5)'; });
+      previewBtn.addEventListener('click', () => {
+        window.open('../ui/browser-menu.html', '_blank', 'width=340,height=700');
+      });
+      previewRow.appendChild(previewBtn);
+      container.appendChild(previewRow);
+    },
+  },
+  {
+    id: 'web-index', title: 'Web Index', icon: '🕸',
+    settings: [
+      { key: 'webIndexMaxPages', label: 'Page cap per crawl', description: 'Stop once this many pages have been fetched', type: 'range', defaultValue: 500, min: 50, max: 5000, step: 50 },
+      { key: 'webIndexConcurrency', label: 'Concurrent fetches', description: 'How many pages to fetch at once, across different sites', type: 'range', defaultValue: 4, min: 1, max: 16, step: 1 },
+    ],
+    renderExtra: ({ container }) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-top:20px;';
+
+      if (!isCrawlerAvailable()) {
+        const unavailable = document.createElement('p');
+        unavailable.style.cssText = 'font-size:12px;color:var(--text-tertiary,#6a6a68);';
+        unavailable.textContent = 'The web crawler is only available when running inside the Nova Browser app.';
+        wrap.appendChild(unavailable);
+        container.appendChild(wrap);
+        return;
+      }
+
+      const note = document.createElement('p');
+      note.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin:0 0 14px;';
+      note.textContent = 'Nova only crawls the sites you add below (and the links it finds on them) — never the open web. '
+        + 'You are responsible for only adding sites you have the right to crawl. Each request identifies itself as NovaCrawler/1.0.';
+      wrap.appendChild(note);
+
+      const addRow = document.createElement('div');
+      addRow.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'https://example.com';
+      input.style.cssText = 'flex:1;padding:8px 10px;border:1px solid var(--border-subtle,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);background:var(--bg-body,#0f0f0f);color:var(--text-primary,#e0e0e0);font-size:13px;';
+      const addBtn = document.createElement('button');
+      addBtn.textContent = 'Add site';
+      addBtn.style.cssText = 'padding:8px 16px;border:1px solid var(--border-subtle,rgba(255,255,255,.12));border-radius:var(--radius-sm,4px);background:var(--bg-surface,#161618);color:var(--text-primary,#e0e0e0);font-size:13px;cursor:pointer;';
+      const statusLine = document.createElement('div');
+      statusLine.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin-bottom:14px;min-height:14px;';
+
+      addBtn.addEventListener('click', () => {
+        const raw = input.value.trim();
+        if (!raw) return;
+        void addSeed(raw).then(() => {
+          input.value = '';
+          statusLine.textContent = `Added ${raw} — start the crawl below to index it.`;
+          refreshStats();
+        }, (err: unknown) => {
+          statusLine.textContent = `Could not add that site: ${err instanceof Error ? err.message : String(err)}`;
+        });
+      });
+      addRow.append(input, addBtn);
+      wrap.append(addRow, statusLine);
+
+      const controlRow = document.createElement('div');
+      controlRow.style.cssText = 'display:flex;gap:8px;margin-bottom:14px;';
+      const startBtn = document.createElement('button');
+      startBtn.textContent = 'Start crawl';
+      startBtn.style.cssText = addBtn.style.cssText;
+      const stopBtn = document.createElement('button');
+      stopBtn.textContent = 'Stop crawl';
+      stopBtn.style.cssText = addBtn.style.cssText;
+      startBtn.addEventListener('click', () => { void startCrawl().then(refreshStats); });
+      stopBtn.addEventListener('click', () => { void stopCrawl().then(refreshStats); });
+      controlRow.append(startBtn, stopBtn);
+      wrap.appendChild(controlRow);
+
+      const statsBox = document.createElement('div');
+      statsBox.style.cssText = 'font-size:12.5px;color:var(--text-secondary,#a0a098);padding:10px 12px;border:1px solid var(--border-subtle,rgba(255,255,255,.06));border-radius:var(--radius-sm,4px);background:var(--bg-surface,#161618);';
+      statsBox.textContent = 'Loading…';
+      wrap.appendChild(statsBox);
+
+      function refreshStats(): void {
+        void getStats().then((stats) => {
+          const domains = stats.allowedDomains.length > 0 ? stats.allowedDomains.join(', ') : 'none yet';
+          statsBox.textContent = `${stats.running ? 'Crawling' : 'Idle'} · ${stats.documentCount} pages indexed · `
+            + `${stats.frontierSize} queued · sites: ${domains}`;
+        }, () => { statsBox.textContent = 'Could not reach the crawler.'; });
+      }
+      refreshStats();
+
+      container.appendChild(wrap);
+    },
   },
 ];
 
@@ -127,7 +239,7 @@ class SettingsPage implements ISettingsPage {
   private _activeSection = 'general';
   private _mounted = false;
 
-  readonly sections: readonly SettingsSection[];
+  sections: readonly SettingsSection[];
 
   constructor(sections?: readonly SettingsSection[]) {
     this.sections = sections ?? DEFAULT_SECTIONS;
@@ -216,6 +328,11 @@ class SettingsPage implements ISettingsPage {
     this._activeSection = sectionId;
   }
 
+  updateSections(sections: readonly SettingsSection[]): void {
+    this.sections = sections;
+    this.render();
+  }
+
   on(type: SettingsPageEventType, handler: (event: SettingsPageEvent) => void): void {
     this.bus.push(handler);
   }
@@ -236,7 +353,7 @@ class SettingsPage implements ISettingsPage {
   private render(): void {
     if (!this.container) return;
 
-    const content = this.container.querySelector('.settings-content');
+    const content = this.container.querySelector<HTMLElement>('.settings-content');
     if (!content) return;
 
     const section = this.sections.find(s => s.id === this._activeSection);
@@ -337,29 +454,7 @@ class SettingsPage implements ISettingsPage {
       content.appendChild(row);
     }
 
-    // Add preview button for the menu section
-    if (section.id === 'menu') {
-      const previewRow = document.createElement('div');
-      previewRow.style.cssText = 'margin-top:20px;padding:16px;border:1px solid var(--border-accent,rgba(124,156,245,.3));border-radius:var(--radius-md,6px);background:var(--accent-dim,rgba(124,156,245,.08));';
-      const previewLabel = document.createElement('div');
-      previewLabel.style.cssText = 'font-size:13px;color:var(--text-primary,#e0e0e0);margin-bottom:8px;font-weight:600;';
-      previewLabel.textContent = '☰  Preview Browser Menu';
-      previewRow.appendChild(previewLabel);
-      const previewDesc = document.createElement('div');
-      previewDesc.style.cssText = 'font-size:11.5px;color:var(--text-tertiary,#6a6a68);margin-bottom:12px;';
-      previewDesc.textContent = 'See how the browser dropdown menu looks with your current settings. Click below to open the preview.';
-      previewRow.appendChild(previewDesc);
-      const previewBtn = document.createElement('button');
-      previewBtn.textContent = 'Open Menu Preview';
-      previewBtn.style.cssText = 'padding:8px 20px;border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:var(--radius-sm,4px);background:var(--accent,#7c9cf5);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;';
-      previewBtn.addEventListener('mouseenter', () => { previewBtn.style.background = 'var(--accent-hover,#9bb5ff)'; });
-      previewBtn.addEventListener('mouseleave', () => { previewBtn.style.background = 'var(--accent,#7c9cf5)'; });
-      previewBtn.addEventListener('click', () => {
-        window.open('../ui/browser-menu.html', '_blank', 'width=340,height=700');
-      });
-      previewRow.appendChild(previewBtn);
-      content.appendChild(previewRow);
-    }
+    if (section.renderExtra) section.renderExtra({ container: content, page: this });
   }
 
   dispose(): void {

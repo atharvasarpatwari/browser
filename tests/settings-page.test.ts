@@ -30,6 +30,16 @@ describe('SettingsPage (unit)', () => {
     expect(page.getSetting('enableCsp')).toBe(true);
   });
 
+  it('offers the speculative-loading switch under Privacy & Security, on by default (it makes a DNS query before the user commits)', () => {
+    const page = new SettingsPage();
+    const privacy = page.sections.find((s) => s.id === 'privacy')!;
+    const entry = privacy.settings.find((s) => s.key === 'speculativeLoading')!;
+    expect(entry).toMatchObject({ label: 'Prepare likely destinations', type: 'boolean', defaultValue: true });
+    expect(entry.description).toMatch(/DNS resolver/);
+    expect(entry.description).toMatch(/private browsing/);
+    expect(page.getSetting('speculativeLoading')).toBe(true);
+  });
+
   it('setSetting should update a value and emit event', () => {
     const page = new SettingsPage();
     const handler = vi.fn();
@@ -136,5 +146,23 @@ describe('SettingsPage (mount)', () => {
     page.unmount();
     page.mount(container);
     expect(page.isMounted).toBe(true);
+  });
+});
+
+describe('SettingsPage web-index section', () => {
+  it('lists Web Index among the sections with its page-cap and concurrency settings', () => {
+    const page = new SettingsPage();
+    const section = page.sections.find((s) => s.id === 'web-index')!;
+    expect(section).toBeDefined();
+    expect(section.settings.map((s) => s.key)).toEqual(['webIndexMaxPages', 'webIndexConcurrency']);
+  });
+
+  it('shows an unavailable message outside the Electron app (no window.nova bridge in tests)', () => {
+    const page = new SettingsPage();
+    const container = createDomContainer();
+    page.mount(container);
+    page.setActiveSection('web-index');
+    page.updateSections(page.sections); // forces a re-render of the active section
+    expect(container.textContent).toContain('only available when running inside the Nova Browser app');
   });
 });
