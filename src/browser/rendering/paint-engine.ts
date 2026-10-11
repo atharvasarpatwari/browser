@@ -15,8 +15,10 @@ import { LayerCompositor } from './compositing/layer-compositor';
 import { LayerTree } from './compositing/layer-tree';
 import { LayerPromoter } from './compositing/layer-promoter';
 import { parseGradient, isGradientValue } from './css-gradients';
+import { splitTopLevelCommas } from './css5/math-functions';
 import { parseBackgrounds } from './enhanced-backgrounds';
 import { parseBorders, parseBorderRadius, renderBorderSide } from './borders-enhanced';
+import type { BorderSide } from './borders-enhanced';
 import { parseBoxShadow, parseTextShadow } from './shadows';
 import { parseFilter } from './css-filters';
 import { parseClipPath, parseMask } from './clip-mask';
@@ -406,38 +408,53 @@ class PaintEngine implements IPaintEngine {
       const bgSize = style.get('background-size') ?? 'auto';
       const bgPos = style.get('background-position') ?? '0% 0%';
 
-      let bgX = bx, bgY = by, bgW = bw, bgH = bh;
-      if (bgSize !== 'auto') {
-        const sizeParts = bgSize.split(/\s+/);
-        if (sizeParts[0] && sizeParts[0] !== 'auto') {
-          if (sizeParts[0].endsWith('%')) bgW = bw * parseFloat(sizeParts[0]) / 100;
-          else bgW = parseFloat(sizeParts[0]) || bw;
+      const paintOneBgLayer = (image: string, size: string, pos: string): void => {
+        let lx = bx, ly = by, lw = bw, lh = bh;
+        if (size !== 'auto') {
+          const sizeParts = size.split(/\s+/);
+          if (sizeParts[0] && sizeParts[0] !== 'auto') {
+            if (sizeParts[0].endsWith('%')) lw = bw * parseFloat(sizeParts[0]) / 100;
+            else lw = parseFloat(sizeParts[0]) || bw;
+          }
+          if (sizeParts[1]) {
+            if (sizeParts[1].endsWith('%')) lh = bh * parseFloat(sizeParts[1]) / 100;
+            else lh = parseFloat(sizeParts[1]) || bh;
+          }
         }
-        if (sizeParts[1]) {
-          if (sizeParts[1].endsWith('%')) bgH = bh * parseFloat(sizeParts[1]) / 100;
-          else bgH = parseFloat(sizeParts[1]) || bh;
+        if (pos !== '0% 0%') {
+          const posParts = pos.split(/\s+/);
+          if (posParts[0] && posParts[0].endsWith('%')) lx = bx + (bw - lw) * parseFloat(posParts[0]) / 100;
+          if (posParts[1] && posParts[1].endsWith('%')) ly = by + (bh - lh) * parseFloat(posParts[1]) / 100;
         }
-      }
-      if (bgPos !== '0% 0%') {
-        const posParts = bgPos.split(/\s+/);
-        if (posParts[0] && posParts[0].endsWith('%')) bgX = bx + (bw - bgW) * parseFloat(posParts[0]) / 100;
-        if (posParts[1] && posParts[1].endsWith('%')) bgY = by + (bh - bgH) * parseFloat(posParts[1]) / 100;
+        if (isGradientValue(image)) {
+          const grad = parseGradient(image);
+          if (grad) commands.push({ type: 'setFillGradient', params: [grad, lx, ly, lw, lh] });
+        } else if (image && image !== 'none' && image.startsWith('url(')) {
+          // No decoded image data available at this layer — nothing to paint.
+        }
+      };
+
+      // `background-color` always paints first (it's the bottom-most layer,
+      // behind every background-image layer, per spec).
+      if (bgColor !== 'transparent') {
+        commands.push({ type: 'setFillStyle', params: [bgColor] });
+        commands.push({ type: 'fillRect', params: [bx, by, bw, bh] });
       }
 
-      if (isGradientValue(bgImage)) {
-        const grad = parseGradient(bgImage);
-        if (grad) {
-          commands.push({ type: 'setFillGradient', params: [grad, bgX, bgY, bgW, bgH] });
-        } else {
-          commands.push({ type: 'setFillStyle', params: [bgColor] });
-          commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
-        }
-      } else if (bgImage && bgImage !== 'none' && bgImage.startsWith('url(')) {
-        commands.push({ type: 'setFillStyle', params: [bgColor] });
-        commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
-      } else if (bgColor !== 'transparent') {
-        commands.push({ type: 'setFillStyle', params: [bgColor] });
-        commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
+      // `background-image` accepts a comma-separated layer list (e.g. two
+      // stacked gradients) — split on TOP-LEVEL commas only, since a single
+      // gradient function's own argument list also contains commas
+      // (`linear-gradient(red, blue)`). The first-listed layer paints closest
+      // to the viewer, so layers are painted back-to-front (reversed).
+      const imageLayers = splitTopLevelCommas(bgImage);
+      const sizeLayers = bgSize === 'auto' ? [] : splitTopLevelCommas(bgSize);
+      const posLayers = bgPos === '0% 0%' ? [] : splitTopLevelCommas(bgPos);
+      for (let i = imageLayers.length - 1; i >= 0; i--) {
+        const image = imageLayers[i]!.trim();
+        if (!image || image === 'none') continue;
+        const size = (sizeLayers[i] ?? sizeLayers[sizeLayers.length - 1] ?? 'auto').trim();
+        const pos = (posLayers[i] ?? posLayers[posLayers.length - 1] ?? '0% 0%').trim();
+        paintOneBgLayer(image, size, pos);
       }
 
       // ── Overflow clip rect (apply before borders/content) ────────────
@@ -467,8 +484,16 @@ class PaintEngine implements IPaintEngine {
 
       // ── Borders (enhanced with radius, per-side colors, dashed/dotted) ─
       const borderInfo = parseBorders(style, layoutBox.width, layoutBox.height);
-      const hasAnyBorder = borderInfo.top.width > 0 || borderInfo.right.width > 0 ||
-        borderInfo.bottom.width > 0 || borderInfo.left.width > 0;
+      // border-width defaults to the CSS initial value "medium" (3px) even
+      // when border-style is (also correctly) "none" — computed values are
+      // independent per spec, and a real browser never paints a side whose
+      // style is none/hidden regardless of its width. Checking width alone
+      // here meant nearly every element on every page painted a phantom
+      // border, since almost nothing sets border-style explicitly.
+      const isVisible = (side: BorderSide): boolean =>
+        side.width > 0 && side.style !== 'none';
+      const hasAnyBorder = isVisible(borderInfo.top) || isVisible(borderInfo.right) ||
+        isVisible(borderInfo.bottom) || isVisible(borderInfo.left);
       if (hasAnyBorder) {
         const borderSides: { w: number; x: number; y: number; rw: number; rh: number; color: string; style: string }[] = [
           { w: borderInfo.top.width, x: layoutBox.x, y: layoutBox.y, rw: layoutBox.width, rh: borderInfo.top.width, color: colorToString(borderInfo.top.color), style: borderInfo.top.style },
@@ -482,7 +507,7 @@ class PaintEngine implements IPaintEngine {
           commands.push({ type: 'setBorderRadius', params: [borderInfo.radius, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
         }
         for (const s of borderSides) {
-          if (s.w <= 0) continue;
+          if (s.w <= 0 || s.style === 'none') continue;
           if (s.style === 'dashed' || s.style === 'dotted') {
             commands.push({ type: 'setFillStyle', params: [s.color] });
             const dashLen = s.style === 'dotted' ? s.w : s.w * 3;
@@ -562,6 +587,45 @@ class PaintEngine implements IPaintEngine {
         const iconX = contentX + (contentW - iconW) / 2;
         const iconY = contentY + (contentH - iconH) / 2;
         commands.push({ type: 'fillRect', params: [iconX, iconY, iconW, iconH] });
+      }
+
+      // ── Form controls (checkbox/radio glyph, input/textarea/select value) ─
+      // input/textarea/select were blank, unsized boxes before this — no
+      // paint step existed for any of them at all. Reuses the same
+      // content-box geometry and fillText/setFillStyle/setFont primitives
+      // the image and text-run blocks above already use.
+      {
+        const tag = node.tagName.toLowerCase();
+        const contentX = layoutBox.x + layoutBox.borderLeft + layoutBox.paddingLeft;
+        const contentY = layoutBox.y + layoutBox.borderTop + layoutBox.paddingTop;
+        const contentW = layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight - layoutBox.paddingLeft - layoutBox.paddingRight;
+        const contentH = layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom - layoutBox.paddingTop - layoutBox.paddingBottom;
+        const inputType = (node.attributes.get('type') ?? '').toLowerCase();
+
+        if (tag === 'input' && (inputType === 'checkbox' || inputType === 'radio')) {
+          const boxSize = Math.min(contentW, contentH);
+          commands.push({ type: 'setFillStyle', params: ['#ffffff'] });
+          commands.push({ type: 'fillRect', params: [contentX, contentY, boxSize, boxSize] });
+          commands.push({ type: 'setStrokeStyle', params: ['#767676'] });
+          commands.push({ type: 'strokeRect', params: [contentX, contentY, boxSize, boxSize] });
+          if (node.checked ?? (node.attributes.get('checked') != null)) {
+            const inset = boxSize * 0.25;
+            commands.push({ type: 'setFillStyle', params: ['#1a73e8'] });
+            commands.push({ type: 'fillRect', params: [contentX + inset, contentY + inset, boxSize - inset * 2, boxSize - inset * 2] });
+          }
+        } else if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+          const text = tag === 'select'
+            ? selectDisplayText(node)
+            // A <textarea>'s initial content is its text content, not a
+            // value="" attribute (mirrors dom-bindings.ts's value getter).
+            : (node.value ?? (tag === 'textarea' ? textContentOf(node) : node.attributes.get('value')) ?? '');
+          if (text) {
+            const fontSize = 14;
+            commands.push({ type: 'setFillStyle', params: ['#1a1a1a'] });
+            commands.push({ type: 'setFont', params: [`${fontSize}px sans-serif`] });
+            commands.push({ type: 'fillText', params: [text, contentX + 2, contentY + fontSize] });
+          }
+        }
       }
 
       // ── Text runs (actual text content from inline formatting context) ───
@@ -702,11 +766,15 @@ class PaintEngine implements IPaintEngine {
 
     const animatedOpacity = this._opacityResolver?.(node);
 
-    // Get animated transform for this element
+    // A static `transform` (no animation running) must still render —
+    // see the matching fallback in stacking.ts's createContext() for why.
     let translate: { x: number; y: number } | null = null;
     const animatedTransform = this._transformResolver?.(node);
-    if (animatedTransform && animatedTransform !== 'none') {
-      const parsed = parseTransform(animatedTransform);
+    const effectiveTransform = (animatedTransform && animatedTransform !== 'none')
+      ? animatedTransform
+      : style.get('transform');
+    if (effectiveTransform && effectiveTransform !== 'none') {
+      const parsed = parseTransform(effectiveTransform);
       if (parsed && isPureTranslation4x4(parsed.matrix)) {
         translate = { x: parsed.matrix.m41, y: parsed.matrix.m42 };
       }
@@ -835,6 +903,29 @@ function getZIndex(element: DomElement): number {
 /** Convert RGBA object to CSS rgba() string */
 function colorToString(c: { r: number; g: number; b: number; a: number }): string {
   return `rgba(${c.r | 0},${c.g | 0},${c.b | 0},${c.a})`;
+}
+
+/** Minimal text-content walk for a raw DomElement — mirrors dom-bindings.ts's module-private getTextContent(), duplicated since that one isn't exported. */
+function textContentOf(el: DomElement): string {
+  let text = '';
+  for (const child of el.children) {
+    if (child.nodeType === 'text') text += (child as unknown as { text?: string }).text ?? '';
+    else if (child.nodeType === 'element') text += textContentOf(child as DomElement);
+  }
+  return text;
+}
+
+/** The text a <select> shows in its closed box: the selected <option>'s value or text — mirrors dom-bindings.ts's <select> value getter, duplicated since that logic is a closure private to wrapElement(). */
+function selectDisplayText(node: DomElement): string {
+  const options = node.children.filter((c): c is DomElement => c.nodeType === 'element' && (c as DomElement).tagName === 'option');
+  if (options.length === 0) return '';
+  let index = node.selectedIndex ?? -1;
+  if (index < 0 || index >= options.length) {
+    const preSelected = options.findIndex(o => o.attributes.has('selected'));
+    index = preSelected >= 0 ? preSelected : 0;
+  }
+  const opt = options[index]!;
+  return opt.attributes.get('value') ?? textContentOf(opt);
 }
 
 export { PaintEngine, DEFAULT_PAINT_CONFIG };

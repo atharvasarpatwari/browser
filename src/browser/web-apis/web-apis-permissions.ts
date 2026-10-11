@@ -102,8 +102,11 @@ export class PermissionStore extends MiniEmitter<{
   constructor(
     private readonly promptUser: PermissionPrompt,
     private readonly secureContextFor: (name: PermissionName) => boolean = () => true,
+    seed?: Map<string, Map<PermissionName, PermissionState>>,
+    private readonly onPersist?: (origin: string, name: PermissionName, state: PermissionState) => void,
   ) {
     super();
+    if (seed) this.grants = seed;
   }
 
   /** Directly set a permission's state (used by engine settings / tests). */
@@ -112,6 +115,7 @@ export class PermissionStore extends MiniEmitter<{
     originMap.set(name, state);
     this.grants.set(origin, originMap);
     this.emit('change', { name, origin, state });
+    this.onPersist?.(origin, name, state);
   }
 
   /** Non-prompting lookup. Defaults to 'prompt' if never set. */
@@ -521,6 +525,10 @@ export interface WebApisConfig {
    * value derived from the document URL (window.isSecureContext).
    */
   isSecureContext?: boolean;
+  /** Seeds grants from a PersistentPermissionStore so they survive reload, instead of starting empty every page load. */
+  permissionSeed?: Map<string, Map<PermissionName, PermissionState>>;
+  /** Called whenever a grant changes, so a PersistentPermissionStore can write it through to disk. */
+  onPermissionChange?: (origin: string, name: PermissionName, state: PermissionState) => void;
 }
 
 export class PermissionGatedWebApis {
@@ -535,6 +543,8 @@ export class PermissionGatedWebApis {
     this.permissions = new PermissionStore(
       config.promptUser,
       (name) => isSecure || !isSecureContextRequiredPermission(name),
+      config.permissionSeed,
+      config.onPermissionChange,
     );
     this.geolocation = new GeolocationAPI(config.origin, this.permissions, config.positionSource);
     this.notifications = new NotificationsAPI(config.origin, this.permissions);

@@ -123,3 +123,19 @@ export const GPU_WORKGROUP_SIZE = 8;
 export const GPU_MAX_BUFFER_SIZE = 256 * 1024 * 1024; // 256 MB
 export const GPU_BUFFER_POOL_MAX_AGE_MS = 5000; // 5 seconds
 export const GPU_BUFFER_POOL_MAX_IDLE = 10; // Max idle buffers per size class
+
+// `navigator.gpu` (device/adapter access) can be fully functional while the
+// bare-global enum namespaces (GPUBufferUsage, GPUMapMode, ...) are still
+// undefined — observed in Electron 41 on Windows: requestAdapter() succeeds
+// but `typeof GPUBufferUsage === 'undefined'`. These are plain, spec-fixed
+// bitflag constants (never change across WebGPU implementations), so a
+// same-value fallback restores the GPU path with no behavior difference from
+// the real global when the real global exists.
+export const GPUBufferUsage: typeof globalThis.GPUBufferUsage = (globalThis as unknown as { GPUBufferUsage?: typeof globalThis.GPUBufferUsage }).GPUBufferUsage ?? {
+  MAP_READ: 0x0001, MAP_WRITE: 0x0002, COPY_SRC: 0x0004, COPY_DST: 0x0008,
+  INDEX: 0x0010, VERTEX: 0x0020, UNIFORM: 0x0040, STORAGE: 0x0080,
+  INDIRECT: 0x0100, QUERY_RESOLVE: 0x0200,
+};
+export const GPUMapMode: typeof globalThis.GPUMapMode = (globalThis as unknown as { GPUMapMode?: typeof globalThis.GPUMapMode }).GPUMapMode ?? {
+  READ: 0x0001, WRITE: 0x0002,
+};

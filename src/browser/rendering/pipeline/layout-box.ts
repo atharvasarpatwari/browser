@@ -12,9 +12,9 @@
  *
  * Scope for this session: block formatting context + inline formatting
  * context geometry for normal-flow boxes. Floats, absolute/fixed
- * positioning, and flex/grid box generation are flagged as TODOs — they sit
- * on top of this box tree in later work, once positioning (session 5,
- * stacking-context.ts) and a dedicated flex/grid module exist.
+ * positioning, and flex/grid box generation sit on top of this box tree —
+ * see positioning.ts (absolute/fixed) and formatting/flex-context.ts +
+ * formatting/grid-context.ts (flex/grid), added in later work.
  */
 
 import {

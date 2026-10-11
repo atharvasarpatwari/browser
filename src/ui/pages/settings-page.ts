@@ -1,10 +1,12 @@
 import type { IDisposable } from '../../app/dependency-container';
+import type { IProfileManager } from '../../browser/settings/profiles';
+import type { PersistentPermissionStore } from '../../browser/storage/persistent-stores';
 
 interface SettingDefinition {
   readonly key: string;
   readonly label: string;
   readonly description: string;
-  readonly type: 'text' | 'number' | 'boolean' | 'select' | 'range';
+  readonly type: 'text' | 'number' | 'boolean' | 'select' | 'range' | 'list';
   readonly defaultValue: unknown;
   readonly options?: readonly { readonly label: string; readonly value: string }[];
   readonly min?: number;
@@ -43,6 +45,11 @@ interface ISettingsPage extends IDisposable {
 
 type SettingsPageEventHandler = (event: SettingsPageEvent) => void;
 
+const PROFILE_COLOR_HEX: Record<string, string> = {
+  blue: '#3a7afd', red: '#e5484d', green: '#30a46c', yellow: '#f5d90a',
+  purple: '#8e4ec6', orange: '#f76b15', pink: '#d6409f', teal: '#12a594',
+};
+
 const DEFAULT_SECTIONS: readonly SettingsSection[] = [
   {
     id: 'general', title: 'General', icon: '⚙',
@@ -55,6 +62,7 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
   {
     id: 'privacy', title: 'Privacy & Security', icon: '🔒',
     settings: [
+      { key: 'httpsOnlyMode', label: 'Always use secure connections', description: 'Upgrade every site to HTTPS before loading it', type: 'boolean', defaultValue: true },
       { key: 'enableCsp', label: 'Content Security Policy', description: 'Enforce CSP headers', type: 'boolean', defaultValue: true },
       { key: 'blockPopups', label: 'Block pop-ups', description: 'Block automatic pop-up windows', type: 'boolean', defaultValue: true },
       { key: 'enableSafeBrowsing', label: 'Safe Browsing', description: 'Warn about dangerous sites', type: 'boolean', defaultValue: true },
@@ -84,6 +92,18 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'anthropicApiKey', label: 'Anthropic API Key', description: 'API key for Claude web search', type: 'text', defaultValue: '' },
       { key: 'researchMaxSearches', label: 'Max searches per query', description: 'Maximum web searches per research session', type: 'range', defaultValue: 10, min: 1, max: 30, step: 1 },
       { key: 'researchModel', label: 'Model', description: 'Claude model for research', type: 'select', defaultValue: 'claude-sonnet-4-5-20250929', options: [{ label: 'Sonnet 4.5', value: 'claude-sonnet-4-5-20250929' }, { label: 'Opus 4', value: 'claude-opus-4-20250514' }] },
+    ],
+  },
+  {
+    id: 'profiles', title: 'Profiles', icon: '👤',
+    settings: [
+      { key: 'profileList', label: 'Manage profiles', description: 'Create, switch, and remove browser profiles', type: 'list', defaultValue: [] },
+    ],
+  },
+  {
+    id: 'permissions', title: 'Permissions', icon: '🔒',
+    settings: [
+      { key: 'permissionList', label: 'Site permissions', description: 'Review and revoke permissions granted to sites', type: 'list', defaultValue: [] },
     ],
   },
   {
@@ -129,7 +149,7 @@ class SettingsPage implements ISettingsPage {
 
   readonly sections: readonly SettingsSection[];
 
-  constructor(sections?: readonly SettingsSection[]) {
+  constructor(sections?: readonly SettingsSection[], private readonly profileManager?: IProfileManager, private readonly permissionStore?: PersistentPermissionStore) {
     this.sections = sections ?? DEFAULT_SECTIONS;
     for (const section of this.sections) {
       for (const setting of section.settings) {
@@ -332,6 +352,16 @@ class SettingsPage implements ISettingsPage {
           row.appendChild(rangeContainer);
           break;
         }
+        case 'list': {
+          // Backed live by a manager/store, not this.values — a managed
+          // collection with its own actions doesn't fit the flat
+          // key->primitive model the other setting types share. Branches on
+          // key rather than a generic list-renderer registry: two list
+          // sections don't justify that abstraction yet.
+          if (setting.key === 'profileList') row.appendChild(this.buildProfileList());
+          else if (setting.key === 'permissionList') row.appendChild(this.buildPermissionsList());
+          break;
+        }
       }
 
       content.appendChild(row);
@@ -360,6 +390,125 @@ class SettingsPage implements ISettingsPage {
       previewRow.appendChild(previewBtn);
       content.appendChild(previewRow);
     }
+  }
+
+  private buildProfileList(): HTMLElement {
+    const wrap = document.createElement('div');
+    const manager = this.profileManager;
+    const activeId = manager?.getActiveProfile().id;
+
+    for (const profile of manager?.getProfiles() ?? []) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.06));';
+
+      const avatar = document.createElement('div');
+      avatar.style.cssText = `width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;background:${PROFILE_COLOR_HEX[profile.color]};flex-shrink:0;`;
+      avatar.textContent = profile.avatar;
+      row.appendChild(avatar);
+
+      const name = document.createElement('div');
+      name.style.cssText = 'flex:1;font-size:13px;color:var(--text-primary,#e0e0e0);';
+      name.textContent = profile.name;
+      row.appendChild(name);
+
+      if (profile.id === activeId) {
+        const badge = document.createElement('span');
+        badge.style.cssText = 'font-size:11px;color:var(--accent,#7c9cf5);border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:10px;padding:2px 8px;';
+        badge.textContent = 'Active';
+        row.appendChild(badge);
+      } else {
+        const switchBtn = SettingsPage.makeButton('Switch', true);
+        switchBtn.addEventListener('click', () => {
+          manager?.switchProfile(profile.id);
+          this.render();
+        });
+        row.appendChild(switchBtn);
+      }
+
+      const removeBtn = SettingsPage.makeButton('Remove', false);
+      removeBtn.addEventListener('click', () => {
+        manager?.removeProfile(profile.id);
+        this.render();
+      });
+      row.appendChild(removeBtn);
+
+      wrap.appendChild(row);
+    }
+
+    const addRow = document.createElement('div');
+    addRow.style.cssText = 'display:flex;gap:8px;margin-top:10px;';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'New profile name';
+    nameInput.style.cssText = 'flex:1;padding:7px 10px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);outline:none;';
+    const createBtn = SettingsPage.makeButton('Create', true);
+    const createProfile = (): void => {
+      const name = nameInput.value.trim();
+      if (!name) return;
+      manager?.createProfile(name);
+      nameInput.value = '';
+      this.render();
+    };
+    createBtn.addEventListener('click', createProfile);
+    nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') createProfile(); });
+    addRow.appendChild(nameInput);
+    addRow.appendChild(createBtn);
+    wrap.appendChild(addRow);
+
+    return wrap;
+  }
+
+  private buildPermissionsList(): HTMLElement {
+    const wrap = document.createElement('div');
+    const entries = this.permissionStore?.entries() ?? [];
+
+    if (entries.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'text-align:center;padding:40px 20px;color:var(--text-tertiary,#8a87a3);';
+      empty.innerHTML = '<div style="font-size:36px;margin-bottom:12px;">🔒</div><p>No permissions granted yet</p>';
+      wrap.appendChild(empty);
+      return wrap;
+    }
+
+    for (const [origin, name, state] of entries) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.06));';
+
+      const originEl = document.createElement('div');
+      originEl.style.cssText = 'flex:1;font-size:13px;color:var(--text-primary,#e0e0e0);';
+      originEl.textContent = origin;
+      row.appendChild(originEl);
+
+      const nameEl = document.createElement('span');
+      nameEl.style.cssText = 'font-size:12px;color:var(--text-secondary,#a0a098);min-width:110px;';
+      nameEl.textContent = name;
+      row.appendChild(nameEl);
+
+      const stateBadge = document.createElement('span');
+      stateBadge.style.cssText = 'font-size:11px;color:var(--accent,#7c9cf5);border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:10px;padding:2px 8px;';
+      stateBadge.textContent = state;
+      row.appendChild(stateBadge);
+
+      const revokeBtn = SettingsPage.makeButton('Revoke', false);
+      revokeBtn.addEventListener('click', () => {
+        this.permissionStore?.revoke(origin, name);
+        this.render();
+      });
+      row.appendChild(revokeBtn);
+
+      wrap.appendChild(row);
+    }
+
+    return wrap;
+  }
+
+  private static makeButton(text: string, primary: boolean): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.textContent = text;
+    btn.style.cssText = primary
+      ? 'padding:5px 12px;border:1px solid var(--border-accent,rgba(124,156,245,.4));border-radius:var(--radius-sm,4px);background:var(--accent,#7c9cf5);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;'
+      : 'padding:5px 12px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);background:transparent;color:var(--text-secondary,#a0a098);font-size:12px;cursor:pointer;font-family:inherit;';
+    return btn;
   }
 
   dispose(): void {

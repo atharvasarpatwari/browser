@@ -35,6 +35,13 @@ npm run build:win     # or build:mac / build:linux, matching your OS
 ```
 Output lands in `release/`.
 
+Builds aren't code-signed — that needs a real certificate (a paid Windows
+code-signing cert, or an Apple Developer ID for macOS notarization), which
+isn't something a build config can supply on its own. If you have one,
+`electron-builder` (what `npm run build:*` calls) signs automatically with
+no config changes: set `CSC_LINK` (path or URL to the `.pfx`/`.p12` file) and
+`CSC_KEY_PASSWORD` as environment variables before running the build.
+
 ## Android
 
 There's no signed release APK yet (see `doc/android-release-signing.md`) — today this means

@@ -1,7 +1,7 @@
 import type { RGBA } from '../rasterizer';
 import type { BufferPool } from './buffer-pool';
 import type { ShaderModules } from './shader-modules';
-import { GPU_WORKGROUP_SIZE } from './types';
+import { GPU_WORKGROUP_SIZE, GPUBufferUsage } from './types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPUTE OPERATIONS

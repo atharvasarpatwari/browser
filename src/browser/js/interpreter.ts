@@ -2,11 +2,12 @@ import type * as AST from './ast';
 import {
   Environment,
   type JSValue, type JSObject, type JSFunction, type NativeFunction,
-  toBoolean, toNumber, toString, getType, instanceofCheck,
+  toBoolean, toNumber, toString, toPropertyKey, getType, instanceofCheck,
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
-  setGlobalCaller, callJSFunction, JSError,
+  setGlobalCaller, getGlobalCaller, callJSFunction, JSError, isJSObjectWithMeta, makeErrorObject,
+  objectPrototypeToStringTag,
 } from './values';
 import { GarbageCollector, getGC } from './gc';
 import { createPromiseConstructor, wrapAsyncResult, isPromiseObject, isPromiseFulfilled, isPromiseRejected, isPromisePending, getPromiseResult, createPromiseObj, fulfillPromise, rejectPromise } from './promise';
@@ -22,6 +23,122 @@ import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERPRETER — Tree-walking evaluator
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Internal validation errors (bad member access, illegal `super()`, CSP
+// rejections, etc.) must be raised as JSError-wrapped values, not native
+// TS Error instances — a native throw here unwinds straight past every
+// sandboxed try/catch (execTry only recognizes JSError) and silently kills
+// the rest of the running script.
+// Assignment (`obj.x = v`) only ever checked obj's OWN properties for an
+// existing setter — a setter (or getter) declared on a class/object
+// PROTOTYPE (every non-static class accessor: `set label(v) {...}`) was
+// invisible here, so assigning through it silently fell back to just
+// creating a same-named plain value property directly on the instance,
+// shadowing the accessor instead of invoking it. Reads already walked the
+// prototype chain correctly (getPropertyValue/evalMember); writes didn't.
+function findPropertyDescriptor(obj: JSObject, key: string) {
+  let cur: JSObject | null = obj;
+  while (cur) {
+    // cur.properties can be undefined here — a plain function/closure
+    // (createFunction's result, e.g. `function Ctor(){}`) has no
+    // .properties map at all, and assigning straight to one of those
+    // (`Ctor.prototype = ...`) reaches this walk with such an object as
+    // `obj` on the very first iteration.
+    const desc = cur.properties?.get(key);
+    if (desc) return desc;
+    cur = cur.prototype;
+  }
+  return undefined;
+}
+
+/** Every leaf identifier name bound by a (possibly nested) destructuring
+ *  pattern — used to TDZ-predeclare a `let`/`const` declaration's real
+ *  bound names before evaluating its initializer, the same way a bare
+ *  `let x = ...` already did for its one name. */
+function collectPatternNames(
+  pattern: AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern,
+  out: string[] = [],
+): string[] {
+  if (pattern.type === 'Identifier') {
+    out.push(pattern.name);
+  } else if (pattern.type === 'RestElement') {
+    collectPatternNames(pattern.argument, out);
+  } else if (pattern.type === 'AssignmentPattern') {
+    collectPatternNames(pattern.left, out);
+  } else if (pattern.type === 'ArrayPattern') {
+    for (const elem of pattern.elements) {
+      if (elem) collectPatternNames(elem, out);
+    }
+  } else if (pattern.type === 'ObjectPattern') {
+    for (const prop of pattern.properties) {
+      collectPatternNames(prop.type === 'RestElement' ? prop : prop.value, out);
+    }
+  }
+  return out;
+}
+
+function jsError(name: string, message: string): JSError {
+  // makeErrorObject links the built error to whatever prototype index.ts
+  // registered for `name` (TypeError, RangeError, ...), so `e instanceof
+  // TypeError` works for engine-thrown errors exactly like it does for
+  // ones a script builds itself via `new TypeError(...)` — a plain
+  // createObject(null) here (this function's original body) has no such
+  // link, so instanceof against any Error subtype was always false.
+  return new JSError(makeErrorObject(name, message));
+}
+
+// Every "plain callable JSObject" constructor built this session (URL,
+// URLSearchParams, FormData, TextEncoder, TextDecoder, the fuller Array/
+// Number redefinitions, regex-literal construction) throws real native
+// errors when given bad input (`new URL('not a url')` really does throw
+// from the underlying native URL parser) — but three of the four places
+// that invoke a JSObject's own `.nativeFn` called it completely
+// unwrapped, so any such throw escaped every sandboxed try/catch exactly
+// like the try/catch-escape bug fixed earlier the same day, just at call
+// sites that bug-hunt hadn't reached yet. Centralized here so a future
+// native-callable dispatch site can't reintroduce the same gap silently.
+function callNativeSafe(fn: NativeFunction, thisArg: JSValue, args: JSValue[]): JSValue {
+  try {
+    return fn(thisArg, args) as JSValue;
+  } catch (err) {
+    if (err instanceof JSError) throw err;
+    throw jsError(err instanceof Error ? err.name : 'Error', err instanceof Error ? err.message : String(err));
+  }
+}
+
+// A match/search/replace pattern argument may be a real regex object
+// (built from a regex literal or `new RegExp(...)`, carrying a native
+// RegExp on .nativeRegExp) or a plain string pattern.
+function toNativeRegex(pattern: JSValue, forceFlags = ''): RegExp {
+  if (typeof pattern === 'object' && pattern !== null && isJSObjectWithMeta(pattern) && pattern.nativeRegExp) {
+    const re = pattern.nativeRegExp;
+    const flags = [...new Set((re.flags + forceFlags).split(''))].join('');
+    return flags === re.flags ? re : new RegExp(re.source, flags);
+  }
+  return new RegExp(toString(pattern), forceFlags);
+}
+
+// String.prototype.replace/replaceAll: the search pattern may be a real
+// regex object (nativeRegExp) or a plain string, and the replacement may be
+// a callable JSFunction (bridged into a native replacer) or a plain string.
+function stringReplaceImpl(str: string, pattern: JSValue, replacement: JSValue, all: boolean): string {
+  let nativePattern: string | RegExp = toString(pattern);
+  if (typeof pattern === 'object' && pattern !== null && isJSObjectWithMeta(pattern) && pattern.nativeRegExp) {
+    nativePattern = pattern.nativeRegExp;
+    if (all && !nativePattern.flags.includes('g')) {
+      nativePattern = new RegExp(nativePattern.source, nativePattern.flags + 'g');
+    }
+  }
+  const isFn = typeof replacement === 'object' && replacement !== null && (replacement as JSFunction).type === 'closure';
+  const replacer = isFn
+    ? (...args: unknown[]) => toString(callJSFunction(replacement as JSFunction, undefined, args as JSValue[]))
+    : toString(replacement ?? '');
+  if (all && typeof nativePattern === 'string') {
+    return str.split(nativePattern).join(typeof replacer === 'string' ? replacer : '');
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (str as any).replace(nativePattern, replacer);
+}
 
 export class Interpreter {
   private globalEnv: Environment;
@@ -46,6 +163,8 @@ export class Interpreter {
   private scriptEnforcer?: CspScriptEnforcer;
   /** Page origin for CSP enforcement */
   private pageOrigin?: string;
+  /** Stack of in-flight generator-body yield sinks (see runGeneratorBody) */
+  private yieldSinkStack: JSValue[][] = [];
 
   constructor(globalEnv?: Environment, eventLoop?: EventLoop, scriptEnforcer?: CspScriptEnforcer, pageOrigin?: string) {
     this.gc = getGC();
@@ -93,6 +212,14 @@ export class Interpreter {
   run(program: AST.Program): JSValue {
     this.executionStartTime = Date.now();
     this.opCount = 0;
+    // Save whatever caller was registered before this run() (e.g. the outer
+    // script's own interpreter, when this run() belongs to a nested eval())
+    // so it can be restored below instead of always clearing to null —
+    // otherwise eval() permanently breaks every getter/setter and other
+    // callJSFunction-mediated call for the rest of the OUTER script, since
+    // that call path has no direct reference to "this" interpreter and
+    // relies entirely on the global registration staying correct.
+    const previousCaller = getGlobalCaller();
     setGlobalCaller(this);
     try {
       // If VM mode is enabled, try compiling and running through bytecode VM
@@ -120,7 +247,7 @@ export class Interpreter {
       this.eventLoop?.drainMicrotasks();
       return result as JSValue;
     } finally {
-      setGlobalCaller(null);
+      setGlobalCaller(previousCaller);
     }
   }
 
@@ -133,7 +260,7 @@ export class Interpreter {
         return result;
       } catch (err) {
         if (err instanceof JSError) throw err;
-        throw new JSError(err instanceof Error ? err.message : String(err));
+        throw jsError(err instanceof Error ? err.name : 'Error', err instanceof Error ? err.message : String(err));
       }
     }
     // Bytecode function — use VM if enabled
@@ -153,10 +280,11 @@ export class Interpreter {
       if (fn.async && this.eventLoop) return wrapAsyncResult(result.value, this.eventLoop);
       return result.value;
     }
+    if (fn.generator) return this.runGeneratorBody(fn, thisArg, args);
     const callEnv = new Environment(fn.closure);
     callEnv.markFunctionScope();
     callEnv.setLocal('arguments', createArray(args));
-    fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+    this.bindParams(fn, callEnv, args);
     if (thisArg === undefined && !fn.isStrict) {
       callEnv.setLocal('this', this.globalEnv.get('this') ?? createObject(null));
     } else {
@@ -202,7 +330,7 @@ export class Interpreter {
             const callEnv = new Environment(fn.closure);
             callEnv.markFunctionScope();
             callEnv.setLocal('arguments', createArray(args));
-            fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+            this.bindParams(fn, callEnv, args);
             callEnv.setLocal('this', thisArg);
             // We need to re-execute with the resolved value... but we can't easily do that.
             // Instead, resolve the continuation promise with the resolved value.
@@ -242,10 +370,26 @@ export class Interpreter {
 
   // ── Statement execution ──────────────────────────────────────────────────
 
-  private exec(stmt: AST.Statement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
+  private exec(stmt: AST.Statement | null, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
+    // parseStatement() returns null for a bare `;` (empty statement) rather
+    // than a dedicated EmptyStatement AST node, and every single-statement
+    // loop/if body (if/else, for-in, for-of, for(;;), while, do-while) reads
+    // it via a `parseStatement()!` non-null assertion — a real `for(d in
+    // a);` (jQuery 1.8.2's own isPlainObject: an empty for-in body used
+    // purely to leave the loop variable set to the last enumerable key)
+    // made that assertion a lie, and exec() crashed on `null.type` instead
+    // of running the no-op real JS gives an empty statement.
+    if (stmt === null) return undefined;
     this.checkTimeout();
     switch (stmt.type) {
-      case 'BlockStatement': return this.execBlock(stmt.body, env);
+      // A block introduces its own lexical scope for let/const/class (and
+      // for the TDZ pre-declarations hoistLetConst does inside execBlock) —
+      // passing the caller's own `env` straight through left every block
+      // (a bare `{ }`, an `if`/`else` body, a `while`/`do-while` body — any
+      // caller that reaches a BlockStatement via plain `exec()`) writing
+      // its let/const bindings directly into the ENCLOSING scope instead,
+      // so they leaked out and stayed visible after the block ended.
+      case 'BlockStatement': return this.execBlock(stmt.body, new Environment(env));
       case 'ExpressionStatement': return this.evalExpr(stmt.expression, env);
       case 'VariableDeclaration': this.execVarDecl(stmt, env); return undefined;
       case 'FunctionDeclaration': this.execFuncDecl(stmt, env); return undefined;
@@ -292,8 +436,13 @@ export class Interpreter {
     return lastResult;
   }
 
-  private hoistLetConst(body: AST.Statement[], env: Environment): void {
+  private hoistLetConst(body: (AST.Statement | null)[], env: Environment): void {
     for (const stmt of body) {
+      // An if's consequent/alternate can be null (a bare `;` empty
+      // statement — see exec()'s own identical null guard for the real
+      // trigger), so this recursive-into-if-branches call can hand this
+      // loop a null entry the same way a real statement list never does.
+      if (stmt === null) continue;
       if (stmt.type === 'VariableDeclaration' && (stmt.kind === 'let' || stmt.kind === 'const')) {
         for (const decl of stmt.declarations) {
           if (decl.id.type === 'Identifier') {
@@ -322,10 +471,17 @@ export class Interpreter {
     for (let i = 0; i < stmt.declarations.length; i++) {
       const decl = stmt.declarations[i];
       if (stmt.kind === 'let' || stmt.kind === 'const') {
-        // TDZ: declare first in TDZ state, then initialize with value
-        if (decl.id.type === 'Identifier') {
-          env.declareTDZ(decl.id.name, stmt.kind);
-        }
+        // TDZ: declare every bound name first in TDZ state, then initialize
+        // with the real value. Only ever walked decl.id itself when it was
+        // a bare Identifier — a destructured `let {a, b} = obj` or
+        // `let [x, y] = arr` left every one of its bound names (a, b, x, y)
+        // completely undeclared here, so destructPattern's leaf case below
+        // called env.initialize(name, value), which silently no-ops when
+        // no TDZ binding exists yet — every let/const destructuring bound
+        // its names to nothing at all (var-based destructuring was
+        // unaffected, since it declares fresh rather than initializing an
+        // existing binding).
+        for (const name of collectPatternNames(decl.id)) env.declareTDZ(name, stmt.kind);
         const value = decl.init ? this.evalExpr(decl.init, env) : undefined;
         this.destructPattern(decl.id, value, env, stmt.kind);
       } else {
@@ -384,7 +540,7 @@ export class Interpreter {
           }
           this.destructPattern(prop.argument, restObj, env, kind);
         } else {
-          const key = prop.key.type === 'Identifier' ? prop.key.name : String(this.evalExpr(prop.key, env));
+          const key = prop.key.type === 'Identifier' ? prop.key.name : toPropertyKey(this.evalExpr(prop.key, env));
           const propVal = obj?.properties?.get(key)?.value;
           this.destructPattern(prop.value as any, propVal, env, kind);
         }
@@ -392,12 +548,45 @@ export class Interpreter {
     }
   }
 
+  // Every function call bound parameters with a plain positional zip
+  // (`fn.params.forEach((p,i) => env.setLocal(p, args[i]))`), which only
+  // works for plain identifier params. `createFunction`'s own call sites
+  // reduced every parameter — including `...rest`, `a = 5`, `[a,b]`,
+  // `{a,b}` — down to `(p as AST.Identifier).name`, which for anything but
+  // a plain identifier reads a field that doesn't exist and silently binds
+  // a parameter literally named "undefined": a rest parameter's own name
+  // was never in scope at all. Reuses destructPattern (already correct for
+  // `var`/`let`/`const` destructuring) now that paramNodes preserves the
+  // real parameter AST instead of discarding it at creation time.
+  private bindParams(fn: JSFunction, callEnv: Environment, args: JSValue[]): void {
+    const nodes = fn.paramNodes as (AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern)[] | undefined;
+    if (!nodes) {
+      fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+      return;
+    }
+    let idx = 0;
+    for (const node of nodes) {
+      if (node.type === 'RestElement') {
+        this.destructPattern(node.argument as AST.Identifier, createArray(args.slice(idx)), callEnv, 'var');
+      } else {
+        this.destructPattern(node, args[idx], callEnv, 'var');
+        idx++;
+      }
+    }
+  }
+
   private execFuncDecl(stmt: AST.FunctionDeclaration, env: Environment): void {
-    const fn = createFunction(stmt.id.name, stmt.params.map(p => (p as AST.Identifier).name), stmt.body, env, stmt.async, false, stmt.generator, false, undefined, stmt.strictMode);
+    const fn = createFunction(stmt.id.name, stmt.params.map(p => (p as AST.Identifier).name), stmt.body, env, stmt.async, false, stmt.generator, false, undefined, stmt.strictMode, stmt.params);
     env.declare(stmt.id.name, fn, 'var');
   }
 
   private execClassDecl(stmt: AST.ClassDeclaration, env: Environment): void {
+    const classObj = this.buildClassObject(stmt, env);
+    if (stmt.id) env.declare(stmt.id.name, classObj, 'var');
+  }
+
+  /** Shared by execClassDecl() (class as a statement) and evalExpr()'s ClassDeclaration case (class as an expression, e.g. `var x = class {}`). */
+  private buildClassObject(stmt: AST.ClassDeclaration, env: Environment): JSObject {
     const className = stmt.id?.name ?? '';
     const classProto = createObject(null);
 
@@ -407,10 +596,11 @@ export class Interpreter {
       prototype: classProto,
       callable: true,
     };
+    (classObj as JSObject & { __classClosure?: Environment }).__classClosure = env;
 
     // Set up prototype with constructor
     classProto.properties.set('constructor', {
-      value: { type: 'closure', name: className, params: [], body: { type: 'BlockStatement', body: [] }, closure: env, async: false, generator: false, isArrow: false, isNative: false } as JSFunction,
+      value: { type: 'closure', properties: new Map(), name: className, params: [], body: { type: 'BlockStatement', body: [] }, closure: env, async: false, generator: false, isArrow: false, isNative: false } as JSFunction,
       writable: true, enumerable: false, configurable: true,
     });
 
@@ -424,35 +614,133 @@ export class Interpreter {
       }
     }
 
+    // Every method's closure previously WAS `env` itself — the same,
+    // shared enclosing-scope environment for every class declared there —
+    // and `super`/`__superCtor` were bound onto it with setLocal(), which
+    // mutates in place. Two classes in the same scope (`class B extends A
+    // {}`, `class C extends B {}` at top level, an extremely ordinary
+    // pattern) meant building C overwrote the *same* environment's `super`
+    // that B's own methods had already captured, so calling B's method
+    // later saw C's superclass instead of A — `super.greet()` inside B
+    // resolved to B's own prototype, recursing into itself forever. Each
+    // class now gets its own child environment to bind `super` on, so
+    // sibling/later classes in the same scope can never retroactively
+    // change an earlier class's methods' idea of `super`.
+    // Static methods need a *different* super binding than instance
+    // methods: `super.staticMethod()` resolves against the parent CLASS
+    // OBJECT itself, not the parent's instance prototype — reusing one
+    // shared closure/binding for both would make static super calls
+    // resolve against the wrong target (a static super lookup landing on
+    // the instance prototype instead, where the parent's static method
+    // was never stored, always returning undefined).
+    const classClosureEnv = new Environment(env);
+    const staticClosureEnv = new Environment(env);
+    // A class binds its own name in an inner scope wrapping its body (like a
+    // named function expression) — this class isn't necessarily bound to
+    // that name in any OUTER scope yet (a static field/block runs during
+    // buildClassObject, before the `class C {}` declaration finishes binding
+    // C in the enclosing scope) or ever (a named class *expression*,
+    // `class Named {}` assigned to some other variable, never binds `Named`
+    // anywhere outside itself). Without this, the common self-referencing
+    // static-initializer idiom (`class Singleton { static instance = new
+    // Singleton(); }`) saw its own name as undefined.
+    if (className) {
+      classClosureEnv.setLocal(className, classObj);
+      staticClosureEnv.setLocal(className, classObj);
+    }
+    const superClassVal = classObj.properties.get('super')?.value;
+    if (superClassVal && typeof superClassVal === 'object' && superClassVal !== null) {
+      const superProto = (superClassVal as JSObject).prototype ?? superClassVal;
+      classClosureEnv.setLocal('super', superProto);
+      classClosureEnv.setLocal('__superCtor', superClassVal);
+      staticClosureEnv.setLocal('super', superClassVal);
+      staticClosureEnv.setLocal('__superCtor', superClassVal);
+    }
+
     // Store methods from body
     let hasConstructor = false;
     if (stmt.body.type === 'ClassBody') {
       for (const method of stmt.body.body) {
         if (method.type === 'MethodDefinition') {
-          const key = method.key.type === 'Identifier' ? method.key.name : String(method.key);
-          const fn = createFunction(key, method.value.params.map(p => (p as AST.Identifier).name), method.value.body, env, false, false, false, false, undefined, true);
-          // Set 'super' in the method's closure so super.method() works
-          const superVal = classObj.properties.get('super')?.value;
-          if (superVal && typeof superVal === 'object' && superVal !== null) {
-            const superProto = (superVal as JSObject).prototype ?? superVal;
-            fn.closure.setLocal('super', superProto);
-            fn.closure.setLocal('__superCtor', superVal);
-          }
+          // A computed key (`[expr]() {}`) needs evaluating; previously this
+          // did native String(method.key) — stringifying the AST node
+          // object itself ("[object Object]") rather than evaluating the
+          // expression it holds, so every computed method name collided.
+          const key = !method.computed && method.key.type === 'Identifier' ? method.key.name : toPropertyKey(this.evalExpr(method.key, env));
+          const fn = createFunction(key, method.value.params.map(p => (p as AST.Identifier).name), method.value.body, method.static ? staticClosureEnv : classClosureEnv, false, false, false, false, undefined, true, method.value.params);
           if (key === 'constructor') {
             hasConstructor = true;
             classObj.properties.set('constructor', { value: fn, writable: true, enumerable: true, configurable: true });
             classProto.properties.set('constructor', { value: fn, writable: true, enumerable: false, configurable: true });
-          } else if (method.static) {
-            classObj.properties.set(key, { value: fn, writable: true, enumerable: true, configurable: true });
           } else {
-            classProto.properties.set(key, { value: fn, writable: true, enumerable: true, configurable: true });
+            // Real class methods and accessors are non-enumerable (unlike
+            // object-literal methods) — this matters now that for-in
+            // filters by the enumerable flag instead of listing every
+            // property regardless of it.
+            const target = method.static ? classObj : classProto;
+            if (method.kind === 'get' || method.kind === 'set') {
+              const existing = target.properties.get(key);
+              target.properties.set(key, {
+                value: undefined, writable: false,
+                getter: method.kind === 'get' ? fn : existing?.getter,
+                setter: method.kind === 'set' ? fn : existing?.setter,
+                enumerable: false, configurable: true,
+              });
+            } else {
+              target.properties.set(key, { value: fn, writable: true, enumerable: false, configurable: true });
+            }
           }
+        } else if (method.type === 'PropertyDefinition') {
+          // Class fields (`x = 1`, `static y = 2`) were silently skipped
+          // entirely — this loop only ever matched MethodDefinition, so a
+          // field declaration parsed fine but never became a real
+          // property on anything. Static fields evaluate immediately (with
+          // `this` bound to the class itself, per spec); instance fields
+          // are deferred to evalNew, run per-instance with `this` bound to
+          // the new instance, since their initializer can reference it.
+          const key = !method.computed && method.key.type === 'Identifier' ? method.key.name : toPropertyKey(this.evalExpr(method.key, env));
+          if (method.static) {
+            // Closes over staticClosureEnv (not the plain outer env) so a
+            // static field initializer gets the same super/__superCtor and
+            // self-name bindings a static method or static block gets —
+            // it previously closed over `env` directly, so `static x =
+            // super.baseValue` or `static y = Singleton.other` (self-
+            // reference) silently saw `super`/the class's own name as
+            // undefined instead of resolving them.
+            const staticEnv = new Environment(staticClosureEnv);
+            staticEnv.setLocal('this', classObj);
+            const value = method.value ? this.evalExpr(method.value, staticEnv) : undefined;
+            classObj.properties.set(key, { value, writable: true, enumerable: true, configurable: true });
+          } else {
+            const withFields = classObj as JSObject & { __instanceFields?: { key: string; value: unknown }[] };
+            (withFields.__instanceFields ??= []).push({ key, value: method.value });
+          }
+        } else if (method.type === 'StaticBlock') {
+          // `static { ... }` runs once, immediately, in declaration order
+          // among the class's other static elements (fields execute this
+          // same way, right above) — with `this` bound to the class and
+          // `super` available exactly like a static method. This was
+          // entirely unimplemented: the parser had no way to even produce
+          // this node, so a static block either failed to parse outright
+          // or (when it happened to parse as *something* by accident) was
+          // silently discarded — its side effects never ran.
+          const blockEnv = new Environment(staticClosureEnv);
+          blockEnv.markFunctionScope();
+          blockEnv.setLocal('this', classObj);
+          const result = this.execBlock(method.body, blockEnv);
+          if (isThrowSignal(result)) throw new JSError(result.value);
         }
       }
     }
 
     // Generate default constructor for derived classes without one
     if (!hasConstructor && stmt.superClass) {
+      // Must close over classClosureEnv (which has __superCtor bound to
+      // THIS class's own superclass), not the plain outer env — this
+      // constructor's whole body is `super(...)`, and when a grandchild
+      // class's own super() call runs *this* constructor's body, it does
+      // so via a fresh Environment(pfn.closure) with no other way to learn
+      // what "the parent of the parent" is except through this closure.
       const defaultCtor = createFunction(className, [], {
         type: 'BlockStatement',
         body: [{
@@ -464,12 +752,12 @@ export class Interpreter {
             optional: false,
           },
         }],
-      } as unknown as AST.BlockStatement, env, false, false, false, false, undefined, true);
+      } as unknown as AST.BlockStatement, classClosureEnv, false, false, false, false, undefined, true);
       classObj.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: true, configurable: true });
       classProto.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: false, configurable: true });
     }
 
-    env.declare(className, classObj, 'var');
+    return classObj;
   }
 
   private execReturn(stmt: AST.ReturnStatement, env: Environment): ReturnSignal {
@@ -532,17 +820,55 @@ export class Interpreter {
   private execForIn(stmt: AST.ForInStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     const obj = this.evalExpr(stmt.right, env);
     if (typeof obj !== 'object' || obj === null) return undefined;
-    const keys = [...(obj as JSObject).properties.keys()];
-    const loopEnv = new Environment(env);
+    // for-in listed every key in .properties unconditionally — regardless
+    // of its enumerable flag, and regardless of whether it was even a
+    // string key. Every non-enumerable built-in method (every one, on
+    // every array/Map/Set/... instance, since those are attached directly
+    // to each instance's own .properties) leaked into the loop right
+    // alongside real data properties: `for (var k in [1,2,3])` produced
+    // "0","1","2" followed by "length","push","pop","join",... Now visits
+    // own enumerable string keys first, then walks the prototype chain for
+    // inherited enumerable ones not already seen — real for-in's order and
+    // shadowing semantics (an own property, even non-enumerable, hides a
+    // same-named inherited one regardless of that one's own flag).
+    const seenKeys = new Set<string>();
+    const keys: string[] = [];
+    let curObj: JSObject | null = obj as JSObject;
+    while (curObj) {
+      for (const [key, desc] of curObj.properties) {
+        if (seenKeys.has(key) || key.startsWith('@@symbol:')) continue;
+        seenKeys.add(key);
+        if (desc.enumerable) keys.push(key);
+      }
+      curObj = curObj.prototype;
+    }
     const varName = stmt.left.type === 'VariableDeclaration'
       ? (stmt.left.declarations[0]!.id as AST.Identifier).name
       : (stmt.left as AST.Identifier).name;
-    if (stmt.left.type === 'VariableDeclaration') {
-      loopEnv.declareTDZ(varName, stmt.left.kind as 'let' | 'const');
-      loopEnv.initialize(varName, undefined);
-    }
+    const isVarDecl = stmt.left.type === 'VariableDeclaration' && stmt.left.kind === 'var';
+    const isLetConst = stmt.left.type === 'VariableDeclaration' && (stmt.left.kind === 'let' || stmt.left.kind === 'const');
+    const kind = isLetConst ? (stmt.left as AST.VariableDeclaration).kind as 'let' | 'const' : undefined;
+    // `var` and a plain, already-existing identifier target both reuse one
+    // shared environment across every iteration — see execForOf's identical
+    // reasoning.
+    const sharedLoopEnv = isLetConst ? null : new Environment(env);
     for (const key of keys) {
-      loopEnv.set(varName, key);
+      let loopEnv: Environment;
+      if (isLetConst) {
+        // A real per-iteration lexical binding — required for `const`
+        // (env.set() always throws "Assignment to constant variable" on a
+        // const binding, so reusing one binding across iterations made
+        // every `for (const k in obj)` throw on the first iteration) and
+        // for `let` (so a closure captured in the loop body closes over
+        // that iteration's own key).
+        loopEnv = new Environment(env);
+        loopEnv.declareTDZ(varName, kind!);
+        loopEnv.initialize(varName, key);
+      } else {
+        loopEnv = sharedLoopEnv!;
+        if (isVarDecl) loopEnv.declare(varName, key, 'var');
+        else loopEnv.set(varName, key);
+      }
       const result = this.exec(stmt.body, loopEnv);
       if (isBreakSignal(result) && !result.label) return undefined;
       if (isBreakSignal(result) && result.label) return result;
@@ -552,22 +878,111 @@ export class Interpreter {
     return undefined;
   }
 
+  // for-of only ever handled array-shaped objects (.length + indexed
+  // properties) — so `for (const x of someMap)`, `of someSet`, `of
+  // 'a string'`, or `of` any generator/custom iterator (anything whose
+  // protocol is a callable .next()) silently iterated zero times. Extracts
+  // every value up front rather than pulling lazily, which is fine here
+  // since this engine's generators (see runGeneratorBody) already run
+  // eagerly to completion themselves.
+  private forOfValues(iterable: JSValue): JSValue[] {
+    if (typeof iterable === 'string') return [...iterable];
+    if (typeof iterable !== 'object' || iterable === null) return [];
+    const obj = iterable as JSObject;
+    if (obj.type === 'array') {
+      const length = Number(obj.properties.get('length')?.value ?? 0);
+      const out: JSValue[] = [];
+      for (let i = 0; i < length; i++) out.push(obj.properties.get(String(i))?.value);
+      return out;
+    }
+    // General protocol: obj[Symbol.iterator]() → an iterator to drain below.
+    const symbolGlobal = this.globalEnv.get('Symbol');
+    const iterSym = typeof symbolGlobal === 'object' && symbolGlobal !== null ? (symbolGlobal as JSObject).properties.get('iterator')?.value : undefined;
+    if (iterSym !== undefined) {
+      const iterFn = this.getPropertyValue(obj, toPropertyKey(iterSym));
+      if (typeof iterFn === 'object' && iterFn !== null && (iterFn as JSFunction).type === 'closure') {
+        const iterator = callJSFunction(iterFn as JSFunction, obj, []);
+        if (typeof iterator === 'object' && iterator !== null && iterator !== obj) return this.forOfValues(iterator);
+      }
+    }
+    if (isJSObjectWithMeta(obj) && (obj.__mapObj || obj.__mapPrim)) {
+      const entriesFn = this.getPropertyValue(obj, 'entries');
+      if (typeof entriesFn === 'object' && entriesFn !== null && (entriesFn as JSFunction).type === 'closure') {
+        return this.forOfValues(callJSFunction(entriesFn as JSFunction, obj, []));
+      }
+    }
+    if (isJSObjectWithMeta(obj) && (obj.__setObj || obj.__setPrim)) {
+      const valuesFn = this.getPropertyValue(obj, 'values');
+      if (typeof valuesFn === 'object' && valuesFn !== null && (valuesFn as JSFunction).type === 'closure') {
+        return this.forOfValues(callJSFunction(valuesFn as JSFunction, obj, []));
+      }
+    }
+    // A .next()-based iterator (a generator's returned object, or any
+    // hand-built { next() {...} } iterator) — drain it fully.
+    const nextFn = this.getPropertyValue(obj, 'next');
+    if (typeof nextFn === 'object' && nextFn !== null && (nextFn as JSFunction).type === 'closure') {
+      const out: JSValue[] = [];
+      for (let guard = 0; guard < 1_000_000; guard++) {
+        const step = callJSFunction(nextFn as JSFunction, obj, []);
+        if (typeof step !== 'object' || step === null) break;
+        const stepObj = step as JSObject;
+        if (toBoolean(stepObj.properties.get('done')?.value)) break;
+        out.push(stepObj.properties.get('value')?.value);
+      }
+      return out;
+    }
+    return [];
+  }
+
   private execForOf(stmt: AST.ForOfStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     const iterable = this.evalExpr(stmt.right, env);
-    if (typeof iterable !== 'object' || iterable === null) return undefined;
-    const arr = iterable as JSObject;
-    const length = Number(arr.properties.get('length')?.value ?? 0);
-    const loopEnv = new Environment(env);
-    const varName = stmt.left.type === 'VariableDeclaration'
-      ? (stmt.left.declarations[0]!.id as AST.Identifier).name
-      : (stmt.left as AST.Identifier).name;
-    if (stmt.left.type === 'VariableDeclaration') {
-      loopEnv.declareTDZ(varName, stmt.left.kind as 'let' | 'const');
-      loopEnv.initialize(varName, undefined);
-    }
-    for (let i = 0; i < length; i++) {
-      const val = arr.properties.get(String(i))?.value;
-      loopEnv.set(varName, val);
+    const values = this.forOfValues(iterable);
+    // Cast straight to Identifier and read .name unconditionally used to
+    // silently drop every destructured loop variable (`for (let {a,b} of
+    // list)`) — a pattern has no .name, so this bound a variable literally
+    // named `undefined` and left a/b unbound for the whole loop body. Now
+    // walks the real pattern via collectPatternNames/assignPatternValues,
+    // the same helpers execVarDecl and bindParams already use for this.
+    const pattern = stmt.left.type === 'VariableDeclaration' ? stmt.left.declarations[0]!.id : stmt.left;
+    const isVarDecl = stmt.left.type === 'VariableDeclaration' && stmt.left.kind === 'var';
+    const isLetConst = stmt.left.type === 'VariableDeclaration' && (stmt.left.kind === 'let' || stmt.left.kind === 'const');
+    const kind = isLetConst ? (stmt.left as AST.VariableDeclaration).kind as 'let' | 'const' : undefined;
+    // `var` and a plain, already-existing identifier target both reuse one
+    // shared environment across every iteration (var isn't block-scoped;
+    // a bare `for (x of arr)` target already lives outside the loop
+    // entirely, so assignPatternValues just walks up to it via env.set()).
+    const sharedLoopEnv = isLetConst ? null : new Environment(env);
+    for (const rawVal of values) {
+      // `for await (x of iterable)` awaits each value before binding it —
+      // same unwrap `await expr` uses, since this tree-walking interpreter
+      // already drains for-of's values eagerly rather than lazily pulling
+      // them one at a time.
+      const val = stmt.await ? this.awaitValue(rawVal) : rawVal;
+      let loopEnv: Environment;
+      if (isVarDecl) {
+        // `var`'s declare() unconditionally overwrites on every call (no
+        // TDZ gate), so destructPattern is safe to call each iteration
+        // against the one shared environment.
+        loopEnv = sharedLoopEnv!;
+        this.destructPattern(pattern, val, loopEnv, 'var');
+      } else if (isLetConst) {
+        // A real per-iteration lexical binding — required for `const`
+        // (env.set() always throws "Assignment to constant variable" on a
+        // const binding, so re-using one binding across iterations made
+        // every `for (const x of arr)` — one of the most common for-of
+        // shapes in real code — throw on the very first iteration) and for
+        // `let` (so a closure captured inside the loop body closes over
+        // THAT iteration's own value, not whichever value the last
+        // iteration ended on).
+        loopEnv = new Environment(env);
+        for (const name of collectPatternNames(pattern)) loopEnv.declareTDZ(name, kind!);
+        this.destructPattern(pattern, val, loopEnv, kind!);
+      } else {
+        // Plain, already-existing identifier/pattern target: assign into
+        // whichever outer scope it already lives in.
+        loopEnv = sharedLoopEnv!;
+        this.assignPatternValues(pattern, val, loopEnv);
+      }
       const result = this.exec(stmt.body, loopEnv);
       if (isBreakSignal(result) && !result.label) return undefined;
       if (isBreakSignal(result) && result.label) return result;
@@ -575,6 +990,58 @@ export class Interpreter {
       if (isReturnSignal(result) || isThrowSignal(result)) return result;
     }
     return undefined;
+  }
+
+  /** Assigns already-computed values into an existing (already-declared)
+   *  pattern's bound names — used by execForOf to update a destructured
+   *  loop variable every iteration. Deliberately separate from
+   *  destructPattern: that one *declares* bindings (initialize()'s TDZ-only
+   *  guard means calling it again after the first iteration would silently
+   *  no-op), this one only ever assigns into bindings that already exist. */
+  private assignPatternValues(pattern: AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern, value: JSValue, env: Environment): void {
+    if (pattern.type === 'Identifier') {
+      env.set(pattern.name, value);
+    } else if (pattern.type === 'AssignmentPattern') {
+      const val = value === undefined || value === null ? this.evalExpr(pattern.right, env) : value;
+      this.assignPatternValues(pattern.left, val, env);
+    } else if (pattern.type === 'ArrayPattern') {
+      const arr = value as JSObject;
+      let idx = 0;
+      for (const elem of pattern.elements) {
+        if (elem === null) { idx++; continue; }
+        if (elem.type === 'RestElement') {
+          const restArr: JSValue[] = [];
+          const len = Number(arr?.properties?.get('length')?.value ?? 0);
+          for (let i = idx; i < len; i++) restArr.push(arr?.properties?.get(String(i))?.value);
+          this.assignPatternValues(elem.argument, createArray(restArr), env);
+        } else {
+          const elemVal = arr?.properties?.get(String(idx))?.value;
+          this.assignPatternValues(elem, elemVal, env);
+          idx++;
+        }
+      }
+    } else if (pattern.type === 'ObjectPattern') {
+      const obj = typeof value === 'object' && value !== null ? value as JSObject : createObject(null);
+      for (const prop of pattern.properties) {
+        if (prop.type === 'RestElement') {
+          const restObj = createObject(null);
+          const seenKeys = new Set<string>();
+          for (const p of pattern.properties) {
+            if (p.type === 'Property' && p.key.type === 'Identifier') seenKeys.add(p.key.name);
+          }
+          if (obj.properties) {
+            for (const [k, desc] of obj.properties) {
+              if (!seenKeys.has(k)) restObj.properties.set(k, desc);
+            }
+          }
+          this.assignPatternValues(prop.argument, restObj, env);
+        } else {
+          const key = prop.key.type === 'Identifier' ? prop.key.name : toPropertyKey(this.evalExpr(prop.key, env));
+          const propVal = obj?.properties?.get(key)?.value;
+          this.assignPatternValues(prop.value as any, propVal, env);
+        }
+      }
+    }
   }
 
   private execSwitch(stmt: AST.SwitchStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
@@ -605,6 +1072,13 @@ export class Interpreter {
     let pendingBreak: BreakSignal | undefined;
     let pendingContinue: ContinueSignal | undefined;
     let pendingThrow: ThrowSignal | undefined;
+    // A native (TS-level) exception with no handler to catch it — re-thrown
+    // after the finalizer below runs, not immediately from inside the catch
+    // block, which used to skip `finally` entirely (`try { ... } finally
+    // { cleanup() }` with no catch never ran `cleanup()` for a native
+    // throw, only for a guest `throw` statement — those return a ThrowSignal
+    // through the normal path below instead of using this catch block at all).
+    let uncaughtNative: unknown;
 
     try {
       const result = this.execBlock(stmt.block.body, env);
@@ -630,20 +1104,32 @@ export class Interpreter {
         pendingContinue = result;
       }
     } catch (e) {
-      if (e instanceof JSError && stmt.handler) {
+      // A native TS Error (TDZ violations, internal validation errors from
+      // member access, etc.) reaching here used to always fall to the
+      // `throw e` below regardless of whether this try has a handler,
+      // unwinding straight past a guest `catch(e)` that should have caught
+      // it — e.g. `try { let x = x; } catch(e) {}` never ran its catch
+      // block at all. callJSFunction already wraps a native throw from a
+      // native-function call into a real, catchable Error-shaped value;
+      // this is the same wrap, applied here so it also covers native
+      // throws from the interpreter's own statement/expression evaluation
+      // (TDZ checks, etc.), not just native-function calls.
+      const jsError = e instanceof JSError ? e : (stmt.handler ? new JSError(makeErrorObject(
+        e instanceof Error ? e.name : 'Error',
+        e instanceof Error ? e.message : String(e),
+      )) : null);
+      if (jsError && stmt.handler) {
         const catchEnv = new Environment(env);
         if (stmt.handler.param) {
-          catchEnv.setLocal(stmt.handler.param.name, e.value);
+          catchEnv.setLocal(stmt.handler.param.name, jsError.value);
         }
         const catchResult = this.execBlock(stmt.handler.body.body, catchEnv);
         if (isThrowSignal(catchResult)) pendingThrow = catchResult;
         else if (isReturnSignal(catchResult)) pendingReturn = catchResult;
         else if (isBreakSignal(catchResult)) pendingBreak = catchResult;
         else if (isContinueSignal(catchResult)) pendingContinue = catchResult;
-      } else if (!(e instanceof JSError)) {
-        throw e;
-      } else if (!stmt.handler) {
-        throw e;
+      } else {
+        uncaughtNative = e;
       }
     }
 
@@ -652,9 +1138,16 @@ export class Interpreter {
       if (isReturnSignal(finResult)) pendingReturn = finResult;
       else if (isBreakSignal(finResult)) pendingBreak = finResult;
       else if (isContinueSignal(finResult)) pendingContinue = finResult;
-      else if (isThrowSignal(finResult)) pendingThrow = finResult;
+      else if (isThrowSignal(finResult)) { pendingThrow = finResult; uncaughtNative = undefined; }
     }
 
+    // A completion from the finalizer (return/break/continue/a new throw)
+    // overrides the original exception per spec — only re-throw the
+    // original native error if the finalizer didn't already produce one of
+    // those.
+    if (uncaughtNative !== undefined && !pendingReturn && !pendingBreak && !pendingContinue && !pendingThrow) {
+      throw uncaughtNative;
+    }
     if (pendingReturn) return pendingReturn;
     if (pendingThrow) return pendingThrow;
     if (pendingBreak) return pendingBreak;
@@ -671,9 +1164,15 @@ export class Interpreter {
 
   private evalExpr(expr: AST.Expression, env: Environment): JSValue {
     switch (expr.type) {
-      case 'Literal': return this.evalLiteral(expr);
+      case 'Literal': return this.evalLiteral(expr, env);
       case 'Identifier': return this.evalIdentifier(expr, env);
       case 'ThisExpression': return env.get('this') ?? undefined;
+      // Arrow functions never set their own __newTarget binding (matching
+      // how they never set their own `this`), so this naturally walks up to
+      // the nearest enclosing ordinary function's value; env.get() returns
+      // undefined for a name nothing ever bound, so top-level/module-scope
+      // use is safely undefined rather than a lookup error.
+      case 'NewTargetExpression': return env.get('__newTarget');
       case 'SuperExpression': {
         // When super is used as super.x or super[expr], return the parent prototype.
         // When super is used as super(), the CallExpression handler detects
@@ -697,14 +1196,24 @@ export class Interpreter {
       case 'ArrowFunctionExpression': return this.evalArrowFunction(expr, env);
       case 'SequenceExpression': return this.evalSequence(expr, env);
       case 'TemplateLiteral': return this.evalTemplateLiteral(expr, env);
+      case 'TaggedTemplateExpression': return this.evalTaggedTemplate(expr, env);
+      case 'ClassDeclaration': return this.buildClassObject(expr, env);
       case 'AwaitExpression': return this.evalAwait(expr, env);
       case 'YieldExpression': return this.evalYield(expr, env);
       default: return undefined;
     }
   }
 
-  private evalLiteral(expr: AST.Literal): JSValue {
-    if (expr.value && typeof expr.value === 'object' && 'type' in expr.value) {
+  private evalLiteral(expr: AST.Literal, env: Environment): JSValue {
+    if (expr.value && typeof expr.value === 'object' && 'type' in expr.value && expr.value.type === 'RegExp') {
+      // A regex literal (/pattern/flags) must produce a real RegExp object —
+      // not its own source text — so .exec()/.test()/named groups etc. work.
+      // Route through the global RegExp constructor's own nativeFn so the
+      // literal gets the exact same object shape `new RegExp(...)` builds.
+      const regExpCtor = env.get('RegExp');
+      if (typeof regExpCtor === 'object' && regExpCtor !== null && 'nativeFn' in regExpCtor && (regExpCtor as JSObject).nativeFn) {
+        return callNativeSafe((regExpCtor as JSObject).nativeFn!, undefined, [expr.value.pattern, expr.value.flags]);
+      }
       return expr.raw;
     }
     return expr.value as JSValue;
@@ -716,10 +1225,73 @@ export class Interpreter {
       result += expr.quasis[i]!.value;
       if (i < expr.expressions.length) {
         const val = this.evalExpr(expr.expressions[i]!, env);
-        result += val === undefined ? 'undefined' : val === null ? 'null' : String(val);
+        result += val === undefined ? 'undefined' : val === null ? 'null' : this.jsToString(val);
       }
     }
     return result;
+  }
+
+  // Real string coercion (template-literal interpolation, `+`, String())
+  // must call a class/object's own toString()/valueOf() when it has one —
+  // this engine's generic values.ts toString() only knows the object's
+  // internal *shape* (array/typed-array/etc.), so a custom `class Money {
+  // toString() { return '$' + this.amt; } }` instance always printed the
+  // generic "[object Object]" instead, since nothing ever looked up and
+  // called the user's own method.
+  private jsToPrimitive(val: JSValue, hint: 'string' | 'number' | 'default' = 'default'): JSValue {
+    if (typeof val !== 'object' || val === null) return val;
+    const obj = val as JSObject;
+    const callIfPrimitiveResult = (fn: JSValue, args: JSValue[]): JSValue | undefined => {
+      if (typeof fn !== 'object' || fn === null || (fn as JSFunction).type !== 'closure') return undefined;
+      const result = callJSFunction(fn as JSFunction, obj, args);
+      return (typeof result !== 'object' || result === null) ? result : undefined;
+    };
+    // Symbol.toPrimitive takes priority over valueOf/toString per spec —
+    // an object defining it decides its own coercion for every hint.
+    const symbolGlobal = this.globalEnv.get('Symbol');
+    const toPrimitiveSym = typeof symbolGlobal === 'object' && symbolGlobal !== null ? (symbolGlobal as JSObject).properties.get('toPrimitive')?.value : undefined;
+    if (toPrimitiveSym !== undefined) {
+      const toPrimitiveFn = this.getPropertyValue(obj, toPropertyKey(toPrimitiveSym));
+      const result = callIfPrimitiveResult(toPrimitiveFn, [hint]);
+      if (result !== undefined) return result;
+    }
+    const order = hint === 'string' ? ['toString', 'valueOf'] : ['valueOf', 'toString'];
+    for (const name of order) {
+      const result = callIfPrimitiveResult(this.getPropertyValue(obj, name), []);
+      if (result !== undefined) return result;
+    }
+    return val;
+  }
+
+  private jsToString(val: JSValue): string {
+    return toString(this.jsToPrimitive(val, 'string'));
+  }
+
+  /**
+   * tag`a${b}c` — call tag(stringsArray, ...substitutionValues), where
+   * stringsArray is the cooked quasi strings plus a non-enumerable .raw
+   * array of the same segments' untouched source text (the lexer now
+   * tracks both per quasi — see TemplateElement.raw).
+   */
+  private evalTaggedTemplate(expr: AST.TaggedTemplateExpression, env: Environment): JSValue {
+    let thisObj: JSValue = undefined;
+    let callee: JSValue;
+    if (expr.tag.type === 'MemberExpression') {
+      thisObj = this.evalExpr(expr.tag.object, env);
+      const key = expr.tag.computed ? toPropertyKey(this.evalExpr(expr.tag.property, env)) : (expr.tag.property as AST.Identifier).name;
+      callee = this.getPropertyValue(thisObj, key);
+    } else {
+      callee = this.evalExpr(expr.tag, env);
+    }
+    if (typeof callee !== 'object' || callee === null) {
+      throw jsError('TypeError', `${expr.tag.type === 'Identifier' ? expr.tag.name : 'tag'} is not a function`);
+    }
+    const cooked = expr.quasi.quasis.map((q) => q.value);
+    const raw = expr.quasi.quasis.map((q) => q.raw);
+    const strings = createArray(cooked);
+    strings.properties.set('raw', { value: createArray(raw), writable: false, enumerable: false, configurable: false });
+    const substitutions = expr.quasi.expressions.map((e) => this.evalExpr(e, env));
+    return this.callFunction(callee as JSFunction, thisObj, [strings, ...substitutions]);
   }
 
   private evalIdentifier(expr: AST.Identifier, env: Environment): JSValue {
@@ -741,10 +1313,10 @@ export class Interpreter {
     }
     const val = this.evalExpr(expr.argument, env);
     switch (expr.operator) {
-      case '-': return -toNumber(val);
-      case '+': return toNumber(val);
+      case '-': return -toNumber(this.jsToPrimitive(val, 'number'));
+      case '+': return toNumber(this.jsToPrimitive(val, 'number'));
       case '!': return !toBoolean(val);
-      case '~': return ~toNumber(val);
+      case '~': return ~toNumber(this.jsToPrimitive(val, 'number'));
       default: return val;
     }
   }
@@ -754,11 +1326,21 @@ export class Interpreter {
       const obj = this.evalExpr(expr.argument.object, env) as JSObject;
       if (typeof obj !== 'object' || obj === null) return 0;
       const key = expr.argument.computed
-        ? String(this.evalExpr(expr.argument.property, env))
+        ? toPropertyKey(this.evalExpr(expr.argument.property, env))
         : (expr.argument.property as AST.Identifier).name;
-      const old = toNumber(obj.properties.get(key)?.value);
+      // Same class of bug as the `=`/compound-assignment paths: this read
+      // only the instance's own plain value (no getter, no prototype walk)
+      // and wrote back a plain value unconditionally (no setter at all) —
+      // `obj.x++` on a getter/setter-backed accessor silently ignored both.
+      const updateDesc = findPropertyDescriptor(obj, key);
+      const old = toNumber(updateDesc?.getter ? callJSFunction(updateDesc.getter, obj, []) : updateDesc?.value);
       const newVal = expr.operator === '++' ? old + 1 : old - 1;
-      obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
+      if (updateDesc?.setter) {
+        callJSFunction(updateDesc.setter, obj, [newVal]);
+      } else {
+        obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
+        this.growArrayLengthIfNeeded(obj, key);
+      }
       return expr.prefix ? newVal : old;
     }
     const name = (expr.argument as AST.Identifier)?.name;
@@ -774,9 +1356,18 @@ export class Interpreter {
     const right = this.evalExpr(expr.right, env);
 
     switch (expr.operator) {
-      case '+':
-        if (typeof left === 'string' || typeof right === 'string') return toString(left) + toString(right);
-        return toNumber(left) + toNumber(right);
+      case '+': {
+        // ToPrimitive both sides first (default hint) — `left`/`right` may
+        // be objects whose own valueOf()/toString() decide whether this
+        // is really string concatenation or numeric addition; checking
+        // `typeof left === 'string'` before coercing missed every object
+        // operand entirely, e.g. `money + 5` never even tried Money's own
+        // toString() and just silently coerced it as NaN instead.
+        const leftPrim = this.jsToPrimitive(left);
+        const rightPrim = this.jsToPrimitive(right);
+        if (typeof leftPrim === 'string' || typeof rightPrim === 'string') return toString(leftPrim) + toString(rightPrim);
+        return toNumber(leftPrim) + toNumber(rightPrim);
+      }
       case '-': return toNumber(left) - toNumber(right);
       case '*': return toNumber(left) * toNumber(right);
       case '/': return toNumber(left) / toNumber(right);
@@ -818,6 +1409,25 @@ export class Interpreter {
     return left;
   }
 
+  // Real arrays auto-grow `.length` when a numeric index at or past the
+  // current length is assigned (`arr[arr.length] = x`, the classic "push
+  // without .push()" idiom — jQuery's own internal `map()` uses exactly
+  // this). Every array method that appends (push, splice, ...) already
+  // maintains this manually; a bare indexed assignment/compound-assignment/
+  // increment never did, so `.length` silently stayed stale — anything
+  // that later reads `.length` (an ordinary for-loop, JSON.stringify,
+  // spread) saw the array as empty even though the values were really
+  // there at their indices. Shared by all three write paths that can
+  // target an array index: plain `=`, compound (`+=` etc.), and `++`/`--`.
+  private growArrayLengthIfNeeded(obj: JSObject, key: string): void {
+    if (obj.type !== 'array' || !/^(0|[1-9]\d*)$/.test(key)) return;
+    const idx = Number(key);
+    const currentLength = Number(obj.properties.get('length')?.value ?? 0);
+    if (idx >= currentLength) {
+      obj.properties.set('length', { value: idx + 1, writable: true, enumerable: false, configurable: false });
+    }
+  }
+
   private evalAssignment(expr: AST.AssignmentExpression, env: Environment): JSValue {
     const right = this.evalExpr(expr.right, env);
 
@@ -842,6 +1452,8 @@ export class Interpreter {
         case '>>=': newVal = toNumber(current) >> toNumber(right); break;
         case '>>>=': newVal = toNumber(current) >>> toNumber(right); break;
         case '??=': newVal = (current !== null && current !== undefined) ? current : right; break;
+        case '&&=': newVal = toBoolean(current) ? right : current; break;
+        case '||=': newVal = toBoolean(current) ? current : right; break;
         default: newVal = right;
       }
       env.set(name, newVal);
@@ -852,10 +1464,10 @@ export class Interpreter {
       const obj = this.evalExpr(expr.left.object, env) as JSObject;
       if (typeof obj !== 'object' || obj === null) return right;
       const key = expr.left.computed
-        ? String(this.evalExpr(expr.left.property, env))
+        ? toPropertyKey(this.evalExpr(expr.left.property, env))
         : (expr.left.property as AST.Identifier).name;
       if (expr.operator === '=') {
-        const existingDesc = obj.properties.get(key);
+        const existingDesc = findPropertyDescriptor(obj, key);
         if (existingDesc?.setter) {
           callJSFunction(existingDesc.setter, obj, [right]);
         } else {
@@ -874,24 +1486,18 @@ export class Interpreter {
             }
           }
           obj.properties.set(key, { value: right, writable: true, enumerable: true, configurable: true });
+          this.growArrayLengthIfNeeded(obj, key);
         }
         return right;
       }
-      let current: JSValue;
-      if (obj.properties.has(key)) {
-        const d = obj.properties.get(key)!;
-        current = d.getter ? callJSFunction(d.getter, obj, []) : d.value;
-      } else if (obj.prototype) {
-        let proto: JSObject | null = obj.prototype;
-        let found = false;
-        while (proto) {
-          if (proto.properties.has(key)) { current = proto.properties.get(key)!.value; found = true; break; }
-          proto = proto.prototype;
-        }
-        if (!found) current = undefined;
-      } else {
-        current = undefined;
-      }
+      // Same prototype-chain gap as the setter checks: an inherited
+      // accessor's descriptor (found only via the prototype walk) was read
+      // with plain `.value` instead of calling `.getter`, and a getter-only
+      // descriptor always has `value: undefined` — so `obj.n += 5` on a
+      // class accessor read `undefined` as the current value regardless of
+      // what the getter actually returned.
+      const currentDesc = findPropertyDescriptor(obj, key);
+      const current: JSValue = currentDesc?.getter ? callJSFunction(currentDesc.getter, obj, []) : currentDesc?.value;
       let newVal: JSValue;
       switch (expr.operator) {
         case '+=': newVal = (typeof current === 'string' || typeof right === 'string') ? toString(current) + toString(right) : toNumber(current) + toNumber(right); break;
@@ -906,11 +1512,17 @@ export class Interpreter {
         case '>>=': newVal = toNumber(current) >> toNumber(right); break;
         case '>>>=': newVal = toNumber(current) >>> toNumber(right); break;
         case '??=': newVal = (current !== null && current !== undefined) ? current : right; break;
+        case '&&=': newVal = toBoolean(current) ? right : current; break;
+        case '||=': newVal = toBoolean(current) ? current : right; break;
         default: newVal = right;
       }
-      obj.properties.has(key) && obj.properties.get(key)!.setter
-        ? callJSFunction(obj.properties.get(key)!.setter!, obj, [newVal])
-        : obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
+      const compoundSetter = findPropertyDescriptor(obj, key)?.setter;
+      if (compoundSetter) {
+        callJSFunction(compoundSetter, obj, [newVal]);
+      } else {
+        obj.properties.set(key, { value: newVal, writable: true, enumerable: true, configurable: true });
+        this.growArrayLengthIfNeeded(obj, key);
+      }
       return newVal;
     }
 
@@ -936,6 +1548,12 @@ export class Interpreter {
           const pEnv = new Environment(pfn.closure);
           pEnv.markFunctionScope();
           pEnv.setLocal('this', thisObj ?? createObject(null));
+          // new.target stays the ORIGINALLY invoked (most-derived) class
+          // throughout an entire super() chain, per spec — pEnv is rooted
+          // fresh at the parent constructor's own closure, which has no
+          // idea what `new.target` was outside it, so it must be carried
+          // over explicitly rather than left to default to undefined.
+          pEnv.setLocal('__newTarget', env.get('__newTarget'));
           const args: JSValue[] = [];
           for (const a of expr.arguments) {
             if (a.type === 'SpreadElement') {
@@ -956,7 +1574,7 @@ export class Interpreter {
             }
           }
           pEnv.setLocal('arguments', createArray(args));
-          pfn.params.forEach((p, i) => pEnv.setLocal(p, args[i]));
+          this.bindParams(pfn, pEnv, args);
           const pResult = this.execBlock((pfn.body as AST.BlockStatement).body as AST.Statement[], pEnv);
           if (isReturnSignal(pResult) && typeof pResult.value === 'object' && pResult.value !== null) {
             return pResult.value;
@@ -964,7 +1582,7 @@ export class Interpreter {
         }
         return thisObj ?? createObject(null);
       }
-      throw new TypeError('super() called outside of a derived class constructor');
+      throw jsError('TypeError', 'super() called outside of a derived class constructor');
     }
 
     // Evaluate callee and cache the member object to avoid double-evaluation
@@ -977,16 +1595,17 @@ export class Interpreter {
       // super.method(): look up method on parent prototype, but use current 'this'
       if (expr.callee.object.type === 'SuperExpression') {
         const superProto = this.evalExpr(expr.callee.object, env);
-        const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+        const key = expr.callee.computed ? toPropertyKey(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
         callee = this.getPropertyValue(superProto, key);
         thisObj = env.get('this');
       } else {
         thisObj = this.evalExpr(expr.callee.object, env);
         if (thisObj === undefined || thisObj === null) {
           if (expr.callee.optional) return undefined;
-          throw new TypeError(`Cannot read properties of ${thisObj}`);
+          const propName = !expr.callee.computed ? (expr.callee.property as AST.Identifier).name : undefined;
+          throw jsError('TypeError', `Cannot read properties of ${thisObj}${propName ? ` (reading '${propName}')` : ''}`);
         }
-        const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+        const key = expr.callee.computed ? toPropertyKey(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
         callee = this.getPropertyValue(thisObj, key);
       }
     } else {
@@ -1022,20 +1641,32 @@ export class Interpreter {
           return result;
         } catch (err) {
           if (err instanceof JSError) throw err;
-          throw new JSError(err instanceof Error ? err.message : String(err));
+          throw jsError(err instanceof Error ? err.name : 'Error', err instanceof Error ? err.message : String(err));
         }
+      }
+      if (fn.type === 'closure' && !fn.isNative && fn.generator) {
+        return this.runGeneratorBody(fn, thisObj, args);
       }
       if (fn.type === 'closure' && !fn.isNative) {
         const callEnv = new Environment(fn.closure);
         callEnv.markFunctionScope();
         callEnv.setLocal('arguments', createArray(args));
-        fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+        this.bindParams(fn, callEnv, args);
         if (fn.isArrow) {
           callEnv.setLocal('this', fn.closure.get('this') ?? createObject(null));
+          // Arrows never get their own new.target binding either — leave
+          // __newTarget unset so `new.target` inside one resolves through
+          // the closure chain to the enclosing ordinary function's value.
         } else if (thisObj === undefined && !fn.isStrict) {
           callEnv.setLocal('this', this.globalEnv.get('this') ?? createObject(null));
+          callEnv.setLocal('__newTarget', undefined);
         } else {
           callEnv.setLocal('this', thisObj);
+          // A plain (non-new) call always has new.target === undefined,
+          // even from inside a constructor that's itself mid-construction —
+          // shadow whatever the enclosing scope's __newTarget was rather
+          // than leaving it unset (which would incorrectly inherit it).
+          callEnv.setLocal('__newTarget', undefined);
         }
         const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
         let result: JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal;
@@ -1071,7 +1702,7 @@ export class Interpreter {
 
     // Callable JSObject with nativeFn (e.g., Promise constructor)
     if (typeof callee === 'object' && callee !== null && 'callable' in callee && (callee as JSObject).callable && (callee as JSObject).nativeFn) {
-      return (callee as JSObject).nativeFn!(thisObj, args) as JSValue;
+      return callNativeSafe((callee as JSObject).nativeFn!, thisObj, args);
     }
 
     if (typeof callee === 'function') {
@@ -1082,14 +1713,47 @@ export class Interpreter {
   }
 
   private evalNew(expr: AST.NewExpression, env: Environment): JSValue {
-    const ctor = this.evalExpr(expr.callee, env);
-    const args = expr.arguments.map(a => this.evalExpr(a, env));
+    let ctor = this.evalExpr(expr.callee, env);
+    let args = expr.arguments.map(a => this.evalExpr(a, env));
+    // Unwrap `fn.bind(...)` results back to the real target — see the
+    // __boundTarget comment in makeFunctionCallHelper.
+    while (typeof ctor === 'object' && ctor !== null && (ctor as unknown as { __boundTarget?: JSFunction }).__boundTarget) {
+      const boundCtor = ctor as unknown as { __boundTarget: JSFunction; __boundArgs: JSValue[] };
+      args = [...boundCtor.__boundArgs, ...args];
+      ctor = boundCtor.__boundTarget;
+    }
 
     // Class constructor (type: 'class' on a JSObject)
     if (typeof ctor === 'object' && ctor !== null && 'type' in ctor && (ctor as JSObject).type === 'class') {
       const classObj = ctor as JSObject;
       const classProto = classObj.prototype ?? createObject(null);
       const instance = createObject(classProto);
+
+      // Instance field initializers (`x = 1` in a class body) — run base
+      // class first, most-derived last (so a subclass field can shadow an
+      // inherited one), each in its own class's closure scope with `this`
+      // bound to the new instance, since an initializer can reference it
+      // (`y = this.x * 2`). buildClassObject only ever collected these;
+      // nothing previously consumed the list, so class fields were
+      // declared but never actually became properties on any instance.
+      const classChain: JSObject[] = [];
+      let curClass: JSObject | undefined = classObj;
+      while (curClass) {
+        classChain.unshift(curClass);
+        const superVal: JSValue = curClass.properties?.get('super')?.value;
+        curClass = typeof superVal === 'object' && superVal !== null ? superVal as JSObject : undefined;
+      }
+      for (const c of classChain) {
+        const fields = (c as JSObject & { __instanceFields?: { key: string; value: unknown }[] }).__instanceFields;
+        const closureEnv = (c as JSObject & { __classClosure?: Environment }).__classClosure;
+        if (!fields || !closureEnv) continue;
+        const fieldEnv = new Environment(closureEnv);
+        fieldEnv.setLocal('this', instance);
+        for (const f of fields) {
+          const value = f.value ? this.evalExpr(f.value as AST.Expression, fieldEnv) : undefined;
+          instance.properties.set(f.key, { value, writable: true, enumerable: true, configurable: true });
+        }
+      }
 
       const superClass = classObj.properties?.get('super')?.value;
       const initFn = classObj.properties?.get('constructor');
@@ -1100,6 +1764,7 @@ export class Interpreter {
         callEnv.markFunctionScope();
         callEnv.setLocal('this', instance);
         callEnv.setLocal('arguments', createArray(args));
+        callEnv.setLocal('__newTarget', classObj);
 
         if (superClass && typeof superClass === 'object' && superClass !== null) {
           // Set super to the parent prototype for super.x / super[expr] member access
@@ -1110,7 +1775,7 @@ export class Interpreter {
           callEnv.setLocal('__superCtor', superClass);
         }
 
-        fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+        this.bindParams(fn, callEnv, args);
         const result = this.execBlock((fn.body as AST.BlockStatement).body as AST.Statement[], callEnv);
         if (isReturnSignal(result) && typeof result.value === 'object' && result.value !== null) {
           return result.value;
@@ -1132,19 +1797,28 @@ export class Interpreter {
     // Callable JSObject with nativeFn (e.g., new Promise(...))
     if (typeof ctor === 'object' && ctor !== null && 'callable' in ctor && (ctor as JSObject).callable && (ctor as JSObject).nativeFn) {
       const obj = ctor as JSObject;
-      const result = obj.nativeFn!(createObject(null), args);
+      const result = callNativeSafe(obj.nativeFn!, createObject(null), args);
       return (typeof result === 'object' && result !== null) ? result : createObject(null);
     }
 
     // Function constructor (JSFunction closure)
     if (typeof ctor === 'object' && ctor !== null && 'type' in ctor && (ctor as JSFunction).type === 'closure') {
       const fn = ctor as JSFunction;
-      const instance = createObject(null);
+      // The new instance must link to fn's own .prototype object (real
+      // JS's [[Prototype]] on construction) — this always built a bare,
+      // unlinked createObject(null) instead, so the entire pre-class
+      // "function Ctor() {}; Ctor.prototype.method = ...; new Ctor()"
+      // inheritance pattern was completely broken: every inherited
+      // property/method read back undefined, and `instance instanceof
+      // Ctor` was always false.
+      const protoVal = this.getPropertyValue(fn, 'prototype');
+      const instance = createObject(typeof protoVal === 'object' && protoVal !== null ? protoVal as JSObject : null);
       const callEnv = new Environment(fn.closure);
       callEnv.markFunctionScope();
       callEnv.setLocal('this', instance);
       callEnv.setLocal('arguments', createArray(args));
-      fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+      callEnv.setLocal('__newTarget', fn);
+      this.bindParams(fn, callEnv, args);
       const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
       if (bodyNode.type === 'BlockStatement') {
         const result = this.execBlock(bodyNode.body as AST.Statement[], callEnv);
@@ -1162,10 +1836,11 @@ export class Interpreter {
     const obj = this.evalExpr(expr.object, env);
     if (obj === undefined || obj === null) {
       if (expr.optional) return undefined;
-      throw new TypeError(`Cannot read properties of ${obj}`);
+      const propName = !expr.computed ? (expr.property as AST.Identifier).name : undefined;
+      throw jsError('TypeError', `Cannot read properties of ${obj}${propName ? ` (reading '${propName}')` : ''}`);
     }
     if (typeof obj === 'string') {
-      const key = expr.computed ? String(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;
+      const key = expr.computed ? toPropertyKey(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;
       if (key === 'length') return (obj as string).length;
       const idx = parseInt(key, 10);
       if (!isNaN(idx)) return (obj as string)[idx] ?? undefined;
@@ -1174,17 +1849,29 @@ export class Interpreter {
         toLowerCase: (_t, _a) => (obj as string).toLowerCase(),
         charAt: (_t, a) => (obj as string).charAt(toNumber(a[0])),
         charCodeAt: (_t, a) => (obj as string).charCodeAt(toNumber(a[0])),
+        at: (_t, a) => {
+          const s = obj as string;
+          let i = toNumber(a[0]);
+          if (i < 0) i += s.length;
+          return i >= 0 && i < s.length ? s[i] : undefined;
+        },
+        normalize: (_t, a) => (obj as string).normalize(a[0] !== undefined ? toString(a[0]) as any : undefined),
+        localeCompare: (_t, a) => (obj as string).localeCompare(toString(a[0])),
         indexOf: (_t, a) => (obj as string).indexOf(toString(a[0])),
         lastIndexOf: (_t, a) => (obj as string).lastIndexOf(toString(a[0])),
         slice: (_t, a) => (obj as string).slice(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         substring: (_t, a) => (obj as string).substring(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         split: (_t, a) => {
-          const sep = a[0] !== undefined ? toString(a[0]) : undefined;
-          const parts = sep !== undefined ? (obj as string).split(sep) : [obj as string];
+          if (a[0] === undefined) return createArray([obj as string]);
+          const pattern = a[0];
+          const parts = typeof pattern === 'object' && pattern !== null && isJSObjectWithMeta(pattern) && pattern.nativeRegExp
+            ? (obj as string).split(pattern.nativeRegExp)
+            : (obj as string).split(toString(pattern));
           return createArray(parts.map(p => p as unknown as JSValue));
         },
-        replace: (_t, a) => (obj as string).replace(toString(a[0]), toString(a[1] ?? '')),
+        replace: (_t, a) => stringReplaceImpl(obj as string, a[0], a[1], false),
+        replaceAll: (_t, a) => stringReplaceImpl(obj as string, a[0], a[1], true),
         trim: (_t, _a) => (obj as string).trim(),
         trimStart: (_t, _a) => (obj as string).trimStart(),
         trimEnd: (_t, _a) => (obj as string).trimEnd(),
@@ -1196,10 +1883,19 @@ export class Interpreter {
         padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
         padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
         match: (_t, a) => {
-          const m = (obj as string).match(new RegExp(toString(a[0])));
+          const m = (obj as string).match(toNativeRegex(a[0]));
           return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
         },
-        search: (_t, a) => (obj as string).search(new RegExp(toString(a[0]))),
+        matchAll: (_t, a) => {
+          const matches = [...(obj as string).matchAll(toNativeRegex(a[0], 'g'))];
+          return createArray(matches.map(m => {
+            const result = createArray(m.map(v => (v !== undefined ? v : null) as unknown as JSValue));
+            result.properties.set('index', { value: m.index, writable: true, enumerable: true, configurable: true });
+            result.properties.set('input', { value: m.input, writable: true, enumerable: true, configurable: true });
+            return result as unknown as JSValue;
+          }));
+        },
+        search: (_t, a) => (obj as string).search(toNativeRegex(a[0])),
         valueOf: (_t: JSValue, _a: JSValue[]) => obj,
         toString: (_t: JSValue, _a: JSValue[]) => obj,
       };
@@ -1210,7 +1906,7 @@ export class Interpreter {
     }
     const nativeObj = obj as JSObject;
     const key = expr.computed
-      ? String(this.evalExpr(expr.property, env))
+      ? toPropertyKey(this.evalExpr(expr.property, env))
       : (expr.property as AST.Identifier).name;
 
     // Closure (function) objects: provide .length, .name, .prototype, .constructor
@@ -1221,6 +1917,13 @@ export class Interpreter {
       if (key === 'arguments') return undefined;
       if (key === 'caller') return undefined;
       if (key === 'prototype' && !fn.isArrow) {
+        // A reassigned prototype (`Ctor.prototype = Object.create(...)`, the
+        // classic subclassing idiom) is stored as a real property, in
+        // fn.properties — check that before falling back to the lazily
+        // cached __proto_obj, or a reassignment would silently keep
+        // returning the original auto-created prototype object.
+        const existing = fn.properties?.get('prototype');
+        if (existing) return existing.value;
         let protoObj = (nativeObj as any).__proto_obj;
         if (!protoObj) {
           protoObj = createObject(null);
@@ -1228,6 +1931,9 @@ export class Interpreter {
           (nativeObj as any).__proto_obj = protoObj;
         }
         return protoObj;
+      }
+      if (key === 'call' || key === 'apply' || key === 'bind') {
+        return this.makeFunctionCallHelper(fn, key);
       }
       // For other properties, fall through to the general path
     }
@@ -1258,7 +1964,93 @@ export class Interpreter {
         proto = proto.prototype;
       }
     }
-    return undefined;
+    return this.objectPrototypeFallback(nativeObj, key);
+  }
+
+  // Function.prototype.call/apply/bind — plain function objects had no
+  // properties map at all until this session, so these three universally
+  // used methods were simply absent from every function: `Parent.call(this,
+  // ...)`, the backbone of the classic prototype-inheritance pattern, and
+  // `fn.bind(x)`/`fn.apply(x, args)` all silently evaluated to `undefined`
+  // instead of ever invoking the target function.
+  private makeFunctionCallHelper(fn: JSFunction, key: 'call' | 'apply' | 'bind'): JSFunction {
+    const toArgsArray = (val: JSValue): JSValue[] => {
+      if (typeof val !== 'object' || val === null || !('type' in val) || (val as JSObject).type !== 'array') return [];
+      const arr = val as JSObject;
+      const len = Number(arr.properties.get('length')?.value ?? 0);
+      const out: JSValue[] = [];
+      for (let i = 0; i < len; i++) out.push(arr.properties.get(String(i))?.value);
+      return out;
+    };
+    if (key === 'call') {
+      return createNativeFunction('call', (_t, args) => this.callFunction(fn, args[0], args.slice(1)));
+    }
+    if (key === 'apply') {
+      return createNativeFunction('apply', (_t, args) => this.callFunction(fn, args[0], toArgsArray(args[1])));
+    }
+    // bind: called once (as `fn.bind(this, ...presetArgs)`) to produce a new
+    // function that always invokes `fn` with that fixed `this` and those
+    // preset args prepended to whatever args it's later called with.
+    return createNativeFunction('bind', (_t, bindArgs) => {
+      const thisArg = bindArgs[0];
+      const presetArgs = bindArgs.slice(1);
+      const bound = createNativeFunction(`bound ${fn.name}`, (_t2, callArgs) => this.callFunction(fn, thisArg, [...presetArgs, ...callArgs]));
+      // A bound function is still constructible (`new (fn.bind(x))()`) — real
+      // JS ignores the bound `this` in that case and constructs the original
+      // target instead, just with the preset args prepended. Tag it so
+      // evalNew can unwrap back to the real target instead of treating this
+      // like any other opaque native function (which would call it with a
+      // throwaway instance as `this`, silently discarding the bound `this`
+      // override in the process without ever linking to fn.prototype).
+      (bound as unknown as { __boundTarget?: JSFunction; __boundArgs?: JSValue[] }).__boundTarget = fn;
+      (bound as unknown as { __boundTarget?: JSFunction; __boundArgs?: JSValue[] }).__boundArgs = presetArgs;
+      return bound;
+    });
+  }
+
+  // Object.prototype fallback (hasOwnProperty, isPrototypeOf,
+  // propertyIsEnumerable, toString, valueOf, toLocaleString). Every plain
+  // object/array/class instance's prototype chain terminates in a
+  // null-prototyped object from createObject(null), never a real
+  // Object.prototype — so these near-universal methods were simply absent:
+  // `obj.hasOwnProperty(k)` silently evaluated to `undefined` (not a
+  // function, but not a crash either, since calling a non-function callee
+  // is itself a no-op here) instead of ever running, quietly defeating the
+  // extremely common for-in-with-hasOwnProperty-guard idiom. Skips
+  // toString/valueOf for functions — those get more specific handling from
+  // the closure special case above and shouldn't fall back to the generic
+  // "[object Object]" that a plain object gets.
+  private objectPrototypeFallback(target: JSObject, key: string): JSValue {
+    const isFunction = (target as unknown as { type?: string }).type === 'closure';
+    switch (key) {
+      case 'hasOwnProperty':
+        return createNativeFunction('hasOwnProperty', (t, a) =>
+          typeof t === 'object' && t !== null ? !!(t as JSObject).properties?.has(toPropertyKey(a[0])) : false);
+      case 'isPrototypeOf':
+        return createNativeFunction('isPrototypeOf', (_t, a) => {
+          let proto = typeof a[0] === 'object' && a[0] !== null ? (a[0] as JSObject).prototype : null;
+          while (proto) {
+            if (proto === target) return true;
+            proto = proto.prototype;
+          }
+          return false;
+        });
+      case 'propertyIsEnumerable':
+        return createNativeFunction('propertyIsEnumerable', (t, a) =>
+          typeof t === 'object' && t !== null ? !!(t as JSObject).properties?.get(toPropertyKey(a[0]))?.enumerable : false);
+      case 'toString':
+        return isFunction ? undefined : createNativeFunction('toString', (t) => {
+          const symbolGlobal = this.globalEnv.get('Symbol');
+          const tagSym = typeof symbolGlobal === 'object' && symbolGlobal !== null ? (symbolGlobal as JSObject).properties.get('toStringTag')?.value : undefined;
+          return objectPrototypeToStringTag(t, tagSym !== undefined ? toPropertyKey(tagSym) : null);
+        });
+      case 'valueOf':
+        return isFunction ? undefined : createNativeFunction('valueOf', (t) => t as JSValue);
+      case 'toLocaleString':
+        return isFunction ? undefined : createNativeFunction('toLocaleString', (t) => toString(t));
+      default:
+        return undefined;
+    }
   }
 
   private getPropertyValue(obj: JSValue, key: string): JSValue {
@@ -1269,17 +2061,29 @@ export class Interpreter {
         toLowerCase: (_t, _a) => (obj as string).toLowerCase(),
         charAt: (_t, a) => (obj as string).charAt(toNumber(a[0])),
         charCodeAt: (_t, a) => (obj as string).charCodeAt(toNumber(a[0])),
+        at: (_t, a) => {
+          const s = obj as string;
+          let i = toNumber(a[0]);
+          if (i < 0) i += s.length;
+          return i >= 0 && i < s.length ? s[i] : undefined;
+        },
+        normalize: (_t, a) => (obj as string).normalize(a[0] !== undefined ? toString(a[0]) as any : undefined),
+        localeCompare: (_t, a) => (obj as string).localeCompare(toString(a[0])),
         indexOf: (_t, a) => (obj as string).indexOf(toString(a[0])),
         lastIndexOf: (_t, a) => (obj as string).lastIndexOf(toString(a[0])),
         slice: (_t, a) => (obj as string).slice(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         substring: (_t, a) => (obj as string).substring(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         split: (_t, a) => {
-          const sep = a[0] !== undefined ? toString(a[0]) : undefined;
-          const parts = sep !== undefined ? (obj as string).split(sep) : [obj as string];
+          if (a[0] === undefined) return createArray([obj as string]);
+          const pattern = a[0];
+          const parts = typeof pattern === 'object' && pattern !== null && isJSObjectWithMeta(pattern) && pattern.nativeRegExp
+            ? (obj as string).split(pattern.nativeRegExp)
+            : (obj as string).split(toString(pattern));
           return createArray(parts.map(p => p as unknown as JSValue));
         },
-        replace: (_t, a) => (obj as string).replace(toString(a[0]), toString(a[1] ?? '')),
+        replace: (_t, a) => stringReplaceImpl(obj as string, a[0], a[1], false),
+        replaceAll: (_t, a) => stringReplaceImpl(obj as string, a[0], a[1], true),
         trim: (_t, _a) => (obj as string).trim(),
         trimStart: (_t, _a) => (obj as string).trimStart(),
         trimEnd: (_t, _a) => (obj as string).trimEnd(),
@@ -1291,9 +2095,19 @@ export class Interpreter {
         padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
         padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
         match: (_t, a) => {
-          const m = (obj as string).match(new RegExp(toString(a[0])));
+          const m = (obj as string).match(toNativeRegex(a[0]));
           return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
         },
+        matchAll: (_t, a) => {
+          const matches = [...(obj as string).matchAll(toNativeRegex(a[0], 'g'))];
+          return createArray(matches.map(m => {
+            const result = createArray(m.map(v => (v !== undefined ? v : null) as unknown as JSValue));
+            result.properties.set('index', { value: m.index, writable: true, enumerable: true, configurable: true });
+            result.properties.set('input', { value: m.input, writable: true, enumerable: true, configurable: true });
+            return result as unknown as JSValue;
+          }));
+        },
+        search: (_t, a) => (obj as string).search(toNativeRegex(a[0])),
         valueOf: (_t: JSValue, _a: JSValue[]) => obj,
         toString: (_t: JSValue, _a: JSValue[]) => obj,
       };
@@ -1342,6 +2156,9 @@ export class Interpreter {
           }
           return protoObj;
         }
+        if (key === 'call' || key === 'apply' || key === 'bind') {
+          return this.makeFunctionCallHelper(fn, key);
+        }
         // Fall through to normal property lookup for other keys
       }
       if ((o as any).__type_override === 'symbol') {
@@ -1355,7 +2172,7 @@ export class Interpreter {
         if (key in symMethods) return createNativeFunction(key, symMethods[key]);
         return undefined;
       }
-      const desc = o.properties.get(key);
+      const desc = o.properties?.get(key);
       if (desc) {
         if (desc.getter) return callJSFunction(desc.getter, obj, []);
         return desc.value;
@@ -1381,6 +2198,7 @@ export class Interpreter {
           proto = proto.prototype;
         }
       }
+      return this.objectPrototypeFallback(o, key);
     }
     return undefined;
   }
@@ -1407,8 +2225,19 @@ export class Interpreter {
         continue;
       }
       const key = prop.computed
-        ? String(this.evalExpr(prop.key, env))
+        ? toPropertyKey(this.evalExpr(prop.key, env))
         : prop.key.type === 'Identifier' ? prop.key.name : String(prop.key);
+      if (prop.kind === 'get' || prop.kind === 'set') {
+        const fn = prop.value ? this.evalExpr(prop.value, env) as JSFunction : undefined;
+        const existing = obj.properties.get(key);
+        obj.properties.set(key, {
+          value: undefined, writable: false,
+          getter: prop.kind === 'get' ? fn : existing?.getter,
+          setter: prop.kind === 'set' ? fn : existing?.setter,
+          enumerable: true, configurable: true,
+        });
+        continue;
+      }
       const value = prop.value ? this.evalExpr(prop.value, env) : undefined;
       obj.properties.set(key, { value, writable: true, enumerable: true, configurable: true });
     }
@@ -1416,12 +2245,12 @@ export class Interpreter {
   }
 
   private evalFunctionExpr(expr: AST.FunctionExpression, env: Environment): JSValue {
-    return createFunction(expr.id?.name ?? 'anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, false, expr.generator, false, undefined, expr.strictMode);
+    return createFunction(expr.id?.name ?? 'anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, false, expr.generator, false, undefined, expr.strictMode, expr.params);
   }
 
   private evalArrowFunction(expr: AST.ArrowFunctionExpression, env: Environment): JSValue {
     const strict = expr.body.type === 'BlockStatement' ? this.hasStrictDirective(expr.body) : false;
-    return createFunction('anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, true, false, false, undefined, strict);
+    return createFunction('anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, true, false, false, undefined, strict, expr.params);
   }
 
   private evalSequence(expr: AST.SequenceExpression, env: Environment): JSValue {
@@ -1433,7 +2262,14 @@ export class Interpreter {
   }
 
   private evalAwait(expr: AST.AwaitExpression, env: Environment): JSValue {
-    const val = this.evalExpr(expr.argument, env);
+    return this.awaitValue(this.evalExpr(expr.argument, env));
+  }
+
+  /** Shared by `await expr` and `for await (x of iterable)` — if the value
+   *  is a Promise, unwrap a fulfilled one, throw a rejected one, or suspend
+   *  via AwaitSignal while pending; otherwise passes the value through
+   *  unchanged (`for await` also accepts plain, non-Promise values). */
+  private awaitValue(val: JSValue): JSValue {
     // If value is a pending Promise, throw AwaitSignal to suspend execution
     if (typeof val === 'object' && val !== null && isPromiseObject(val)) {
       if (isPromiseFulfilled(val)) {
@@ -1454,7 +2290,78 @@ export class Interpreter {
 
   private evalYield(expr: AST.YieldExpression, env: Environment): JSValue {
     const val = expr.argument ? this.evalExpr(expr.argument, env) : undefined;
-    return val;
+    const sink = this.yieldSinkStack[this.yieldSinkStack.length - 1];
+    if (sink) {
+      if (expr.delegate) for (const v of this.forOfValues(val)) sink.push(v);
+      else sink.push(val);
+    }
+    // A real `yield` suspends here and resumes with whatever .next(v) is
+    // next called with — this tree-walking interpreter has no way to pause
+    // mid-body (see runGeneratorBody), so .next(v) can never feed v back in.
+    return undefined;
+  }
+
+  /**
+   * Generator functions (`function* () { yield ... }`) can't actually
+   * suspend in a tree-walking interpreter — there's no way to pause
+   * mid-body and resume later from the exact same point. Instead this runs
+   * the whole body once, eagerly, collecting every yielded value in order
+   * via yieldSinkStack, then hands back a real .next()-based iterator that
+   * replays those collected values one per call. This is faithful for the
+   * common "yield a sequence of values" iterable pattern (including
+   * `for...of` and `yield*` delegation, both of which only ever pull
+   * values forward) but NOT for two-way communication (a value passed to
+   * .next(v) can't be fed back into an already-finished run) or for
+   * infinite/lazy generators, which still run to completion up front,
+   * gated only by the interpreter's existing runaway-script timeout.
+   */
+  private runGeneratorBody(fn: JSFunction, thisObj: JSValue, args: JSValue[]): JSObject {
+    const callEnv = new Environment(fn.closure);
+    callEnv.markFunctionScope();
+    callEnv.setLocal('arguments', createArray(args));
+    this.bindParams(fn, callEnv, args);
+    if (fn.isArrow) callEnv.setLocal('this', fn.closure.get('this') ?? createObject(null));
+    else if (thisObj === undefined && !fn.isStrict) callEnv.setLocal('this', this.globalEnv.get('this') ?? createObject(null));
+    else callEnv.setLocal('this', thisObj);
+
+    const sink: JSValue[] = [];
+    this.yieldSinkStack.push(sink);
+    let returnValue: JSValue;
+    try {
+      const result = this.execBlock((fn.body as AST.BlockStatement).body as AST.Statement[], callEnv);
+      if (isReturnSignal(result)) returnValue = result.value;
+      else if (isThrowSignal(result)) throw new JSError(result.value);
+    } finally {
+      this.yieldSinkStack.pop();
+    }
+
+    const iterObj = createObject(null);
+    let idx = 0;
+    let done = false;
+    const stepResult = (value: JSValue, isDone: boolean): JSObject => {
+      const r = createObject(null);
+      r.properties.set('value', { value, writable: true, enumerable: true, configurable: true });
+      r.properties.set('done', { value: isDone, writable: true, enumerable: true, configurable: true });
+      return r;
+    };
+    iterObj.properties.set('next', {
+      value: createNativeFunction('next', () => {
+        if (done) return stepResult(undefined, true);
+        if (idx < sink.length) return stepResult(sink[idx++], false);
+        done = true;
+        return stepResult(returnValue, true);
+      }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    iterObj.properties.set('return', {
+      value: createNativeFunction('return', (_t, a) => { done = true; return stepResult(a[0], true); }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    iterObj.properties.set('throw', {
+      value: createNativeFunction('throw', (_t, a) => { done = true; throw new JSError(a[0]); }),
+      writable: true, enumerable: true, configurable: true,
+    });
+    return iterObj;
   }
 
   /** Check if a block statement body starts with a 'use strict' directive. */

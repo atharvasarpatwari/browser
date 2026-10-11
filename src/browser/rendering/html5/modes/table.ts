@@ -198,12 +198,12 @@ export function handleInTableBody(ctx: TreeBuilderContext, token: Token): void {
     case 'open':
       switch (token.tagName) {
         case 'tr':
-          ctx.generateImpliedEndTags();
           // Auto-insert <tbody> if no table body element exists in scope
           if (!ctx.isInTableScope('tbody') && !ctx.isInTableScope('thead') && !ctx.isInTableScope('tfoot')) {
             const tbodyToken: Token = { kind: 'open', tagName: 'tbody', attrs: new Map(), offset: token.offset };
             ctx.insertHTMLElement(tbodyToken);
           }
+          ctx.clearStackToTableBodyContext();
           ctx.insertHTMLElement(token);
           ctx.setMode(Im.IN_ROW);
           return;

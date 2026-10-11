@@ -98,6 +98,11 @@ class SocketHandle implements ISocketHandle {
       .then((result) => (result as { certificate?: unknown } | null)?.certificate ?? null);
   }
 
+  getTlsAuthorization(): Promise<{ authorized: boolean; authorizationError: string | null }> {
+    return this.proxy.invoke(this.id, 'get-tls-authorization')
+      .then((result) => result as { authorized: boolean; authorizationError: string | null });
+  }
+
   upgradeTls(servername: string): Promise<void> {
     return this.proxy.invoke(this.id, 'upgrade-tls', { servername }).then(() => undefined);
   }

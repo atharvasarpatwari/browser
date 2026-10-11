@@ -48,6 +48,10 @@
 
 import type { ISharedService, AppConfig } from '../../app/app-shell';
 import type { IBrowserEngine }             from './browser-engine';
+import { createLogger } from '../../common/logger';
+
+const eventBusLog = createLogger('LifecycleEventBus');
+const managerLog = createLogger('LifecycleManager');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LIFECYCLE STATE
@@ -339,7 +343,7 @@ class LifecycleEventBus {
     for (const h of handlers) {
       try { h(event); }
       catch (err) {
-        console.error(`[LifecycleEventBus] Handler threw on "${event.kind}":`, err);
+        eventBusLog.error(`Handler threw on "${event.kind}":`, err);
       }
     }
   }
@@ -456,7 +460,7 @@ class LifecycleManager implements ILifecycleManager, ISharedService {
       try {
         await this.runPhases('shutdown');
       } catch (err) {
-        console.error('[LifecycleManager] Error during graceful shutdown:', err);
+        managerLog.error('Error during graceful shutdown:', err);
       }
     }
 
@@ -648,7 +652,7 @@ class LifecycleManager implements ILifecycleManager, ISharedService {
     this.transition(LifecycleState.Crashed);
     this.bus.emit({ kind: 'crashed', error, phase, crashCount: this._crashCount });
     await this.notifyObservers('onCrash', error);
-    console.error(`[LifecycleManager] CRASHED (count=${this._crashCount}):`, error.message);
+    managerLog.error(`CRASHED (count=${this._crashCount}):`, error.message);
 
     // Schedule auto-recovery with exponential backoff if configured
     if (this._recoveryConfig.autoRecover &&
@@ -686,9 +690,7 @@ class LifecycleManager implements ILifecycleManager, ISharedService {
       try {
         await fn.call(obs, arg);
       } catch (err) {
-        console.error(
-          `[LifecycleManager] Observer "${obs.name}.${hook}" threw:`, err,
-        );
+        managerLog.error(`Observer "${obs.name}.${hook}" threw:`, err);
       }
     }
   }
@@ -775,7 +777,7 @@ class LifecycleManager implements ILifecycleManager, ISharedService {
 
   private log(msg: string): void {
     if (this.config.debug) {
-      console.log(`[LifecycleManager] ${msg}`);
+      managerLog.info(msg);
     }
   }
 }

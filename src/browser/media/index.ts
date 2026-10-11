@@ -74,15 +74,6 @@ export type { INavigatorService, BatteryInfo, NetworkConnection, NavigatorEvent,
 export { ClipboardService } from './clipboard';
 export type { IClipboardService, ClipboardItem, ClipboardEvent, ClipboardEventKind, ClipboardEventHandler } from './clipboard';
 
-export { NotificationService } from './notifications';
-export type { INotificationService, NotificationPermission, NotificationOptions, NotificationHandle, NotificationEvent, NotificationEventKind, NotificationEventHandler } from './notifications';
-
-export { PermissionService } from './permissions';
-export type { IPermissionService, PermissionName, PermissionStatus, PermissionResult, PermissionEvent, PermissionEventKind, PermissionEventHandler } from './permissions';
-
-export { GeolocationService } from './geolocation';
-export type { IGeolocationService, GeolocationPermission, PositionOptions, GeolocationPosition, GeolocationCoordinates, GeolocationEvent, GeolocationEventKind, GeolocationEventHandler } from './geolocation';
-
 export { WebSocketClient } from './websocket';
 export type { IWebSocketClient, WSReadyState, WebSocketEvent, WebSocketEventKind, WebSocketEventHandler } from './websocket';
 
@@ -91,9 +82,6 @@ export type { IBroadcastChannelService, BroadcastEvent, BroadcastEventKind, Broa
 
 export { ServiceWorkerContainer } from './service-workers';
 export type { IServiceWorkerContainer, ServiceWorkerRegistration, ServiceWorker, SWState, RegistrationOptions, SWEvent, SWEventKind, SWEventHandler } from './service-workers';
-
-export { PushManager } from './push-api';
-export type { IPushManager, PushSubscription, PushSubscriptionOptions, PushSubscriptionJSON, PushPermissionState, PushEvent, PushEventKind, PushEventHandler } from './push-api';
 
 export { SameOriginPolicy } from './same-origin-policy';
 export type { ISameOriginPolicy, SOPResourceType, SOPAccessResult, SOPEvent, SOPEventKind, SOPEventHandler } from './same-origin-policy';

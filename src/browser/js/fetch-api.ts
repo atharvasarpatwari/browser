@@ -69,7 +69,7 @@ function jsObjToMap(obj: JSObject): Map<string, string> {
 // ── Internal state ───────────────────────────────────────────────────────────
 
 interface HeadersInternal { map: Map<string, string> }
-interface ResponseInternal {
+export interface ResponseInternal {
   body: string;
   status: number;
   statusText: string;
@@ -79,7 +79,7 @@ interface ResponseInternal {
   type: string;
   bodyUsed: boolean;
 }
-interface RequestInternal {
+export interface RequestInternal {
   url: string;
   method: string;
   headers: HeadersInternal;
@@ -100,6 +100,14 @@ interface AbortControllerInternal {
 const headersState = new WeakMap<JSObject, HeadersInternal>();
 const responseState = new WeakMap<JSObject, ResponseInternal>();
 const requestState = new WeakMap<JSObject, RequestInternal>();
+
+/** Exposed for cache-api.ts, which stores/reconstructs real Response/Request instances. */
+export function getResponseInternal(obj: JSValue): ResponseInternal | undefined {
+  return typeof obj === 'object' && obj !== null ? responseState.get(obj as JSObject) : undefined;
+}
+export function getRequestInternal(obj: JSValue): RequestInternal | undefined {
+  return typeof obj === 'object' && obj !== null ? requestState.get(obj as JSObject) : undefined;
+}
 const signalState = new WeakMap<JSObject, AbortSignalInternal>();
 const controllerState = new WeakMap<JSObject, AbortControllerInternal>();
 
@@ -240,7 +248,7 @@ export function createHeadersClass(_eventLoop: EventLoop): JSObject {
 
 // ── Response class ───────────────────────────────────────────────────────────
 
-function buildResponseInstance(eventLoop: EventLoop, internal: ResponseInternal): JSObject {
+export function buildResponseInstance(eventLoop: EventLoop, internal: ResponseInternal): JSObject {
   const obj = createObject(null);
   responseState.set(obj, internal);
 

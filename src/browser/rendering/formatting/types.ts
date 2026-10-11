@@ -17,7 +17,21 @@ export type FormattingContextType =
   | 'inline-table'
   | 'none';
 
-/** Classifies a display value into its formatting role. */
+/**
+ * Classifies a display value into its formatting role.
+ *
+ * Only `table`/`inline-table` (the table box itself) map to `'table'` —
+ * that's what tells `layoutNode` to hand an element's children to
+ * `layoutTableContainer`'s row/cell-aware iteration. The table-internal
+ * roles (`table-row`, `table-cell`, `table-row-group`, ...) must NOT map
+ * to the same value: `layoutTableContainer` calls `layoutNode` directly on
+ * each `<td>`, and if a cell's own `display: table-cell` also classified
+ * as `'table'`, that call would recurse into `layoutTableContainer` again
+ * treating the cell as its own (row-less) table and silently dropping all
+ * of its content. A cell/row/caption's children lay out in an ordinary
+ * block formatting context per CSS2.1 §17.5.2, so they classify as
+ * `'block'` here — same as any other block container.
+ */
 export function classifyDisplay(display: string): FormattingContextType {
   switch (display) {
     case 'none':
@@ -33,9 +47,6 @@ export function classifyDisplay(display: string): FormattingContextType {
     case 'block':
     case 'list-item':
     case 'flow-root':
-      return 'block';
-    case 'table':
-    case 'inline-table':
     case 'table-row':
     case 'table-cell':
     case 'table-row-group':
@@ -44,6 +55,9 @@ export function classifyDisplay(display: string): FormattingContextType {
     case 'table-column':
     case 'table-column-group':
     case 'table-caption':
+      return 'block';
+    case 'table':
+    case 'inline-table':
       return 'table';
     case 'inline-block':
       return 'inline-block';

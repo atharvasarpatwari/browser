@@ -1,5 +1,5 @@
 import type { GpuBufferEntry, GpuBufferStats } from './types';
-import { GPU_BUFFER_ALIGNMENT, GPU_BUFFER_POOL_MAX_AGE_MS, GPU_BUFFER_POOL_MAX_IDLE } from './types';
+import { GPU_BUFFER_ALIGNMENT, GPU_BUFFER_POOL_MAX_AGE_MS, GPU_BUFFER_POOL_MAX_IDLE, GPUBufferUsage } from './types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BUFFER POOL

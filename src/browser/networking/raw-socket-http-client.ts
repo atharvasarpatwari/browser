@@ -344,8 +344,11 @@ class RawSocketHttpClient implements IHttpClient {
     const statusMatch = /^HTTP\/\d\.?\d?\s+(\d{3})/.exec(statusLine);
     const statusCode = statusMatch ? parseInt(statusMatch[1]!, 10) : 0;
 
-    // Parse headers
+    // Parse headers. A response can carry multiple Set-Cookie lines (one per
+    // cookie) — the headers Map can only keep the last value per key, so
+    // Set-Cookie lines are also collected into setCookieHeaders untouched.
     const headers = new Map<string, string>();
+    const setCookieHeaders: string[] = [];
     for (let i = 1; i < headerLines.length; i++) {
       const line = headerLines[i]!;
       const colonIdx = line.indexOf(':');
@@ -353,6 +356,7 @@ class RawSocketHttpClient implements IHttpClient {
         const key = line.substring(0, colonIdx).trim().toLowerCase();
         const value = line.substring(colonIdx + 1).trim();
         headers.set(key, value);
+        if (key === 'set-cookie') setCookieHeaders.push(value);
       }
     }
 
@@ -406,6 +410,7 @@ class RawSocketHttpClient implements IHttpClient {
       bodyBinary,
       redirected: false,
       redirectChain: [],
+      setCookieHeaders,
     };
   }
 

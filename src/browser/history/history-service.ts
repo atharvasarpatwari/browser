@@ -40,6 +40,8 @@ interface IHistoryService extends ISharedService {
   getEntryByUrl(url: string): Promise<HistoryEntry | null>;
   connectController(controller: INavigationController): void;
   disconnectController(controller: INavigationController): void;
+  /** While disabled, connected controllers' navigations are not recorded (private browsing). */
+  setRecordingEnabled(enabled: boolean): void;
   on(type: HistoryServiceEventType, handler: (event: HistoryServiceEventUnion) => void): void;
   off(type: HistoryServiceEventType, handler: (event: HistoryServiceEventUnion) => void): void;
   readonly totalEntries: number;
@@ -79,6 +81,7 @@ class HistoryService implements IHistoryService {
   private readonly bus = new HistoryServiceEventBus();
   private readonly controllerListeners = new Map<INavigationController, (event: NavigationEvent) => void>();
   private _initialized = false;
+  private recordingEnabled = true;
 
   constructor(store: IHistoryStore = new InMemoryHistoryStore()) {
     this.store = store;
@@ -140,7 +143,7 @@ class HistoryService implements IHistoryService {
     if (this.controllerListeners.has(controller)) return;
 
     const listener = (event: NavigationEvent): void => {
-      if (event.kind === 'navigationCommitted') {
+      if (event.kind === 'navigationCommitted' && this.recordingEnabled) {
         void this.addVisit(event.entry.url, event.entry.title, false);
       }
     };
@@ -154,6 +157,10 @@ class HistoryService implements IHistoryService {
     if (!listener) return;
     controller.off('navigationCommitted', listener);
     this.controllerListeners.delete(controller);
+  }
+
+  setRecordingEnabled(enabled: boolean): void {
+    this.recordingEnabled = enabled;
   }
 
   get totalEntries(): number {

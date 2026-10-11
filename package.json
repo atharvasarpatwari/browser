@@ -2,7 +2,12 @@
   "name": "nova-browser",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Nova Browser — A TypeScript browser engine",
+  "author": {
+    "name": "Atharva Sarpatwari",
+    "email": "atharvasarpatwari@users.noreply.github.com"
+  },
   "engines": {
     "node": ">=20.19.0"
   },
@@ -18,9 +23,9 @@
     "electron:start": "electron .",
     "test:electron": "npm run build:web && playwright test --config=playwright-electron.config.cjs",
     "pack:win": "vite build && electron-builder --win --dir",
-    "build:win": "vite build && electron-builder --win",
-    "build:mac": "vite build && electron-builder --mac",
-    "build:linux": "vite build && electron-builder --linux",
+    "build:win": "vite build && electron-builder --win --publish=never",
+    "build:mac": "vite build && electron-builder --mac --publish=never",
+    "build:linux": "vite build && electron-builder --linux --publish=never",
     "android": "cd android && gradlew.bat installDebug",
     "android:assemble": "cd android && gradlew.bat assembleDebug",
     "android:install": "cd android && gradlew.bat installDebug",
@@ -51,6 +56,7 @@
     "native:build:android": "cargo ndk -t arm64-v8a build --release -p nova-bindings --manifest-path native/Cargo.toml",
     "native:build:wasm": "wasm-pack build --target web -p nova-net native/nova-net",
     "native:dist:linux-x64": "npm run native:build:linux-x64 && mkdir -p native/dist/linux-x64-x64 && cp native/target/x86_64-unknown-linux-gnu/release/libnova_bindings.so native/dist/linux-x64-x64/nova_bindings.node",
+    "native:dist:win-x64": "npm run native:build:win-x64 && mkdir -p native/dist/win32-x64-x64 && cp native/target/x86_64-pc-windows-msvc/release/nova_bindings.dll native/dist/win32-x64-x64/nova_bindings.node",
     "native:dist": "npm run native:dist:linux-x64",
     "native:test": "cargo test --workspace --manifest-path native/Cargo.toml",
     "native:bench": "cargo bench --workspace --manifest-path native/Cargo.toml",
@@ -76,7 +82,7 @@
     "@webgpu/types": "^0.1.71",
     "concurrently": "^9.2.4",
     "cross-env": "^10.1.0",
-    "electron": "^41.7.1",
+    "electron": "41.7.1",
     "electron-builder": "^26.15.3",
     "eslint": "^8.57.0",
     "happy-dom": "^20.10.6",

@@ -19,7 +19,7 @@ interface PageLoadResult {
  * Implemented by networking/request-manager.ts.
  */
 interface IPageLoader {
-  load(url: string, signal: AbortSignal): Promise<PageLoadResult>;
+  load(url: string, signal: AbortSignal, init?: { method?: string; body?: string }): Promise<PageLoadResult>;
 }
 
 export type { IPageLoader, PageLoadResult };

@@ -1,4 +1,5 @@
 import type { ISharedService } from '../../app/app-shell';
+import { loadNodeBuiltin } from '../networking/node-builtins';
 type DownloadState = 'queued' | 'downloading' | 'paused' | 'completed' | 'failed' | 'cancelled';
 
 interface DownloadItem {
@@ -103,6 +104,8 @@ interface IDownloadManager extends ISharedService {
   remove(id: string): Promise<boolean>;
   getItem(id: string): DownloadItem | null;
   clearCompleted(): Promise<number>;
+  /** Restarts a failed download from scratch (not a partial resume — bytes buffered before a failure aren't trustworthy to blindly append to). */
+  retry(id: string): Promise<boolean>;
   on(type: DownloadEventType, handler: (event: DownloadEvent) => void): void;
   off(type: DownloadEventType, handler: (event: DownloadEvent) => void): void;
   /** Pause all active downloads */
@@ -247,8 +250,16 @@ class DownloadManager implements IDownloadManager {
   private readonly bus = new DownloadManagerEventBus();
   private readonly speedTrackers = new Map<string, SpeedTracker>();
   private readonly _order = new Map<string, number>();
+  // Accumulated bytes per download, keyed by id — kept at instance level
+  // (not a startDownload()-local variable) so a paused-then-resumed
+  // download's bytes survive across the resumed fetch's own default-empty
+  // start; the eventual real completion writes the full concatenation.
+  private readonly chunksById = new Map<string, Uint8Array[]>();
   private _seq = 0;
   private _initialized = false;
+
+  /** Real OS downloads folder (from Electron main via preload), or a relative fallback outside Electron (tests). */
+  constructor(private readonly baseDir: string = './downloads') {}
 
   get items(): readonly DownloadItem[] {
     return [...this._items.values()].sort((a, b) => {
@@ -291,7 +302,7 @@ class DownloadManager implements IDownloadManager {
 
     const id = nextDownloadId();
     const filename = options?.filename ?? suggestedFilename(url, 'application/octet-stream');
-    const path = options?.path ?? `./downloads/${filename}`;
+    const path = options?.path ?? DownloadManager.resolveDefaultPath(this.baseDir, filename);
 
     const item: DownloadItem = {
       id,
@@ -320,6 +331,13 @@ class DownloadManager implements IDownloadManager {
 
     this.startDownload(id, options?.headers).catch(() => {});
     return item;
+  }
+
+  /** basename() strips any path segments a malicious/unexpected URL-derived filename could carry, since this now resolves to a real on-disk path. */
+  private static resolveDefaultPath(baseDir: string, filename: string): string {
+    const pathMod = loadNodeBuiltin<typeof import('node:path')>('node:path');
+    const safeName = pathMod ? pathMod.basename(filename) : filename.replace(/[/\\]/g, '_');
+    return pathMod ? pathMod.join(baseDir, safeName) : `${baseDir}/${safeName}`;
   }
 
   private async startDownload(id: string, headers?: Record<string, string>): Promise<void> {
@@ -359,7 +377,8 @@ class DownloadManager implements IDownloadManager {
       const total = contentLength ? parseInt(contentLength, 10) + item.receivedBytes : 0;
       (item as { totalBytes: number }).totalBytes = total;
 
-      const chunks: Uint8Array[] = [];
+      if (!this.chunksById.has(id)) this.chunksById.set(id, []);
+      const chunks = this.chunksById.get(id)!;
       let received = item.receivedBytes;
       const startTime = Date.now();
 
@@ -397,6 +416,24 @@ class DownloadManager implements IDownloadManager {
         this.bus.emit({ kind: 'downloadPaused', id });
         return;
       }
+
+      // ponytail: buffers the whole file in memory before writing (chunks
+      // were already being accumulated for progress tracking); fine for
+      // typical downloads, revisit with a real streaming IPC (main-process
+      // fs, not the renderer fs bridge) if multi-GB files become a real
+      // use case. fs.createWriteStream() has no prior art through this
+      // bridge and a WriteStream isn't proven to survive contextBridge.
+      const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+      const pathMod = loadNodeBuiltin<typeof import('node:path')>('node:path');
+      if (!fs || !pathMod) throw new Error('Filesystem access is not available in this environment');
+      const dir = pathMod.dirname(item.path);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const totalLen = chunks.reduce((n, c) => n + c.length, 0);
+      const full = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const chunk of chunks) { full.set(chunk, offset); offset += chunk.length; }
+      fs.writeFileSync(item.path, full);
+      this.chunksById.delete(id);
 
       (item as { state: DownloadState }).state = 'completed';
       (item as { completedAt: number | null }).completedAt = Date.now();
@@ -437,11 +474,25 @@ class DownloadManager implements IDownloadManager {
     return true;
   }
 
+  async retry(id: string): Promise<boolean> {
+    const item = this._items.get(id);
+    if (!item || item.state !== 'failed') return false;
+    (item as { state: DownloadState }).state = 'queued';
+    (item as { error: string | null }).error = null;
+    (item as { receivedBytes: number }).receivedBytes = 0;
+    (item as { supportsResume: boolean }).supportsResume = false;
+    this.chunksById.delete(id); // start clean — bytes buffered before a failure aren't trustworthy
+    this.bus.emit({ kind: 'downloadResumed', id });
+    this.startDownload(id).catch(() => {});
+    return true;
+  }
+
   async cancel(id: string): Promise<boolean> {
     const item = this._items.get(id);
     if (!item) return false;
     if (item.state === 'completed') return false;
     (item as { state: DownloadState }).state = 'cancelled';
+    this.chunksById.delete(id);
     this.bus.emit({ kind: 'downloadCancelled', id });
     return true;
   }
@@ -450,6 +501,7 @@ class DownloadManager implements IDownloadManager {
     const deleted = this._items.delete(id);
     if (deleted) {
       this.speedTrackers.delete(id);
+      this.chunksById.delete(id);
       this.bus.emit({ kind: 'downloadRemoved', id });
     }
     return deleted;
@@ -465,6 +517,7 @@ class DownloadManager implements IDownloadManager {
       if (item.state === 'completed' || item.state === 'failed' || item.state === 'cancelled') {
         this._items.delete(id);
         this.speedTrackers.delete(id);
+        this.chunksById.delete(id);
         count++;
       }
     }

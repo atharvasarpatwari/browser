@@ -55,6 +55,16 @@ interface ICssParser extends IDisposable {
   parseStylesheet(css: string, url?: string): CssStylesheet;
   parseInlineStyle(styleAttr: string): ReadonlyMap<string, string>;
   extractStylesFromDocument(doc: HtmlDocument): readonly CssRule[];
+  /**
+   * Like extractStylesFromDocument(), but returns CSS5's own rule shape
+   * un-flattened — @media/@supports/@container/@layer/@layer-order keep
+   * their nested rules and conditions intact. extractStylesFromDocument()'s
+   * legacy CssRule[] has no field for "this rule is conditional on X", so
+   * convertRule() drops anything that isn't a plain style/keyframes rule;
+   * real page rendering (page-renderer.ts) needs this method instead, or
+   * every conditional at-rule silently never applies.
+   */
+  extractCss5RulesFromDocument(doc: HtmlDocument): readonly Css5Rule[];
   computeStyles(element: HtmlElement, allRules: readonly CssRule[]): ReadonlyMap<string, string>;
   computeStylesForElement(tagName: string, attributes: ReadonlyMap<string, string>, allRules: readonly CssRule[]): ReadonlyMap<string, string>;
 }
@@ -139,6 +149,18 @@ class CssParser implements ICssParser {
       }
     }
 
+    return allRules;
+  }
+
+  extractCss5RulesFromDocument(doc: HtmlDocument): readonly Css5Rule[] {
+    const allRules: Css5Rule[] = [];
+    const styleEls = getElementsByTagName(doc, 'style');
+    for (const style of styleEls) {
+      const text = (style as { rawContent: string }).rawContent || '';
+      if (text.trim()) {
+        allRules.push(...this.css5.parseStylesheetRobust(text).rules);
+      }
+    }
     return allRules;
   }
 

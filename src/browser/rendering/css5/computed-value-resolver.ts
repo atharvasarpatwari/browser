@@ -425,9 +425,19 @@ export function resolveComputedValue(
   // ── Line-height: number multiplier vs keyword ───────────────────────
   if (prop === 'line-height') {
     if (v === 'normal') return 'normal';
-    const n = parseFloat(v);
-    if (!isNaN(n) && !v.endsWith('px') && !v.endsWith('em') && !v.endsWith('rem') && !v.endsWith('%')) {
-      return String(n);
+    // Only a value with NO unit at all (e.g. "1.5") is the CSS unitless
+    // multiplier — it must stay a bare number so each descendant rescales
+    // it against its own font-size. A value carrying a unit we don't
+    // special-case here (e.g. "12pt") is a fixed length, not a multiplier;
+    // parseFloat() alone can't tell the difference since it happily reads
+    // the leading digits off "12pt" too, so this must check the full
+    // string, not just whether parseFloat succeeds. Leave it as-is so a
+    // later stage that does understand the unit (e.g. resolveLineHeight)
+    // resolves it — normalizing to String(n) here would silently discard
+    // the unit and misread it as a x12 multiplier.
+    if (/^-?\d+(\.\d+)?$/.test(v.trim())) {
+      const n = parseFloat(v);
+      if (!isNaN(n)) return String(n);
     }
   }
 

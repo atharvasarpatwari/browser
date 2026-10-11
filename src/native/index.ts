@@ -52,9 +52,11 @@ function loadNative(): NovaNativeBindings | null {
     const bindingPath = `../../native/dist/${platformDir}/nova_bindings.node`;
 
     _native = requireFn(bindingPath) as NovaNativeBindings;
+    console.log(`[nova-native] loaded native bindings from ${bindingPath}`);
     return _native;
   } catch (err) {
     _native = null;
+    console.log(`[nova-native] native bindings unavailable: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }
@@ -67,35 +69,45 @@ export function getNativeBindings(): NovaNativeBindings | null {
   return loadNative();
 }
 
+/**
+ * Checks that a specific export exists on the loaded native module, not just
+ * that the module loaded at all. A build compiled with a narrower Cargo
+ * feature set (e.g. `--features dns` only) still loads successfully but
+ * doesn't export `tlsConnect`/`httpFetch`/etc. — calling those directly on
+ * `native` would throw "not a function" from inside what looks like the
+ * "native available" branch. Checking per-function lets a partial build
+ * degrade to the JS fallback one function at a time instead of crashing.
+ */
+function nativeFn<K extends keyof NovaNativeBindings>(
+  native: NovaNativeBindings | null,
+  name: K,
+): NovaNativeBindings[K] | null {
+  if (native && typeof native[name] === 'function') return native[name];
+  if (native) console.log(`[nova-native] loaded, but ${String(name)} is not exported (partial build) — using JS fallback for this call`);
+  return null;
+}
+
 export async function resolveDns(domain: string): Promise<DnsResult> {
-  const native = loadNative();
-  if (native) {
-    return native.resolveDns(domain);
-  }
+  const fn = nativeFn(loadNative(), 'resolveDns');
+  if (fn) return fn(domain);
   return fallbackResolveDns(domain);
 }
 
 export async function resolveDnsIps(domain: string): Promise<string[]> {
-  const native = loadNative();
-  if (native) {
-    return native.resolveDnsIps(domain);
-  }
+  const fn = nativeFn(loadNative(), 'resolveDnsIps');
+  if (fn) return fn(domain);
   return fallbackResolveDnsIps(domain);
 }
 
 export function tlsConnect(host: string, port: number, config?: TlsConfig): TlsInfo {
-  const native = loadNative();
-  if (native) {
-    return native.tlsConnect(host, port, config);
-  }
+  const fn = nativeFn(loadNative(), 'tlsConnect');
+  if (fn) return fn(host, port, config);
   return fallbackTlsConnect(host, port, config);
 }
 
 export async function httpFetch(request: HttpRequest): Promise<HttpResponse> {
-  const native = loadNative();
-  if (native) {
-    return native.httpFetch(request);
-  }
+  const fn = nativeFn(loadNative(), 'httpFetch');
+  if (fn) return fn(request);
   return fallbackHttpFetch(request);
 }
 
@@ -103,10 +115,8 @@ export async function httpGet(
   url: string,
   headers?: Record<string, string>,
 ): Promise<HttpResponse> {
-  const native = loadNative();
-  if (native) {
-    return native.httpGet(url, headers);
-  }
+  const fn = nativeFn(loadNative(), 'httpGet');
+  if (fn) return fn(url, headers);
   return fallbackHttpFetch({ url, method: 'GET', headers });
 }
 
@@ -115,10 +125,8 @@ export async function httpPost(
   body: string,
   headers?: Record<string, string>,
 ): Promise<HttpResponse> {
-  const native = loadNative();
-  if (native) {
-    return native.httpPost(url, body, headers);
-  }
+  const fn = nativeFn(loadNative(), 'httpPost');
+  if (fn) return fn(url, body, headers);
   return fallbackHttpFetch({ url, method: 'POST', headers, body });
 }
 

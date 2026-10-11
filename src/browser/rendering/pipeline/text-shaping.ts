@@ -61,22 +61,21 @@ function readLineHeight(style: ComputedStyleLike, fontSize: number): number {
 }
 
 /**
- * Naive deterministic metrics provider: no real font/glyph data is
- * available yet, so character advances are approximated by character
- * class (narrow / normal / wide) scaled to font-size. This keeps line
- * breaking behavior stable and testable while remaining a drop-in
- * replacement target once a real shaping backend exists — callers only
- * depend on the FontMetricsProvider interface above.
+ * Metrics provider matching the rasterizer's actual glyph rendering: the
+ * paint stage (rasterizer.ts fillText/strokeText) draws every character on
+ * a fixed 8x8 bitmap-font grid advanced by exactly 1.0x fontSize per
+ * character — a monospace font, not a proportional one. Layout must use
+ * the same per-character advance the paint stage will actually use, or
+ * words get positioned assuming they're narrower than they're drawn and
+ * overlap the next word. (A variable-width heuristic used to live here;
+ * it was self-consistent but didn't match the bitmap font, so text on
+ * every page rendered as overlapping glyphs.) Swap this to a real
+ * proportional measurement only once the rasterizer can paint proportional
+ * glyphs — until then the two must agree.
  */
 export class HeuristicFontMetricsProvider implements FontMetricsProvider {
-  measureChar(ch: string, style: ComputedStyleLike): number {
-    const fontSize = readFontSize(style);
-    if (ch === " " || ch === "\t") return fontSize * 0.28;
-    if (/[iIl.,'!|]/.test(ch)) return fontSize * 0.28;
-    if (/[mMWw@]/.test(ch)) return fontSize * 0.83;
-    if (/[A-Z]/.test(ch)) return fontSize * 0.68;
-    if (/[0-9]/.test(ch)) return fontSize * 0.55;
-    return fontSize * 0.5;
+  measureChar(_ch: string, style: ComputedStyleLike): number {
+    return readFontSize(style);
   }
 
   metricsFor(style: ComputedStyleLike): FontMetrics {

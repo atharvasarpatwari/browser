@@ -10,41 +10,42 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
 private val DarkColors = darkColorScheme(
-    primary = NovaGold,
-    onPrimary = Ink,
-    secondary = NovaViolet,
-    onSecondary = Ink,
-    background = SpaceBackground,
-    surface = SpaceSurface,
-    surfaceVariant = SpaceSurfaceElevated,
-    surfaceContainerHigh = SpaceSurfaceContainerHigh,
-    onBackground = Starlight,
-    onSurface = Starlight,
-    onSurfaceVariant = StarlightMuted,
-    outline = SpaceOutline,
+    primary = NovaCyan,
+    onPrimary = OnAccentDark,
+    secondary = NovaAmber,
+    onSecondary = OnAccentDark,
+    background = ObsidianBackground,
+    surface = ObsidianSurface,
+    surfaceVariant = ObsidianInput,
+    surfaceContainerHigh = ObsidianElevated,
+    onBackground = StarlightPrimary,
+    onSurface = StarlightPrimary,
+    onSurfaceVariant = StarlightSecondary,
+    outline = ObsidianOutline,
     error = ErrorRed
 )
 
 private val LightColors = lightColorScheme(
-    primary = NovaOchre,
-    onPrimary = Starlight,
-    secondary = NovaVioletDeep,
-    onSecondary = Starlight,
+    primary = NovaCyanLight,
+    onPrimary = Color.White,
+    secondary = NovaAmber,
+    onSecondary = OnAccentDark,
     background = PaperBackground,
     surface = PaperSurface,
-    surfaceVariant = PaperSurfaceElevated,
-    surfaceContainerHigh = PaperSurfaceContainerHigh,
-    onBackground = Ink,
-    onSurface = Ink,
-    onSurfaceVariant = InkMuted,
+    surfaceVariant = PaperInput,
+    surfaceContainerHigh = PaperElevated,
+    onBackground = InkPrimary,
+    onSurface = InkPrimary,
+    onSurfaceVariant = InkSecondary,
     outline = PaperOutline,
-    error = ErrorRedDeep
+    error = ErrorRed
 )
 
 // A slightly tighter, more considered corner scale than Material3's defaults —

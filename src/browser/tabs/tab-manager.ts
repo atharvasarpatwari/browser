@@ -114,7 +114,14 @@ class TabManager implements ITabManager {
   }
   get count(): number { return this._tabs.length; }
 
-  createTab(url?: string, pinned = false, index?: number): ITabSession {
+  // A tab created with no destination in mind (the "+" button, Ctrl+T, the
+  // main menu's "New Tab") should open the app's own start page — every
+  // mainstream browser does this. TabSession's own default stays the spec-
+  // accurate 'about:blank' (a real, distinct destination a caller can still
+  // ask for explicitly); this is the app-level "give me a fresh tab" default,
+  // one layer up, so a literal about:blank tab and an unspecified new tab
+  // stay distinguishable instead of colliding on the same default.
+  createTab(url: string = 'nova://newtab', pinned = false, index?: number): ITabSession {
     const tab = new TabSession(url);
     tab.setPinned(pinned);
 

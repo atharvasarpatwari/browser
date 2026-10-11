@@ -72,6 +72,10 @@ export interface JSObjectWithMeta extends JSObject {
   __remote?: JSObject;
   /** Signal listeners for AbortSignal */
   __signalListeners?: Set<(ev: unknown) => void>;
+  /** Class instance field definitions (`x = 1` in a class body) — evaluated per-instance at construction time, with `this` bound, rather than once at class-definition time (their initializer can reference `this`). Untyped `unknown` here to avoid this file depending on ./ast; the interpreter casts to the real Expression type it stored. */
+  __instanceFields?: { key: string; value: unknown }[];
+  /** The environment a class was defined in, needed to give instance field initializers (and any constructor-less default) the right closure scope. */
+  __classClosure?: Environment;
   /** Associated animation object */
   __animation?: unknown;
   /** Range internal state */
@@ -82,6 +86,12 @@ export interface JSObjectWithMeta extends JSObject {
   nativeDate?: Date;
   /** Native RegExp object for RegExp wrappers */
   nativeRegExp?: RegExp;
+  /** Native URL object for URL wrappers */
+  nativeURL?: URL;
+  /** Native URLSearchParams object for URLSearchParams wrappers */
+  nativeURLSearchParams?: URLSearchParams;
+  /** FormData internal entries (string values only — no File support) */
+  __formEntries?: [string, string][];
   /** Symbol numeric ID */
   symbolId?: number;
   /** Map internal object-key store */
@@ -116,7 +126,13 @@ export interface PropertyDescriptor {
 export interface JSFunction {
   type: 'closure';
   name: string;
+  /** Static properties (e.g. `Ctor.prototype = ...`, `Ctor.staticProp = 5`) — a plain
+   *  function is a legal assignment target for these in real JS, so it needs the
+   *  same properties map a JSObject has, not just the ad hoc `__proto_obj` cache. */
+  properties: Map<string, PropertyDescriptor>;
   params: string[];
+  /** Raw parameter AST nodes (Identifier/RestElement/AssignmentPattern/ArrayPattern/ObjectPattern), when known — lets the interpreter bind default values, rest params, and destructured params correctly instead of the plain-name-only fallback `params` gives. */
+  paramNodes?: unknown[];
   body: unknown; // AST.BlockStatement | AST.Expression | BytecodeFunction
   closure: Environment;
   async: boolean;
@@ -173,9 +189,22 @@ export function isAwaitSignal(v: unknown): v is AwaitSignal { return typeof v ==
 export class Environment {
   private bindings = new Map<string, { value: JSValue; kind: 'var' | 'let' | 'const'; __tdz?: boolean }>();
   readonly parent: Environment | null;
+  /** Set only on the global environment (see `linkWindow`). */
+  private windowLink: JSObject | null = null;
 
   constructor(parent: Environment | null = null) {
     this.parent = parent;
+  }
+
+  /**
+   * Links this (global) environment to the real `window` object, so that
+   * `var`/function declarations at the top level become `window` properties
+   * and `window.foo = ...` is visible to a bare `foo` reference — in a real
+   * browser these are literally the same storage (the global object IS the
+   * global environment record), not two independently-updated copies.
+   */
+  linkWindow(windowObj: JSObject): void {
+    this.windowLink = windowObj;
   }
 
   /** Declare a variable (var/let/const) */
@@ -186,10 +215,11 @@ export class Environment {
       while (scope && !scope.isFunctionScope()) {
         scope = scope.parent;
       }
-      if (scope) {
-        scope.bindings.set(name, { value, kind });
+      const target = scope ?? this;
+      if (target.windowLink) {
+        target.windowLink.properties.set(name, { value, writable: true, enumerable: true, configurable: true });
       } else {
-        this.bindings.set(name, { value, kind });
+        target.bindings.set(name, { value, kind });
       }
     } else {
       // let/const: per ECMAScript § 9.1.1, bindings are created in TDZ state.
@@ -223,6 +253,13 @@ export class Environment {
     if (this.parent) {
       return this.parent.set(name, value);
     }
+    if (this.windowLink) {
+      const desc = this.windowLink.properties.get(name);
+      if (desc) {
+        desc.value = value;
+        return true;
+      }
+    }
     return false;
   }
 
@@ -253,6 +290,10 @@ export class Environment {
     if (this.parent) {
       return this.parent.get(name);
     }
+    if (this.windowLink) {
+      const desc = this.windowLink.properties.get(name);
+      if (desc) return desc.value;
+    }
     return undefined;
   }
 
@@ -260,6 +301,7 @@ export class Environment {
   has(name: string): boolean {
     if (this.bindings.has(name)) return true;
     if (this.parent) return this.parent.has(name);
+    if (this.windowLink && this.windowLink.properties.has(name)) return true;
     return false;
   }
 
@@ -335,14 +377,102 @@ export function toString(val: JSValue): string {
       return getArrayElements(obj).map(e => toString(e)).join(',');
     }
     const override = obj.__type_override;
+    // Error-shaped objects (new TypeError(...), a caught error, etc.)
+    // stringify as "Name: message" — matching Error.prototype.toString —
+    // rather than falling through to the generic "[object Object]" below.
+    if (override === 'error') {
+      const name = obj.properties.get('name')?.value;
+      const message = obj.properties.get('message')?.value;
+      const nameStr = typeof name === 'string' ? name : 'Error';
+      const messageStr = typeof message === 'string' ? message : '';
+      return messageStr ? `${nameStr}: ${messageStr}` : nameStr;
+    }
     if (override === 'arraybuffer') return '[object ArrayBuffer]';
     if (override === 'dataview') return '[object DataView]';
     if (override === 'sharedarraybuffer') return '[object SharedArrayBuffer]';
     if (override === 'weakref') return '[object WeakRef]';
     if (override === 'finalizationregistry') return '[object FinalizationRegistry]';
     if (typeof override === 'string' && override.endsWith('Array')) return `[object ${override}]`;
+    // A real URL/Location object stringifies to its own href — this is the
+    // ToString path used e.g. when `new URL(relative, base)` coerces a
+    // non-string `base` argument (a real URL object, or `window.location`,
+    // both real-world-common — `new URL(".", location)` is real SvelteKit
+    // bootstrap code). Without this, coercing either fell through to the
+    // generic "[object Object]" below, which Node's real URL constructor
+    // then rejects outright as an invalid base URL.
+    if (override === 'url') return obj.nativeURL?.href ?? '[object Object]';
+    if (override === 'location') {
+      const desc = obj.properties.get('href');
+      const href = desc?.getter ? callJSFunction(desc.getter, obj, []) : desc?.value;
+      return typeof href === 'string' ? href : '[object Object]';
+    }
   }
   return '[object Object]';
+}
+
+/**
+ * The real `Object.prototype.toString` algorithm — deliberately separate
+ * from the generic `toString()` coercion above, which calls an object's
+ * OWN toString/valueOf-style formatting (e.g. `Error: message`). This one
+ * never does: per spec it's override-proof, always returning `[object
+ * Tag]`, and checks `Symbol.toStringTag` (own or inherited, invoking a
+ * getter if the tag is defined as one) before falling back to built-in
+ * type detection. `toStringTagKey` is the caller's already-computed
+ * `toPropertyKey()` result for the real `Symbol.toStringTag` object — this
+ * module has no Environment to look that symbol up itself.
+ */
+export function objectPrototypeToStringTag(val: JSValue, toStringTagKey: string | null): string {
+  if (val === undefined) return '[object Undefined]';
+  if (val === null) return '[object Null]';
+  if (typeof val === 'boolean') return '[object Boolean]';
+  if (typeof val === 'number') return '[object Number]';
+  if (typeof val === 'string') return '[object String]';
+  if (typeof val !== 'object') return '[object Object]';
+  if ((val as { type?: string }).type === 'closure') return '[object Function]';
+  const obj = val as JSObjectWithMeta;
+  if (toStringTagKey) {
+    let cur: JSObject | null = obj;
+    while (cur) {
+      const desc = cur.properties?.get(toStringTagKey);
+      if (desc) {
+        const tag = desc.getter ? callJSFunction(desc.getter, obj, []) : desc.value;
+        if (typeof tag === 'string') return `[object ${tag}]`;
+        break;
+      }
+      cur = cur.prototype;
+    }
+  }
+  if (obj.type === 'array') return '[object Array]';
+  if (obj.type === 'function' || obj.type === 'class') return '[object Function]';
+  if (obj.__type_override === 'date') return '[object Date]';
+  if (obj.__type_override === 'regexp') return '[object RegExp]';
+  if (obj.__type_override === 'error') return '[object Error]';
+  // Everything else (ArrayBuffer, DataView, TypedArrays, SharedArrayBuffer,
+  // WeakRef, FinalizationRegistry, plain objects) already has correct
+  // `[object Type]` formatting in the generic coercion helper above —
+  // reuse it instead of re-deriving the same __type_override list twice.
+  return toString(val);
+}
+
+// Computed property keys (`obj[expr]`, `{[expr]: ...}`) were coerced with
+// native TS `String()`, which has no idea how to render this engine's own
+// object values — a symbol (this engine's own JSObject, not a real native
+// Symbol) stringifies to the generic "[object Object]", so EVERY symbol
+// used as a computed key collided under that one key regardless of which
+// symbol it was, and `obj[Symbol.iterator] = fn` was unreadable by anything
+// that later looked it up the same way. Symbols get a stable, per-symbol
+// key derived from their unique id; everything else still goes through
+// this engine's own toString() (matching real Object-to-string coercion
+// instead of native String()'s generic object fallback). Exported (not just
+// an interpreter-local helper) so other modules — e.g. index.ts's
+// Array.from, which needs to look up a value's Symbol.iterator without any
+// Interpreter instance in scope — can derive the same key a computed
+// `[Symbol.iterator]` property definition would have used.
+export function toPropertyKey(val: JSValue): string {
+  if (typeof val === 'object' && val !== null && isJSObjectWithMeta(val) && val.__type_override === 'symbol' && val.symbolId !== undefined) {
+    return `@@symbol:${val.symbolId}`;
+  }
+  return toString(val);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -370,12 +500,31 @@ export function instanceofCheck(left: JSValue, right: JSValue): boolean {
   if (typeof left !== 'object' || left === null) return false;
   if (!right || typeof right !== 'object') return false;
   const rightObj = right as JSObject;
-  const isNativeFn = 'closure' in right || (rightObj.type === 'function' && rightObj.callable);
+  // A user-defined class is its own JSObject shape (type: 'class'), neither
+  // a closure nor a plain callable `type: 'function'` object — `x
+  // instanceof MyClass` always returned false, unconditionally, for every
+  // class in the engine.
+  const isClass = rightObj.type === 'class';
+  const isNativeFn = 'closure' in right || isClass || (rightObj.type === 'function' && rightObj.callable);
   if (!isNativeFn) return false;
   const ctorName = ('closure' in right) ? (right as JSFunction).name : (rightObj.properties?.get('name')?.value as string ?? '');
   const leftObj = left as JSObject;
   if (ctorName === 'Array' && leftObj.type === 'array') return true;
-  const ctorProto = rightObj.properties?.get('prototype')?.value;
+  // A class's user-visible `.prototype` is never placed in its own
+  // .properties map (only its *structural* `.prototype` link, used for
+  // this engine's own prototype-chain walks, is set) — fall back to that
+  // structural link directly for classes instead of the empty lookup.
+  // A plain function used as a constructor (`function Ctor(){}`) has NO
+  // .properties map at all (createFunction's closures never had one), so
+  // `Ctor.prototype` — normally lazily created and cached on first access
+  // as `__proto_obj` by getPropertyValue's function-object special case —
+  // is invisible to the .properties lookup too; fall back to that cache,
+  // which by the time anything checks `x instanceof Ctor` has almost
+  // always already been populated (evalNew's own construction of `x`
+  // reads Ctor.prototype to link the new instance, which populates it).
+  const ctorProto = isClass
+    ? rightObj.prototype
+    : (rightObj.properties?.get('prototype')?.value ?? (rightObj as { __proto_obj?: JSObject }).__proto_obj);
   if (!ctorProto || typeof ctorProto !== 'object' || ctorProto === null) return false;
   let proto = leftObj.prototype;
   while (proto) {
@@ -450,14 +599,22 @@ function arrayIndexOf(_this: JSValue, args: JSValue[]): JSValue {
 }
 
 function arrayIncludes(_this: JSValue, args: JSValue[]): JSValue {
-  return arrayIndexOf(_this, args) !== -1;
+  if (typeof _this !== 'object' || _this === null) return false;
+  const elems = getArrayElements(_this as JSObject);
+  const search = args[0];
+  // SameValueZero: unlike indexOf's ===, includes() must treat NaN as matching NaN.
+  return elems.some(v => v === search || (typeof v === 'number' && typeof search === 'number' && Number.isNaN(v) && Number.isNaN(search)));
+}
+
+function resolveSliceIndex(value: number, length: number): number {
+  return value < 0 ? Math.max(length + value, 0) : Math.min(value, length);
 }
 
 function arraySlice(_this: JSValue, args: JSValue[]): JSValue {
   if (typeof _this !== 'object' || _this === null) return createArray([]);
   const elems = getArrayElements(_this as JSObject);
-  const start = args[0] !== undefined ? Math.max(0, toNumber(args[0])) : 0;
-  const end = args[1] !== undefined ? Math.min(elems.length, toNumber(args[1])) : elems.length;
+  const start = args[0] !== undefined ? resolveSliceIndex(toNumber(args[0]), elems.length) : 0;
+  const end = args[1] !== undefined ? resolveSliceIndex(toNumber(args[1]), elems.length) : elems.length;
   return createArray(elems.slice(start, end));
 }
 
@@ -566,6 +723,28 @@ function arrayFindIndex(_this: JSValue, args: JSValue[]): JSValue {
   return -1;
 }
 
+function arrayFindLast(_this: JSValue, args: JSValue[]): JSValue {
+  if (typeof _this !== 'object' || _this === null) return undefined;
+  const elems = getArrayElements(_this as JSObject);
+  const fn = args[0];
+  if (typeof fn !== 'object' || fn === null || (fn as JSFunction).type !== 'closure') return undefined;
+  for (let i = elems.length - 1; i >= 0; i--) {
+    if (toBoolean(callJSFunction(fn as JSFunction, undefined, [elems[i], Number(i), _this]))) return elems[i];
+  }
+  return undefined;
+}
+
+function arrayFindLastIndex(_this: JSValue, args: JSValue[]): JSValue {
+  if (typeof _this !== 'object' || _this === null) return -1;
+  const elems = getArrayElements(_this as JSObject);
+  const fn = args[0];
+  if (typeof fn !== 'object' || fn === null || (fn as JSFunction).type !== 'closure') return -1;
+  for (let i = elems.length - 1; i >= 0; i--) {
+    if (toBoolean(callJSFunction(fn as JSFunction, undefined, [elems[i], Number(i), _this]))) return i;
+  }
+  return -1;
+}
+
 function arraySplice(_this: JSValue, args: JSValue[]): JSValue {
   if (typeof _this !== 'object' || _this === null) return createArray([]);
   const arr = _this as JSObject;
@@ -634,9 +813,45 @@ const arrayNativeMethods: Record<string, NativeFunction> = {
   find: arrayFind,
   forEach: arrayForEach,
   findIndex: arrayFindIndex,
+  findLast: arrayFindLast,
+  findLastIndex: arrayFindLastIndex,
   splice: arraySplice,
   unshift: arrayUnshift,
   flat: arrayFlat,
+  at: (_this, args) => {
+    if (typeof _this !== 'object' || _this === null) return undefined;
+    const elems = getArrayElements(_this as JSObject);
+    let i = toNumber(args[0]);
+    if (i < 0) i += elems.length;
+    return i >= 0 && i < elems.length ? elems[i] : undefined;
+  },
+  // ES2023 non-mutating counterparts of sort/reverse/splice/index-assign —
+  // missing entirely; only their mutating originals existed.
+  toSorted: (_this, args) => {
+    if (typeof _this !== 'object' || _this === null) return createArray([]);
+    const elems = getArrayElements(_this as JSObject);
+    const cmpFn = args[0];
+    if (typeof cmpFn === 'object' && cmpFn !== null && (cmpFn as JSFunction).type === 'closure') {
+      elems.sort((a, b) => toNumber(callJSFunction(cmpFn as JSFunction, undefined, [a, b])));
+    } else {
+      elems.sort((a, b) => { const sa = toString(a), sb = toString(b); return sa < sb ? -1 : sa > sb ? 1 : 0; });
+    }
+    return createArray(elems);
+  },
+  toReversed: (_this) => {
+    if (typeof _this !== 'object' || _this === null) return createArray([]);
+    return createArray(getArrayElements(_this as JSObject).reverse());
+  },
+  with: (_this, args) => {
+    if (typeof _this !== 'object' || _this === null) return createArray([]);
+    const elems = getArrayElements(_this as JSObject);
+    let i = toNumber(args[0]);
+    if (i < 0) i += elems.length;
+    if (i < 0 || i >= elems.length) throw new RangeError('Invalid index');
+    const copy = [...elems];
+    copy[i] = args[1];
+    return createArray(copy);
+  },
   keys: (_this) => {
     if (typeof _this !== 'object' || _this === null) return createArray([]);
     const len = Number((_this as JSObject).properties.get('length')?.value ?? 0);
@@ -681,7 +896,7 @@ const arrayNativeMethods: Record<string, NativeFunction> = {
   },
 };
 
-function attachArrayMethods(arr: JSObject): void {
+export function attachArrayMethods(arr: JSObject): void {
   for (const [name, fn] of Object.entries(arrayNativeMethods)) {
     arr.properties.set(name, {
       value: createNativeFunction(name, fn),
@@ -712,6 +927,7 @@ export function createFunction(
   isBytecode = false,
   upvalues?: UpvalueRef[],
   isStrict = false,
+  paramNodes?: unknown[],
 ): JSFunction {
   if (isStrict) {
     const seen = new Set<string>();
@@ -724,8 +940,10 @@ export function createFunction(
   }
   return {
     type: 'closure',
+    properties: new Map(),
     name,
     params,
+    paramNodes,
     body,
     closure,
     async,
@@ -741,6 +959,7 @@ export function createFunction(
 export function createNativeFunction(name: string, fn: NativeFunction): JSFunction {
   return {
     type: 'closure',
+    properties: new Map(),
     name,
     params: [],
     body: null,
@@ -769,6 +988,40 @@ export function setGlobalCaller(caller: JSFunctionCaller | null): void {
   _globalCaller = caller;
 }
 
+/** Lets a nested run() (e.g. eval()'s own Interpreter) save the enclosing
+ *  caller before overwriting it, and restore that exact value afterward
+ *  instead of unconditionally clearing it — see Interpreter.run(). */
+export function getGlobalCaller(): JSFunctionCaller | null {
+  return _globalCaller;
+}
+
+// Error prototypes, registered by index.ts's Error/TypeError/RangeError/...
+// global-constructor setup, and looked up here so any internally-built
+// error object (an engine-thrown JSError, a wrapped native exception) gets
+// linked to the SAME prototype chain `new TypeError(...)` in user code
+// would produce. Without this link `err instanceof TypeError` — an
+// extremely common error-handling pattern — is always false for every
+// error this engine throws on its own behalf, since instanceof walks
+// .prototype and a plain createObject(null) error has none to walk.
+// ponytail: this is one shared, module-level map, not scoped per page/
+// interpreter — with multiple tabs open, the most-recently-loaded page's
+// Error prototypes win for any error the ENGINE throws on a script's
+// behalf (a script's own `new TypeError()` is unaffected either way, since
+// that always resolves against its own environment's own constructor).
+// Scope per-Interpreter instead if that cross-tab mix-up ever matters.
+const errorPrototypes = new Map<string, JSObject>();
+export function registerErrorPrototype(name: string, proto: JSObject): void {
+  errorPrototypes.set(name, proto);
+}
+export function makeErrorObject(name: string, message: string): JSObject {
+  const err = createObject(errorPrototypes.get(name) ?? null) as JSObjectWithMeta;
+  err.__type_override = 'error';
+  err.properties.set('message', { value: message, writable: true, enumerable: true, configurable: true });
+  err.properties.set('name', { value: name, writable: true, enumerable: true, configurable: true });
+  err.properties.set('stack', { value: message ? `${name}: ${message}` : name, writable: true, enumerable: true, configurable: true });
+  return err;
+}
+
 export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]): JSValue {
   // Fast path: native functions can be called directly
   if (fn.isNative && fn.nativeFn) {
@@ -776,7 +1029,11 @@ export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]
       return fn.nativeFn(thisArg, args) as JSValue;
     } catch (err) {
       if (err instanceof JSError) throw err;
-      throw new JSError(err instanceof Error ? err.message : String(err));
+      // Wrap as a proper Error-shaped value (not a bare string) so sandboxed
+      // `catch(e)` sees e.message/e.name like a real thrown Error.
+      const name = err instanceof Error ? err.name : 'Error';
+      const message = err instanceof Error ? err.message : String(err);
+      throw new JSError(makeErrorObject(name, message));
     }
   }
   // Non-native: delegate to the interpreter
@@ -791,7 +1048,17 @@ export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]
 export class JSError extends Error {
   value: JSValue;
   constructor(value: JSValue) {
-    super(toString(value));
+    // An Error-shaped thrown value (has its own .message, e.g. `new
+    // TypeError(...)` or the objects jsError()/native-throw wrapping
+    // build) should surface THAT message here, not a generic
+    // toString(value) — for a plain object that stringifies to
+    // "[object Object]", masking whatever the real error said from
+    // anything reading this outer, unhandled-error-level .message
+    // (RunJSResult.error.message, devtools, etc.).
+    const msg = typeof value === 'object' && value !== null && 'properties' in value
+      ? (value as JSObject).properties.get('message')?.value
+      : undefined;
+    super(typeof msg === 'string' ? msg : toString(value));
     this.value = value;
   }
 }
