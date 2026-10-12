@@ -1,8 +1,16 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { ISettingsStore } from './settings-store';
 import type { ISettingsPage, SettingsPageEvent } from '../../ui/pages/settings-page';
+import { encryptSecret, decryptSecret } from './secure-value';
 
 type SettingsChangeHandler = (key: string, value: unknown, oldValue: unknown) => void;
+
+/** Setting keys whose values are encrypted at rest (see secure-value.ts). */
+const SECRET_KEYS = new Set(['anthropicApiKey']);
+
+interface IHistoryService {
+  deleteAll(): Promise<void>;
+}
 
 interface ISettingsService extends IDisposable {
   init(settingsPage: ISettingsPage): void;
@@ -11,10 +19,14 @@ interface ISettingsService extends IDisposable {
   getBoolean(key: string, fallback?: boolean): boolean;
   getString(key: string, fallback?: string): string;
   getNumber(key: string, fallback?: number): number;
+  /** Reads a SECRET_KEYS value, decrypting it if it was stored encrypted. */
+  getSecretString(key: string, fallback?: string): Promise<string>;
   has(key: string): boolean;
   onChange(handler: SettingsChangeHandler): void;
   offChange(handler: SettingsChangeHandler): void;
   resetAll(): void;
+  /** Lets the "Clear browsing data" settings action actually delete history. */
+  setHistoryService(service: IHistoryService): void;
   dispose(): void;
 }
 
@@ -23,6 +35,7 @@ class SettingsService implements ISettingsService {
   private page: ISettingsPage | null = null;
   private readonly listeners: SettingsChangeHandler[] = [];
   private syncing = false;
+  private historyService: IHistoryService | null = null;
 
   constructor(store: ISettingsStore) {
     this.store = store;
@@ -32,16 +45,52 @@ class SettingsService implements ISettingsService {
     this.page = settingsPage;
 
     settingsPage.on('settingChanged', (event: SettingsPageEvent) => {
+      if (event.kind !== 'settingChanged') return;
       if (this.syncing) return;
       if (event.key === undefined) return;
+      if (SECRET_KEYS.has(event.key)) {
+        void this.persistSecret(event.key, String(event.value ?? ''));
+        return;
+      }
       this.store.set(event.key, event.value);
     });
 
+    settingsPage.on('actionTriggered', (event: SettingsPageEvent) => {
+      if (event.kind !== 'actionTriggered') return;
+      if (event.key === 'clearBrowsingData') void this.clearBrowsingData();
+    });
+
+    void this.loadInto(settingsPage);
+  }
+
+  private async loadInto(settingsPage: ISettingsPage): Promise<void> {
     for (const [key, value] of this.store.entries()) {
       this.syncing = true;
-      settingsPage.setSetting(key, value);
+      const resolved = SECRET_KEYS.has(key) && typeof value === 'string'
+        ? await decryptSecret(value)
+        : value;
+      settingsPage.setSetting(key, resolved);
       this.syncing = false;
     }
+  }
+
+  private async persistSecret(key: string, value: string): Promise<void> {
+    const cipher = await encryptSecret(value);
+    this.store.set(key, cipher);
+  }
+
+  async getSecretString(key: string, fallback = ''): Promise<string> {
+    const raw = this.getValue<string>(key);
+    if (!raw) return fallback;
+    return decryptSecret(raw);
+  }
+
+  setHistoryService(service: IHistoryService): void {
+    this.historyService = service;
+  }
+
+  async clearBrowsingData(): Promise<void> {
+    await this.historyService?.deleteAll();
   }
 
   getValue<T = unknown>(key: string): T | undefined {

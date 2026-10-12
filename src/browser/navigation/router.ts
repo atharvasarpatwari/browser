@@ -31,6 +31,7 @@
  *   nova://history       → InternalPage  (id = "history")
  *   nova://bookmarks     → InternalPage  (id = "bookmarks")
  *   nova://extensions    → InternalPage  (id = "extensions")
+ *   nova://privacy       → InternalPage  (id = "privacy")
  *   https: (protocol)    → WebContent
  *   http:  (protocol)    → WebContent
  *   file:  (protocol)    → LocalFile
@@ -504,6 +505,7 @@ class Router implements IRouter {
       ['nova://bookmarks',  'bookmarks',  'Bookmarks'],
       ['nova://extensions', 'extensions', 'Extensions'],
       ['nova://research',   'research',   'AI Research'],
+      ['nova://privacy',    'privacy',    'Privacy Policy'],
     ];
 
     for (const [pattern, pageId, title] of internalPages) {
