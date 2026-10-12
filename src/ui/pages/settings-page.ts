@@ -96,32 +96,6 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'enableKeyboardShortcuts', label: 'Enable keyboard shortcuts', description: 'Use keyboard shortcuts for navigation', type: 'boolean', defaultValue: true },
     ],
   },
-  {
-    id: 'menu', title: 'Browser Menu', icon: '☰',
-    settings: [
-      { key: 'menuShowNewTab', label: 'New tab', description: 'Show "New tab" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowNewWindow', label: 'New window', description: 'Show "New window" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowPrivateWindow', label: 'New private window', description: 'Show "New private window" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowTorWindow', label: 'New private window with Tor', description: 'Show Tor window option in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowLeoAI', label: 'Leo AI', description: 'Show "Leo AI" assistant in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowWallet', label: 'Wallet', description: 'Show "Wallet" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowVPN', label: 'Brave VPN', description: 'Show "Brave VPN" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowSidebar', label: 'Sidebar', description: 'Show sidebar toggle in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuSidebarAutohide', label: 'Sidebar autohide', description: 'Autohide the sidebar when not in use', type: 'boolean', defaultValue: false },
-      { key: 'menuShowPasswords', label: 'Passwords and autofill', description: 'Show passwords section in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowHistory', label: 'History', description: 'Show history in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowBookmarks', label: 'Bookmarks and lists', description: 'Show bookmarks in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowDownloads', label: 'Downloads', description: 'Show downloads in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowExtensions', label: 'Extensions', description: 'Show extensions in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowClearData', label: 'Delete browsing data', description: 'Show "Delete browsing data" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuDefaultZoom', label: 'Default zoom', description: 'Default zoom level for new pages', type: 'select', defaultValue: '100', options: [{ label: '50%', value: '50' }, { label: '75%', value: '75' }, { label: '80%', value: '80' }, { label: '90%', value: '90' }, { label: '100%', value: '100' }, { label: '110%', value: '110' }, { label: '125%', value: '125' }, { label: '150%', value: '150' }, { label: '175%', value: '175' }, { label: '200%', value: '200' }] },
-      { key: 'menuShowPrint', label: 'Print', description: 'Show print option in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowFind', label: 'Find and edit', description: 'Show find/edit in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowShare', label: 'Save and share', description: 'Show save/share in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowMoreTools', label: 'More tools', description: 'Show more tools submenu in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowHelp', label: 'Help', description: 'Show help in menu', type: 'boolean', defaultValue: true },
-    ],
-  },
 ];
 
 class SettingsPage implements ISettingsPage {

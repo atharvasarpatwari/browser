@@ -1,6 +1,6 @@
 # Nova Browser — TODO
 
-Last updated: 2026-10-11
+Last updated: 2026-10-12
 
 > **2026-09-10 reference note:** a visual mockup of the browser UI (main window + new-tab page) was built on a Claude Design canvas in Cowork session `session_01W6wSGNKHuZ7Mv7nQRXAgXK` — see `doc/2026-09-10-browser-interface-design-mockup.md` for the published link and an open question it surfaced (two parallel, unreconciled CSS/component systems in the source — `themes.ts`'s small scheme vs. the richer `.nova-*` classes actually shipped in `dist/assets/main-DR04VOts.css`). No code changed; not an action item, just a pointer for whoever next touches the UI.
 
@@ -34,26 +34,23 @@ Last updated: 2026-10-11
 
 ## Priority: Medium
 
-### 5a. Dead/orphaned code audit (2026-10-11, ponytail-audit) — NOT YET DELETED, noted for later
-Full-repo sweep found these fully built and tested but never wired into the running app (zero importers anywhere outside their own directory, confirmed via grep + checked for dynamic `import()`/`require()` too). Each is its own self-contained deletion — no cross-dependencies found between them. Deliberately not deleted yet; revisit and remove when there's time to confirm none is mid-integration.
+### 5a. Dead/orphaned code audit (2026-10-11, ponytail-audit) — CLEANED UP 2026-10-12
+Re-verified every item before deleting (a day had passed; status can change). 96 files / 20,169 lines removed, 0 new tsc/eslint errors, full suite green afterward.
 
-- [ ] `src/browser/rendering/pipeline/` — the "9-session" shadow render pipeline (render-tree, layout-box, text-shaping, stacking-context, compositor, rasterizer, repaint-scheduler, paint-record, devtools-bridge) + its 9 test files, 5,239 lines. Only consumer in the repo is `src/benchmark/suites/index.ts`; the live engine renders through the original `src/browser/rendering/` modules instead.
-- [ ] `new/analytics.html` — 3,152-line committed duplicate of `doc/analytics.html`, byte-identical lead, zero references anywhere.
-- [ ] `src/browser/extensions/` — Manifest-V3 extension system, 8 files + test, 1,851 lines. Never registered in `main.ts`'s DI container; `nova://extensions` renders without it.
-- [ ] `src/browser/navigation-controls/` — tab-group manager, 1,817 lines. Imported only by its own barrel, which nothing outside it imports.
-- [ ] `src/browser/devtools/` — 9-panel DevTools implementation, 984 lines. Every other "DevTools" hit in the repo is an unrelated Electron/CSP reference.
-- [ ] `mini-browser-android/` — a second, fully separate Kotlin+Compose Android app (968 lines) wrapping the system WebView directly, unrelated to the real `android/` Nova app, referenced by no build/CI script.
-- [ ] `src/browser/credentials/` — autofill/credential-store/encryption subsystem, 927 lines. Zero importers.
-- [ ] `src/browser/omnibox/` — 739 lines, zero importers on this branch (the search-engine-subsystem docs describing an omnibox classifier appear to describe unmerged work on `claude/search-subsystem` — confirm branch state before deleting, it may just need wiring instead).
-- [ ] `src/browser/pdf-viewer/` — 567 lines, zero importers anywhere.
-- [ ] `src/browser/web-apis/web-apis-permissions.ts` — 544 lines, its own one-file directory, not even imported by the JS engine's own web-apis modules.
-- [ ] `src/browser/accessibility/screen-reader.ts` — 373 lines, builds an accessibility tree that's never attached to the page-render lifecycle.
-- [ ] `native/nova-net/src/http.rs` + `native/nova-bindings/src/http.rs` — 341 lines, already self-flagged unwired by commit `cd06095`; live networking runs through `raw-socket-http-client.ts`.
-- [ ] `src/browser/image/ImageDecoder` — 137 lines, zero importers.
-- [ ] `src/ui/pages/settings-page.ts` — 22 `menuShow*` + `menuSidebarAutohide` + `menuDefaultZoom` settings in the "Browser Menu" section, read by zero code anywhere; several gate menu items for features Nova doesn't have at all (Leo AI, Brave VPN, Tor window, Wallet — copied wholesale from Brave's settings schema).
-- [ ] `src/browser/media/permission-manager.ts` (141 lines) vs. `src/browser/security/permission-manager.ts` (453 lines, the one actually wired into `main.ts`) — two independently hand-rolled permission-tracking systems with near-identical shape. Lower confidence than the rest: consolidate rather than straight-delete, route media's permission checks through the one real `PermissionManager`.
+**Deleted as confirmed-dead:**
+- `src/browser/rendering/pipeline/` (9 modules + 9 tests) — shadow render pipeline, only consumer was `src/benchmark/suites/index.ts`.
+- `new/analytics.html` — stale duplicate of `doc/analytics.html`.
+- `src/browser/navigation-controls/`, `src/browser/devtools/` (+ `accessibility-panel.ts`'s only remaining consumer of `screen-reader.ts`), `src/browser/credentials/`, `src/browser/omnibox/` (confirmed still unwired on this branch — the search-subsystem work lives on `claude/search-subsystem`, untouched by this), `src/browser/pdf-viewer/`, `src/browser/web-apis/web-apis-permissions.ts` (+ surgically trimmed the 2 describe blocks using it out of `tests/security-runtime-enforcement.test.ts`, which otherwise covers live CSP/CORS code), `src/browser/accessibility/screen-reader.ts` + its now-empty `index.ts` barrel.
+- `mini-browser-android/` — the separate unintegrated Kotlin/Compose app.
+- `native/nova-net/src/http.rs` + `native/nova-bindings/src/http.rs` + `src/native/http-client.ts` (the `NovaHttpClient` wrapper, also unused) — removed the `http` Cargo feature from both crates' `Cargo.toml`/`lib.rs`, updated `package.json`'s `native:build:*` scripts and `.github/workflows/native-build.yml` to drop `http` from the `--features` list.
+- `src/ui/pages/settings-page.ts` — removed the entire dead "Browser Menu" section (22 `menuShow*` + `menuSidebarAutohide` + `menuDefaultZoom`, all unread anywhere; several gated features Nova doesn't have — Leo AI, Brave VPN, Tor window, Wallet — copied wholesale from Brave's settings schema).
 
-Net if all deleted: ~17,659 lines, 0 confirmed-removable third-party deps (every orphan is first-party code).
+**Excluded — status had changed or the original audit was wrong:**
+- `src/browser/extensions/` — no longer dead. The 2026-10-12 session wired `ExtensionLoader`/`Permissions`/`manifest.ts` into `main.ts` and built `nova://extensions`. The remaining pieces (`messaging.ts`, `storage-api.ts`, `content-scripts.ts`, `background-scripts.ts`) are the natural next step for that same feature (actually running extensions), not abandoned code — left in place.
+- `src/browser/image/` (`ImageDecoder`) — **the original audit was wrong here.** `src/browser/rendering/lazy-loader.ts` (used by the live `page-renderer.ts`) imports it via a relative path (`../image/decoder`) that the audit's substring grep missed. Caught by `tsc` immediately after deleting it; restored. A reminder that grep-based reachability checks can false-negative on relative imports — worth a second pass with an actual bundler/tsc check next time, not just grep.
+
+**Still open, not a deletion task:**
+- [ ] `src/browser/media/permission-manager.ts` (141 lines) vs. `src/browser/security/permission-manager.ts` (453 lines, the one wired into `main.ts`) — two independently hand-rolled permission-tracking systems with near-identical shape. Needs consolidation (route media's permission checks through the one real `PermissionManager`), not a straight delete.
 
 ### 5. Native Rust Wiring (Phase 3, parallel track)
 - `nova-net` (DNS/TLS/HTTP) + `nova-bindings` (napi-rs) build locally; cross-platform CI matrix mostly commented out in `native-build.yml`.

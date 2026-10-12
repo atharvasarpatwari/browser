@@ -22,7 +22,6 @@ crate-type = ["cdylib"]
 default = ["dns"]
 dns = ["nova-net/dns"]
 tls = ["nova-net/tls"]
-http = ["nova-net/http"]
 
 [dependencies]
 nova-net = { path = "../nova-net", default-features = false }

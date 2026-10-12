@@ -27,7 +27,7 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            features: "dns,tls,http"
+            features: "dns,tls"
 
     runs-on: ${{ matrix.os }}
     name: test (${{ matrix.target }})
@@ -107,7 +107,7 @@ jobs:
             --lib \
             --manifest-path native/Cargo.toml \
             --target x86_64-unknown-linux-gnu \
-            --features dns,tls,http
+            --features dns,tls
 
       - name: Prepare output directory
         run: |
@@ -151,7 +151,7 @@ jobs:
   #         cargo build --release --lib \
   #           --manifest-path native/Cargo.toml \
   #           --target aarch64-unknown-linux-gnu \
-  #           --features dns,tls,http
+  #           --features dns,tls
   #     - name: Prepare output
   #       run: |
   #         mkdir -p native/dist/linux-arm64-arm64
@@ -175,7 +175,7 @@ jobs:
   #         cargo build --release --lib \
   #           --manifest-path native/Cargo.toml \
   #           --target x86_64-apple-darwin \
-  #           --features dns,tls,http
+  #           --features dns,tls
   #     - name: Prepare output
   #       run: |
   #         mkdir -p native/dist/darwin-x64-x64
@@ -199,7 +199,7 @@ jobs:
   #         cargo build --release --lib \
   #           --manifest-path native/Cargo.toml \
   #           --target aarch64-apple-darwin \
-  #           --features dns,tls,http
+  #           --features dns,tls
   #     - name: Prepare output
   #       run: |
   #         mkdir -p native/dist/darwin-arm64-arm64

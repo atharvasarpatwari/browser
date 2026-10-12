@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { isNativeAvailable, resolveDns } from '@/native/index';
 import { NovaDnsResolver } from '@/native/dns-resolver';
-import { NovaHttpClient } from '@/native/http-client';
-import type { DnsResult, HttpResponse } from '@/native/types';
+import type { DnsResult } from '@/native/types';
 
 describe('Native module loader', () => {
   it('should export isNativeAvailable', () => {
@@ -62,35 +61,6 @@ describe('NovaDnsResolver', () => {
     expect(resolver.cacheSize).toBe(1);
     await resolver.resolve('localhost');
     expect(resolver.cacheSize).toBe(1);
-  });
-});
-
-describe('NovaHttpClient', () => {
-  it('should create client with defaults', () => {
-    const client = new NovaHttpClient();
-    expect(typeof client.isNative()).toBe('boolean');
-  });
-
-  it('should create client with custom options', () => {
-    const client = new NovaHttpClient({
-      defaultHeaders: { 'X-Custom': 'test' },
-      timeoutSecs: 10,
-    });
-    expect(client).toBeDefined();
-  });
-
-  it('should reject invalid URLs', async () => {
-    const client = new NovaHttpClient();
-    await expect(
-      client.get('not-a-valid-url'),
-    ).rejects.toThrow();
-  });
-
-  it('should reject invalid methods', async () => {
-    const client = new NovaHttpClient();
-    await expect(
-      client.fetch({ url: 'https://example.com', method: 'NOT A METHOD' }),
-    ).rejects.toThrow();
   });
 });
 

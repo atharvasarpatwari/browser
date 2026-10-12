@@ -3,13 +3,12 @@ name = "nova-net"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Nova Browser — native networking (DNS, TLS, HTTP)"
+description = "Nova Browser — native networking (DNS, TLS)"
 
 [features]
 default = ["dns"]
 dns = []
 tls = ["rustls", "webpki-roots"]
-http = ["tls"]
 
 [dependencies]
 tokio.workspace = true
@@ -26,9 +25,6 @@ hickory-proto = { version = "0.24", default-features = false, features = ["tokio
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 rustls-pki-types = { version = "1", features = ["std"], optional = true }
 webpki-roots = { version = "0.26", optional = true }
-
-# HTTP
-http = "1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
