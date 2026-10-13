@@ -136,7 +136,7 @@ async function getBranchInfo() {
   try {
     const current = await runGit('branch --show-current');
     const all = await runGit('branch -a');
-    const branches = all.split('\n').filter(Boolean).map(b => b.trim().replace(/^\*\s*/, ''));
+    const branches = all.split('\n').filter(Boolean).map(b => b.trim().replace(/^[*+]\s*/, ''));
     const count = branches.length;
     return { current, branches, count };
   } catch {
