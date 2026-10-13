@@ -481,10 +481,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   </div>
   <h1 class="sr-only">Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num" id="statDocs">257</span> Documents</span>
-    <span><span class="num" id="statDays">46</span> Days</span>
-    <span><span class="num" id="statTests">9,295</span> Total Suite Tests</span>
-    <span>Generated <span class="num" id="statGenerated">2026-10-11 16:15:00</span></span>
+    <span><span class="num" id="statDocs">261</span> Documents</span>
+    <span><span class="num" id="statDays">48</span> Days</span>
+    <span><span class="num" id="statTests">8,667</span> Total Suite Tests</span>
+    <span>Generated <span class="num" id="statGenerated">2026-10-13 00:00:00</span></span>
   </p>
 </header>
 
@@ -516,10 +516,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <div class="kpi-row" id="kpis">
-  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">257</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
-  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,295</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
-  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">483</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
-  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,367</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">261</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">9,317</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
+  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">494</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,411</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
   <div class="kpi amber glass"><span class="icon">📐</span><div class="value" id="kpiCompliance">~78%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
 </div>
 
@@ -1142,14 +1142,18 @@ const DOCS = [
 {file:"2026-09-13-security-enforcement-wiring.md",date:"2026-09-13",title:"Security Runtime Enforcement Wiring (CSP / CORS / Secure Context)",category:"Security",tests:22,status:"Completed",rootCauses:4,filesModified:5,filesCreated:2},
 {file:"2026-09-14-webrtc-phase2-dtls-sctp-plan.md",date:"2026-09-14",title:"WebRTC Phase 2 — Real DTLS 1.2 + SCTP + DCEP (Browser Interop) Plan",category:"Plan",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:0},
 {file:"2026-10-10-url-parsing-native-http-fixes.md",date:"2026-10-10",title:"URL Parsing Review & Native HTTP/DNS Fixes",category:"IPC/Networking",tests:2,status:"Completed",rootCauses:5,filesModified:3,filesCreated:0},
-{file:"2026-10-11-wire-native-http-client.md",date:"2026-10-11",title:"Wire the Native Rust HTTP Client Into the Browser",category:"IPC/Networking",tests:6,status:"Completed",rootCauses:5,filesModified:7,filesCreated:2}
+{file:"2026-10-11-wire-native-http-client.md",date:"2026-10-11",title:"Wire the Native Rust HTTP Client Into the Browser",category:"IPC/Networking",tests:6,status:"Completed",rootCauses:5,filesModified:7,filesCreated:2},
+{file:"2026-10-11-compliance-checklist-security-privacy-fixes.md",date:"2026-10-11",title:"Compliance Checklist — API Key Encryption, Privacy Page, Clear Browsing Data",category:"Security",tests:4,status:"Completed",rootCauses:4,filesModified:8,filesCreated:3},
+{file:"2026-10-12-extension-permissions-and-chrome-keyboard-nav.md",date:"2026-10-12",title:"Extension Permission Prompt + Chrome Keyboard Nav/Contrast",category:"UI",tests:18,status:"Completed",rootCauses:4,filesModified:6,filesCreated:5},
+{file:"2026-10-12-dead-code-cleanup.md",date:"2026-10-12",title:"Dead Code Cleanup — Acting on the 2026-10-11 Audit",category:"Architecture",tests:0,status:"Completed",rootCauses:2,filesModified:11,filesCreated:1},
+{file:"2026-10-13-integrate-branches-native-http-vs-dead-code-cleanup.md",date:"2026-10-13",title:"Integrate Branches — Native HTTP Client vs. Dead-Code Cleanup Merge Conflict",category:"IPC/Networking",tests:0,status:"Completed",rootCauses:1,filesModified:9,filesCreated:1}
 
 ];
 
 /* Last-updated stamp: when the DOCS dataset is refreshed, bump these so the header
    stat-line and footer always show exactly when this dashboard version was generated. */
-const GEN_DATE='2026-09-12';
-const GEN_TIME='20:59:18';
+const GEN_DATE='2026-10-12';
+const GEN_TIME='16:15:45';
 
 const CAT_COLORS={CSS:'#60a5fa',HTML5:'#f472b6',JavaScript:'#fbbf24',Layout:'#34d399',Rendering:'#a855f7',Security:'#f87171','IPC/Networking':'#00f0ff',UI:'#f472b6',Architecture:'#94a3b8',Plan:'#fbbf24'};
 const CAT_CLASS={CSS:'cat-css',HTML5:'cat-html5',JavaScript:'cat-javascript',Layout:'cat-layout',Rendering:'cat-rendering',Security:'cat-security','IPC/Networking':'cat-ipc',UI:'cat-ui',Architecture:'cat-architecture',Plan:'cat-plan'};
@@ -1316,18 +1320,25 @@ document.getElementById('metricToggle').addEventListener('click',e=>{
 });
 
 /* ---------- Category Distribution ---------- */
-const cats={};DOCS.forEach(d=>{cats[d.category]=(cats[d.category]||0)+1});
+const cats=DOCS.reduce((acc,d)=>(acc[d.category]=(acc[d.category]||0)+1,acc),{});
 const catKeys=Object.keys(cats).sort((a,b)=>cats[b]-cats[a]);
+/* Same idea as docsByDate below: one grouped-by-category lookup instead of each
+   consuming function re-scanning DOCS with its own `d=>d.category===c` filter. */
+const docsByCategory=DOCS.reduce((acc,d)=>((acc[d.category]=acc[d.category]||[]).push(d),acc),{});
 CHARTS.categoryDist=new Chart(document.getElementById('categoryDist'),{type:'doughnut',data:{labels:catKeys,datasets:[{data:catKeys.map(k=>cats[k]),backgroundColor:catKeys.map(k=>CAT_COLORS[k]+'dd'),borderWidth:0,hoverOffset:8}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',onHover:(e,els)=>{e.native.target.style.cursor=els.length?'pointer':'default'},onClick:(e,els)=>{if(els.length)openCategoryPage(catKeys[els[0].index])},plugins:{legend:{position:'right',labels:{padding:14}}}}});
 
 /* ---------- Cumulative Growth ---------- */
 const sorted=[...DOCS].sort((a,b)=>a.date.localeCompare(b.date)||a.title.localeCompare(b.title));
-let cum=0;const cumData=sorted.map(d=>{cum+=d.tests;return{x:truncate(d.title,20),y:cum}});
+const cumData=sorted.reduce((acc,d)=>{const cum=(acc.at(-1)?.y||0)+d.tests;acc.push({x:truncate(d.title,20),y:cum});return acc},[]);
 CHARTS.cumulativeGrowth=new Chart(document.getElementById('cumulativeGrowth'),{type:'line',data:{labels:cumData.map(d=>d.x),datasets:[{label:'Cumulative Tests',data:cumData.map(d=>d.y),borderColor:'#00f0ff',backgroundColor:'rgba(0,240,255,0.08)',fill:true,tension:.3,pointRadius:2,pointHoverRadius:5,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{display:false},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{callback:v=>v>=1000?(v/1000)+'K':v}}}}});
 
 /* ---------- Docs Per Date ---------- */
-const dateCounts={};DOCS.forEach(d=>{dateCounts[d.date]=(dateCounts[d.date]||0)+1});
+const dateCounts=DOCS.reduce((acc,d)=>(acc[d.date]=(acc[d.date]||0)+1,acc),{});
 const dateKeys=Object.keys(dateCounts).sort();
+/* Single grouped-by-date lookup, built once, reused everywhere a function previously
+   re-scanned all of DOCS with its own `d=>d.date===k` filter (11 call sites, each an
+   O(n) scan repeated once per date — same result every time, just recomputed). */
+const docsByDate=DOCS.reduce((acc,d)=>((acc[d.date]=acc[d.date]||[]).push(d),acc),{});
 CHARTS.docsPerDate=new Chart(document.getElementById('docsPerDate'),{type:'bar',data:{labels:dateKeys.map(d=>{const p=d.split('-');return p[1]+'/'+p[2]}),datasets:[{label:'Documents',data:dateKeys.map(k=>dateCounts[k]),backgroundColor:['#00f0ffcc','#a855f7cc'],borderRadius:8,borderSkipped:false,barPercentage:.5}]},options:{responsive:true,maintainAspectRatio:false,onHover:(e,els)=>{e.native.target.style.cursor=els.length?'pointer':'default'},onClick:(e,els)=>{if(els.length)openDatePage(dateKeys[els[0].index])},plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:5}}}}});
 
 /* ---------- Root Causes ---------- */
@@ -1342,7 +1353,7 @@ const fData=DOCS.filter(d=>d.filesModified+d.filesCreated>0).sort((a,b)=>(b.file
 CHARTS.filesChart=new Chart(document.getElementById('filesChart'),{type:'bar',data:{labels:fData.map(d=>truncate(d.title,22)),datasets:[{label:'Modified',data:fData.map(d=>d.filesModified),backgroundColor:'rgba(96,165,250,0.65)',borderRadius:4,borderSkipped:false},{label:'Created',data:fData.map(d=>d.filesCreated),backgroundColor:'rgba(168,85,247,0.65)',borderRadius:4,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{x:{grid:{display:false},ticks:{font:{size:9},maxRotation:45}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{stepSize:2}}}}});
 
 /* ---------- Status Pie ---------- */
-const statusCounts={Completed:0,Planned:0};DOCS.forEach(d=>statusCounts[d.status]=(statusCounts[d.status]||0)+1);
+const statusCounts=DOCS.reduce((acc,d)=>(acc[d.status]=(acc[d.status]||0)+1,acc),{Completed:0,Planned:0});
 CHARTS.statusPie=new Chart(document.getElementById('statusPie'),{type:'pie',data:{labels:Object.keys(statusCounts),datasets:[{data:Object.values(statusCounts),backgroundColor:['rgba(52,211,153,0.75)','rgba(251,191,36,0.75)'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,onHover:(e,els)=>{e.native.target.style.cursor=els.length?'pointer':'default'},onClick:(e,els)=>{if(els.length)openStatusPage(Object.keys(statusCounts)[els[0].index])},plugins:{legend:{position:'bottom'}}}});
 
 /* ---------- Files Touched vs Tests Added (scatter, bubble size = root causes) ---------- */
@@ -1415,10 +1426,10 @@ CHARTS.paretoChart=new Chart(document.getElementById('paretoChart'),{
 
 /* ---------- Category Comparison (radar, interactive category picker) ---------- */
 const radarMetrics=[
-  {label:'Tests',get:c=>DOCS.filter(d=>d.category===c).reduce((s,d)=>s+d.tests,0)},
-  {label:'Root Causes',get:c=>DOCS.filter(d=>d.category===c).reduce((s,d)=>s+d.rootCauses,0)},
-  {label:'Files Touched',get:c=>DOCS.filter(d=>d.category===c).reduce((s,d)=>s+d.filesModified+d.filesCreated,0)},
-  {label:'Documents',get:c=>DOCS.filter(d=>d.category===c).length}
+  {label:'Tests',get:c=>docsByCategory[c].reduce((s,d)=>s+d.tests,0)},
+  {label:'Root Causes',get:c=>docsByCategory[c].reduce((s,d)=>s+d.rootCauses,0)},
+  {label:'Files Touched',get:c=>docsByCategory[c].reduce((s,d)=>s+d.filesModified+d.filesCreated,0)},
+  {label:'Documents',get:c=>docsByCategory[c].length}
 ];
 const radarMax=radarMetrics.map(m=>Math.max(...catKeys.map(c=>m.get(c)))||1);
 const RADAR_MAX_SELECTED=8;
@@ -1557,13 +1568,13 @@ function drawSpark(id,values,color){
 const testedSessions=DOCS.filter(d=>d.tests>0);
 const avgTests=Math.round(testedSessions.reduce((s,d)=>s+d.tests,0)/testedSessions.length);
 animateCount(document.getElementById('kpiAvgTests'),avgTests);
-drawSpark('sparkAvg',dateKeys.map(k=>{const ds=DOCS.filter(d=>d.date===k&&d.tests>0);return ds.length?ds.reduce((s,d)=>s+d.tests,0)/ds.length:0}),'#60a5fa');
+drawSpark('sparkAvg',dateKeys.map(k=>{const ds=docsByDate[k].filter(d=>d.tests>0);return ds.length?ds.reduce((s,d)=>s+d.tests,0)/ds.length:0}),'#60a5fa');
 
 const busiestDate=dateKeys.reduce((a,b)=>dateCounts[a]>=dateCounts[b]?a:b);
 document.getElementById('kpiBusiest').textContent=busiestDate.slice(5)+' ('+dateCounts[busiestDate]+')';
 drawSpark('sparkBusy',dateKeys.map(k=>dateCounts[k]),'#f472b6');
 
-const testsByDate=k=>DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.tests,0);
+const testsByDate=k=>docsByDate[k].reduce((s,d)=>s+d.tests,0);
 const laziestDate=dateKeys.reduce((a,b)=>{
   if(dateCounts[a]!==dateCounts[b])return dateCounts[a]<dateCounts[b]?a:b;
   return testsByDate(a)<=testsByDate(b)?a:b;
@@ -1577,29 +1588,35 @@ document.getElementById('kpiBusiest').closest('.kpi').addEventListener('click',(
 
 const completionRate=Math.round((statusCounts.Completed/(DOCS.length))*100);
 animateCount(document.getElementById('kpiCompletion'),completionRate,{formatter:n=>Math.round(n)+'%'});
-let runningComplete=0,runningTotal=0;
-drawSpark('sparkComp',dateKeys.map(k=>{const ds=DOCS.filter(d=>d.date===k);runningTotal+=ds.length;runningComplete+=ds.filter(d=>d.status==='Completed').length;return runningTotal?Math.round((runningComplete/runningTotal)*100):0}),'#34d399');
+const completionSpark=dateKeys.reduce((acc,k)=>{
+  const ds=docsByDate[k];
+  const runningTotal=acc.runningTotal+ds.length;
+  const runningComplete=acc.runningComplete+ds.filter(d=>d.status==='Completed').length;
+  acc.points.push(runningTotal?Math.round((runningComplete/runningTotal)*100):0);
+  return{runningTotal,runningComplete,points:acc.points};
+},{runningTotal:0,runningComplete:0,points:[]}).points;
+drawSpark('sparkComp',completionSpark,'#34d399');
 
 const totalCreated=DOCS.reduce((s,d)=>s+d.filesCreated,0);
 animateCount(document.getElementById('kpiCreated'),totalCreated);
-drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.filesCreated,0)),'#00f0ff');
+drawSpark('sparkCreated',dateKeys.map(k=>docsByDate[k].reduce((s,d)=>s+d.filesCreated,0)),'#00f0ff');
 
 /* ---------- Insights ---------- */
 (function buildInsights(){
   const list=document.getElementById('insightsList');
-  const topCatByTests=catKeys.map(k=>({k,t:DOCS.filter(d=>d.category===k).reduce((s,d)=>s+d.tests,0)})).sort((a,b)=>b.t-a.t)[0];
+  const topCatByTests=catKeys.map(k=>({k,t:docsByCategory[k].reduce((s,d)=>s+d.tests,0)})).sort((a,b)=>b.t-a.t)[0];
   const topRootCauseDoc=[...DOCS].sort((a,b)=>b.rootCauses-a.rootCauses)[0];
   const topTestDoc=[...DOCS].sort((a,b)=>b.tests-a.tests)[0];
   const plannedCount=DOCS.filter(d=>d.status==='Planned').length;
   const zeroCoverage=DOCS.filter(d=>d.tests===0&&d.status==='Completed').length;
   const sortedDates=[...dateKeys].sort();
-  let longestStreak=1,currentRun=1;
-  for(let i=1;i<sortedDates.length;i++){
-    const prev=new Date(sortedDates[i-1]+'T00:00:00');
-    const cur=new Date(sortedDates[i]+'T00:00:00');
+  const{longestStreak}=sortedDates.slice(1).reduce((acc,dateStr,i)=>{
+    const prev=new Date(sortedDates[i]+'T00:00:00');
+    const cur=new Date(dateStr+'T00:00:00');
     const diffDays=Math.round((cur-prev)/86400000);
-    if(diffDays===1){currentRun++;longestStreak=Math.max(longestStreak,currentRun)}else{currentRun=1}
-  }
+    const currentRun=diffDays===1?acc.currentRun+1:1;
+    return{currentRun,longestStreak:Math.max(acc.longestStreak,currentRun)};
+  },{currentRun:1,longestStreak:1});
   const lastActiveDate=sortedDates[sortedDates.length-1];
   const items=[
     `<b>${topCatByTests.k}</b> leads all categories with <b>${topCatByTests.t.toLocaleString()}</b> tests contributed.`,
@@ -1643,8 +1660,9 @@ drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)
   const avg=Math.round(testCounts.reduce((s,v)=>s+v,0)/testCounts.length);
   const skewNote=avg>median*1.3?'a few large sessions are pulling the average up':avg<median*0.77?'a few very small sessions are pulling the average down':'fairly evenly distributed';
 
-  let paretoDocCount=0,paretoRunningPct=0;
-  for(let i=0;i<paretoCumPct.length;i++){paretoDocCount=i+1;paretoRunningPct=paretoCumPct[i];if(paretoRunningPct>=80)break}
+  const paretoIdx=paretoCumPct.findIndex(pct=>pct>=80);
+  const paretoDocCount=paretoIdx===-1?paretoCumPct.length:paretoIdx+1;
+  const paretoRunningPct=paretoCumPct[paretoDocCount-1];
   const paretoDocPct=Math.round((paretoDocCount/paretoRanked.length)*100);
 
   const totalCreated=DOCS.reduce((s,d)=>s+d.filesCreated,0);
@@ -1653,12 +1671,12 @@ drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)
   const createdPct=Math.round((totalCreated/totalFiles)*100);
 
   const bugDensity=catKeys.map(c=>{
-    const docs=DOCS.filter(d=>d.category===c);
+    const docs=docsByCategory[c];
     const tests=docs.reduce((s,d)=>s+d.tests,0);
     const roots=docs.reduce((s,d)=>s+d.rootCauses,0);
     return{c,density:tests?roots/tests:0,roots};
   }).filter(x=>x.roots>0).sort((a,b)=>b.density-a.density)[0];
-  const cleanestCat=catKeys.map(c=>({c,roots:DOCS.filter(d=>d.category===c).reduce((s,d)=>s+d.rootCauses,0),docs:DOCS.filter(d=>d.category===c).length})).filter(x=>x.roots===0).sort((a,b)=>b.docs-a.docs)[0];
+  const cleanestCat=catKeys.map(c=>({c,roots:docsByCategory[c].reduce((s,d)=>s+d.rootCauses,0),docs:docsByCategory[c].length})).filter(x=>x.roots===0).sort((a,b)=>b.docs-a.docs)[0];
 
   const items=[
     `Median tests per session is <b>${median}</b> vs an average of <b>${avg}</b> — ${skewNote}.`,
@@ -1719,19 +1737,18 @@ drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)
   const totalDocsCount=DOCS.length;
 
   // Longest run of consecutive calendar days with at least one entry
-  let streak={len:1,start:dateKeys[0],end:dateKeys[0]};
-  let curLen=1,curStart=dateKeys[0];
-  for(let i=1;i<dateKeys.length;i++){
-    const prev=new Date(dateKeys[i-1]+'T00:00:00');
-    const cur=new Date(dateKeys[i]+'T00:00:00');
+  const{best:streak}=dateKeys.slice(1).reduce((acc,dateStr,i)=>{
+    const prev=new Date(dateKeys[i]+'T00:00:00');
+    const cur=new Date(dateStr+'T00:00:00');
     const diffDays=Math.round((cur-prev)/86400000);
-    curLen=diffDays===1?curLen+1:1;
-    if(diffDays!==1)curStart=dateKeys[i];
-    if(curLen>streak.len)streak={len:curLen,start:curStart,end:dateKeys[i]};
-  }
+    const curLen=diffDays===1?acc.curLen+1:1;
+    const curStart=diffDays===1?acc.curStart:dateStr;
+    const best=curLen>acc.best.len?{len:curLen,start:curStart,end:dateStr}:acc.best;
+    return{curLen,curStart,best};
+  },{curLen:1,curStart:dateKeys[0],best:{len:1,start:dateKeys[0],end:dateKeys[0]}});
 
   // Busiest single day by tests added (distinct from the "Busiest Day" KPI, which ranks by doc count)
-  const testsPerDay=dateKeys.map(k=>({date:k,tests:DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.tests,0)}));
+  const testsPerDay=dateKeys.map(k=>({date:k,tests:docsByDate[k].reduce((s,d)=>s+d.tests,0)}));
   const biggestTestDay=testsPerDay.reduce((a,b)=>b.tests>a.tests?b:a);
 
   // Heaviest single session (one document, most tests)
@@ -1741,7 +1758,7 @@ drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)
   // the inverse of the "highest bug density" fact already called out in the Data Patterns card,
   // so this stays meaningful even in datasets where no category hits a literal zero.
   const bugRatioByCat=catKeys.map(c=>{
-    const docs=DOCS.filter(d=>d.category===c);
+    const docs=docsByCategory[c];
     const tests=docs.reduce((s,d)=>s+d.tests,0);
     const roots=docs.reduce((s,d)=>s+d.rootCauses,0);
     return{c,ratio:tests?roots/tests:Infinity,roots,tests};
@@ -1750,7 +1767,7 @@ drawSpark('sparkCreated',dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)
 
   // The very first entry logged (earliest date; ties broken by highest tests that day)
   const firstDay=dateKeys[0];
-  const firstDoc=DOCS.filter(d=>d.date===firstDay).sort((a,b)=>b.tests-a.tests)[0];
+  const firstDoc=[...docsByDate[firstDay]].sort((a,b)=>b.tests-a.tests)[0];
 
   const badges=[
     {icon:'🎯',title:milestone(totalTests,1000).toLocaleString()+'+ Tests Delivered',sub:totalTests.toLocaleString()+' total so far'},
@@ -1787,12 +1804,12 @@ document.getElementById('badgeShelf').addEventListener('click',e=>{
   const minDate=toDate(dateKeys[0]);
   const maxDate=toDate(dateKeys[dateKeys.length-1]);
 
-  const dayStats={};
-  DOCS.forEach(d=>{
-    if(!dayStats[d.date])dayStats[d.date]={docs:0,tests:0};
-    dayStats[d.date].docs++;
-    dayStats[d.date].tests+=d.tests;
-  });
+  const dayStats=DOCS.reduce((acc,d)=>{
+    const bucket=acc[d.date]||(acc[d.date]={docs:0,tests:0});
+    bucket.docs++;
+    bucket.tests+=d.tests;
+    return acc;
+  },{});
   const nonZeroTests=Object.values(dayStats).map(s=>s.tests).filter(t=>t>0).sort((a,b)=>a-b);
   const levelThresholds=[0.25,0.5,0.75].map(p=>nonZeroTests[Math.floor(p*(nonZeroTests.length-1))]||0);
   function levelFor(tests){
@@ -1847,9 +1864,9 @@ document.getElementById('calHeatmap').addEventListener('click',e=>{
 /* ---------- Daily activity heat strip ---------- */
 (function buildHeat(){
   const strip=document.getElementById('heatStrip');
-  const maxTests=Math.max(...dateKeys.map(k=>DOCS.filter(d=>d.date===k).reduce((s,d)=>s+d.tests,0)));
+  const maxTests=Math.max(...dateKeys.map(k=>docsByDate[k].reduce((s,d)=>s+d.tests,0)));
   strip.innerHTML=dateKeys.map(k=>{
-    const docsOnDay=DOCS.filter(d=>d.date===k);
+    const docsOnDay=docsByDate[k];
     const tests=docsOnDay.reduce((s,d)=>s+d.tests,0);
     const intensity=maxTests?tests/maxTests:0;
     const bg=`rgba(var(--accent-rgb),${(0.06+intensity*0.28).toFixed(3)})`;
@@ -1865,7 +1882,7 @@ document.getElementById('heatStrip').addEventListener('click',e=>{
 let leaderSort={col:'tests',dir:'desc'};
 function buildLeaderRows(){
   const rows=catKeys.map(k=>{
-    const ds=DOCS.filter(d=>d.category===k);
+    const ds=docsByCategory[k];
     const tests=ds.reduce((s,d)=>s+d.tests,0);
     const rootCauses=ds.reduce((s,d)=>s+d.rootCauses,0);
     const files=ds.reduce((s,d)=>s+d.filesModified+d.filesCreated,0);
@@ -1899,8 +1916,7 @@ document.getElementById('leaderBody').addEventListener('click',e=>{
 /* ---------- Daily Changelog (git-log style view of daily activity) ---------- */
 const CHANGELOG_AUTHOR='Atharva Sarpatwari';
 function fakeHash(str){
-  let h=0;
-  for(let i=0;i<str.length;i++){h=(h<<5)-h+str.charCodeAt(i);h|=0}
+  const h=[...str].reduce((acc,ch)=>((acc<<5)-acc+ch.charCodeAt(0))|0,0);
   return (h>>>0).toString(16).padStart(8,'0').slice(0,7);
 }
 function commitPrefix(d){
@@ -1921,8 +1937,7 @@ function relativeDays(dateStr){
   return days+' days ago';
 }
 function fakeMinutesOfDay(str){
-  let h=0;
-  for(let i=0;i<str.length;i++){h=(h<<3)-h+str.charCodeAt(i)+7;h|=0}
+  const h=[...str].reduce((acc,ch)=>((acc<<3)-acc+ch.charCodeAt(0)+7)|0,0);
   return 540+(Math.abs(h)%870);
 }
 function fakeTime(str){
@@ -1939,7 +1954,7 @@ function getFilteredChangelogDays(){
   const q=changelogQuery.trim().toLowerCase();
   const days=[...dateKeys].sort((a,b)=>changelogSortDesc?b.localeCompare(a):a.localeCompare(b));
   return days.map(dateStr=>{
-    let docsOfDay=DOCS.filter(d=>d.date===dateStr).sort((a,b)=>fakeMinutesOfDay(a.file)-fakeMinutesOfDay(b.file));
+    let docsOfDay=[...docsByDate[dateStr]].sort((a,b)=>fakeMinutesOfDay(a.file)-fakeMinutesOfDay(b.file));
     if(changelogFilterType)docsOfDay=docsOfDay.filter(d=>commitPrefix(d)===changelogFilterType);
     if(q)docsOfDay=docsOfDay.filter(d=>d.title.toLowerCase().includes(q)||d.category.toLowerCase().includes(q));
     return{dateStr,docsOfDay};
@@ -2017,8 +2032,7 @@ document.getElementById('changelogFilters').addEventListener('click',e=>{
 
 const PREFIX_COLOR={feat:'#34d399',new:'#00f0ff',fix:'#f87171',test:'#60a5fa',docs:'#a855f7',plan:'#fbbf24'};
 function buildChangelogBreakdown(){
-  const counts={feat:0,new:0,fix:0,test:0,docs:0,plan:0};
-  DOCS.forEach(d=>{counts[commitPrefix(d)]++});
+  const counts=DOCS.reduce((acc,d)=>(acc[commitPrefix(d)]++,acc),{feat:0,new:0,fix:0,test:0,docs:0,plan:0});
   const total=DOCS.length;
   const bar=document.getElementById('changelogBreakdown');
   bar.innerHTML=Object.keys(counts).filter(k=>counts[k]>0).map(k=>
@@ -2253,7 +2267,7 @@ document.getElementById('copyMdBtn').addEventListener('click',async()=>{
    logged day, formatted to paste straight into a stand-up/status update. ---------- */
 document.getElementById('copyStandupBtn').addEventListener('click',async()=>{
   const lastDate=dateKeys[dateKeys.length-1];
-  const docsToday=DOCS.filter(d=>d.date===lastDate).sort((a,b)=>b.tests-a.tests);
+  const docsToday=[...docsByDate[lastDate]].sort((a,b)=>b.tests-a.tests);
   const totalTests=docsToday.reduce((s,d)=>s+d.tests,0);
   const totalRoot=docsToday.reduce((s,d)=>s+d.rootCauses,0);
   const totalFiles=docsToday.reduce((s,d)=>s+d.filesModified+d.filesCreated,0);
@@ -2502,7 +2516,7 @@ function buildStatCards(items){
 /* ---------- Category Detail Page (opens full-screen on clicking any category tag) ---------- */
 let cpChartInstance=null;
 function openCategoryPage(category){
-  const docs=DOCS.filter(d=>d.category===category).sort((a,b)=>a.date.localeCompare(b.date)||b.tests-a.tests);
+  const docs=[...docsByCategory[category]].sort((a,b)=>a.date.localeCompare(b.date)||b.tests-a.tests);
   if(docs.length===0)return;
   const totalTests=docs.reduce((s,d)=>s+d.tests,0);
   const totalRoot=docs.reduce((s,d)=>s+d.rootCauses,0);
@@ -2579,7 +2593,7 @@ function formatFullDate(dateStr){
   return d.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
 }
 function openDatePage(dateStr){
-  const docs=DOCS.filter(d=>d.date===dateStr).sort((a,b)=>b.tests-a.tests);
+  const docs=[...docsByDate[dateStr]].sort((a,b)=>b.tests-a.tests);
   if(docs.length===0)return;
   const totalTests=docs.reduce((s,d)=>s+d.tests,0);
   const totalRoot=docs.reduce((s,d)=>s+d.rootCauses,0);
@@ -2588,7 +2602,7 @@ function openDatePage(dateStr){
   const cats=[...new Set(docs.map(d=>d.category))];
   const allTestsSum=DOCS.reduce((s,d)=>s+d.tests,0);
   const shareOfAll=allTestsSum?Math.round((totalTests/allTestsSum)*100):0;
-  const rank=[...dateKeys].sort((a,b)=>DOCS.filter(d=>d.date===b).length-DOCS.filter(d=>d.date===a).length).indexOf(dateStr)+1;
+  const rank=[...dateKeys].sort((a,b)=>dateCounts[b]-dateCounts[a]).indexOf(dateStr)+1;
   const topDoc=docs[0];
 
   document.getElementById('dpTitle').textContent=formatFullDate(dateStr);

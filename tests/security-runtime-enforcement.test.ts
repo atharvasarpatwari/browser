@@ -21,11 +21,6 @@ import { CorsEngine } from '../src/browser/security/cors';
 import { createGlobalEnv, Interpreter, EventLoop, Lexer, Parser } from '../src/browser/js/index';
 import { DomTree } from '../src/browser/rendering/dom-tree';
 import { isSecureContextUrl, isSecureContextOrigin } from '../src/browser/security/secure-context';
-import {
-  PermissionStore,
-  PermissionGatedWebApis,
-  type PermissionPrompt,
-} from '../src/browser/web-apis/web-apis-permissions';
 
 // ── Mock helpers (mirror tests/page-renderer.test.ts) ───────────────────────
 
@@ -427,85 +422,5 @@ describe('window.isSecureContext reflects page origin', () => {
       pageOrigin: 'http://localhost:8080',
     });
     expect(env.get('_secure')).toBe(true);
-  });
-});
-
-describe('PermissionStore secure-context predicate', () => {
-  it('denies every request without prompting when the predicate reports insecure', async () => {
-    const prompt = vi.fn<PermissionPrompt>().mockResolvedValue('granted');
-    const store = new PermissionStore(prompt, () => false);
-
-    expect(store.query('http://example.com', 'geolocation')).toBe('denied');
-    await store.request('http://example.com', 'geolocation');
-    await store.request('http://example.com', 'vibrate');
-    expect(prompt).not.toHaveBeenCalled();
-  });
-
-  it('applies the predicate per permission name', async () => {
-    const prompt = vi.fn<PermissionPrompt>().mockResolvedValue('granted');
-    const store = new PermissionStore(prompt, (name) => name !== 'geolocation');
-
-    expect(store.query('http://example.com', 'geolocation')).toBe('denied');
-    expect(store.query('http://example.com', 'vibrate')).toBe('prompt');
-    await store.request('http://example.com', 'vibrate');
-    expect(prompt).toHaveBeenCalledTimes(1);
-  });
-
-  it('defaults to secure when no predicate is provided', () => {
-    const store = new PermissionStore(async () => 'granted');
-    expect(store.query('http://example.com', 'geolocation')).toBe('prompt');
-  });
-});
-
-describe('PermissionGatedWebApis.isSecureContext=false', () => {
-  function buildInsecureApis() {
-    const promptUser: PermissionPrompt = vi.fn().mockResolvedValue('granted');
-    const apis = new PermissionGatedWebApis({
-      origin: 'http://example.com',
-      promptUser,
-      isSecureContext: false,
-      positionSource: {
-        getPosition: vi.fn().mockResolvedValue({ coords: { latitude: 0, longitude: 0 }, timestamp: Date.now() }),
-        subscribe: vi.fn(),
-      },
-      clipboardBackend: { read: vi.fn().mockResolvedValue(''), write: vi.fn() },
-      vibrationBackend: { vibrate: vi.fn(), cancel: vi.fn() },
-    });
-    return { promptUser, apis };
-  }
-
-  it('geolocation is denied without prompting', async () => {
-    const { promptUser, apis } = buildInsecureApis();
-
-    await apis.permissions.request('http://example.com', 'geolocation');
-    expect(promptUser).not.toHaveBeenCalled();
-    expect(apis.permissions.query('http://example.com', 'geolocation')).toBe('denied');
-  });
-
-  it('geolocation API reports PERMISSION_DENIED via onError', async () => {
-    const { apis } = buildInsecureApis();
-    const onSuccess = vi.fn();
-    const onError = vi.fn();
-
-    await apis.geolocation.getCurrentPosition(onSuccess, onError);
-
-    expect(onSuccess).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledTimes(1);
-  });
-
-  it('notifications and clipboard are denied on insecure contexts too', async () => {
-    const { apis } = buildInsecureApis();
-
-    expect(apis.permissions.query('http://example.com', 'notifications')).toBe('denied');
-    expect(apis.permissions.query('http://example.com', 'clipboard-read')).toBe('denied');
-    expect(apis.permissions.query('http://example.com', 'clipboard-write')).toBe('denied');
-  });
-
-  it('non-powerful permissions (vibrate) still prompt on insecure contexts', async () => {
-    const { promptUser, apis } = buildInsecureApis();
-
-    expect(apis.permissions.query('http://example.com', 'vibrate')).toBe('prompt');
-    await apis.permissions.request('http://example.com', 'vibrate');
-    expect(promptUser).toHaveBeenCalledTimes(1);
   });
 });

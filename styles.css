@@ -89,7 +89,10 @@
 
   --tx-primary:  rgba(255,255,255,.92);
   --tx-secondary:rgba(255,255,255,.56);
-  --tx-tertiary: rgba(255,255,255,.32);
+  /* .32 computed to ~2.9:1 against --bg-tab (#121828) — just under the WCAG
+     1.4.11 non-text 3:1 floor (tab-close/new-tab icons use this token). .40
+     computes to ~3.8:1 against the same background. */
+  --tx-tertiary: rgba(255,255,255,.40);
   --tx-disabled: rgba(255,255,255,.20);
   --tx-inverse:  rgba(0,0,0,.88);
 
@@ -1573,7 +1576,9 @@ input    { font-family:inherit; }
 
     --tx-primary:   rgba(0,0,0,.88);
     --tx-secondary: rgba(0,0,0,.56);
-    --tx-tertiary:  rgba(0,0,0,.36);
+    /* Same fix as the dark-theme token above: .36 computed to ~2.5:1 against
+       --bg-tab (#ececef) here, also under the 3:1 floor. .44 computes to ~3.2:1. */
+    --tx-tertiary:  rgba(0,0,0,.44);
     --tx-disabled:  rgba(0,0,0,.20);
     --tx-inverse:   rgba(255,255,255,.92);
 
