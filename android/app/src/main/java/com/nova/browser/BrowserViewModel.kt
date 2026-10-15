@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebView
@@ -153,30 +154,41 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     // ── Web permissions (WebChromeClient.onPermissionRequest) ────────────────
 
-    /** Non-null while a WebView permission request awaits a runtime-permission grant. */
-    var permissionRequest = mutableStateOf<PermissionRequest?>(null)
+    /** A page's pending ask for Android runtime permissions, launched by BrowserScreen. */
+    class PermissionAsk(val permissions: Array<String>, val onResult: (Map<String, Boolean>) -> Unit)
+
+    /** Non-null while a page's camera/mic/location request awaits a runtime-permission grant. */
+    var permissionAsk = mutableStateOf<PermissionAsk?>(null)
         private set
 
+    private fun ask(next: PermissionAsk) {
+        permissionAsk.value?.onResult?.invoke(emptyMap()) // a superseded ask resolves as denied, never hangs
+        permissionAsk.value = next
+    }
+
+    /** Camera/mic requests (WebChromeClient.onPermissionRequest). */
     fun onPermissionRequested(request: PermissionRequest) {
-        permissionRequest.value = request
+        val needed = request.resources.mapNotNull { WEB_RESOURCE_PERMISSIONS[it] }.distinct()
+        if (needed.isEmpty()) {
+            request.grant(request.resources) // MIDI sync, protected media: no runtime grant exists
+            return
+        }
+        ask(PermissionAsk(needed.toTypedArray()) { result ->
+            val ok = grantableResources(request.resources, result)
+            if (ok.isEmpty()) request.deny() else request.grant(ok)
+        })
     }
 
-    /**
-     * Maps a WebView permission request to the Android runtime permission it
-     * needs, or null when the request needs no user grant (MIDI sync, protected
-     * media) and can be auto-granted.
-     */
-    fun androidPermissionFor(request: PermissionRequest): String? {
-        val res = request.resources.toSet()
-        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in res) return Manifest.permission.CAMERA
-        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in res) return Manifest.permission.RECORD_AUDIO
-        return null
+    /** Geolocation (WebChromeClient.onGeolocationPermissionsShowPrompt). */
+    fun onGeolocationRequested(origin: String, callback: GeolocationPermissions.Callback) {
+        val perms = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        ask(PermissionAsk(perms) { result -> callback.invoke(origin, result.values.any { it }, false) })
     }
 
-    fun resolvePermissionRequest(granted: Boolean) {
-        val request = permissionRequest.value ?: return
-        permissionRequest.value = null
-        if (granted) request.grant(request.resources) else request.deny()
+    fun resolvePermissionAsk(result: Map<String, Boolean>) {
+        val pending = permissionAsk.value ?: return
+        permissionAsk.value = null
+        pending.onResult(result)
     }
 
     // ── Downloads (natively owned, see NativeDownloader) ─────────────────────
@@ -294,26 +306,36 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         return plain?.groupValues?.get(1)?.trim()
     }
 
-    /** Set once by EngineWebView right after the single engine WebView is created. */
+    /** Set by EngineWebView right after it creates the engine WebView. */
     private var webView: WebView? = null
-    private var webViewDestroyed = false
+
+    /** Bumped when the renderer dies; BrowserScreen keys EngineWebView on it to build a fresh one. */
+    var engineGeneration = mutableStateOf(0)
+        private set
 
     fun attachWebView(webView: WebView) {
         this.webView = webView
     }
 
     /**
+     * WebView's renderer process crashed or was killed for memory. The dead WebView
+     * must be destroyed and never touched again; a new one reboots the engine.
+     */
+    fun onRendererGone() {
+        releaseWebView()
+        engineGeneration.value++
+    }
+
+    /**
      * Called from MainActivity.onDestroy(). Detaches the WebView from its parent
      * BEFORE destroy() — WebView.destroy() on an attached view throws
-     * IllegalStateException — and guards against a second destroy on the same
-     * instance (the engine never recreates its WebView, so a stale reference
-     * must not be destroyed twice).
+     * IllegalStateException. Clearing the reference first makes a second call a
+     * no-op, so the same instance is never destroyed twice.
      */
     fun releaseWebView() {
         val view = webView ?: return
         webView = null
-        if (webViewDestroyed) return
-        webViewDestroyed = true
+        engineReady = false // a new WebView must boot the engine again before links can open
         try {
             (view.parent as? android.view.ViewGroup)?.removeView(view)
         } catch (_: Exception) {
@@ -378,6 +400,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         homeUrl.value = obj.optString("homeUrl", "about:blank")
         searchTemplate.value = obj.optString("searchTemplate", "https://www.google.com/search?q=%s")
         incognito.value = obj.optBoolean("incognito", false)
+
+        engineReady = true
+        pendingExternalUrl?.let { pendingExternalUrl = null; openInNewTab(it) }
     }
 
     /** Parses the full bookmark list pushed from listBookmarksExternal() (browser-window.ts). */
@@ -459,6 +484,18 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /** Opens a URL in a fresh engine tab (context-menu "open in new tab" / popup targets). */
+    // ── Links from other apps (ACTION_VIEW, see MainActivity) ─────────────────
+
+    /** True once the engine has pushed its first state snapshot (window.novaNative is live). */
+    private var engineReady = false
+
+    /** A link that arrived before the engine booted; opened on the first snapshot. */
+    private var pendingExternalUrl: String? = null
+
+    fun openExternalLink(url: String) {
+        if (engineReady) openInNewTab(url) else pendingExternalUrl = url
+    }
+
     fun openInNewTab(url: String) {
         callEngine("window.novaNative && window.novaNative.openInNewTab(${jsString(url)});")
     }
@@ -517,3 +554,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         private const val TAG = "BrowserViewModel"
     }
 }
+
+/** WebView capture resources that need an Android runtime permission. */
+internal val WEB_RESOURCE_PERMISSIONS = mapOf(
+    PermissionRequest.RESOURCE_VIDEO_CAPTURE to Manifest.permission.CAMERA,
+    PermissionRequest.RESOURCE_AUDIO_CAPTURE to Manifest.permission.RECORD_AUDIO,
+)
+
+/** The requested resources a page may have: those needing no permission, or whose permission was granted. */
+internal fun grantableResources(resources: Array<String>, granted: Map<String, Boolean>): Array<String> =
+    resources.filter { r -> WEB_RESOURCE_PERMISSIONS[r]?.let { granted[it] == true } ?: true }.toTypedArray()

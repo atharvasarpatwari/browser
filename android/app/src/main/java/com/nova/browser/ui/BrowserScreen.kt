@@ -10,7 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.LibraryBooks
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -49,20 +49,14 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
         }
     }
 
-    // Runtime-permission grant for WebView onPermissionRequest flows
-    // (camera/microphone from page JS).
+    // Runtime-permission grant for page camera/microphone/location requests.
     val webPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted -> viewModel.resolvePermissionRequest(granted) }
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result -> viewModel.resolvePermissionAsk(result) }
 
-    LaunchedEffect(viewModel.permissionRequest.value) {
-        val request = viewModel.permissionRequest.value ?: return@LaunchedEffect
-        val needed = viewModel.androidPermissionFor(request)
-        if (needed != null) {
-            webPermissionLauncher.launch(needed)
-        } else {
-            viewModel.resolvePermissionRequest(true)
-        }
+    LaunchedEffect(viewModel.permissionAsk.value) {
+        val ask = viewModel.permissionAsk.value ?: return@LaunchedEffect
+        webPermissionLauncher.launch(ask.permissions)
     }
 
     fun requestNotificationPermissionIfNeeded() {
@@ -91,7 +85,6 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                 )
                 AddressBar(
                     text = viewModel.addressBarText.value,
-                    onTextChange = { /* draft state is handled locally inside AddressBar */ },
                     onSubmit = { input -> viewModel.navigate(input) },
                     isLoading = activeTab?.loading ?: false,
                     isSecure = viewModel.addressBarText.value.startsWith("https://"),
@@ -124,15 +117,17 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     Icon(Icons.Filled.Download, contentDescription = "Downloads")
                 }
                 IconButton(onClick = { showLibrary = true }) {
-                    Icon(Icons.Filled.LibraryBooks, contentDescription = "Bookmarks & History")
+                    Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = "Bookmarks & History")
                 }
             })
         }
     ) { padding ->
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
-            // Mounted exactly once for the app's lifetime — the engine owns all
-            // tabs internally, so there is no per-tab WebView to switch between.
-            EngineWebView(viewModel = viewModel, modifier = Modifier.fillMaxSize())
+            // One WebView for all tabs (the engine owns them internally); rebuilt
+            // only after a renderer crash (BrowserViewModel.onRendererGone).
+            key(viewModel.engineGeneration.value) {
+                EngineWebView(viewModel = viewModel, modifier = Modifier.fillMaxSize())
+            }
             activeTab?.error?.let { error ->
                 ErrorPage(error = error, onRetry = { viewModel.reload() })
             }

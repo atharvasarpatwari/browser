@@ -27,7 +27,6 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun AddressBar(
     text: String,
-    onTextChange: (String) -> Unit,
     onSubmit: (String) -> Unit,
     isLoading: Boolean,
     progress: Int,

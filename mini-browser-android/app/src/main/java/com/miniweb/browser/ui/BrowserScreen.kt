@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.LibraryBooks
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -42,7 +42,6 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                 )
                 AddressBar(
                     text = viewModel.addressBarText.value,
-                    onTextChange = { viewModel.addressBarText.value = it },
                     onSubmit = { input ->
                         val url = viewModel.resolveInput(input)
                         viewModel.addressBarText.value = url
@@ -68,7 +67,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                 }
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { showLibrary = true }) {
-                    Icon(Icons.Filled.LibraryBooks, contentDescription = "Bookmarks & History")
+                    Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = "Bookmarks & History")
                 }
             })
         }

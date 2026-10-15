@@ -28,7 +28,6 @@ import com.nova.browser.ui.theme.SuccessGreen
 @Composable
 fun AddressBar(
     text: String,
-    onTextChange: (String) -> Unit,
     onSubmit: (String) -> Unit,
     isLoading: Boolean,
     isSecure: Boolean,

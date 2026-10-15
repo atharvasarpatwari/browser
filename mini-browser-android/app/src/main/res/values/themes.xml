@@ -1,6 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.MiniWeb" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="android:windowBackground">@android:color/white</item>
-        <item name="android:statusBarColor">?attr/colorPrimary</item>
+    <!-- Pre-Compose window only (launch frame); colors match ui/theme Theme.kt. -->
+    <style name="Theme.MiniWeb" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FBFAF8</item>
+        <item name="android:statusBarColor">#FBFAF8</item>
+        <item name="android:navigationBarColor">#FBFAF8</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

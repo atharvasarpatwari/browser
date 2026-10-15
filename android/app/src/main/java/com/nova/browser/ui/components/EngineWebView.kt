@@ -5,8 +5,10 @@ import android.net.Uri
 import android.util.Log
 import android.view.View
 import android.webkit.ConsoleMessage
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -26,9 +28,9 @@ private const val TAG = "NovaEngine"
 private const val ENGINE_URL = "https://appassets.androidplatform.net/index.html"
 
 /**
- * Hosts the Nova engine in a single WebView for the lifetime of the app.
- * Unlike the old per-tab MiniWeb-era BrowserWebView, this is created exactly
- * once (factory{} only runs on first composition) — the engine owns all tabs
+ * Hosts the Nova engine in a single WebView. It is created once (factory{} only
+ * runs on first composition) and rebuilt only if the renderer process dies
+ * (BrowserScreen keys this on viewModel.engineGeneration). The engine owns all tabs
  * internally, so there is no per-tab WebView to switch between. Native
  * Compose chrome (AddressBar/TabsBar) drives this WebView purely through
  * viewModel actions -> window.novaNative.* (evaluateJavascript); this
@@ -101,6 +103,17 @@ fun EngineWebView(
                         return response ?: super.shouldInterceptRequest(view, request)
                     }
 
+                    /**
+                     * Without this, a renderer crash or low-memory kill takes the whole
+                     * app down with it. Returning true keeps the app alive; the ViewModel
+                     * then swaps in a fresh WebView.
+                     */
+                    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                        Log.e(TAG, "Renderer gone (didCrash=${detail.didCrash()}); rebuilding engine WebView")
+                        viewModel.onRendererGone()
+                        return true
+                    }
+
                     override fun onPageFinished(view: WebView, url: String?) {
                         super.onPageFinished(view, url)
                         Log.i(TAG, "onPageFinished: $url")
@@ -108,12 +121,11 @@ fun EngineWebView(
 
                     override fun onReceivedError(
                         view: WebView,
-                        errorCode: Int,
-                        description: String?,
-                        failingUrl: String?
+                        request: WebResourceRequest,
+                        error: WebResourceError
                     ) {
-                        super.onReceivedError(view, errorCode, description, failingUrl)
-                        Log.e(TAG, "WebView error $errorCode: $description @ $failingUrl")
+                        super.onReceivedError(view, request, error)
+                        Log.e(TAG, "WebView error ${error.errorCode}: ${error.description} @ ${request.url}")
                     }
                 }
 
@@ -138,33 +150,25 @@ fun EngineWebView(
                     }
 
                     /**
-                     * Camera/mic/midi/permission requests from page JS. Requests that
-                     * need a runtime grant surface an Android permission dialog via
-                     * BrowserScreen; the grant result resolves this request.
+                     * Camera/mic/midi requests from page JS. Capture resources go through
+                     * an Android runtime-permission dialog (BrowserScreen) and only the
+                     * granted ones are passed to the page.
                      */
                     override fun onPermissionRequest(request: android.webkit.PermissionRequest) {
-                        val needed = viewModel.androidPermissionFor(request)
-                        if (needed == null) {
-                            Log.i(TAG, "onPermissionRequest auto-grant: ${request.resources.joinToString()}")
-                            request.grant(request.resources)
-                        } else {
-                            Log.i(TAG, "onPermissionRequest waiting for runtime grant: $needed")
-                            viewModel.onPermissionRequested(request)
-                        }
+                        Log.i(TAG, "onPermissionRequest: ${request.resources.joinToString()}")
+                        viewModel.onPermissionRequested(request)
                     }
 
                     /**
-                     * Geolocation prompt — auto-grant: the engine resolves coordinates
-                     * in-process (its own Geolocation shim), so there is no separate
-                     * origin to gate; an explicit runtime permission (if ever needed)
-                     * is handled by onPermissionRequest.
+                     * Geolocation prompt. WebView only returns a position when the app holds
+                     * the location runtime permission, so ask for it (no dialog if already held).
                      */
                     override fun onGeolocationPermissionsShowPrompt(
                         origin: String,
                         callback: android.webkit.GeolocationPermissions.Callback
                     ) {
-                        Log.i(TAG, "onGeolocationPermissionsShowPrompt origin=$origin (auto-grant)")
-                        callback.invoke(origin, true, false)
+                        Log.i(TAG, "onGeolocationPermissionsShowPrompt origin=$origin")
+                        viewModel.onGeolocationRequested(origin, callback)
                     }
 
                     /**
