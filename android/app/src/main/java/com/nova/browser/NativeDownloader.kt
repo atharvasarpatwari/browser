@@ -76,8 +76,7 @@ class NativeDownloader(
     fun start(url: String, filename: String?, mimeType: String?, referrer: String?, requestHeaders: Map<String, String> = emptyMap()): String {
         val id = newId()
         val headers = if (referrer.isNullOrBlank()) requestHeaders else requestHeaders + ("Referer" to referrer)
-        val state = initialState(id, url, filename, mimeType, headers)
-        states[id] = state
+        val state = register(id, url, filename, mimeType, headers)
         Log.i(TAG, "start[$id] $url -> ${state.filename}")
         emit(state)
         executor.execute { runDownload(state) }
@@ -93,20 +92,20 @@ class NativeDownloader(
         requestHeaders: Map<String, String> = emptyMap()
     ): String {
         val id = newId()
-        val suggested = parseDispositionFilename(disposition)
-        val state = initialState(id, url, null, mimeType, requestHeaders).copy(
-            filename = sanitizeFilename(suggested ?: guessFilename(url, mimeType)),
-            partFile = File(downloadsDir(), "${sanitizeFilename(suggested ?: guessFilename(url, mimeType))}.part"),
-            finalFile = File(downloadsDir(), sanitizeFilename(suggested ?: guessFilename(url, mimeType)))
-        )
-        states[id] = state
+        val state = register(id, url, parseDispositionFilename(disposition), mimeType, requestHeaders)
         emit(state)
         executor.execute {
-            // Long/streaming read: lift the fetch-path's 45s read timeout.
-            connection.readTimeout = 0
-            streamFrom(state, connection)
-            connections.remove(id)
-            emit(state)
+            try {
+                // Long/streaming read: lift the fetch-path's 45s read timeout.
+                connection.readTimeout = 0
+                streamFrom(state, connection)
+            } catch (e: Exception) {
+                // Uncaught exceptions on a worker thread kill the app process on Android.
+                handleStreamError(state, e)
+            } finally {
+                connections.remove(id)
+                emit(state)
+            }
         }
         return id
     }
@@ -163,18 +162,31 @@ class NativeDownloader(
 
     // ── Internals ────────────────────────────────────────────────────────────
 
-    private fun initialState(id: String, url: String, filename: String?, mimeType: String?, requestHeaders: Map<String, String>): State {
-        val name = sanitizeFilename(filename ?: guessFilename(url, mimeType))
-        return State(
+    /**
+     * Creates and stores a download under a name no other download or file is using
+     * ("report.pdf" -> "report (1).pdf"), so two downloads never share a .part file
+     * and a new one never overwrites a finished one. Synchronized: claim + store is atomic.
+     */
+    @Synchronized
+    private fun register(id: String, url: String, filename: String?, mimeType: String?, requestHeaders: Map<String, String>): State {
+        val dir = downloadsDir()
+        val wanted = sanitizeFilename(filename ?: guessFilename(url, mimeType))
+        val taken = states.values.map { it.filename }.toSet()
+        val name = generateSequence(0) { it + 1 }
+            .map { numberedFilename(wanted, it) }
+            .first { it !in taken && !File(dir, it).exists() && !File(dir, "$it.part").exists() }
+        val state = State(
             id = id,
             url = url,
             filename = name,
             mimeType = mimeType ?: "",
-            partFile = File(downloadsDir(), "$name.part"),
-            finalFile = File(downloadsDir(), name),
+            partFile = File(dir, "$name.part"),
+            finalFile = File(dir, name),
             createdAt = System.currentTimeMillis(),
             requestHeaders = requestHeaders
         )
+        states[id] = state
+        return state
     }
 
     private fun downloadsDir(): File =
@@ -187,15 +199,11 @@ class NativeDownloader(
             if (state.receivedBytes > 0 && state.supportsResume) {
                 headers["Range"] = "bytes=${state.receivedBytes}-"
             }
-            connection = (URL(state.url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 30_000
-                readTimeout = 60_000
-                setRequestProperty("Accept-Encoding", "identity")
-                headers.forEach { (k, v) -> setRequestProperty(k, v) }
+            connection = openFollowingRedirects(state.url, headers) { conn ->
+                connection = conn
+                connections[state.id] = conn // so pause/cancel can disconnect mid-redirect
             }
-            connections[state.id] = connection
-            streamFrom(state, connection)
+            streamFrom(state, connection!!)
         } catch (e: Exception) {
             handleStreamError(state, e)
         } finally {
@@ -207,7 +215,7 @@ class NativeDownloader(
 
     private fun streamFrom(state: State, connection: HttpURLConnection) {
         val code = connection.responseCode
-        if (code >= 400) {
+        if (code !in 200..299) {
             throw IOException("HTTP $code while downloading ${state.url}")
         }
 
@@ -217,11 +225,11 @@ class NativeDownloader(
 
         val isResume = code == 206 && state.receivedBytes > 0
         if (isResume) {
-            val remaining = connection.contentLength
+            val remaining = connection.contentLengthLong
             if (remaining > 0) state.totalBytes = state.receivedBytes + remaining
         } else {
-            val total = connection.contentLength
-            if (total > 0) state.totalBytes = total.toLong()
+            val total = connection.contentLengthLong
+            if (total > 0) state.totalBytes = total
             if (state.receivedBytes > 0) {
                 // Server ignored the Range header — restart from scratch.
                 state.receivedBytes = 0
@@ -420,4 +428,44 @@ private object FileProviderCompat {
             "${context.packageName}${NativeDownloader.PROVIDER_AUTHORITY_SUFFIX}",
             file
         )
+}
+
+/** "report.pdf", 2 -> "report (2).pdf"; n == 0 returns the name unchanged. */
+internal fun numberedFilename(name: String, n: Int): String {
+    if (n == 0) return name
+    val dot = name.lastIndexOf('.')
+    return if (dot > 0) "${name.substring(0, dot)} ($n)${name.substring(dot)}" else "$name ($n)"
+}
+
+/**
+ * GET [url], following redirects ourselves: HttpURLConnection never crosses
+ * http<->https on its own, and a 3xx body must not be saved as the download.
+ * [onConnection] sees each hop's connection before it is used.
+ */
+internal fun openFollowingRedirects(
+    url: String,
+    headers: Map<String, String>,
+    maxRedirects: Int = 10,
+    onConnection: (HttpURLConnection) -> Unit = {}
+): HttpURLConnection {
+    var target = URL(url)
+    repeat(maxRedirects + 1) {
+        val conn = (target.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 30_000
+            readTimeout = 60_000
+            instanceFollowRedirects = false
+            setRequestProperty("Accept-Encoding", "identity")
+            headers.forEach { (k, v) -> setRequestProperty(k, v) }
+        }
+        onConnection(conn)
+        val location = conn.getHeaderField("Location")
+        if (conn.responseCode !in 300..399 || location == null) return conn
+        conn.disconnect()
+        target = URL(target, location)
+        if (target.protocol != "http" && target.protocol != "https") {
+            throw IOException("Refusing redirect to ${target.protocol}: URL")
+        }
+    }
+    throw IOException("Too many redirects for $url")
 }
