@@ -162,6 +162,24 @@ const server = http.createServer((req, res) => {
     res.write(crypto.randomBytes(64 * 1024));
     return setTimeout(() => res.socket.destroy(), 500); // connection dies mid-body
   }
+  if (p === '/cookie/set') { // #15
+    res.writeHead(200, { 'Set-Cookie': `sid=${u.searchParams.get('v')}; Path=/; Max-Age=86400`, 'Content-Type': 'text/plain' });
+    return res.end('set');
+  }
+  if (p === '/cookie/pair') { // #16: one script-visible + one HttpOnly cookie
+    res.writeHead(200, { 'Set-Cookie': ['vis=1; Path=/; Max-Age=86400', 'hid=2; Path=/; Max-Age=86400; HttpOnly'], 'Content-Type': 'text/plain' });
+    return res.end('pair');
+  }
+  if (p === '/cookie/echo') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end(req.headers.cookie ?? ''); }
+  if (p === '/echo') { // #14: reports exactly what arrived
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    return req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ method: req.method, contentType: req.headers['content-type'] ?? null, size: body.length, sha: sha(body), text: body.toString('utf8').slice(0, 2000) }));
+    });
+  }
   res.writeHead(404); res.end();
 });
 
@@ -263,6 +281,59 @@ async function main() {
     const h = await js(`fetch('${base}/blob.wasm').then((r) => r.arrayBuffer()).then((b) => crypto.subtle.digest('SHA-256', b))
       .then((d) => [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, '0')).join(''))`, { awaitPromise: true, timeoutMs: 15000 });
     return { ok: h === sha(PAYLOAD_WASM), detail: `sha256 ${h?.slice(0, 16)}… vs served ${sha(PAYLOAD_WASM).slice(0, 16)}…` };
+  });
+
+  // #14 request bodies + PATCH (v1.5)
+  await check(14, 'PATCH works and FormData/binary request bodies arrive intact', async () => {
+    const r = await js(`(async () => {
+      const post = (init) => fetch('${base}/echo', init).then((r) => r.json());
+      const form = new FormData(); form.append('field', 'value'); form.append('up', new Blob(['file-bytes']), 'a.txt');
+      return {
+        patch: await post({ method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{"x":1}' }),
+        form: await post({ method: 'POST', body: form }),
+        bin: await post({ method: 'PUT', body: new Uint8Array([0, 255, 128, 10]) }),
+      };
+    })()`, { awaitPromise: true, timeoutMs: 20000 });
+    const binSha = sha(Buffer.from([0, 255, 128, 10]));
+    const ok = r.patch.method === 'PATCH' && r.patch.text === '{"x":1}' &&
+      /^multipart\/form-data; boundary=/.test(r.form.contentType ?? '') && r.form.text.includes('file-bytes') &&
+      r.bin.sha === binSha;
+    return { ok, detail: `PATCH→${r.patch.method} body=${JSON.stringify(r.patch.text)}; FormData→${r.form.contentType} ${r.form.size} B; binary sha match=${r.bin.sha === binSha}` };
+  });
+
+  // #15 cookies persist across restarts and stay out of incognito (v1.6)
+  await check(15, 'cookies are stored, sent, survive restart, isolated in incognito', async () => {
+    const get = (path) => js(`fetch('${base}${path}').then((r) => r.text())`, { awaitPromise: true, timeoutMs: 15000 });
+    await get('/cookie/set?v=normal');
+    const sent = await get('/cookie/echo');
+    sh('input keyevent 3'); // HOME -> onPause -> CookieManager.flush()
+    await sleep(2000);
+    sh(`am force-stop ${PKG}`);
+    await launch();
+    const afterRestart = await get('/cookie/echo');
+    await js('window.novaNative.setIncognito(true)');
+    await poll(async () => (await engineState())?.incognito === true, 8000);
+    const inIncognito = await get('/cookie/echo');
+    await get('/cookie/set?v=private');
+    const privateSent = await get('/cookie/echo');
+    await js('window.novaNative.setIncognito(false)');
+    await poll(async () => (await engineState())?.incognito === false, 8000);
+    const backToNormal = await get('/cookie/echo');
+    const ok = sent === 'sid=normal' && afterRestart === 'sid=normal' && inIncognito === '' && privateSent === 'sid=private' && backToNormal === 'sid=normal';
+    return { ok, detail: `sent=${JSON.stringify(sent)} afterRestart=${JSON.stringify(afterRestart)} incognito=${JSON.stringify(inIncognito)}→${JSON.stringify(privateSent)} backToNormal=${JSON.stringify(backToNormal)}` };
+  });
+
+  // #16 document.cookie bridge: HttpOnly hidden, script writes reach the server (v1.7)
+  await check(16, 'NovaCookies bridge hides HttpOnly and script cookies reach the server', async () => {
+    const page = `${base}/cookie/page`;
+    await js(`fetch('${base}/cookie/pair').then((r) => r.text())`, { awaitPromise: true, timeoutMs: 15000 });
+    const forScript = await js(`window.NovaCookies.getForScript('${page}')`);
+    await js(`window.NovaCookies.setFromScript('${page}', 'fromjs=3; Path=/')`);
+    await js(`window.NovaCookies.setFromScript('${page}', 'hid=stolen; Path=/')`);
+    const sent = await js(`fetch('${base}/cookie/echo').then((r) => r.text())`, { awaitPromise: true, timeoutMs: 15000 });
+    const has = (c) => sent.split('; ').includes(c);
+    const ok = /(^|; )vis=1(;|$)/.test(forScript) && !/hid=/.test(forScript) && has('fromjs=3') && has('hid=2') && !sent.includes('hid=stolen');
+    return { ok, detail: `getForScript=${JSON.stringify(forScript)}; server received ${JSON.stringify(sent)}` };
   });
 
   // #7 duplicate downloads, concurrent, via the fetch-handoff path (v1.3)

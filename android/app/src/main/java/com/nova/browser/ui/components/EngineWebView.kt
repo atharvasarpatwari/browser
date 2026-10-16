@@ -21,6 +21,7 @@ import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewFeature
 import com.nova.browser.BrowserViewModel
+import com.nova.browser.NovaCookiesBridge
 import com.nova.browser.NovaFetchBridge
 import com.nova.browser.NovaStateBridge
 
@@ -209,6 +210,10 @@ fun EngineWebView(
                 // Attachment responses (Content-Disposition) hand off to the
                 // native downloader instead of being buffered into JS memory.
                 addJavascriptInterface(NovaFetchBridge(this, viewModel.nativeDownloader), "NovaFetchBridge")
+
+                // NovaCookies: document.cookie for engine pages (main.ts installCookies),
+                // backed by the same native jar HttpURLConnection uses. HttpOnly stays hidden.
+                addJavascriptInterface(NovaCookiesBridge(viewModel.cookies), "NovaCookies")
 
                 // NovaStateBridge: JS -> Kotlin tab/nav state pushes. Registering
                 // this BEFORE loadUrl() is what makes isNativeHostPresent() true

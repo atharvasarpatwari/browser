@@ -1733,7 +1733,7 @@ export function createGlobalEnv(
   env.setLocal('navigator', navObj);
 
   // DOM binding
-  const docBinding = createDocumentBinding(doc, domTree);
+  const docBinding = createDocumentBinding(doc, domTree, () => controller?.getCurrentEntry()?.parsedUrl?.href ?? pageOrigin ?? '');
   env.setLocal('document', docBinding);
 
   // document.write() / document.open() — requires an HtmlParser

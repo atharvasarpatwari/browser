@@ -44,6 +44,7 @@ import { ContentRenderer } from '../components/content-renderer/content-renderer
 import { NavigationFetcher } from '../components/navigation-fetcher';
 import { ContextMenu, type ContextMenuItem } from '../components/context-menu/context-menu';
 import { IncognitoManager, type IIncognitoManager } from '../../browser/settings/incognito';
+import { setCookieIncognito } from '../../browser/networking/cookie-service';
 import type { DomElement, DomNode, DomTextNode } from '../../browser/rendering/dom-tree';
 import type { ILayoutEngine } from '../../browser/rendering/layout-engine';
 import { SettingsPage } from './settings-page';
@@ -1291,6 +1292,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     } else {
       this.incognitoManager.deactivate();
     }
+    setCookieIncognito(enabled);
     this.syncAll();
   }
 

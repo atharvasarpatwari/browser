@@ -13,17 +13,13 @@
  * pipeline — it sits between ResponseParser and RequestManager to
  * automatically attach and receive cookies.
  *
- * Pipeline position
+ * Pipeline position (wired by cookie-service.ts)
  * ─────────────────
- *   ResponseParser.parse(response)
- *        │
- *        ▼
- *   CookieJar.setFromResponse(url, setCookieHeaders)
- *        │
- *   RequestManager.send(request)
- *        │
- *        ▼
- *   CookieJar.getForRequest(url)  → Cookie-Header value
+ *   CookieAwareHttpClient.send(request)      — every hop, redirects included
+ *        ├─ CookieJar.getCookieHeader(url)   → Cookie request header
+ *        └─ CookieJar.setFromResponse(url, setCookies)
+ *   document.cookie (dom-bindings.ts)
+ *        └─ getScriptCookieString / setFromScript  (HttpOnly hidden from scripts)
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * OOP PRINCIPLES
@@ -134,6 +130,14 @@ interface ICookieJar extends IDisposable {
   getStats(): CookieJarStats;
   /** Check if a cookie can be sent over a secure connection only. */
   isSecureOnly(hostname: string, name: string): boolean;
+  /** `document.cookie` read: matching cookies minus HttpOnly, as "a=1; b=2". */
+  getScriptCookieString(url: string): string;
+  /** `document.cookie` write: one cookie string; HttpOnly is refused, as in browsers. */
+  setFromScript(url: string, cookieString: string): boolean;
+  /** Persistent (non-session, unexpired) cookies as JSON, for storage. */
+  serialize(): string;
+  /** Load cookies produced by serialize(); unparseable input is ignored. */
+  restore(json: string): number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,26 +178,74 @@ class CookieOverflowError extends CookieError {
 class CookieJar implements ICookieJar {
   private readonly store = new Map<string, CookieData>();
 
+  /** @param onChange called after any mutation (used to persist the jar). */
+  constructor(private readonly onChange?: () => void) {}
+
   // ── ICookieJar: setFromResponse ─────────────────────────────────────
 
   setFromResponse(url: string, setCookieHeaders: readonly string[]): number {
     let accepted = 0;
 
     for (const raw of setCookieHeaders) {
-      const parsed = CookieJar.parseSetCookie(raw, url);
-      if (!parsed) continue;
-
-      const requestHost = CookieJar.extractHostname(url);
-      const requestPath = CookieJar.extractPath(url);
-      const cookie = CookieJar.buildCookie(parsed, requestHost, requestPath);
-
-      if (cookie && this.acceptCookie(cookie)) {
-        this.store.set(this.cookieKey(cookie), cookie);
-        accepted++;
-      }
+      if (this.storeParsed(url, CookieJar.parseSetCookie(raw, url), false)) accepted++;
     }
-
+    if (accepted > 0) this.onChange?.();
     return accepted;
+  }
+
+  // ── ICookieJar: document.cookie ─────────────────────────────────────
+
+  getScriptCookieString(url: string): string {
+    return this.getForRequest(url).filter(c => !c.httpOnly).map(c => `${c.name}=${c.value}`).join('; ');
+  }
+
+  setFromScript(url: string, cookieString: string): boolean {
+    const parsed = CookieJar.parseSetCookie(cookieString, url);
+    if (!parsed || parsed.httpOnly) return false;
+    const ok = this.storeParsed(url, parsed, true);
+    if (ok) this.onChange?.();
+    return ok;
+  }
+
+  // ── ICookieJar: persistence ─────────────────────────────────────────
+
+  serialize(): string {
+    const now = Date.now();
+    return JSON.stringify([...this.store.values()].filter(c => !c.session && c.expires !== null && c.expires > now));
+  }
+
+  restore(json: string): number {
+    let list: unknown;
+    try { list = JSON.parse(json); } catch { return 0; }
+    if (!Array.isArray(list)) return 0;
+    const now = Date.now();
+    let loaded = 0;
+    for (const c of list as CookieData[]) {
+      if (!c || typeof c.name !== 'string' || typeof c.domain !== 'string' || typeof c.path !== 'string') continue;
+      if (c.expires === null || c.expires <= now) continue;
+      this.store.set(this.cookieKey(c), c);
+      loaded++;
+    }
+    return loaded;
+  }
+
+  /**
+   * Stores (or, for an expired cookie, deletes) one parsed cookie. A script
+   * may not overwrite an HttpOnly cookie (RFC 6265bis §5.6).
+   */
+  private storeParsed(url: string, parsed: ParsedSetCookie | null, fromScript: boolean): boolean {
+    if (!parsed) return false;
+    const requestPath = CookieJar.extractPath(url);
+    const cookie = CookieJar.buildCookie(parsed, CookieJar.extractHostname(url), CookieJar.defaultPath(requestPath));
+    if (!cookie) return false;
+    const key = this.cookieKey(cookie);
+    if (fromScript && this.store.get(key)?.httpOnly) return false;
+    if (cookie.expires !== null && cookie.expires <= Date.now()) {
+      return this.store.delete(key); // Max-Age=0 / past Expires = delete (logout)
+    }
+    if (!this.acceptCookie(cookie, key)) return false;
+    this.store.set(key, cookie);
+    return true;
   }
 
   // ── ICookieJar: getForRequest ───────────────────────────────────────
@@ -251,7 +303,9 @@ class CookieJar implements ICookieJar {
     const requestHost = CookieJar.extractHostname(url);
     const requestPath = CookieJar.extractPath(url);
     const key = `${requestHost}|${name}|${requestPath}`;
-    return this.store.delete(key);
+    const deleted = this.store.delete(key);
+    if (deleted) this.onChange?.();
+    return deleted;
   }
 
   deleteDomain(hostname: string): number {
@@ -267,6 +321,7 @@ class CookieJar implements ICookieJar {
 
   clear(): void {
     this.store.clear();
+    this.onChange?.();
   }
 
   // ── ICookieJar: prune ──────────────────────────────────────────────
@@ -356,7 +411,7 @@ class CookieJar implements ICookieJar {
 
         switch (key) {
           case 'domain':
-            domain = val.startsWith('.') ? val.slice(1) : val;
+            domain = (val.startsWith('.') ? val.slice(1) : val).toLowerCase() || null;
             break;
           case 'path':
             path = val || DEFAULT_COOKIE_PATH;
@@ -402,7 +457,7 @@ class CookieJar implements ICookieJar {
   private static buildCookie(
     parsed: ParsedSetCookie,
     requestHost: string,
-    requestPath: string,
+    defaultPath: string,
   ): CookieData | null {
     // Domain matching.
     const domain = parsed.domain ?? requestHost;
@@ -421,7 +476,7 @@ class CookieJar implements ICookieJar {
     // client stores the cookie unconditionally; matching happens at send time
     // in shouldSendCookie.  We keep a lightweight check here so obviously
     // wrong paths (e.g. Path=/app but request was /other) are dropped early.
-    const path = parsed.path ?? DEFAULT_COOKIE_PATH;
+    const path = parsed.path && parsed.path.startsWith('/') ? parsed.path : defaultPath;
 
     return {
       name: parsed.name,
@@ -470,16 +525,19 @@ class CookieJar implements ICookieJar {
     return true;
   }
 
-  private acceptCookie(cookie: CookieData): boolean {
+  private acceptCookie(cookie: CookieData, key: string): boolean {
+    // Replacing an existing cookie never counts against the limits.
+    const replacing = this.store.has(key);
+
     // Per-domain limit.
     let domainCount = 0;
     for (const c of this.store.values()) {
       if (c.domain === cookie.domain) domainCount++;
     }
-    if (domainCount >= MAX_COOKIES_PER_DOMAIN) return false;
+    if (!replacing && domainCount >= MAX_COOKIES_PER_DOMAIN) return false;
 
     // Total limit.
-    if (this.store.size >= MAX_TOTAL_COOKIES) return false;
+    if (!replacing && this.store.size >= MAX_TOTAL_COOKIES) return false;
 
     // Size limit.
     const size = cookie.name.length + cookie.value.length;
@@ -505,6 +563,13 @@ class CookieJar implements ICookieJar {
       const parts = url.split('/');
       return '/' + (parts.slice(3).join('/') || '');
     }
+  }
+
+  /** RFC 6265 §5.1.4 default-path: the request path up to (not incl.) its last "/". */
+  private static defaultPath(requestPath: string): string {
+    if (!requestPath.startsWith('/')) return DEFAULT_COOKIE_PATH;
+    const last = requestPath.lastIndexOf('/');
+    return last <= 0 ? DEFAULT_COOKIE_PATH : requestPath.slice(0, last);
   }
 
   private static isSecureUrl(url: string): boolean {

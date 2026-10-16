@@ -13,7 +13,7 @@
  * injected into dist/index.html by android/scripts/copy-web.mjs.
  *
  * Contract with NovaFetchBridge (Kotlin):
- *   NovaFetchBridge.fetch(id, method, url, headersJson, redirectMode, bodyText)
+ *   NovaFetchBridge.fetch(id, method, url, headersJson, redirectMode, bodyBase64)
  *   NovaFetchBridge.abort(id)
  *   window.__novaFetchResolve(id, payload)  // invoked from Kotlin via
  *     // evaluateJavascript; payload = { status, statusText, headers{},
@@ -47,11 +47,40 @@
     return out;
   }
 
-  function bodyToString(body) {
-    if (body == null) return null;
-    if (typeof body === 'string') return body;
-    if (body instanceof URLSearchParams) return body.toString();
-    return null;
+  function bytesToBase64(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var bin = '';
+    for (var i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(bin);
+  }
+
+  /**
+   * Serializes any fetch body (string, URLSearchParams, FormData, Blob/File,
+   * ArrayBuffer, typed array, stream) exactly as the browser would, plus the
+   * Content-Type that implies (e.g. FormData's multipart boundary). Resolves
+   * null when there is no body. Headers are NOT taken from the Request: it drops
+   * forbidden names (Cookie, Referer, ...) that the engine sets itself.
+   */
+  function serializeBody(url, method, input, init) {
+    var source = null;
+    if (init && init.body != null) {
+      source = new Request(url, { method: method, body: init.body, duplex: 'half' });
+    } else if (typeof Request !== 'undefined' && input instanceof Request && input.body) {
+      source = input.clone();
+    }
+    if (!source) return Promise.resolve(null);
+    return source.arrayBuffer().then(function (buffer) {
+      return { base64: bytesToBase64(buffer), contentType: source.headers.get('content-type') };
+    });
+  }
+
+  function hasHeader(headers, name) {
+    for (var key in headers) {
+      if (key.toLowerCase() === name) return true;
+    }
+    return false;
   }
 
   function rejectEntry(entry, error) {
@@ -124,7 +153,6 @@
     var method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
     var headers = headersToObject((init && init.headers) || (input && input.headers));
     var redirectMode = (init && init.redirect) || (input && input.redirect) || 'follow';
-    var body = bodyToString((init && init.body) || (input && input.body));
     var signal = (init && init.signal) || (input && input.signal);
 
     var id = String(++seq);
@@ -148,13 +176,17 @@
         });
       }
 
-      try {
-        console.log('[nova-bridge] fetch#' + id + ' ' + method + ' ' + url);
-        window.NovaFetchBridge.fetch(id, method, url, JSON.stringify(headers), redirectMode, body);
-      } catch (e) {
+      serializeBody(url, method, input, init).then(function (body) {
+        if (entry.aborted) return;
+        if (body && body.contentType && !hasHeader(headers, 'content-type')) {
+          headers['Content-Type'] = body.contentType;
+        }
+        console.log('[nova-bridge] fetch#' + id + ' ' + method + ' ' + url + (body ? ' body=' + body.base64.length + 'b64' : ''));
+        window.NovaFetchBridge.fetch(id, method, url, JSON.stringify(headers), redirectMode, body ? body.base64 : null);
+      }).catch(function (e) {
         delete pending[id];
-        reject(e);
-      }
+        rejectEntry(entry, e);
+      });
     });
   };
 })();

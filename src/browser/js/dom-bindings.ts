@@ -14,6 +14,7 @@ import type { CanvasGradient } from '../rendering/canvas/canvas-gradient';
 import type { CanvasPattern } from '../rendering/canvas/canvas-pattern';
 import { Path2D } from '../rendering/canvas/canvas-path';
 import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../security/blocked-url-schemes';
+import { getScriptCookieProvider } from '../networking/cookie-service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DOM BINDINGS — Bridges the JS interpreter to the Nova DOM tree
@@ -139,8 +140,22 @@ function makeTextNode(text: string, parent: DomNode | null): DomTextNode {
 export function createDocumentBinding(
   doc: DomDocument,
   domTree: IDomTree,
+  /** URL `document.cookie` is scoped to (the document's current URL). */
+  cookieUrl: () => string = () => '',
 ): JSObject {
   const docObj = createObject(null);
+
+  // document.cookie — through the platform's ScriptCookieProvider (cookie-service.ts).
+  // HttpOnly cookies are never visible or writable here.
+  docObj.properties.set('cookie', {
+    value: '',
+    writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get cookie', () => getScriptCookieProvider()?.get(cookieUrl()) ?? ''),
+    setter: createNativeFunction('set cookie', (_t, args) => {
+      getScriptCookieProvider()?.set(cookieUrl(), toString(args[0]));
+      return undefined;
+    }),
+  });
 
   // getElementById
   docObj.properties.set('getElementById', {

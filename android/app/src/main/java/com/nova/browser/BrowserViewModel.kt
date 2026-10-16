@@ -60,6 +60,10 @@ data class ContextMenuTarget(
  */
 class BrowserViewModel(application: Application) : AndroidViewModel(application) {
 
+    /** Cookies for all native HTTP (HttpURLConnection reads CookieHandler.getDefault()) and document.cookie; see NovaCookieHandler. */
+    internal val cookies = NovaCookieHandler(NativeCookieJar(java.io.File(application.filesDir, "nova-cookies.json")))
+        .also { java.net.CookieHandler.setDefault(it) }
+
     val tabs = mutableStateListOf<Tab>()
     var activeTabId = mutableStateOf<String?>(null)
         private set
@@ -351,6 +355,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     /** Pauses the engine WebView (JS timers, video) when the app leaves the foreground. */
     fun pause() {
         webView?.onPause()
+        cookies.flush() // persist login cookies before the process can be killed
     }
 
     /** Resumes the engine WebView when the app returns to the foreground. */
@@ -400,6 +405,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         homeUrl.value = obj.optString("homeUrl", "about:blank")
         searchTemplate.value = obj.optString("searchTemplate", "https://www.google.com/search?q=%s")
         incognito.value = obj.optBoolean("incognito", false)
+        cookies.incognito = incognito.value
 
         engineReady = true
         pendingExternalUrl?.let { pendingExternalUrl = null; openInNewTab(it) }
@@ -430,6 +436,24 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
         history.clear()
         history.addAll(parsed)
+        importLegacyCookies()
+    }
+
+    /**
+     * One-time move of v1.6 logins out of the WebView cookie store, which v1.7 no longer
+     * uses. That store can't be enumerated, so the origins come from history.
+     */
+    private fun importLegacyCookies() {
+        val prefs = getApplication<Application>().getSharedPreferences("nova", android.content.Context.MODE_PRIVATE)
+        if (history.isEmpty() || prefs.getBoolean("legacyCookiesImported", false)) return
+        val webkit = runCatching { android.webkit.CookieManager.getInstance() }.getOrNull() ?: return
+        history.mapNotNull { runCatching { java.net.URI(it.url) }.getOrNull() }
+            .filter { (it.scheme == "http" || it.scheme == "https") && it.host != null }
+            .map { java.net.URI(it.scheme, it.host, "/", null) }
+            .distinct()
+            .forEach { origin -> webkit.getCookie(origin.toString())?.let { cookies.importLegacy(origin, it) } }
+        cookies.flush()
+        prefs.edit().putBoolean("legacyCookiesImported", true).apply()
     }
 
     /** Parses the optional per-tab `error` object {code, description, url} pushed in ChromeStateSnapshot. */

@@ -82,6 +82,7 @@ import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from 
 import { RawSocketHttpClient } from '../browser/networking/raw-socket-http-client';
 import { ProxyAwareHttpClient, createProxyConfigFromEnv } from '../browser/networking/request-manager';
 import type { IHttpClient } from '../browser/networking/request-manager';
+import { CookieAwareHttpClient, CookieService, setActiveCookieService, setScriptCookieProvider } from '../browser/networking/cookie-service';
 import { TlsHandler } from '../browser/networking/tls-handler';
 import type { ITlsHandler } from '../browser/networking/tls-handler';
 
@@ -171,6 +172,33 @@ import type { ITokenStore } from '../browser/auth/token-store';
  * Well-known DI tokens.  Using const symbols prevents accidental token collision
  * if two modules happen to use the same string key.
  */
+/** Native cookie bridge exposed by the Android shell (NovaCookieHandler.kt). */
+interface NativeCookieBridge {
+  getForScript(url: string): string;
+  setFromScript(url: string, cookie: string): void;
+}
+
+/**
+ * Cookies. On Android, native HttpURLConnection owns them (NovaCookieHandler) and
+ * document.cookie goes through the NovaCookies bridge; elsewhere the engine's jar
+ * does both, persisted to localStorage. Returns the engine service, or null on Android.
+ */
+function installCookies(): CookieService | null {
+  const win = typeof window !== 'undefined' ? (window as unknown as { NovaCookies?: NativeCookieBridge }) : undefined;
+  const bridge = win?.NovaCookies;
+  if (bridge) {
+    setScriptCookieProvider({ get: (u) => bridge.getForScript(u), set: (u, c) => bridge.setFromScript(u, c) });
+    return null;
+  }
+  let storage: Storage | undefined;
+  try { storage = typeof window !== 'undefined' ? window.localStorage : undefined; } catch { storage = undefined; }
+  const service = new CookieService(storage);
+  setActiveCookieService(service);
+  setScriptCookieProvider(service);
+  if (typeof window !== 'undefined') window.addEventListener?.('pagehide', () => service.flush());
+  return service;
+}
+
 const Tokens = Object.freeze({
   AppConfig: Symbol('AppConfig'),
   AppShell: Symbol('AppShell'),
@@ -428,6 +456,7 @@ class ApplicationBootstrap {
       () => new TlsHandler({ useRealTls: true, verifyCertificates: true }),
       ServiceLifetime.Singleton,
     );
+    const cookieService = installCookies();
     c.register<IResourceLoader>(
       Tokens.ResourceLoader,
       (ctx) => {
@@ -442,6 +471,9 @@ class ApplicationBootstrap {
         } else if (isNode) {
           client = new RawSocketHttpClient({ tlsHandler });
         }
+        // Only where the engine owns the socket. Fetch-based transports (Android,
+        // plain browser) get cookies from the platform below the engine.
+        if (client && cookieService) client = new CookieAwareHttpClient(client, cookieService);
         const cache = ctx.resolve<ICacheManager>(Tokens.CacheManager);
         const loader = new ResourceLoader(
           client,

@@ -41,12 +41,12 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
     private val active = ConcurrentHashMap<String, HttpURLConnection>()
 
     @JavascriptInterface
-    fun fetch(id: String, method: String, url: String, headersJson: String, redirectMode: String, body: String?) {
+    fun fetch(id: String, method: String, url: String, headersJson: String, redirectMode: String, bodyBase64: String?) {
         Log.i(TAG, "fetch[$id] $method $url redirect=$redirectMode")
         executor.execute {
             val connection = try {
                 (URL(url).openConnection() as HttpURLConnection).apply {
-                    requestMethod = method.uppercase()
+                    setMethod(this, method.uppercase())
                     connectTimeout = 30_000
                     readTimeout = 45_000
                     instanceFollowRedirects = redirectMode != "manual"
@@ -57,7 +57,7 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
                         setRequestProperty(key, headers.getString(key))
                     }
                     setRequestProperty("Accept-Encoding", "identity")
-                    if (!body.isNullOrEmpty() && requestMethod != "GET" && requestMethod != "HEAD") {
+                    if (!bodyBase64.isNullOrEmpty() && requestMethod != "GET" && requestMethod != "HEAD") {
                         doOutput = true
                     }
                 }
@@ -69,8 +69,9 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
             active[id] = connection
             var handedOff = false
             try {
-                if (connection.doOutput && !body.isNullOrEmpty()) {
-                    connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+                if (connection.doOutput && !bodyBase64.isNullOrEmpty()) {
+                    // Bytes exactly as the page's fetch() serialized them (nova-bridge.js).
+                    connection.outputStream.use { it.write(Base64.decode(bodyBase64, Base64.NO_WRAP)) }
                 }
 
                 val code = connection.responseCode
@@ -198,6 +199,19 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
 
     private companion object {
         const val TAG = "NovaBridge"
+
+        /**
+         * HttpURLConnection.setRequestMethod() rejects PATCH (ProtocolException), which
+         * broke every PATCH from web apps. Android's OkHttp-backed implementation reads
+         * the protected `method` field directly, so set it there when the setter refuses.
+         */
+        fun setMethod(connection: HttpURLConnection, method: String) {
+            try {
+                connection.requestMethod = method
+            } catch (e: java.net.ProtocolException) {
+                HttpURLConnection::class.java.getDeclaredField("method").apply { isAccessible = true }.set(connection, method)
+            }
+        }
     }
 
     private fun postResult(id: String, payload: JSONObject) {
