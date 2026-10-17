@@ -92,6 +92,8 @@ describe('BrowserWindowPage — native chrome bridge', () => {
         if (key === 'defaultSearchEngine') return 'duckduckgo';
         return fallback;
       },
+      getBoolean: (_key: string, fallback = false) => fallback,
+      onChange: () => {},
     } as unknown as Parameters<typeof page.setSettingsService>[0]);
     await page.mount(container);
     const state = page.getChromeState();

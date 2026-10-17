@@ -19,6 +19,7 @@ interface ITabStripView extends IDisposable {
   detach(): void;
   update(state: TabStripState): void;
   setEventHandler(handler: (event: TabStripEventUnion) => void): void;
+  setKeyboardNavEnabled(enabled: boolean): void;
 }
 
 const ICON_NEW_TAB =
@@ -35,6 +36,7 @@ class TabStripView implements ITabStripView {
   private newTabButton: HTMLElement | null = null;
   private eventHandler: ((event: TabStripEventUnion) => void) | null = null;
   private dragState: { tabId: string; startX: number; startIndex: number } | null = null;
+  private keyboardNavEnabled = true;
 
   constructor(model: ITabStrip, config?: Partial<TabStripViewConfig>) {
     this.model = model;
@@ -69,12 +71,17 @@ class TabStripView implements ITabStripView {
     this.eventHandler = handler;
   }
 
+  setKeyboardNavEnabled(enabled: boolean): void {
+    this.keyboardNavEnabled = enabled;
+  }
+
   private build(): void {
     if (!this.container) return;
     this.container.innerHTML = '';
 
     this.tabsList = document.createElement('div');
     this.tabsList.className = 'nova-tabs-list';
+    this.tabsList.setAttribute('role', 'tablist');
     this.container.appendChild(this.tabsList);
 
     this.tabsContainer = document.createElement('div');
@@ -131,6 +138,7 @@ class TabStripView implements ITabStripView {
   private createTabElement(tab: { id: string; title: string; favicon: string | null; loading: boolean; pinned: boolean; active: boolean }): HTMLElement {
     const el = document.createElement('div');
     el.className = 'nova-tab';
+    el.setAttribute('role', 'tab');
     el.dataset.tabId = tab.id;
     el.draggable = true;
 
@@ -211,12 +219,50 @@ class TabStripView implements ITabStripView {
     } else {
       el.removeAttribute('aria-selected');
     }
+    el.tabIndex = tab.active ? 0 : -1;
 
     el.onclick = (e) => {
       if (!(e.target as HTMLElement).closest('.nova-tab-close')) {
-        this.dispatchEvent({ kind: 'tabSelected', tabId: tab.id });
+        this.selectTab(tab.id);
       }
     };
+    el.onkeydown = (e) => this.handleTabKeydown(e, tab.id);
+  }
+
+  private selectTab(tabId: string): void {
+    this.dispatchEvent({ kind: 'tabSelected', tabId });
+  }
+
+  /** Standard WAI-ARIA tablist keyboard pattern: arrows/Home/End move AND switch
+   *  (automatic activation), matching how real browser tab strips already behave. */
+  private handleTabKeydown(e: KeyboardEvent, tabId: string): void {
+    if (!this.keyboardNavEnabled) return;
+    const tabs = this.model.state.tabs;
+    const idx = tabs.findIndex(t => t.id === tabId);
+    if (idx === -1) return;
+
+    let targetIdx: number;
+    switch (e.key) {
+      case 'ArrowRight': targetIdx = (idx + 1) % tabs.length; break;
+      case 'ArrowLeft': targetIdx = (idx - 1 + tabs.length) % tabs.length; break;
+      case 'Home': targetIdx = 0; break;
+      case 'End': targetIdx = tabs.length - 1; break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        this.selectTab(tabId);
+        return;
+      default:
+        return;
+    }
+    e.preventDefault();
+    const targetTab = tabs[targetIdx];
+    if (!targetTab) return;
+    // The target element already exists (every tab renders regardless of active
+    // state) so focus can move immediately, independent of when the model's
+    // 'tabSelected' round trip re-renders tabindex/aria-selected.
+    this.tabsContainer?.querySelector<HTMLElement>(`[data-tab-id="${targetTab.id}"]`)?.focus();
+    this.selectTab(targetTab.id);
   }
 
   private getTabIndex(tabId: string): number {

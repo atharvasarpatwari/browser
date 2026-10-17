@@ -57,9 +57,6 @@
     "native:clean": "cargo clean --manifest-path native/Cargo.toml"
   },
   "dependencies": {
-    "@capacitor/android": "^8.4.2",
-    "@capacitor/cli": "^7.6.8",
-    "@capacitor/core": "^8.4.2",
     "@stacksjs/ts-webp": "^0.1.2",
     "electron-updater": "^6.3.9",
     "jpeg-js": "^0.4.4",

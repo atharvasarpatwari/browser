@@ -4,12 +4,14 @@ interface SettingDefinition {
   readonly key: string;
   readonly label: string;
   readonly description: string;
-  readonly type: 'text' | 'number' | 'boolean' | 'select' | 'range';
+  readonly type: 'text' | 'password' | 'number' | 'boolean' | 'select' | 'range' | 'action';
   readonly defaultValue: unknown;
   readonly options?: readonly { readonly label: string; readonly value: string }[];
   readonly min?: number;
   readonly max?: number;
   readonly step?: number;
+  /** Button text for type 'action' (defaults to the setting's label). */
+  readonly actionLabel?: string;
 }
 
 interface SettingsSection {
@@ -19,7 +21,7 @@ interface SettingsSection {
   readonly settings: readonly SettingDefinition[];
 }
 
-type SettingsPageEventType = 'settingChanged' | 'sectionChanged';
+type SettingsPageEventType = 'settingChanged' | 'sectionChanged' | 'actionTriggered';
 
 interface SettingsPageEvent {
   readonly kind: SettingsPageEventType;
@@ -59,6 +61,8 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'blockPopups', label: 'Block pop-ups', description: 'Block automatic pop-up windows', type: 'boolean', defaultValue: true },
       { key: 'enableSafeBrowsing', label: 'Safe Browsing', description: 'Warn about dangerous sites', type: 'boolean', defaultValue: true },
       { key: 'doNotTrack', label: 'Send Do Not Track', description: 'Request sites not to track you', type: 'boolean', defaultValue: false },
+      { key: 'openPrivacyPolicy', label: 'Privacy Policy', description: 'See what Nova stores on this device and what the AI Research feature sends to Anthropic', type: 'action', actionLabel: 'View', defaultValue: null },
+      { key: 'clearBrowsingData', label: 'Clear browsing data', description: 'Permanently delete your browsing history from this device', type: 'action', actionLabel: 'Clear now', defaultValue: null },
     ],
   },
   {
@@ -81,7 +85,7 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
     id: 'ai-research', title: 'AI Research', icon: '🔬',
     settings: [
       { key: 'researchEnabled', label: 'Enable AI Research', description: 'Show research panel in browser', type: 'boolean', defaultValue: true },
-      { key: 'anthropicApiKey', label: 'Anthropic API Key', description: 'API key for Claude web search', type: 'text', defaultValue: '' },
+      { key: 'anthropicApiKey', label: 'Anthropic API Key', description: 'API key for Claude web search. Your research queries are sent to Anthropic — see Privacy Policy. Encrypted on disk where supported.', type: 'password', defaultValue: '' },
       { key: 'researchMaxSearches', label: 'Max searches per query', description: 'Maximum web searches per research session', type: 'range', defaultValue: 10, min: 1, max: 30, step: 1 },
       { key: 'researchModel', label: 'Model', description: 'Claude model for research', type: 'select', defaultValue: 'claude-sonnet-4-5-20250929', options: [{ label: 'Sonnet 4.5', value: 'claude-sonnet-4-5-20250929' }, { label: 'Opus 4', value: 'claude-opus-4-20250514' }] },
     ],
@@ -90,32 +94,6 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
     id: 'shortcuts', title: 'Shortcuts', icon: '⌨',
     settings: [
       { key: 'enableKeyboardShortcuts', label: 'Enable keyboard shortcuts', description: 'Use keyboard shortcuts for navigation', type: 'boolean', defaultValue: true },
-    ],
-  },
-  {
-    id: 'menu', title: 'Browser Menu', icon: '☰',
-    settings: [
-      { key: 'menuShowNewTab', label: 'New tab', description: 'Show "New tab" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowNewWindow', label: 'New window', description: 'Show "New window" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowPrivateWindow', label: 'New private window', description: 'Show "New private window" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowTorWindow', label: 'New private window with Tor', description: 'Show Tor window option in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowLeoAI', label: 'Leo AI', description: 'Show "Leo AI" assistant in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowWallet', label: 'Wallet', description: 'Show "Wallet" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowVPN', label: 'Brave VPN', description: 'Show "Brave VPN" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowSidebar', label: 'Sidebar', description: 'Show sidebar toggle in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuSidebarAutohide', label: 'Sidebar autohide', description: 'Autohide the sidebar when not in use', type: 'boolean', defaultValue: false },
-      { key: 'menuShowPasswords', label: 'Passwords and autofill', description: 'Show passwords section in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowHistory', label: 'History', description: 'Show history in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowBookmarks', label: 'Bookmarks and lists', description: 'Show bookmarks in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowDownloads', label: 'Downloads', description: 'Show downloads in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowExtensions', label: 'Extensions', description: 'Show extensions in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowClearData', label: 'Delete browsing data', description: 'Show "Delete browsing data" in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuDefaultZoom', label: 'Default zoom', description: 'Default zoom level for new pages', type: 'select', defaultValue: '100', options: [{ label: '50%', value: '50' }, { label: '75%', value: '75' }, { label: '80%', value: '80' }, { label: '90%', value: '90' }, { label: '100%', value: '100' }, { label: '110%', value: '110' }, { label: '125%', value: '125' }, { label: '150%', value: '150' }, { label: '175%', value: '175' }, { label: '200%', value: '200' }] },
-      { key: 'menuShowPrint', label: 'Print', description: 'Show print option in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowFind', label: 'Find and edit', description: 'Show find/edit in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowShare', label: 'Save and share', description: 'Show save/share in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowMoreTools', label: 'More tools', description: 'Show more tools submenu in menu', type: 'boolean', defaultValue: true },
-      { key: 'menuShowHelp', label: 'Help', description: 'Show help in menu', type: 'boolean', defaultValue: true },
     ],
   },
 ];
@@ -275,6 +253,27 @@ class SettingsPage implements ISettingsPage {
           input.addEventListener('blur', () => { input.style.borderColor = 'var(--border-default,rgba(255,255,255,.1))'; });
           input.addEventListener('change', () => this.setSetting(setting.key, input.value));
           row.appendChild(input);
+          break;
+        }
+        case 'password': {
+          const input = document.createElement('input');
+          input.type = 'password';
+          input.autocomplete = 'off';
+          input.value = String(currentValue);
+          input.style.cssText = 'width:100%;padding:7px 10px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);outline:none;transition:border .15s;';
+          input.addEventListener('focus', () => { input.style.borderColor = 'var(--border-accent,rgba(124,156,245,.4))'; });
+          input.addEventListener('blur', () => { input.style.borderColor = 'var(--border-default,rgba(255,255,255,.1))'; });
+          input.addEventListener('change', () => this.setSetting(setting.key, input.value));
+          row.appendChild(input);
+          break;
+        }
+        case 'action': {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = setting.actionLabel ?? setting.label;
+          button.style.cssText = 'padding:7px 14px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);cursor:pointer;';
+          button.addEventListener('click', () => this.emit({ kind: 'actionTriggered', key: setting.key }));
+          row.appendChild(button);
           break;
         }
         case 'boolean': {
