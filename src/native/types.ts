@@ -37,7 +37,12 @@ export interface HttpResponse {
   status: number;
   statusText: string;
   headers: Record<string, string>;
-  body: string | null;
+  /**
+   * Raw response bytes. A Node `Buffer` (a `Uint8Array` subclass) crosses
+   * the N-API boundary here untouched — callers decide text vs. binary by
+   * content-type, same as `FetchHttpClient` already does.
+   */
+  body: Uint8Array | null;
 }
 
 export interface NovaNativeBindings {

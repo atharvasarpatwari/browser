@@ -80,10 +80,12 @@ import { ResourcePrioritizer } from '../browser/networking/resource-prioritizer'
 import { Firewall, applyBaselineRules } from '../browser/networking/firewall';
 import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from '../browser/networking/networking-setup';
 import { RawSocketHttpClient } from '../browser/networking/raw-socket-http-client';
+import { NativeHttpClient } from '../browser/networking/native-http-client';
 import { ProxyAwareHttpClient, createProxyConfigFromEnv } from '../browser/networking/request-manager';
 import type { IHttpClient } from '../browser/networking/request-manager';
 import { TlsHandler } from '../browser/networking/tls-handler';
 import type { ITlsHandler } from '../browser/networking/tls-handler';
+import { isNativeAvailable } from '../native/index';
 
 // Security
 import { CertificateValidator } from '../browser/security/certificate-validator';
@@ -438,9 +440,13 @@ class ApplicationBootstrap {
         const proxyConfig = createProxyConfigFromEnv();
         let client: IHttpClient | undefined;
         if (proxyConfig.socksProxy || proxyConfig.httpProxy || proxyConfig.httpsProxy) {
+          // Native has no proxy support, so proxied requests always go
+          // through the socket-based client regardless of isNativeAvailable().
           client = new ProxyAwareHttpClient(proxyConfig, undefined, tlsHandler);
         } else if (isNode) {
-          client = new RawSocketHttpClient({ tlsHandler });
+          client = isNativeAvailable()
+            ? new NativeHttpClient()
+            : new RawSocketHttpClient({ tlsHandler });
         }
         const cache = ctx.resolve<ICacheManager>(Tokens.CacheManager);
         const loader = new ResourceLoader(
