@@ -130,6 +130,8 @@ interface TextRun {
   readonly fontFamily: string;
   readonly fontWeight?: string;
   readonly color: string;
+  /** The width layout gave this run; the painter fits the glyphs into it so text never overruns its box. */
+  readonly width?: number;
 }
 
 type DomMutationType =

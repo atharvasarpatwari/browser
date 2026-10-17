@@ -38,6 +38,7 @@ import type { ITabSession } from '../../browser/tabs/tab-session';
 import type { IAddressBar, AddressBarEventUnion } from './address-bar/address-bar';
 import type { IToolbar, ToolbarEventUnion } from './toolbar/toolbar';
 import type { IStatusBar } from './status-bar/status-bar';
+import type { ISearchEngineManager } from '../../browser/omnibox/search-engine';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -98,8 +99,10 @@ type BridgeEventUnion =
   | HistoryChangedEvent;
 
 interface NavigationBridgeConfig {
-  /** Default search engine URL. Must contain %s placeholder. */
+  /** Default search engine URL. Must contain %s placeholder. Used only when searchEngineManager is absent. */
   readonly searchEngineUrl: string;
+  /** Shared search-engine manager; when present, its default engine's URL wins over searchEngineUrl. */
+  readonly searchEngineManager?: ISearchEngineManager | null;
   /** Whether to show loading state in the address bar. */
   readonly showLoadingInAddressBar: boolean;
   /** Whether to update status bar protocol/security on navigation. */
@@ -334,7 +337,8 @@ class NavigationBridge implements INavigationBridge {
     if (isSearch) {
       this._searchMode = true;
       this._searchQuery = trimmed;
-      const searchUrl = this.config.searchEngineUrl.replace('%s', encodeURIComponent(trimmed));
+      const engineUrl = this.config.searchEngineManager?.getDefaultEngine().url ?? this.config.searchEngineUrl;
+      const searchUrl = engineUrl.replace('%s', encodeURIComponent(trimmed));
 
       // Navigate to the search URL through the controller so the engine pipeline loads it.
       const result = await this.nav.navigate(searchUrl);

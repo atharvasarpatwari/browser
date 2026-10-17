@@ -752,12 +752,16 @@ export class Rasterizer {
     this.fillRectRaw(x + w - lw, y + lw, lw, h - 2 * lw, c.r, c.g, c.b, a);
   }
 
-  private fillText(params: [string, number, number]): void {
-    const [text, x, y] = params;
+  private fillText(params: [string, number, number, number?]): void {
+    const [text, x, y, width] = params;
     const c = this.state.fillStyle;
     const a = c.a * this.state.globalAlpha;
     const scale = this.state.fontSize / FONT_H;
-    const charW = FONT_W * scale;
+    // Layout measured this run with real font advances (~0.5 em per character); the 8x8 bitmap font is 1 em wide.
+    // Fit the glyphs into the laid-out width, or neighbouring words are painted over each other.
+    const fitted = width !== undefined && width > 0 && text.length > 0 ? width / text.length : FONT_W * scale;
+    const charW = Math.min(fitted, FONT_W * scale);
+    const scaleX = charW / FONT_W;
     let startX = x;
 
     if (this.state.textAlign === 'center') {
@@ -772,7 +776,7 @@ export class Rasterizer {
       const bitmap = getCharBitmap(text.charCodeAt(i));
       if (bitmap) {
         const chX = Math.round(startX + i * charW);
-        this.drawCharBitmap(bitmap, chX, baseY, scale, c.r, c.g, c.b, a);
+        this.drawCharBitmap(bitmap, chX, baseY, scale, c.r, c.g, c.b, a, scaleX);
       }
     }
   }
@@ -805,10 +809,11 @@ export class Rasterizer {
   private drawCharBitmap(
     bitmap: number[], ox: number, oy: number, scale: number,
     r: number, g: number, b: number, a: number,
+    scaleX: number = scale,
   ): void {
     let sx = Math.max(0, ox);
     let sy = Math.max(0, oy);
-    let ex = Math.min(this.width, ox + FONT_W * scale);
+    let ex = Math.min(this.width, ox + FONT_W * scaleX);
     let ey = Math.min(this.height, oy + FONT_H * scale);
     if (this.state.clipRect) {
       const cr = this.state.clipRect;
@@ -819,7 +824,7 @@ export class Rasterizer {
     }
     if (sx >= ex || sy >= ey) return;
 
-    if (scale === 1) {
+    if (scale === 1 && scaleX === 1) {
       for (let row = sy; row < ey; row++) {
         const bmpRow = bitmap[row - oy];
         if (bmpRow === undefined) continue;
@@ -837,7 +842,7 @@ export class Rasterizer {
         const bmpRow = bitmap[bmpRowIdx];
         if (bmpRow === undefined) continue;
         for (let col = sx; col < ex; col++) {
-          const bmpColIdx = (col - ox) / scale | 0;
+          const bmpColIdx = (col - ox) / scaleX | 0;
           if (bmpColIdx < 0 || bmpColIdx >= FONT_W) continue;
           const bit = 7 - bmpColIdx;
           if (bmpRow & (1 << bit)) {

@@ -38,4 +38,8 @@ export { ZoomManager, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP, DEFAULT_ZOOM } from './zoom
 export type { IZoomManager, ZoomEvent, ZoomEventKind, ZoomEventHandler } from './zoom';
 
 export { FindInPage } from './find-in-page';
-export type { IFindInPage, FindMatch, FindOptions, FindResult, FindEvent, FindEventKind, FindEventHandler } from './find-in-page';
+export type {
+  IFindInPage, FindMatch, FindOptions, FindResult, FindEvent, FindEventKind, FindEventHandler,
+  FindRect, FindRun, FindBlock, FindTextSource,
+} from './find-in-page';
+export { createDomFindSource } from './find-page-source';

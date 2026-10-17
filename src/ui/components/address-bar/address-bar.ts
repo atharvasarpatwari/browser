@@ -1,10 +1,12 @@
 import type { IDisposable } from '../../../app/dependency-container';
 import type { IUrlParser, ValidationResult } from '../../../browser/navigation/url-parser';
 import { UrlParser } from '../../../browser/navigation/url-parser';
+import type { OmniboxResult } from '../../../browser/omnibox/omnibox';
 
 type AddressBarEventType =
   | 'navigate' | 'inputChanged' | 'focus' | 'blur'
-  | 'search' | 'reload' | 'stop';
+  | 'search' | 'reload' | 'stop'
+  | 'typing' | 'resultsChanged';
 
 interface AddressBarEvent {
   readonly kind: AddressBarEventType;
@@ -26,10 +28,23 @@ interface SearchEvent extends AddressBarEvent {
   readonly query: string;
 }
 
+/** The user is typing: `value` is a draft, never a navigation request. */
+interface TypingEvent extends AddressBarEvent {
+  readonly kind: 'typing';
+  readonly value: string;
+}
+
+interface ResultsChangedEvent extends AddressBarEvent {
+  readonly kind: 'resultsChanged';
+  readonly results: readonly OmniboxResult[];
+}
+
 type AddressBarEventUnion =
   | NavigateEvent
   | InputChangedEvent
   | SearchEvent
+  | TypingEvent
+  | ResultsChangedEvent
   | AddressBarEvent;
 
 interface AddressBarState {
@@ -40,14 +55,23 @@ interface AddressBarState {
   readonly secure: boolean;
   readonly hostname: string;
   readonly suggestions: readonly string[];
+  /** Rich omnibox rows (see `setResults`). */
+  readonly results?: readonly OmniboxResult[];
 }
 
 interface IAddressBar extends IDisposable {
   readonly state: AddressBarState;
   setValue(value: string): void;
+  /**
+   * Reports in-progress text from the input box. Unlike `setValue` it never navigates or searches;
+   * it only emits `typing` so an omnibox controller can compute suggestions.
+   */
+  setDraft(value: string): void;
   setLoading(loading: boolean): void;
   setSecure(secure: boolean): void;
   setSuggestions(suggestions: readonly string[]): void;
+  /** Replaces the dropdown rows and emits `resultsChanged` (an empty list hides the dropdown). */
+  setResults(results: readonly OmniboxResult[]): void;
   focus(): void;
   blur(): void;
   clear(): void;
@@ -92,6 +116,7 @@ class AddressBar implements IAddressBar {
   private _secure = false;
   private _hostname = '';
   private _suggestions: readonly string[] = [];
+  private _results: readonly OmniboxResult[] = [];
 
   constructor(parser: IUrlParser = new UrlParser()) {
     this.parser = parser;
@@ -106,7 +131,17 @@ class AddressBar implements IAddressBar {
       secure: this._secure,
       hostname: this._hostname,
       suggestions: [...this._suggestions],
+      results: [...this._results],
     };
+  }
+
+  setDraft(value: string): void {
+    this.bus.emit({ kind: 'typing', value });
+  }
+
+  setResults(results: readonly OmniboxResult[]): void {
+    this._results = results;
+    this.bus.emit({ kind: 'resultsChanged', results });
   }
 
   setValue(value: string): void {
@@ -156,6 +191,7 @@ class AddressBar implements IAddressBar {
   clear(): void {
     this.setValue('');
     this._suggestions = [];
+    if (this._results.length > 0) this.setResults([]);
   }
 
   on(type: AddressBarEventType, handler: AddressBarEventHandler): void {
@@ -169,8 +205,11 @@ class AddressBar implements IAddressBar {
   dispose(): void {
     this.bus.dispose();
     this._suggestions = [];
+    this._results = [];
   }
 }
 
 export { AddressBar, AddressBarEventBus };
-export type { IAddressBar, AddressBarState, AddressBarEventUnion, AddressBarEventType };
+export type {
+  IAddressBar, AddressBarState, AddressBarEventUnion, AddressBarEventType, TypingEvent, ResultsChangedEvent,
+};

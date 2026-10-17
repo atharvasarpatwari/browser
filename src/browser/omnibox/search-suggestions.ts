@@ -97,13 +97,6 @@ class SearchSuggestionsProvider implements ISearchSuggestionsProvider {
       }
     }
 
-    if (lastWord.length >= 2) {
-      for (let i = 0; i < 3; i++) {
-        const completion = lastWord + String.fromCharCode(97 + Math.floor(Math.random() * 26));
-        suggestions.push(prefix ? `${prefix} ${completion}` : completion);
-      }
-    }
-
     return suggestions.slice(0, 5);
   }
 }

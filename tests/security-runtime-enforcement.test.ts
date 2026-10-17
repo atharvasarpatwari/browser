@@ -102,6 +102,8 @@ function createMockPaintEngine(): IPaintEngine {
     rasterize: vi.fn(),
     rasterizeAsync: vi.fn().mockReturnValue(Promise.resolve({} as ImageData)),
     resize: vi.fn(),
+    setScroll: vi.fn().mockReturnValue(0),
+    getScroll: vi.fn().mockReturnValue({ y: 0, max: 0, viewportHeight: 1080, documentHeight: 0 }),
     getConfig: vi.fn(),
     updateConfig: vi.fn(),
     on: vi.fn(),

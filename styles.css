@@ -535,6 +535,22 @@ input    { font-family:inherit; }
 .nova-security.danger  { color:var(--red-400); }
 .nova-security svg { width:13px; height:13px; }
 
+/* Query-type badge: what Enter will do with the typed text (🌐 address · !bang · @scope · ✨ ask · ⚡ command · 🧮 answer · 🔍 search). It replaces the lock icon while typing. */
+.nova-addressbar-badge {
+  flex-shrink:0; display:inline-flex; align-items:center;
+  height:18px; padding:0 var(--sp-2);
+  font-size:var(--sz-xs); line-height:1; color:var(--tx-secondary);
+  user-select:none; cursor:default;
+}
+.nova-addressbar-badge[hidden] { display:none; }
+.nova-addressbar-badge[data-kind="bang"],
+.nova-addressbar-badge[data-kind="scope"] {
+  padding:0 var(--sp-3); border-radius:var(--r-full);
+  font-family:var(--font-mono); font-weight:600;
+  color:var(--accent); background:var(--accent-dim);
+}
+.nova-addressbar.has-badge .nova-security { display:none; }
+
 .nova-addressbar-input {
   flex:1; background:transparent; border:none; outline:none;
   color:var(--tx-primary); font-family:var(--font-mono);
@@ -557,6 +573,21 @@ input    { font-family:inherit; }
 }
 .nova-addrbar-btn:hover { background:var(--glass-300); color:var(--tx-primary); }
 .nova-addrbar-btn svg { width:13px; height:13px; }
+
+/* "＋ Add <site>" offer while a page advertises a search engine the user lacks; the same chip then reports the result. */
+.nova-addressbar-offer {
+  flex-shrink:1; min-width:0; max-width:190px; height:22px; padding:0 var(--sp-4);
+  border:1px solid var(--accent); border-radius:var(--r-full);
+  background:var(--accent-dim); color:var(--accent);
+  font-size:var(--sz-xs); line-height:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  cursor:pointer;
+  transition:background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+}
+.nova-addressbar-offer:hover:not(:disabled) { background:var(--accent); color:var(--tx-inverse); }
+.nova-addressbar-offer:disabled { cursor:default; }
+.nova-addressbar-offer[data-state="busy"] { opacity:.7; cursor:progress; }
+.nova-addressbar-offer[data-state="done"] { border-color:var(--green-400); color:var(--green-400); background:transparent; }
+.nova-addressbar-offer[data-state="failed"] { border-color:var(--amber-400); color:var(--amber-400); background:transparent; }
 
 .nova-star { color:var(--tx-tertiary); }
 .nova-star.active { color:var(--amber-400); }
@@ -1428,6 +1459,48 @@ input    { font-family:inherit; }
   height:1px; margin:var(--sp-2) 0; background:var(--bd-subtle);
 }
 
+/* Omnibox rich rows (icon · title/description · hint) and section headers */
+.nova-dropdown-header {
+  padding:var(--sp-3) var(--sp-5) var(--sp-1);
+  font-size:var(--sz-xs); text-transform:uppercase; letter-spacing:.06em;
+  color:var(--tx-tertiary); user-select:none;
+}
+.nova-dropdown-item--rich { min-height:34px; }
+.nova-dropdown-item__icon {
+  flex:0 0 20px; display:flex; align-items:center; justify-content:center; font-size:14px;
+}
+.nova-dropdown-swatch {
+  width:16px; height:16px; border-radius:var(--r-2); border:1px solid var(--bd-default);
+}
+.nova-dropdown-item__body {
+  flex:1; min-width:0; display:flex; flex-direction:column; gap:1px;
+}
+.nova-dropdown-item__text {
+  color:var(--tx-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.nova-dropdown-item__desc {
+  font-size:var(--sz-xs); color:var(--tx-tertiary);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.nova-dropdown-item__hint { flex-shrink:0; font-size:var(--sz-xs); color:var(--tx-tertiary); }
+.nova-dropdown-item--selected .nova-dropdown-item__hint { color:var(--tx-secondary); }
+.nova-dropdown-match { font-weight:700; color:var(--accent); }
+
+/* Hover buttons on a row: copy link, remove from history. Hidden until the row is hovered or highlighted. */
+.nova-dropdown-item__actions {
+  flex-shrink:0; display:none; align-items:center; gap:var(--sp-1);
+}
+.nova-dropdown-item:hover .nova-dropdown-item__actions,
+.nova-dropdown-item--selected .nova-dropdown-item__actions { display:flex; }
+.nova-dropdown-item__action {
+  width:22px; height:22px; border:none; border-radius:var(--r-full);
+  background:transparent; color:var(--tx-tertiary); font-size:12px; line-height:1;
+  display:flex; align-items:center; justify-content:center; cursor:pointer;
+  transition:background var(--dur-fast), color var(--dur-fast);
+}
+.nova-dropdown-item__action:hover { background:var(--glass-300); color:var(--tx-primary); }
+.nova-dropdown-item__action[data-action="delete"]:hover { color:var(--red-400); }
+
 
 /* ============================================================================
    28. FIND-IN-PAGE BAR
@@ -1455,6 +1528,18 @@ input    { font-family:inherit; }
 .nova-find-bar-count {
   font-size:var(--sz-xs); color:var(--tx-tertiary);
   min-width:48px; text-align:center;
+}
+.nova-find-bar[hidden] { display:none; }
+.nova-find-bar input[aria-invalid] { border-color:var(--danger,#f0625f); }
+.nova-find-bar-count--empty { color:var(--danger,#f0625f); }
+.nova-find-btn {
+  min-width:24px; height:24px; padding:0 var(--sp-2);
+  background:transparent; border:1px solid transparent; border-radius:var(--r-2);
+  color:var(--tx-secondary); font-size:var(--sz-xs); cursor:pointer;
+}
+.nova-find-btn:hover { background:var(--bg-hover); color:var(--tx-primary); }
+.nova-find-toggle[aria-pressed="true"] {
+  background:var(--bg-hover); border-color:var(--accent); color:var(--tx-primary);
 }
 
 

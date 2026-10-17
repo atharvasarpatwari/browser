@@ -115,13 +115,17 @@ export function bench(
 
   if (options?.teardown) options.teardown();
 
-  // Sort for percentile calculations
+  return summarize(name, times, warmup, heapBefore, heapAfter);
+}
+
+/** The statistics of iteration times already measured, for a benchmark that times only part of what it runs. */
+export function summarize(name: string, times: readonly number[], warmup = 0, heapBefore = 0, heapAfter = 0): BenchmarkResult {
   const sorted = [...times].sort((a, b) => a - b);
-  const avg = mean(times);
+  const avg = mean([...times]);
 
   return {
     name,
-    iterations,
+    iterations: times.length,
     warmup,
     times,
     opsPerSec: avg > 0 ? 1000 / avg : Infinity,
@@ -131,7 +135,7 @@ export function bench(
     p99Ms: percentile(sorted, 0.99),
     minMs: sorted[0]!,
     maxMs: sorted[sorted.length - 1]!,
-    stdDevMs: stdDev(times, avg),
+    stdDevMs: stdDev([...times], avg),
     heapBefore,
     heapAfter,
     heapDelta: heapAfter - heapBefore,
@@ -186,24 +190,5 @@ export async function benchAsync(
 
   if (options?.teardown) options.teardown();
 
-  const sorted = [...times].sort((a, b) => a - b);
-  const avg = mean(times);
-
-  return {
-    name,
-    iterations,
-    warmup,
-    times,
-    opsPerSec: avg > 0 ? 1000 / avg : Infinity,
-    meanMs: avg,
-    medianMs: median(sorted),
-    p95Ms: percentile(sorted, 0.95),
-    p99Ms: percentile(sorted, 0.99),
-    minMs: sorted[0]!,
-    maxMs: sorted[sorted.length - 1]!,
-    stdDevMs: stdDev(times, avg),
-    heapBefore,
-    heapAfter,
-    heapDelta: heapAfter - heapBefore,
-  };
+  return summarize(name, times, warmup, heapBefore, heapAfter);
 }

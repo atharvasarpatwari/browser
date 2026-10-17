@@ -503,13 +503,29 @@ class Router implements IRouter {
       ['nova://history',    'history',    'History'],
       ['nova://bookmarks',  'bookmarks',  'Bookmarks'],
       ['nova://extensions', 'extensions', 'Extensions'],
-      ['nova://research',   'research',   'AI Research'],
     ];
 
     for (const [pattern, pageId, title] of internalPages) {
       add({
         pattern,
         strategy: MatchStrategy.Exact,
+        type:     RouteType.InternalPage,
+        priority: 150,
+        label:    `built-in:${pageId}`,
+        handler:  Router.makeStaticHandler(RouteType.InternalPage, pageId, title),
+      });
+    }
+
+    // Internal pages that take a query string: nova://search?q=…, nova://research?q=…
+    const queryPages: Array<[string, string]> = [
+      ['search',   'Nova Search'],
+      ['research', 'AI Research'],
+    ];
+
+    for (const [pageId, title] of queryPages) {
+      add({
+        pattern:  `^nova://${pageId}/?(?:[?#].*)?$`,
+        strategy: MatchStrategy.RegExp,
         type:     RouteType.InternalPage,
         priority: 150,
         label:    `built-in:${pageId}`,
@@ -855,6 +871,29 @@ class Router implements IRouter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ROUTE → RENDERER
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Route types the engine fetches and renders itself. Every other type has no engine-rendered
+ * document: built-in pages (nova://, about:) are drawn by the browser window, external protocols
+ * are handed to the OS — so the page bitmap must not be painted over the window for them.
+ */
+const ENGINE_RENDERED: ReadonlySet<RouteType> = new Set([
+  RouteType.WebContent,
+  RouteType.LocalFile,
+  RouteType.WebSocket,
+  RouteType.SecureFileTransfer,
+  RouteType.Usenet,
+  RouteType.LegacyProtocol,
+  RouteType.Gateway,
+]);
+
+function isEngineRendered(type: RouteType): boolean {
+  return ENGINE_RENDERED.has(type);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -864,6 +903,7 @@ export {
   MatchStrategy,
   RouteNotFoundError,
   DuplicateRouteError,
+  isEngineRendered,
 };
 
 export type {

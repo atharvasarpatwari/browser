@@ -104,6 +104,8 @@ function createMockPaintEngine(): IPaintEngine {
     rasterize: vi.fn(),
     rasterizeAsync: vi.fn().mockReturnValue(Promise.resolve({} as ImageData)),
     resize: vi.fn(),
+    setScroll: vi.fn().mockReturnValue(0),
+    getScroll: vi.fn().mockReturnValue({ y: 0, max: 0, viewportHeight: 1080, documentHeight: 0 }),
     getConfig: vi.fn(),
     updateConfig: vi.fn(),
     on: vi.fn(),
@@ -192,6 +194,24 @@ describe('PageRenderer', () => {
       expect(mockDeps.cssParser.extractStylesFromDocument).toHaveBeenCalled();
       expect(mockDeps.layoutEngine.layout).toHaveBeenCalled();
       expect(mockDeps.paintEngine.paint).toHaveBeenCalled();
+    });
+
+    it('should report the finished document to onDocumentReady after painting', async () => {
+      const onDocumentReady = vi.fn();
+      const hooked = new PageRenderer({ ...mockDeps, onDocumentReady });
+      const result = createMockPageLoadResult({ url: 'https://example.com/final' });
+
+      await hooked.render(result, new AbortController().signal);
+
+      expect(onDocumentReady).toHaveBeenCalledTimes(1);
+      expect(onDocumentReady).toHaveBeenCalledWith('https://example.com/final', expect.anything());
+      const paintOrder = (mockDeps.paintEngine.paint as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!;
+      expect(onDocumentReady.mock.invocationCallOrder[0]!).toBeGreaterThan(paintOrder);
+    });
+
+    it('should not let a throwing onDocumentReady break rendering', async () => {
+      const hooked = new PageRenderer({ ...mockDeps, onDocumentReady: () => { throw new Error('observer bug'); } });
+      await expect(hooked.render(createMockPageLoadResult(), new AbortController().signal)).resolves.toBeUndefined();
     });
 
     it('should parse HTML with correct parameters', async () => {

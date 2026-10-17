@@ -52,7 +52,7 @@ import type {
   NavigationCommittedEvent,
 } from '../navigation/navigation-controller';
 import type { IRouter, RouteResult } from '../navigation/router';
-import { RouteType }                  from '../navigation/router';
+import { isEngineRendered }           from '../navigation/router';
 import type { ILayoutEngine }         from '../rendering/layout-engine';
 import type { IPageLoader, PageLoadResult } from './engine-types';
 
@@ -511,15 +511,7 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
     // ── Step 3: Fetch (web content, local files, and network protocols only) ──
     let raw: PageLoadResult | null = null;
-    if (
-      routeResult.type === RouteType.WebContent ||
-      routeResult.type === RouteType.LocalFile   ||
-      routeResult.type === RouteType.WebSocket   ||
-      routeResult.type === RouteType.SecureFileTransfer ||
-      routeResult.type === RouteType.Usenet      ||
-      routeResult.type === RouteType.LegacyProtocol ||
-      routeResult.type === RouteType.Gateway
-    ) {
+    if (isEngineRendered(routeResult.type)) {
       this.throwIfAborted(signal, session);
       raw = await this.loader.load(session.entry.url, signal);
       this.bus.emit({ kind: 'pageLoadFetched', session, raw });

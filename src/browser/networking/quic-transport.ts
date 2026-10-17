@@ -58,6 +58,15 @@ enum QuicFrameType {
   HandshakeDone = 0x1e,
 }
 
+// A STREAM frame's payload never exceeds this, so a write is split across
+// multiple packets rather than trusted to fit in one UDP datagram — macOS
+// rejects a single sendto() over its default net.inet.udp.maxdgram (9216
+// bytes) with EMSGSIZE, while Linux/Windows silently tolerate a larger one
+// on loopback via IP fragmentation. 1200 bytes matches the conservative
+// datagram size real QUIC implementations default to before path MTU
+// discovery, well under every OS's limit.
+const MAX_STREAM_FRAME_PAYLOAD = 1200;
+
 enum QuicConnectionState {
   Listening,
   WaitingForInitial,
@@ -220,8 +229,16 @@ class QuicConnection implements IQuicConnection {
       throw new QuicStreamClosedError(streamId);
     }
 
-    const frame = this.buildStreamFrame(streamId, data, false);
-    await this.sendPacket(QuicLongHeaderType.OneRtt, frame);
+    // Split into MAX_STREAM_FRAME_PAYLOAD-sized chunks so no single UDP
+    // datagram carries more than one packet can safely hold — see that
+    // constant's comment. A zero-length write still sends one empty frame.
+    let offset = 0;
+    do {
+      const chunk = data.subarray(offset, offset + MAX_STREAM_FRAME_PAYLOAD);
+      offset += chunk.length;
+      const frame = this.buildStreamFrame(streamId, chunk, false, offset - chunk.length);
+      await this.sendPacket(QuicLongHeaderType.OneRtt, frame);
+    } while (offset < data.length);
   }
 
   async readStream(streamId: number): Promise<Uint8Array> {
@@ -268,13 +285,13 @@ class QuicConnection implements IQuicConnection {
     });
   }
 
-  private buildStreamFrame(streamId: number, data: Uint8Array, fin: boolean): Uint8Array {
+  private buildStreamFrame(streamId: number, data: Uint8Array, fin: boolean, offset = 0): Uint8Array {
     const type = QuicFrameType.Stream | (fin ? 0x01 : 0x00) | 0x04 | 0x02;
 
     return concatBytes([
       new Uint8Array([type]),
       encodeVarInt(streamId),
-      encodeVarInt(0),
+      encodeVarInt(offset),
       encodeVarInt(data.length),
       data,
     ]);
