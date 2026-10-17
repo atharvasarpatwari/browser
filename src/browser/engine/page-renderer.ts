@@ -51,7 +51,7 @@ import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
-import { runJS } from '../js/index';
+import { runJS, createGlobalEnv } from '../js/index';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
@@ -99,6 +99,9 @@ interface PageRendererDependencies {
 // ─────────────────────────────────────────────────────────────────────────────
 // CONCRETE IMPLEMENTATION
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Total time all of a page's scripts may take before the rest are skipped. */
+const PAGE_SCRIPT_BUDGET_MS = 3000;
 
 class PageRenderer implements IPageRenderer, IDisposable {
   private readonly deps: PageRendererDependencies;
@@ -166,9 +169,16 @@ class PageRenderer implements IPageRenderer, IDisposable {
     this._lastRules = rules;
     this.applyComputedStyles(rules);
 
-    // 5. Execute scripts: inline synchronously, external fetched via ResourceLoader
-    await this.executeAllScripts(doc, result.url, signal);
-    this.applyComputedStyles(rules); // Re-apply after script execution
+    // 5. Execute scripts: inline synchronously, external fetched via ResourceLoader.
+    //    Paint the script-free page first, so a slow script never delays seeing it;
+    //    the full layout+paint below then picks up whatever the scripts changed.
+    if (domTree.getElementsByTagName('script').length > 0) {
+      layoutEngine.layout(doc, domTree);
+      paintEngine.paint(doc);
+      this.deps.onFrameRendered?.();
+      await this.executeAllScripts(doc, result.url, signal);
+      this.applyComputedStyles(rules); // Re-apply after script execution
+    }
 
     // 6. Run layout
     layoutEngine.layout(doc, domTree);
@@ -411,7 +421,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     baseUrl: string,
     signal: AbortSignal,
   ): Promise<void> {
-    const { domTree, resourceLoader } = this.deps;
+    const { domTree, resourceLoader, scriptEnforcer } = this.deps;
     const scripts = domTree.getElementsByTagName('script');
     if (scripts.length === 0) return;
 
@@ -419,10 +429,18 @@ class PageRenderer implements IPageRenderer, IDisposable {
     const origin = parseOrigin(baseUrl);
 
     const eventLoop = new JsEventLoop();
+    // One global environment per page: what one script defines (e.g. a library)
+    // must be visible to the scripts after it, as in a browser.
+    const env = createGlobalEnv(
+      doc, domTree, eventLoop, this.deps.controller, undefined,
+      this.deps.resourceEnforcer, scriptEnforcer, origin, this.deps.htmlParser,
+      this.deps.storageDir, this.deps.corsEngine,
+    );
 
-    const blockingScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
-    const deferScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
-    const asyncScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
+    type Entry = { source: string; inline: boolean; nonce?: string };
+    const blockingScripts: Entry[] = [];
+    const deferScripts: Entry[] = [];
+    const asyncScripts: Entry[] = [];
 
     // Categorize scripts
     for (const script of scripts) {
@@ -448,6 +466,15 @@ class PageRenderer implements IPageRenderer, IDisposable {
           }
         }
 
+        // CSP script-src for an external script is decided by its URL (not as inline code).
+        if (scriptEnforcer) {
+          const check = scriptEnforcer.checkExternalScript(fullUrl, origin, baseUrl);
+          if (!check.allowed) {
+            console.warn(`[CSP] Blocked external script: ${fullUrl} (${check.reason})`);
+            continue;
+          }
+        }
+
         try {
           const source = await resourceLoader.loadScript(fullUrl);
 
@@ -464,12 +491,13 @@ class PageRenderer implements IPageRenderer, IDisposable {
             }
           }
 
+          const entry: Entry = { source, inline: false };
           if (isAsync) {
-            asyncScripts.push({ source, el: script });
+            asyncScripts.push(entry);
           } else if (isDefer) {
-            deferScripts.push({ source, el: script });
+            deferScripts.push(entry);
           } else {
-            blockingScripts.push({ source, el: script });
+            blockingScripts.push(entry);
           }
         } catch (err) {
           console.error(
@@ -489,59 +517,36 @@ class PageRenderer implements IPageRenderer, IDisposable {
         if (source === '') continue;
 
         // Inline scripts without defer/async are blocking by default
-        blockingScripts.push({ source, el: script });
+        blockingScripts.push({ source, inline: true, nonce: script.attributes.get('nonce') ?? undefined });
       }
     }
 
-    // 1. Execute blocking scripts in document order
-    for (const { source } of blockingScripts) {
-      if (signal.aborted) break;
-      if (this.deps.scriptEnforcer) {
-        const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
+    // ponytail: one total budget per page (each script is also capped at 5 s by the
+    // interpreter); scripts past it are skipped. Upgrade path: yield and resume later.
+    const deadline = Date.now() + PAGE_SCRIPT_BUDGET_MS;
+    let skipped = 0;
+    const run = (entry: Entry, kind: string): void => {
+      if (Date.now() > deadline) { skipped++; return; }
+      if (entry.inline && scriptEnforcer) {
+        const check = scriptEnforcer.checkInlineScript(entry.source, origin, baseUrl, entry.nonce);
         if (!check.allowed) {
-          console.warn(`[CSP] Blocked inline script: ${check.reason}`);
-          continue;
+          console.warn(`[CSP] Blocked ${kind} script: ${check.reason}`);
+          return;
         }
       }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: origin, corsEngine: this.deps.corsEngine, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
-      if (result2.error) {
-        console.error(
-          `[ScriptEngine] Error executing blocking script: ${result2.error.message}`,
-        );
+      const result = runJS(entry.source, { document: doc, domTree, eventLoop, globalEnv: env, htmlParser: this.deps.htmlParser });
+      if (result.error) {
+        console.error(`[ScriptEngine] Error executing ${kind} script: ${result.error.message}`);
       }
-    }
+    };
 
-    // 2. Execute defer scripts in document order (after DOM is parsed)
-    for (const { source } of deferScripts) {
-      if (signal.aborted) break;
-      if (this.deps.scriptEnforcer) {
-        const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
-        if (!check.allowed) {
-          console.warn(`[CSP] Blocked defer script: ${check.reason}`);
-          continue;
-        }
-      }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: origin, corsEngine: this.deps.corsEngine, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
-      if (result2.error) {
-        console.error(
-          `[ScriptEngine] Error executing defer script: ${result2.error.message}`,
-        );
-      }
-    }
-
-    // 3. Fire async scripts (best-effort — they may already be downloaded)
-    for (const { source, el } of asyncScripts) {
-      if (this.deps.scriptEnforcer) {
-        const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
-        if (!check.allowed) {
-          console.warn(`[CSP] Blocked async script: ${check.reason}`);
-          void el;
-          continue;
-        }
-      }
-      // Fire and forget — async scripts don't block rendering
-      runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: origin, corsEngine: this.deps.corsEngine, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
-      void el; // used only for categorization
+    // 1. Blocking scripts in document order, 2. defer scripts (after the DOM is
+    //    parsed), 3. async scripts (best-effort: already downloaded by now).
+    for (const entry of blockingScripts) { if (signal.aborted) return; run(entry, 'blocking'); }
+    for (const entry of deferScripts) { if (signal.aborted) return; run(entry, 'defer'); }
+    for (const entry of asyncScripts) { if (signal.aborted) return; run(entry, 'async'); }
+    if (skipped > 0) {
+      console.warn(`[ScriptEngine] Page script budget (${PAGE_SCRIPT_BUDGET_MS} ms) used up; skipped ${skipped} script(s) on ${baseUrl}`);
     }
   }
 

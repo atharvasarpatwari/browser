@@ -7,30 +7,27 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nova.browser.BrowserViewModel
-import com.nova.browser.ui.components.AddressBar
-import com.nova.browser.ui.components.ContextMenuSheet
-import com.nova.browser.ui.components.DownloadsSheet
-import com.nova.browser.ui.components.EngineWebView
-import com.nova.browser.ui.components.ErrorPage
-import com.nova.browser.ui.components.LibrarySheet
-import com.nova.browser.ui.components.TabsBar
+import com.nova.browser.ui.components.*
+
+private enum class Overlay { NONE, TABS, SETTINGS }
 
 @Composable
 fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
-    var showLibrary by remember { mutableStateOf(false) }
+    var overlay by remember { mutableStateOf(Overlay.NONE) }
+    var libraryTab by remember { mutableStateOf<LibraryTab?>(null) }
     var showDownloads by remember { mutableStateOf(false) }
     val activeTab = viewModel.activeTab
     val context = LocalContext.current
+    val onNewTabPage = activeTab == null || (activeTab.error == null && viewModel.isNewTabUrl(activeTab.url))
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -59,7 +56,8 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
         webPermissionLauncher.launch(ask.permissions)
     }
 
-    fun requestNotificationPermissionIfNeeded() {
+    fun openDownloads() {
+        showDownloads = true
         if (Build.VERSION.SDK_INT >= 33) {
             val granted = context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -67,70 +65,97 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
         }
     }
 
-    BackHandler(enabled = viewModel.canGoBack.value) {
+    fun openShortcut(s: NewTabShortcut) = when (s) {
+        NewTabShortcut.BOOKMARKS -> libraryTab = LibraryTab.BOOKMARKS
+        NewTabShortcut.HISTORY -> libraryTab = LibraryTab.HISTORY
+        NewTabShortcut.DOWNLOADS -> openDownloads()
+        NewTabShortcut.SETTINGS -> overlay = Overlay.SETTINGS
+    }
+
+    BackHandler(enabled = overlay == Overlay.NONE && viewModel.canGoBack.value) {
         viewModel.goBack()
     }
 
-    Scaffold(
-        topBar = {
-            Column {
-                TabsBar(
-                    tabs = viewModel.tabs,
-                    activeTabId = viewModel.activeTabId.value ?: "",
-                    incognito = viewModel.incognito.value,
-                    onToggleIncognito = { viewModel.setIncognito(!viewModel.incognito.value) },
-                    onSelect = viewModel::selectTab,
-                    onClose = viewModel::closeTab,
-                    onNewTab = { viewModel.newTab() }
-                )
-                AddressBar(
-                    text = viewModel.addressBarText.value,
-                    onSubmit = { input -> viewModel.navigate(input) },
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            bottomBar = {
+                BottomChrome(
+                    url = activeTab?.url ?: "",
+                    showUrl = !onNewTabPage,
                     isLoading = activeTab?.loading ?: false,
-                    isSecure = viewModel.addressBarText.value.startsWith("https://"),
-                    isBookmarked = viewModel.isBookmarked(activeTab?.url ?: ""),
+                    incognito = viewModel.incognito.value,
+                    tabCount = viewModel.tabs.size,
+                    canGoBack = viewModel.canGoBack.value,
+                    onBack = { viewModel.goBack() },
+                    onSubmit = { viewModel.navigate(it) },
                     onReload = { viewModel.reload() },
                     onStop = { viewModel.stop() },
-                    onToggleBookmark = { viewModel.toggleBookmark() },
-                    onCopyUrl = {
-                        activeTab?.let { viewModel.copyToClipboard("URL", it.url) }
+                    onShowTabs = { overlay = Overlay.TABS },
+                    menuContent = { close ->
+                        MenuEntry("Forward", Icons.AutoMirrored.Filled.ArrowForward, enabled = viewModel.canGoForward.value) { close(); viewModel.goForward() }
+                        MenuEntry("New tab", Icons.Filled.Add) { close(); viewModel.setIncognito(false); viewModel.newTab() }
+                        MenuEntry("New incognito tab", Icons.Filled.VisibilityOff) { close(); viewModel.setIncognito(true); viewModel.newTab() }
+                        if (!onNewTabPage && activeTab != null) {
+                            val bookmarked = viewModel.isBookmarked(activeTab.url)
+                            MenuEntry(if (bookmarked) "Remove bookmark" else "Add bookmark", if (bookmarked) Icons.Filled.Star else Icons.Filled.StarBorder) {
+                                close(); viewModel.toggleBookmark()
+                            }
+                        }
+                        HorizontalDivider()
+                        MenuEntry("Bookmarks", Icons.Filled.Star) { close(); libraryTab = LibraryTab.BOOKMARKS }
+                        MenuEntry("History", Icons.Filled.History) { close(); libraryTab = LibraryTab.HISTORY }
+                        MenuEntry("Downloads", Icons.Filled.Download) { close(); openDownloads() }
+                        if (!onNewTabPage && activeTab != null) {
+                            HorizontalDivider()
+                            MenuEntry("Share page", Icons.Filled.Share) { close(); viewModel.shareUrl(activeTab.title, activeTab.url) }
+                            MenuEntry("Copy link", Icons.Filled.ContentCopy) { close(); viewModel.copyToClipboard("URL", activeTab.url) }
+                        }
+                        HorizontalDivider()
+                        MenuEntry("Settings", Icons.Filled.Settings) { close(); overlay = Overlay.SETTINGS }
                     },
-                    onShareUrl = {
-                        activeTab?.let { viewModel.shareUrl(it.title, it.url) }
-                    }
                 )
+            },
+        ) { padding ->
+            Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+                // One WebView for all tabs (the engine owns them internally); rebuilt
+                // only after a renderer crash (BrowserViewModel.onRendererGone).
+                key(viewModel.engineGeneration.value) {
+                    EngineWebView(viewModel = viewModel, modifier = Modifier.fillMaxSize())
+                }
+                if (onNewTabPage) {
+                    NewTabPage(
+                        history = viewModel.history,
+                        incognito = viewModel.incognito.value,
+                        onSubmit = { viewModel.navigate(it) },
+                        onOpen = { viewModel.navigate(it) },
+                        onShortcut = ::openShortcut,
+                    )
+                }
+                activeTab?.error?.let { error ->
+                    ErrorPage(error = error, onRetry = { viewModel.reload() })
+                }
             }
-        },
-        bottomBar = {
-            BottomAppBar(actions = {
-                IconButton(onClick = { viewModel.goBack() }, enabled = viewModel.canGoBack.value) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                }
-                IconButton(onClick = { viewModel.goForward() }, enabled = viewModel.canGoForward.value) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Forward")
-                }
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = {
-                    showDownloads = true
-                    requestNotificationPermissionIfNeeded()
-                }) {
-                    Icon(Icons.Filled.Download, contentDescription = "Downloads")
-                }
-                IconButton(onClick = { showLibrary = true }) {
-                    Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = "Bookmarks & History")
-                }
-            })
         }
-    ) { padding ->
-        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
-            // One WebView for all tabs (the engine owns them internally); rebuilt
-            // only after a renderer crash (BrowserViewModel.onRendererGone).
-            key(viewModel.engineGeneration.value) {
-                EngineWebView(viewModel = viewModel, modifier = Modifier.fillMaxSize())
-            }
-            activeTab?.error?.let { error ->
-                ErrorPage(error = error, onRetry = { viewModel.reload() })
-            }
+
+        when (overlay) {
+            Overlay.TABS -> TabSwitcher(
+                tabs = viewModel.tabs,
+                activeTabId = viewModel.activeTabId.value,
+                incognito = viewModel.incognito.value,
+                onSelect = viewModel::selectTab,
+                onClose = viewModel::closeTab,
+                onNewTab = { viewModel.newTab() },
+                onSetIncognito = viewModel::setIncognito,
+                onDismiss = { overlay = Overlay.NONE },
+            )
+            Overlay.SETTINGS -> SettingsScreen(
+                searchEngine = viewModel.searchEngine.value,
+                onSearchEngine = viewModel::setSearchEngine,
+                onClearData = viewModel::clearBrowsingData,
+                version = viewModel.appVersion,
+                onDismiss = { overlay = Overlay.NONE },
+            )
+            Overlay.NONE -> Unit
         }
     }
 
@@ -148,18 +173,19 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
         )
     }
 
-    if (showLibrary) {
+    libraryTab?.let { initial ->
         LibrarySheet(
             bookmarks = viewModel.bookmarks,
             history = viewModel.history,
             onOpen = { url ->
                 viewModel.navigate(url)
-                showLibrary = false
+                libraryTab = null
             },
             onRemoveBookmark = viewModel::removeBookmark,
             onRemoveHistory = viewModel::removeHistoryEntry,
             onClearHistory = viewModel::clearHistory,
-            onDismiss = { showLibrary = false }
+            onDismiss = { libraryTab = null },
+            initialTab = initial,
         )
     }
 
@@ -190,4 +216,14 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
             onDismiss = { viewModel.dismissContextMenu() }
         )
     }
+}
+
+@Composable
+private fun MenuEntry(label: String, icon: ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        leadingIcon = { Icon(icon, contentDescription = null) },
+        enabled = enabled,
+        onClick = onClick,
+    )
 }

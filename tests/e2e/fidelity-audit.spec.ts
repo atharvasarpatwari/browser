@@ -443,7 +443,8 @@ test('Nova fidelity audit over crafted fixtures', async () => {
 
   try {
     await page.locator('#browser-app').waitFor({ state: 'visible', timeout: 30_000 });
-    const input = page.locator('.address-input');
+    // Located by role + accessible name, so chrome class renames don't break it.
+    const input = page.getByRole('combobox', { name: 'Search or enter URL' });
     await input.waitFor({ state: 'visible', timeout: 30_000 });
 
     for (const fixture of FIXTURES) {

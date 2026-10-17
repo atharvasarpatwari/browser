@@ -1293,6 +1293,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.incognitoManager.deactivate();
     }
     setCookieIncognito(enabled);
+    this.historyService?.setRecordingPaused?.(enabled); // incognito visits aren't saved
     this.syncAll();
   }
 

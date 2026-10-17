@@ -9,10 +9,11 @@ test('Nova Browser launches in Electron and renders content', async () => {
   try {
     // Bootstrap mounts the browser chrome into #browser-app
     await expect(page.locator('#browser-app')).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('.address-bar')).toBeVisible();
+    // Located by role + accessible name, so chrome class renames don't break it.
+    const addressInput = page.getByRole('combobox', { name: 'Search or enter URL' });
+    await expect(addressInput).toBeVisible();
 
     // Navigate to a real site through the engine pipeline
-    const addressInput = page.locator('.address-input');
     await addressInput.fill('https://example.com');
     await addressInput.press('Enter');
 

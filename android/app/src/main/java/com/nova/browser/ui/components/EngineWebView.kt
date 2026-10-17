@@ -51,6 +51,13 @@ fun EngineWebView(
                 .build()
 
             WebView(context).apply {
+                // MATCH_PARENT, not the default wrap-content: with a wrap-content height
+                // Chromium resolves 100vh and the root's height:100% to 0, so the engine's
+                // whole page (html → #browser-app → canvas) collapsed to 0 px on device.
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                )
                 // The engine paints real page content (its own canvas, real-world
                 // colors) — Android's automatic WebView dark-mode inversion must
                 // never touch it, or a light page renders as an inverted black

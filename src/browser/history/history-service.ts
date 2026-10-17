@@ -38,6 +38,8 @@ interface IHistoryService extends ISharedService {
   deleteRange(fromTime: number, toTime: number): Promise<number>;
   deleteAll(): Promise<void>;
   getEntryByUrl(url: string): Promise<HistoryEntry | null>;
+  /** While paused (incognito), committed navigations are not recorded. */
+  setRecordingPaused?(paused: boolean): void;
   connectController(controller: INavigationController): void;
   disconnectController(controller: INavigationController): void;
   on(type: HistoryServiceEventType, handler: (event: HistoryServiceEventUnion) => void): void;
@@ -97,6 +99,12 @@ class HistoryService implements IHistoryService {
     this._initialized = false;
   }
 
+  private recordingPaused = false;
+
+  setRecordingPaused(paused: boolean): void {
+    this.recordingPaused = paused;
+  }
+
   async addVisit(url: string, title: string, typed = false): Promise<HistoryEntry> {
     const entry = await this.store.addVisit(url, title, typed);
     this.bus.emit({ kind: 'entryAdded', entry });
@@ -140,7 +148,7 @@ class HistoryService implements IHistoryService {
     if (this.controllerListeners.has(controller)) return;
 
     const listener = (event: NavigationEvent): void => {
-      if (event.kind === 'navigationCommitted') {
+      if (event.kind === 'navigationCommitted' && !this.recordingPaused) {
         void this.addVisit(event.entry.url, event.entry.title, false);
       }
     };

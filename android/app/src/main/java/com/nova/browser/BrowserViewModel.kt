@@ -572,7 +572,36 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
      * UrlParser normalization rules (localhost/IPv4/single-label hosts, bare
      * domains, explicit-scheme pass-through, search fallback).
      */
-    fun resolveInput(input: String): String = UrlInputResolver.resolve(input, searchTemplate.value)
+    fun resolveInput(input: String): String = UrlInputResolver.resolve(input, searchEngine.value.template)
+
+    // ── Settings (native; see Settings.kt) ───────────────────────────────────
+
+    private val settings = NovaSettings(application.getSharedPreferences("nova", android.content.Context.MODE_PRIVATE))
+
+    /** Search engine for address-bar searches; overrides the engine's searchTemplate. */
+    var searchEngine = mutableStateOf(settings.searchEngine)
+        private set
+
+    fun setSearchEngine(engine: SearchEngine) {
+        settings.searchEngine = engine
+        searchEngine.value = engine
+    }
+
+    /** Settings → Clear browsing data. */
+    fun clearBrowsingData(history: Boolean, cookies: Boolean, downloads: Boolean) {
+        if (history) clearHistory()
+        if (cookies) this.cookies.clearAll()
+        if (downloads) clearCompletedDownloads()
+    }
+
+    /** True for the engine's start pages, which the native New Tab page covers. */
+    fun isNewTabUrl(url: String): Boolean = url.isBlank() || url == homeUrl.value || url.startsWith("about:")
+
+    val appVersion: String
+        get() = runCatching {
+            val app = getApplication<Application>()
+            app.packageManager.getPackageInfo(app.packageName, 0).versionName ?: ""
+        }.getOrDefault("")
 
     companion object {
         private const val TAG = "BrowserViewModel"

@@ -892,7 +892,10 @@ class ApplicationBootstrap {
       resourceLoader,
       prioritizer: new ResourcePrioritizer(),
       controller: this.container.resolve<INavigationController>(Tokens.NavigationController),
-      sanitizer: new HtmlSanitizer(),
+      // Page scripts are kept: the sanitizer runs before executeAllScripts, and
+      // stripping them disabled page JavaScript entirely. Scripts still pass CSP,
+      // SRI and the interpreter's time limits; on* handlers etc. stay stripped.
+      sanitizer: new HtmlSanitizer({ keepScriptElements: true }),
       scriptEnforcer: cspEnforcement.scriptEnforcer,
       resourceEnforcer: cspEnforcement.resourceEnforcer,
       policyStore: cspEnforcement.policyStore,

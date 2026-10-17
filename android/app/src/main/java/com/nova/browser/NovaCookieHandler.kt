@@ -40,6 +40,13 @@ class NovaCookieHandler(private val normal: NativeCookieJar) : CookieHandler() {
     /** Persists the normal jar (incognito is never written). */
     fun flush() = normal.save()
 
+    /** "Clear browsing data": every cookie, normal and incognito, removed and saved. */
+    fun clearAll() {
+        normal.clear()
+        normal.save()
+        privateJar = NativeCookieJar(null)
+    }
+
     /** See NativeCookieJar.importLegacy; always into the normal jar. */
     fun importLegacy(origin: URI, nameValuePairs: String) = normal.importLegacy(origin, nameValuePairs)
 
@@ -144,6 +151,12 @@ class NativeCookieJar(private val file: File?) : CookieHandler() {
             )
             dirty = true
         }
+    }
+
+    @Synchronized
+    fun clear() {
+        if (cookies.isNotEmpty()) dirty = true
+        cookies.clear()
     }
 
     /** Writes persistent cookies (session ones never touch disk). */

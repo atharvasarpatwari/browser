@@ -270,6 +270,29 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     expect(await page.listHistoryExternal()).toHaveLength(0);
   });
 
+  it('incognito pauses history recording, and leaving it resumes recording', async () => {
+    page = new BrowserWindowPage({ hideChromeUI: true });
+    await page.mount(container);
+    const historyService = new HistoryService();
+    page.setHistoryService(historyService);
+    // Fake controller: capture the listener HistoryService registers.
+    let commit: ((e: unknown) => void) | null = null;
+    historyService.connectController({ on: (_k: string, fn: (e: unknown) => void) => { commit = fn; } } as never);
+    const visit = (url: string) => commit!({ kind: 'navigationCommitted', entry: { url, title: url } });
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+
+    page.setIncognitoExternal(true);
+    visit('https://secret.example/');
+    await flush();
+    page.setIncognitoExternal(false);
+    visit('https://public.example/');
+    await flush();
+
+    const urls = (await page.listHistoryExternal()).map((h) => h.url);
+    expect(urls).toContain('https://public.example/');
+    expect(urls).not.toContain('https://secret.example/');
+  });
+
   it('setIncognitoExternal() toggles the incognito session and reflects in getChromeState()', async () => {
     page = new BrowserWindowPage({ hideChromeUI: true });
     await page.mount(container);
