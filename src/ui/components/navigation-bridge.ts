@@ -268,6 +268,10 @@ class NavigationBridge implements INavigationBridge {
           this._setLoading(false);
           this.addressBar.setLoading(false);
           this.toolbar.setLoading(false);
+          // reload() (and other non-navigate() routes) set the tab loading too; only
+          // navigate()'s own result path used to clear it, so after a reload the tab
+          // (and the Android chrome, which reads it) stayed "loading" forever.
+          this.tabs.activeTab?.setLoading(false);
           this._syncToolbarState();
           this.bus.emit({ kind: 'navigationCompleted', url: e.entry.url, elapsedMs: e.elapsedMs });
           break;
@@ -286,6 +290,7 @@ class NavigationBridge implements INavigationBridge {
           this._setLoading(false);
           this.addressBar.setLoading(false);
           this.toolbar.setLoading(false);
+          this.tabs.activeTab?.setLoading(false);
           this.bus.emit({ kind: 'navigationFailed', url: e.request.url, error: e.error });
           break;
 
@@ -293,6 +298,7 @@ class NavigationBridge implements INavigationBridge {
           this._setLoading(false);
           this.addressBar.setLoading(false);
           this.toolbar.setLoading(false);
+          this.tabs.activeTab?.setLoading(false);
           break;
 
         case 'canGoBackChanged':

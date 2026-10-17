@@ -171,6 +171,10 @@ interface IBrowserWindowPage extends IDisposable {
 
   // ── Incognito (private browsing) session toggle for external chrome ────────
   setIncognitoExternal(enabled: boolean): void;
+  /** Find in page for native chrome; `{total, index}` or null when no page is rendered. */
+  findInPageExternal(query: string): { total: number; index: number } | null;
+  findStepExternal(forward: boolean): { total: number; index: number } | null;
+  clearFindExternal(): void;
   isIncognito(): boolean;
 
   // ── Context-menu (long-press) element resolution for external chrome ───────
@@ -620,6 +624,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         area: areas.content,
         scroll: () => this.paintEngine?.getScroll() ?? { y: 0, max: 0, viewportHeight: 0, documentHeight: 0 },
         scrollTo: (y) => this.scrollPageTo(y),
+        onPullRefresh: () => this.reload(),
       });
       this.pageScroll.attach();
     }
@@ -1670,6 +1675,18 @@ class BrowserWindowPage implements IBrowserWindowPage {
     setCookieIncognito(enabled);
     this.historyService?.setRecordingPaused?.(enabled); // incognito visits aren't saved
     this.syncAll();
+  }
+
+  findInPageExternal(query: string): { total: number; index: number } | null {
+    return this.search?.findExternal(query) ?? null;
+  }
+
+  findStepExternal(forward: boolean): { total: number; index: number } | null {
+    return this.search?.findStepExternal(forward) ?? null;
+  }
+
+  clearFindExternal(): void {
+    this.search?.clearFindExternal();
   }
 
   isIncognito(): boolean {

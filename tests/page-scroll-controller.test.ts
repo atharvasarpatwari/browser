@@ -209,6 +209,82 @@ describe('PageScrollController', () => {
       expect(bar()).toBeNull();
     });
   });
+  describe('touch', () => {
+    // Screen px; the bitmap is shown at SCALE, so a 100 px drag moves 200 page px.
+    const touch = (type: string, y: number, t: number, target: EventTarget = page): Event => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      const touches = type === 'touchend' || type === 'touchcancel' ? [] : [{ clientY: y, clientX: 10 }];
+      Object.defineProperty(event, 'touches', { value: touches });
+      Object.defineProperty(event, 'timeStamp', { value: t });
+      target.dispatchEvent(event);
+      return event;
+    };
+
+    it('drags the page: finger up scrolls down, by the drag converted to page pixels', () => {
+      state.y = 1000;
+      touch('touchstart', 400, 0);
+      touch('touchmove', 350, 16);
+      touch('touchmove', 300, 32);
+      expect(state.y).toBe(1000 + 100 / SCALE);
+    });
+
+    it('a tap (under the slop) never scrolls and is not cancelled, so links still click', () => {
+      touch('touchstart', 400, 0);
+      const move = touch('touchmove', 404, 16);
+      const end = touch('touchend', 404, 32);
+      expect(scrollTo).not.toHaveBeenCalled();
+      expect(move.defaultPrevented).toBe(false);
+      expect(end.defaultPrevented).toBe(false);
+    });
+
+    it('a drag cancels the click and a fast release keeps scrolling (fling) until it slows down', () => {
+      state.y = 1000;
+      touch('touchstart', 400, 0);
+      touch('touchmove', 380, 10);
+      touch('touchmove', 340, 20);
+      const end = touch('touchend', 340, 21);
+      expect(end.defaultPrevented).toBe(true);
+      const afterDrag = state.y;
+      runFrames();
+      expect(state.y).toBeGreaterThan(afterDrag);
+      for (let n = 0; n < 300 && frames.length; n++) runFrames();
+      expect(frames).toHaveLength(0); // it stops
+    });
+
+    describe('pull to refresh', () => {
+      let onPullRefresh: ReturnType<typeof vi.fn<() => void>>;
+      beforeEach(() => {
+        controller.dispose();
+        onPullRefresh = vi.fn<() => void>();
+        controller = new PageScrollController({ area, scroll: read, scrollTo, schedule: (cb) => { frames.push(cb); }, onPullRefresh });
+        controller.attach();
+      });
+
+      it('pulling down at the top past the trigger and releasing reloads, with an indicator meanwhile', () => {
+        touch('touchstart', 100, 0);
+        touch('touchmove', 140, 16);
+        touch('touchmove', 200, 32);
+        expect(area.querySelector('.nova-pull-refresh')).not.toBeNull();
+        touch('touchend', 200, 40);
+        expect(onPullRefresh).toHaveBeenCalledTimes(1);
+        expect(area.querySelector('.nova-pull-refresh')).toBeNull();
+        expect(scrollTo).not.toHaveBeenCalled();
+      });
+
+      it('a short pull does not reload; pulling while scrolled down just scrolls', () => {
+        touch('touchstart', 100, 0);
+        touch('touchmove', 140, 16);
+        touch('touchend', 140, 32);
+        expect(onPullRefresh).not.toHaveBeenCalled();
+        state.y = 500;
+        touch('touchstart', 100, 100);
+        touch('touchmove', 200, 116);
+        touch('touchend', 200, 132);
+        expect(onPullRefresh).not.toHaveBeenCalled();
+        expect(state.y).toBeLessThan(500);
+      });
+    });
+  });
 });
 
 describe('scrollToReveal', () => {
@@ -232,6 +308,7 @@ describe('scrollToReveal', () => {
     expect(scrollToReveal(rect(3000), { y: 0, documentHeight: 900, viewportHeight: 1000 })).toBeNull();
     expect(scrollToReveal(rect(3000), { y: 0, documentHeight: 5000 })).toBeNull();
   });
+
 });
 
 describe('view transform with a scrolled page', () => {

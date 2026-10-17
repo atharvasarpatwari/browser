@@ -7,6 +7,13 @@ const LINE_PX = 40;
 const ARROW_PX = 40;
 /** PageUp / PageDown / Space move by this share of the viewport, leaving a little context. */
 const PAGE_SHARE = 0.9;
+/** A finger must move this far (screen px) before a touch counts as a drag, so taps still click. */
+const TOUCH_SLOP_PX = 8;
+/** Pulling down this far (screen px) at the top of the page and letting go reloads it. */
+const PULL_TRIGGER_PX = 72;
+/** Fling: velocity (screen px/ms) kept per frame, and the speed below which it stops. */
+const FLING_DECAY = 0.95;
+const FLING_MIN = 0.02;
 
 interface PageScrollState {
   readonly y: number;
@@ -24,6 +31,8 @@ interface PageScrollDeps {
   readonly scrollTo: (y: number) => void;
   /** Runs `cb` before the next frame (wheel events are coalesced into one scroll per frame). Default: requestAnimationFrame. */
   readonly schedule?: (cb: () => void) => void;
+  /** Pull-to-refresh: called when a downward pull at the top of the page is released past the trigger. */
+  readonly onPullRefresh?: () => void;
 }
 
 /**
@@ -37,12 +46,19 @@ class PageScrollController implements IDisposable {
   private pendingWheel = 0;
   private scheduled = false;
   private dragging: { readonly startY: number; readonly startScroll: number } | null = null;
+  private touch: { startY: number; lastY: number; lastT: number; velocity: number; pull: number; moved: boolean } | null = null;
+  private flingVelocity = 0;
+  private pullIndicator: HTMLDivElement | null = null;
 
   constructor(private readonly deps: PageScrollDeps) {}
 
   attach(): void {
     this.deps.area.addEventListener('wheel', this.onWheel, { passive: false });
     document.addEventListener('keydown', this.onKeyDown);
+    this.deps.area.addEventListener('touchstart', this.onTouchStart, { passive: true });
+    this.deps.area.addEventListener('touchmove', this.onTouchMove, { passive: false });
+    this.deps.area.addEventListener('touchend', this.onTouchEnd, { passive: false });
+    this.deps.area.addEventListener('touchcancel', this.onTouchEnd, { passive: false });
   }
 
   /** The page scrolled, repainted or changed height: redraw the scrollbar. */
@@ -66,6 +82,12 @@ class PageScrollController implements IDisposable {
   dispose(): void {
     this.deps.area.removeEventListener('wheel', this.onWheel);
     document.removeEventListener('keydown', this.onKeyDown);
+    this.deps.area.removeEventListener('touchstart', this.onTouchStart);
+    this.deps.area.removeEventListener('touchmove', this.onTouchMove);
+    this.deps.area.removeEventListener('touchend', this.onTouchEnd);
+    this.deps.area.removeEventListener('touchcancel', this.onTouchEnd);
+    this.flingVelocity = 0;
+    this.setPull(0);
     this.stopDrag();
     this.removeBar();
   }
@@ -88,6 +110,91 @@ class PageScrollController implements IDisposable {
       this.scrollBy(dy);
     });
   };
+
+  // ── touch: drag to scroll, fling, pull-to-refresh ─────────────────────────
+
+  private readonly onTouchStart = (e: TouchEvent): void => {
+    this.flingVelocity = 0; // a new touch stops any fling
+    const t = e.touches[0];
+    if (e.touches.length !== 1 || !t || !this.pageCanvas()) { this.touch = null; return; }
+    this.touch = { startY: t.clientY, lastY: t.clientY, lastT: e.timeStamp, velocity: 0, pull: 0, moved: false };
+  };
+
+  private readonly onTouchMove = (e: TouchEvent): void => {
+    const touch = this.touch;
+    const t = e.touches[0];
+    const canvas = this.pageCanvas();
+    if (!touch || e.touches.length !== 1 || !t || !canvas) return;
+    if (!touch.moved && Math.abs(t.clientY - touch.startY) < TOUCH_SLOP_PX) return;
+    touch.moved = true;
+    e.preventDefault();
+    const dy = t.clientY - touch.lastY; // screen px, positive = finger moving down
+    const dt = Math.max(1, e.timeStamp - touch.lastT);
+    touch.velocity = 0.8 * (dy / dt) + 0.2 * touch.velocity;
+    touch.lastY = t.clientY;
+    touch.lastT = e.timeStamp;
+    const atTop = this.deps.scroll().y <= 0;
+    if (this.deps.onPullRefresh && atTop && (dy > 0 || touch.pull > 0)) {
+      touch.pull = Math.max(0, touch.pull + dy);
+      this.setPull(touch.pull);
+      return;
+    }
+    this.scrollBy(-dy / this.scaleOf(canvas));
+  };
+
+  private readonly onTouchEnd = (e: TouchEvent): void => {
+    const touch = this.touch;
+    this.touch = null;
+    if (!touch?.moved) return; // a tap: leave it alone so links still click
+    e.preventDefault(); // a drag is not a click
+    if (touch.pull > 0) {
+      const fire = touch.pull >= PULL_TRIGGER_PX;
+      this.setPull(0);
+      if (fire) this.deps.onPullRefresh?.();
+      return;
+    }
+    if (Math.abs(touch.velocity) > 0.3) this.fling(touch.velocity);
+  };
+
+  /** Keeps scrolling after the finger lifts, slowing each frame. */
+  private fling(velocity: number): void {
+    this.flingVelocity = velocity;
+    const schedule = this.deps.schedule ?? ((cb: () => void) => { requestAnimationFrame(cb); });
+    const step = (): void => {
+      const canvas = this.pageCanvas();
+      if (Math.abs(this.flingVelocity) < FLING_MIN || !canvas) { this.flingVelocity = 0; return; }
+      const before = this.deps.scroll().y;
+      this.scrollBy((-this.flingVelocity * 16) / this.scaleOf(canvas));
+      if (this.deps.scroll().y === before) { this.flingVelocity = 0; return; } // hit the top or bottom
+      this.flingVelocity *= FLING_DECAY;
+      schedule(step);
+    };
+    schedule(step);
+  }
+
+  /** The ↻ indicator that follows a pull-to-refresh; 0 removes it. */
+  private setPull(distance: number): void {
+    if (distance <= 0) {
+      this.pullIndicator?.remove();
+      this.pullIndicator = null;
+      return;
+    }
+    if (!this.pullIndicator) {
+      const el = document.createElement('div');
+      el.className = 'nova-pull-refresh';
+      el.setAttribute('aria-hidden', 'true');
+      el.textContent = '\u21bb';
+      el.style.cssText = 'position:absolute;left:50%;top:0;width:36px;height:36px;margin-left:-18px;border-radius:50%;'
+        + 'background:#fff;color:#444;box-shadow:0 2px 6px rgba(0,0,0,.3);display:flex;align-items:center;'
+        + 'justify-content:center;font:20px/1 system-ui,sans-serif;pointer-events:none;z-index:5;';
+      if (getComputedStyle(this.deps.area).position === 'static') this.deps.area.style.position = 'relative';
+      this.deps.area.appendChild(el);
+      this.pullIndicator = el;
+    }
+    const progress = Math.min(1, distance / PULL_TRIGGER_PX);
+    this.pullIndicator.style.transform = `translateY(${Math.min(distance, PULL_TRIGGER_PX * 1.5) / 2}px) rotate(${progress * 270}deg)`;
+    this.pullIndicator.style.opacity = String(0.4 + 0.6 * progress);
+  }
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || !this.pageCanvas() || this.focusKeepsKeys()) return;

@@ -513,7 +513,7 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
     let raw: PageLoadResult | null = null;
     if (isEngineRendered(routeResult.type)) {
       this.throwIfAborted(signal, session);
-      raw = await this.loader.load(session.entry.url, signal);
+      raw = await this.loader.load(session.entry.url, signal, { bypassCache: session.entry.type === 'reload' });
       this.bus.emit({ kind: 'pageLoadFetched', session, raw });
 
       // A 3xx redirect changed the committed URL — surface the final URL so

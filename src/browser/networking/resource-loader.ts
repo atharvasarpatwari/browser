@@ -40,6 +40,8 @@ interface ResourceLoadOptions {
   readonly priority?: ResourcePriority;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
+  /** Skip the cached copy and fetch from the network (a user reload); the fresh response is still cached. */
+  readonly bypassCache?: boolean;
 }
 
 interface IResourceLoader extends IDisposable {
@@ -92,7 +94,7 @@ class ResourceLoader implements IResourceLoader {
 
   async loadResource(url: string, _kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
     // ── Cache check ─────────────────────────────────────────────────────────
-    if (this.cache) {
+    if (this.cache && !options?.bypassCache) {
       const cached = await this.cache.get(url);
       if (cached) {
         return {

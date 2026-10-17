@@ -58,6 +58,19 @@ describe('ResourceLoader â€” Cache integration', () => {
     expect(result.body).toBe('cached');
   });
 
+  it('bypassCache (a user reload) skips the cached copy and refreshes it', async () => {
+    await cache.set('https://example.com/a.css', {
+      url: 'https://example.com/a.css',
+      body: 'stale', contentType: 'text/css', statusCode: 200,
+      headers: new Map(), etag: null, lastModified: null, immutable: false, expiresAt: null,
+    });
+    const fresh = await loader.loadResource('https://example.com/a.css', 'stylesheet', { bypassCache: true });
+    expect(fresh.fromCache).toBe(false);
+    expect(fresh.body).toBe('body{color:red}');
+    const after = await loader.loadResource('https://example.com/a.css', 'stylesheet');
+    expect(after.body).toBe('body{color:red}');
+  });
+
   it('cache miss triggers network fetch', async () => {
     const result = await loader.loadResource('https://example.com/a.css', 'stylesheet');
     expect(result.fromCache).toBe(false);

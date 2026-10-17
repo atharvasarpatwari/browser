@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-17
 **Session:** "I want you to alter the android app". The user picked missing browser features, UI/layout redesign, and fixing bugs on a real device.
-**Status:** Planned (awaiting approval)
+**Status:** Completed. Approved (bottom bar; settings, new-tab page, find, pull-to-refresh; phone over USB) and implemented as Nova 1.9; see `2026-10-17-nova-android-ui-features.md`. Find and pull-to-refresh turned out to need engine scrolling, so `claude/search-subsystem` was merged in (user-approved).
 
 ---
 

@@ -277,21 +277,58 @@ class SearchIntegration implements IDisposable {
   openFindBar(): boolean {
     const area = this.host.contentArea();
     if (!area || !this.frameSize(area)) return false;
+    const engine = this.ensureFind(area);
     if (!this.findBar) {
-      if (getComputedStyle(area).position === 'static') area.style.position = 'relative';
-      this.findEngine = new FindInPage(createDomFindSource(() => this.pageDocument()));
-      this.findOverlay = new FindHighlightOverlay(area, () => this.frameSize(area), () => this.scrollView());
-      this.findBar = new FindBarView(this.findEngine, {
-        onChange: (r, kind) => {
-          this.findOverlay?.show(r.matches, r.activeIndex);
-          this.revealActiveMatch(r, kind);
-        },
+      this.findBar = new FindBarView(engine, {
         onClose: () => { this.findOverlay?.clear(); this.revealedQuery = ''; },
       });
       this.findBar.mount(area);
     }
     this.findBar.open();
     return true;
+  }
+
+  /**
+   * Headless find for native chrome (the Android find bar): same engine, highlights
+   * and scroll-to-match as the DOM bar. Returns null when no rendered page is shown.
+   */
+  findExternal(query: string): { total: number; index: number } | null {
+    const area = this.host.contentArea();
+    if (!area || !this.frameSize(area)) return null;
+    const engine = this.ensureFind(area);
+    if (!query.trim()) { engine.clear(); return { total: 0, index: -1 }; }
+    const result = engine.find(query);
+    return { total: result.total, index: result.activeIndex };
+  }
+
+  findStepExternal(forward: boolean): { total: number; index: number } | null {
+    const engine = this.findEngine;
+    if (!engine) return null;
+    if (forward) engine.findNext(); else engine.findPrevious();
+    return { total: engine.getMatchCount(), index: engine.getCurrentIndex() };
+  }
+
+  clearFindExternal(): void {
+    this.findEngine?.clear();
+  }
+
+  /** Creates the find engine and highlight overlay once; engine events drive highlights and scroll-to-match. */
+  private ensureFind(area: HTMLElement): FindInPage {
+    if (!this.findEngine) {
+      if (getComputedStyle(area).position === 'static') area.style.position = 'relative';
+      this.findEngine = new FindInPage(createDomFindSource(() => this.pageDocument()));
+      this.findOverlay = new FindHighlightOverlay(area, () => this.frameSize(area), () => this.scrollView());
+      this.findEngine.onEvent((e) => {
+        if (e.kind === 'cleared') {
+          this.findOverlay?.clear();
+          this.revealedQuery = '';
+          return;
+        }
+        this.findOverlay?.show(e.result.matches, e.result.activeIndex);
+        this.revealActiveMatch(e.result, e.kind);
+      });
+    }
+    return this.findEngine;
   }
 
   dispose(): void {

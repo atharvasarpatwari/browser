@@ -72,6 +72,16 @@ fun BottomChrome(
 
     BackHandler(enabled = editing) { stopEditing() }
 
+    // Select the whole address once editing starts, a frame after focus: the tap that
+    // focused the field places its cursor after onFocusChanged, which would undo an
+    // immediate select-all and make typing append to the old URL.
+    LaunchedEffect(editing) {
+        if (editing) {
+            withFrameNanos { }
+            draft = draft.copy(selection = TextRange(0, draft.text.length))
+        }
+    }
+
     Surface(
         color = if (incognito) IncognitoSurface else MaterialTheme.colorScheme.surface,
         tonalElevation = 3.dp,

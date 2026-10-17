@@ -79,6 +79,16 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
     Box(Modifier.fillMaxSize()) {
         Scaffold(
             bottomBar = {
+              Column {
+                viewModel.findState.value?.let { find ->
+                    FindBar(
+                        state = find,
+                        onQuery = viewModel::find,
+                        onNext = viewModel::findNext,
+                        onPrevious = viewModel::findPrevious,
+                        onClose = viewModel::closeFind,
+                    )
+                }
                 BottomChrome(
                     url = activeTab?.url ?: "",
                     showUrl = !onNewTabPage,
@@ -107,6 +117,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                         MenuEntry("Downloads", Icons.Filled.Download) { close(); openDownloads() }
                         if (!onNewTabPage && activeTab != null) {
                             HorizontalDivider()
+                            MenuEntry("Find in page", Icons.Filled.Search) { close(); viewModel.openFind() }
                             MenuEntry("Share page", Icons.Filled.Share) { close(); viewModel.shareUrl(activeTab.title, activeTab.url) }
                             MenuEntry("Copy link", Icons.Filled.ContentCopy) { close(); viewModel.copyToClipboard("URL", activeTab.url) }
                         }
@@ -114,6 +125,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                         MenuEntry("Settings", Icons.Filled.Settings) { close(); overlay = Overlay.SETTINGS }
                     },
                 )
+              }
             },
         ) { padding ->
             Box(modifier = Modifier.padding(padding).fillMaxSize()) {

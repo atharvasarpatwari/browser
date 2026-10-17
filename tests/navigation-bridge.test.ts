@@ -392,6 +392,26 @@ describe('NavigationBridge', () => {
       expect(nav.reload).toHaveBeenCalledTimes(1);
     });
 
+    it('reload() leaves the tab loading until the controller completes, then clears it', () => {
+      const { bridge, nav, tabMgr } = buildBridge();
+      nav.navState.currentEntry = makeEntry('https://example.com');
+      bridge.reload();
+      expect(tabMgr.activeTab.loading).toBe(true);
+      nav.bus.emit('navigationCompleted', { kind: 'navigationCompleted', entry: makeEntry('https://example.com'), elapsedMs: 5 });
+      expect(tabMgr.activeTab.loading).toBe(false); // was stuck true: only navigate() cleared it
+    });
+
+    it('a failed or stopped reload clears the tab loading flag too', () => {
+      const { bridge, nav, tabMgr } = buildBridge();
+      nav.navState.currentEntry = makeEntry('https://example.com');
+      bridge.reload();
+      nav.bus.emit('navigationFailed', { kind: 'navigationFailed', request: { url: 'https://example.com' }, error: new Error('x') });
+      expect(tabMgr.activeTab.loading).toBe(false);
+      bridge.reload();
+      nav.bus.emit('navigationStopped', { kind: 'navigationStopped' });
+      expect(tabMgr.activeTab.loading).toBe(false);
+    });
+
     it('stop() should call navController.stop()', () => {
       const { bridge, nav } = buildBridge();
 

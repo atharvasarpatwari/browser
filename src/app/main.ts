@@ -906,6 +906,14 @@ class ApplicationBootstrap {
       onDocumentReady: (url, doc) => page.onPageDocumentReady(url, doc),
     });
     engine.setPageRenderer(pageRenderer);
+
+    // Android: lay pages out at the phone's size and density (see PageRenderer.setViewport);
+    // desktop keeps the 1920-wide layout scaled into the window.
+    if (isNativeHostPresent()) {
+      const fitViewport = (): void => pageRenderer.setViewport(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1);
+      fitViewport();
+      window.addEventListener('resize', fitViewport);
+    }
     page.setPageDocumentProvider(() => domTree.getDocument());
 
     this.log('Browser UI mounted');

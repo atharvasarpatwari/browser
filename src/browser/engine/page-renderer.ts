@@ -107,6 +107,9 @@ const PAGE_SCRIPT_BUDGET_MS = 3000;
 
 class PageRenderer implements IPageRenderer, IDisposable {
   private readonly deps: PageRendererDependencies;
+  /** Layout viewport in CSS px. Desktop keeps the 1920×1080 default; the Android shell sets the phone's size. */
+  private viewport = { width: 1920, height: 1080 };
+  private lastDocument: DomDocument | null = null;
   private disposed = false;
   private reflowController: ReflowRepaintController | null = null;
   private transitionEngine: CssTransitionEngine | null = null;
@@ -114,6 +117,36 @@ class PageRenderer implements IPageRenderer, IDisposable {
   constructor(deps: PageRendererDependencies) {
     this.deps = deps;
   }
+
+  /**
+   * Lays pages out at `width`×`height` CSS px and paints them at `devicePixelRatio`, so a
+   * phone gets a phone-width page (readable text, its own @media rules) drawn at native
+   * resolution instead of a 1920-wide desktop page shrunk to fit. Re-lays out the current
+   * page when the size changes.
+   */
+  setViewport(width: number, height: number, devicePixelRatio = 1): void {
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    if (w === this.viewport.width && h === this.viewport.height && devicePixelRatio === this.dpr) return;
+    this.viewport = { width: w, height: h };
+    this.dpr = devicePixelRatio;
+    this.deps.layoutEngine.updateConfig({ viewportWidth: w, viewportHeight: h });
+    this.deps.paintEngine.updateConfig({ width: w, height: h, devicePixelRatio });
+    const doc = this.lastDocument;
+    if (!doc || this.disposed) return;
+    this.applyComputedStyles(this._lastRules);
+    this.deps.layoutEngine.layout(doc, this.deps.domTree);
+    this.deps.paintEngine.paint(doc);
+    this.deps.domTree.clearMutations();
+    this.initReflowController(doc);
+    this.deps.onFrameRendered?.();
+  }
+
+  getViewport(): { width: number; height: number } {
+    return { ...this.viewport };
+  }
+
+  private dpr = 1;
 
   /**
    * Parses and renders a fetched document into the visible view.
@@ -160,6 +193,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 3. Convert the parsed HTML into our internal DOM tree representation
     const doc = domTree.buildFromHtml(htmlDoc);
+    this.lastDocument = doc;
 
     // 3b. Sanitize DOM tree — strip dangerous elements and attributes
     if (this.deps.sanitizer) {
@@ -196,7 +230,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       this.reflowController?.requestFrame();
     });
     lazyLoader.scanForLazyElements(doc);
-    lazyLoader.setViewport(1920, 1080); // Default viewport
+    lazyLoader.setViewport(this.viewport.width, this.viewport.height);
 
     // 8. Paint
     paintEngine.paint(doc);
@@ -241,8 +275,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     this.reflowController?.dispose();
     const controller = new ReflowRepaintController(layoutEngine, paintEngine, domTree, {
-      viewportWidth: 1920,
-      viewportHeight: 1080,
+      viewportWidth: this.viewport.width,
+      viewportHeight: this.viewport.height,
     });
     controller.init(doc);
     // Incremental style recalc resolves _dirtyStyle nodes before layout.
@@ -305,8 +339,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // Determine container dimensions for percentage-based used-style resolution.
     const bodyEl = doc.bodyElement;
-    const containerWidth = bodyEl?.layoutBox?.width ?? 1920;
-    const containerHeight = bodyEl?.layoutBox?.height ?? 1080;
+    const containerWidth = bodyEl?.layoutBox?.width ?? this.viewport.width;
+    const containerHeight = bodyEl?.layoutBox?.height ?? this.viewport.height;
 
     // Pass 1: Build StyleableElement tree mirroring the DOM tree.
     const rootStyleables = this.buildStyleableTree(doc.children, null);
@@ -325,8 +359,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
     if (!doc) return;
 
     const bodyEl = doc.bodyElement;
-    const containerWidth = bodyEl?.layoutBox?.width ?? 1920;
-    const containerHeight = bodyEl?.layoutBox?.height ?? 1080;
+    const containerWidth = bodyEl?.layoutBox?.width ?? this.viewport.width;
+    const containerHeight = bodyEl?.layoutBox?.height ?? this.viewport.height;
 
     const dirtyNodes = this.collectDirtyNodes(doc);
     if (dirtyNodes.length === 0) return;
@@ -345,7 +379,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       const computed = computeComputedStyles(
         styleable,
         stylesheet,
-        undefined,
+        this.viewport,
         parentComputed,
       );
       domTree.setComputedStyle(el, computed);
@@ -618,7 +652,12 @@ class PageRenderer implements IPageRenderer, IDisposable {
         sourceOrder: order++,
         sourceUrl: rule.sourceUrl,
       };
-      css5Rules.push(styleRule);
+      // Re-wrap @media rules so the cascade evaluates them against the viewport.
+      let wrapped: Css5Rule = styleRule;
+      for (const mediaQueries of [...(rule.media ?? [])].reverse()) {
+        wrapped = { type: 'media', mediaQueries, rules: [wrapped] };
+      }
+      css5Rules.push(wrapped);
     }
 
     return { rules: css5Rules, url: null };
@@ -682,7 +721,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       const computed = computeComputedStyles(
         styleable,
         stylesheet,
-        undefined,
+        this.viewport,
         parentComputed ?? undefined,
       );
       domTree.setComputedStyle(el, computed);

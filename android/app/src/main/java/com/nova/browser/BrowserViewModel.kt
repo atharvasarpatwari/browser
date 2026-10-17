@@ -480,6 +480,49 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     private fun jsString(s: String): String = JSONObject.quote(s)
 
+    /** Like callEngine, but hands the expression's (string) result to [onResult] on the main thread. */
+    private fun callEngineForString(expr: String, onResult: (String?) -> Unit) {
+        val view = webView ?: return onResult(null)
+        view.post {
+            view.evaluateJavascript(expr) { raw ->
+                // evaluateJavascript returns the value JSON-encoded: a JS string arrives quoted.
+                onResult(runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull())
+            }
+        }
+    }
+
+    // ── Find in page (engine FindInPage via novaNative.find*) ────────────────
+
+    data class FindState(val query: String, val total: Int, val index: Int)
+
+    /** Non-null while the find bar is open. */
+    var findState = mutableStateOf<FindState?>(null)
+        private set
+
+    fun openFind() {
+        if (findState.value == null) findState.value = FindState("", 0, -1)
+    }
+
+    fun find(query: String) {
+        findState.value = FindState(query, findState.value?.total ?: 0, findState.value?.index ?: -1)
+        callEngineForString("window.novaNative && window.novaNative.find(${jsString(query)})") { applyFindResult(it) }
+    }
+
+    fun findNext() = callEngineForString("window.novaNative && window.novaNative.findNext()") { applyFindResult(it) }
+
+    fun findPrevious() = callEngineForString("window.novaNative && window.novaNative.findPrevious()") { applyFindResult(it) }
+
+    fun closeFind() {
+        findState.value = null
+        callEngine("window.novaNative && window.novaNative.clearFind();")
+    }
+
+    private fun applyFindResult(json: String?) {
+        val current = findState.value ?: return
+        val obj = runCatching { JSONObject(json ?: return) }.getOrNull() ?: return
+        findState.value = current.copy(total = obj.optInt("total", 0), index = obj.optInt("index", -1))
+    }
+
     fun navigate(url: String) {
         val resolved = resolveInput(url)
         if (resolved.isEmpty()) return
