@@ -1721,6 +1721,8 @@ export function createGlobalEnv(
   const navObj = createObject(null);
   navObj.properties.set('userAgent', { value: 'NovaBrowser/1.0', writable: false, enumerable: true, configurable: false });
   navObj.properties.set('language', { value: 'en-US', writable: false, enumerable: true, configurable: false });
+  // navigator.languages: pages pick a translation with navigator.languages.some(…); it was undefined, so that threw.
+  navObj.properties.set('languages', { value: createArray(['en-US', 'en']), writable: false, enumerable: true, configurable: false });
   navObj.properties.set('platform', { value: 'Nova', writable: false, enumerable: true, configurable: false });
   // navigator.vibrate()
   navObj.properties.set('vibrate', {

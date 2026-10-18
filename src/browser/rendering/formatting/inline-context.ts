@@ -48,6 +48,9 @@ export class InlineFormattingContext {
   /** Font weight for text measurement. */
   private fontWeight: string;
 
+  /** Owner stamped on the text segments of the addTextRun call in progress. */
+  private textOwner: DomElement | null = null;
+
   constructor(
     availableWidth: number,
     startY: number,
@@ -164,8 +167,10 @@ export class InlineFormattingContext {
     fontFamily: string,
     fontWeight?: string,
     preserveWhitespace = false,
+    owner: DomElement | null = null,
   ): void {
     if (!text) return;
+    this.textOwner = owner;
 
     // Whitespace-only text handling
     const trimmed = text.trim();
@@ -297,6 +302,7 @@ export class InlineFormattingContext {
       baselineOffset: fontSize * 0.8,
       isAnonymous: true,
       textContent: text,
+      owner: this.textOwner,
       fontSize,
       fontFamily,
     };
@@ -316,13 +322,18 @@ export class InlineFormattingContext {
    *
    * Returns the total height consumed by all line boxes.
    */
-  finalize(): number {
+  finalize(textAlign = 'start'): number {
     let totalHeight = 0;
     const strutHeight = this.computeStrutHeight();
 
     for (const line of this.lineBoxes) {
       // Ensure minimum height of at least the strut height
       line.height = Math.max(line.height, strutHeight);
+
+      // text-align (CSS Text §6.1): shift the line by its free space. Trailing spaces hang,
+      // so they don't count. ponytail: justify and rtl start/end are treated as left-to-right start.
+      const shift = this.alignmentShift(line, textAlign);
+      if (shift > 0) for (const box of line.boxes) box.box.x += shift;
 
       // Position each box vertically within the line box
       for (const box of line.boxes) {
@@ -335,6 +346,20 @@ export class InlineFormattingContext {
     }
 
     return totalHeight;
+  }
+
+  private alignmentShift(line: LineBox, textAlign: string): number {
+    const align = textAlign.replace(/^-webkit-/, '');
+    if (align !== 'center' && align !== 'right' && align !== 'end') return 0;
+    let used = line.usedWidth;
+    for (let i = line.boxes.length - 1; i >= 0; i--) {
+      const b = line.boxes[i]!;
+      if (b.textContent === undefined || b.textContent.trim() !== '') break;
+      used -= b.box.width;
+    }
+    const free = this.availableWidth - used;
+    if (free <= 0) return 0;
+    return align === 'center' ? free / 2 : free;
   }
 
   /**

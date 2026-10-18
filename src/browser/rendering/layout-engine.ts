@@ -294,6 +294,11 @@ class LayoutEngine implements ILayoutEngine {
       }
     }
 
+    // Auto margins take no space while the width is worked out (CSS 2.2 §10.3.3).
+    const marginLeftAuto = style.get('margin-left') === 'auto';
+    const marginRightAuto = style.get('margin-right') === 'auto';
+    const fixedMargins = (marginLeftAuto ? 0 : marginLeft) + (marginRightAuto ? 0 : marginRight);
+
     let borderWidthBox: number;
     if (specWidth && specWidth !== 'auto') {
       const specified = resolve('width', '0');
@@ -319,8 +324,23 @@ class LayoutEngine implements ILayoutEngine {
         borderWidthBox = Math.min(wContent + paddingLeft + paddingRight + borderLeft + borderRight, availableWidth);
       }
     } else {
-      borderWidthBox = availableWidth;
+      // width: auto fills the containing block minus the margins (it used to ignore them,
+      // so `margin: 0 20px` pushed the box 20px past the right edge).
+      borderWidthBox = Math.max(0, availableWidth - fixedMargins);
     }
+
+    // ── min-width / max-width (CSS 2.2 §10.4) — were not applied at all ──
+    const boxExtras = boxSizing === 'border-box' ? 0 : paddingLeft + paddingRight + borderLeft + borderRight;
+    const maxWidth = style.get('max-width');
+    if (maxWidth && maxWidth !== 'none') borderWidthBox = Math.min(borderWidthBox, resolve('max-width', '0') + boxExtras);
+    const minWidth = style.get('min-width');
+    if (minWidth && minWidth !== 'auto') borderWidthBox = Math.max(borderWidthBox, resolve('min-width', '0') + boxExtras);
+
+    // ── Auto margins share the remaining space: `margin: 0 auto` centres the box ──
+    const freeWidth = availableWidth - borderWidthBox - fixedMargins;
+    const usedMarginLeft = marginLeftAuto
+      ? (freeWidth > 0 ? (marginRightAuto ? freeWidth / 2 : freeWidth) : 0)
+      : marginLeft;
 
     // ── Resolve height ────────────────────────────────────────────────────
     let specifiedContentHeight: number;
@@ -344,7 +364,7 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     // ── Position the border box ───────────────────────────────────────────
-    const posX = x + marginLeft;
+    const posX = x + usedMarginLeft;
     const posY = y + marginTop;
 
     // ── Content area dimensions (box-sizing aware) ────────────────────────
@@ -358,7 +378,7 @@ class LayoutEngine implements ILayoutEngine {
       y: posY,
       width: borderWidthBox,
       height: 0, // updated after children
-      marginTop, marginRight, marginBottom, marginLeft,
+      marginTop, marginRight, marginBottom, marginLeft: usedMarginLeft,
       paddingTop, paddingRight, paddingBottom, paddingLeft,
       borderTop, borderRight, borderBottom, borderLeft,
     };
@@ -789,11 +809,11 @@ class LayoutEngine implements ILayoutEngine {
         this.layoutInlineBlockElement(el, ifc, contentX, startY, availableWidth, parentFontSize, domTree);
       } else {
         // Regular inline element or text
-        this.layoutInlineElement(el, ifc, contentX, startY, availableWidth, parentFontSize, domTree);
+        this.flowInlineElement(el, ifc, contentX, startY, availableWidth, parentFontSize, domTree);
       }
     }
 
-    const totalHeight = ifc.finalize();
+    const totalHeight = ifc.finalize(parentStyle.get('text-align'));
     this.populateTextRuns(parent, ifc, parentFontSize);
     return startY + Math.max(totalHeight, parentLineHeight);
   }
@@ -1436,8 +1456,6 @@ class LayoutEngine implements ILayoutEngine {
     domTree?: IDomTree,
   ): number {
     const exclusionZones = this.floatContext?.getExclusionZones() ?? [];
-    // ponytail: an inline element's own children (layoutInlineElement → here) start at the
-    // parent's contentX, not at the element's x on its line; exact only for line-start inlines.
     const ifc = new InlineFormattingContext(availableWidth, contentY, {
       exclusionZones,
       defaultFontSize: parentFontSize,
@@ -1480,11 +1498,11 @@ class LayoutEngine implements ILayoutEngine {
         const savedY = this.layoutNode(el, contentX, ifc.getEndY(), availableWidth, parentFontSize, domTree);
         // The block element breaks the line. We just advance the IFC.
       } else {
-        this.layoutInlineElement(el, ifc, contentX, contentY, availableWidth, parentFontSize, domTree);
+        this.flowInlineElement(el, ifc, contentX, contentY, availableWidth, parentFontSize, domTree);
       }
     }
 
-    const totalHeight = ifc.finalize();
+    const totalHeight = ifc.finalize(parent.computedStyle?.get('text-align'));
 
     // Populate text runs on the parent's LayoutBox for painting
     this.populateTextRuns(parent, ifc, parentFontSize);
@@ -1505,24 +1523,36 @@ class LayoutEngine implements ILayoutEngine {
     if (!box) return;
 
     const runs: TextRun[] = [];
-    const elStyle = el.computedStyle ?? new Map();
-    const color = elStyle.get('color') ?? '#000000';
-    const fontFamily = elStyle.get('font-family') ?? 'sans-serif';
-    const fontWeight = elStyle.get('font-weight') ?? 'normal';
+    const ownerRuns = new Map<DomElement, TextRun[]>();
+    const ownerBounds = new Map<DomElement, { x0: number; y0: number; x1: number; y1: number }>();
 
     for (const line of ifc.lineBoxes) {
       for (const ilBox of line.boxes) {
         if (ilBox.textContent) {
-          runs.push({
+          // Each run is painted by its owning inline element (its colour, weight, and paint order).
+          const owner = ilBox.owner ?? el;
+          const ownerStyle = owner.computedStyle ?? new Map();
+          const run: TextRun = {
             text: ilBox.textContent,
             x: ilBox.box.x,
             y: ilBox.box.y + ilBox.baselineOffset,
             fontSize: ilBox.fontSize ?? fontSize,
-            fontFamily: ilBox.fontFamily ?? fontFamily,
-            fontWeight: ilBox.fontWeight ?? fontWeight,
-            color,
+            fontFamily: ownerStyle.get('font-family') ?? ilBox.fontFamily ?? 'sans-serif',
+            fontWeight: ownerStyle.get('font-weight') ?? ilBox.fontWeight ?? 'normal',
+            color: ownerStyle.get('color') ?? '#000000',
             width: ilBox.box.width,
-          });
+          };
+          if (owner === el) { runs.push(run); continue; }
+          if (!ownerRuns.has(owner)) ownerRuns.set(owner, []);
+          ownerRuns.get(owner)!.push(run);
+          // Grow the owner and every inline ancestor up to the block to cover this fragment.
+          for (let n: DomElement | null = owner; n && n !== el; n = n.parent as DomElement | null) {
+            const b = ownerBounds.get(n);
+            const { x, y, width, height } = ilBox.box;
+            ownerBounds.set(n, b
+              ? { x0: Math.min(b.x0, x), y0: Math.min(b.y0, y), x1: Math.max(b.x1, x + width), y1: Math.max(b.y1, y + height) }
+              : { x0: x, y0: y, x1: x + width, y1: y + height });
+          }
         }
       }
     }
@@ -1530,11 +1560,78 @@ class LayoutEngine implements ILayoutEngine {
     if (runs.length > 0) {
       box.textRuns = runs;
     }
+    for (const [owner, ownRuns] of ownerRuns) {
+      const ownerBox = this.layoutBoxes.get(owner.domId);
+      if (ownerBox) ownerBox.textRuns = ownRuns;
+    }
+    for (const [owner, b] of ownerBounds) {
+      const ownerBox = this.layoutBoxes.get(owner.domId);
+      if (!ownerBox) continue;
+      ownerBox.x = b.x0; ownerBox.y = b.y0; ownerBox.width = b.x1 - b.x0; ownerBox.height = b.y1 - b.y0;
+    }
   }
 
   /**
    * Lays out an inline-level element within an inline formatting context.
    */
+  /**
+   * Flows a non-replaced inline element (a, b, span, em…) through the parent's line boxes
+   * (CSS 2.2 §9.4.2): its text joins the surrounding line, tagged with the element as owner so
+   * the element paints it in its own colour and weight. Its box is sized to its fragments in
+   * populateTextRuns. Used to be an atomic, full-width box: every link or <b> took a line of its
+   * own and its text was drawn over the start of the paragraph.
+   * ponytail: the inline's own padding/margin/border aren't added to the line.
+   */
+  private flowInlineElement(
+    el: DomElement,
+    ifc: InlineFormattingContext,
+    contentX: number,
+    contentY: number,
+    availableWidth: number,
+    parentFontSize: number,
+    domTree?: IDomTree,
+  ): void {
+    if (el.children.length === 0 || this.resolveIntrinsicSize(el).width != null) {
+      this.layoutInlineElement(el, ifc, contentX, contentY, availableWidth, parentFontSize, domTree);
+      return;
+    }
+    const style = el.computedStyle ?? new Map();
+    const fontSize = this.resolveFontSize(style, parentFontSize);
+    const lineHeight = this.resolveLineHeight(style, fontSize);
+    const box: LayoutBox = {
+      x: contentX, y: ifc.getEndY(), width: 0, height: 0,
+      marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0,
+      paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0,
+      borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
+    };
+    this.layoutBoxes.set(el.domId, box);
+    this.elementPositions.push({ element: el, box });
+    domTree?.setLayoutBox(el, box);
+
+    for (const child of el.children) {
+      if (child.nodeType === 'text') {
+        const text = (child as DomNode & { text: string }).text ?? '';
+        if (text) ifc.addTextRun(text, fontSize, lineHeight, 'sans-serif', style.get('font-weight'), preservesWhitespace(el), el);
+        continue;
+      }
+      if (child.nodeType !== 'element') continue;
+      const inner = child as DomElement;
+      const innerStyle = inner.computedStyle ?? new Map();
+      const innerPosition = innerStyle.get('position') ?? 'static';
+      const innerClassified = classifyDisplay(innerStyle.get('display') ?? 'inline');
+      if (innerPosition === 'absolute' || innerPosition === 'fixed') {
+        const containingBlock = innerPosition === 'fixed' ? null : findContainingBlockForScheme(inner, innerPosition as 'absolute' | 'fixed' | 'sticky');
+        this.positionedQueue.push({ element: inner, containingBlock, fontSize: this.resolveFontSize(innerStyle, fontSize), availableWidth, domTree });
+      } else if (innerClassified === 'inline-block') {
+        this.layoutInlineBlockElement(inner, ifc, contentX, contentY, availableWidth, fontSize, domTree);
+      } else if (innerClassified === 'block') {
+        this.layoutNode(inner, contentX, ifc.getEndY(), availableWidth, fontSize, domTree);
+      } else {
+        this.flowInlineElement(inner, ifc, contentX, contentY, availableWidth, fontSize, domTree);
+      }
+    }
+  }
+
   private layoutInlineElement(
     el: DomElement,
     ifc: InlineFormattingContext,

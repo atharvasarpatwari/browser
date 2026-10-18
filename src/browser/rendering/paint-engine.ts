@@ -9,7 +9,7 @@ import {
   type PaintCmd,
 } from './formatting/stacking';
 import { buildRenderObject, sortByPaintOrder, type RenderObject } from './render-tree';
-import { Rasterizer } from './rasterizer';
+import { Rasterizer, isParsableColor } from './rasterizer';
 import { GpuRasterizer } from './gpu/gpu-rasterizer';
 import { LayerCompositor } from './compositing/layer-compositor';
 import { LayerTree } from './compositing/layer-tree';
@@ -127,6 +127,28 @@ function nextLayerId(): string {
   return `layer-${(++_layerSeq).toString(36)}`;
 }
 
+/**
+ * CSS Backgrounds §2.11.2: the canvas (everything below a short page) takes the root
+ * element's background, or <body>'s when the root has none. It used to stay white.
+ */
+function propagatedCanvasBackground(document: DomDocument): string | null {
+  for (const el of [document.htmlElement, document.bodyElement]) {
+    const style = el?.computedStyle;
+    if (!style) continue;
+    let color = style.get('background-color') ?? 'transparent';
+    const shorthand = style.get('background');
+    if (isTransparent(color) && shorthand && !/url\(|gradient\(/.test(shorthand)) color = shorthand;
+    // An unparsable colour would be drawn black over the whole screen; fall back to white.
+    if (!isTransparent(color)) return isParsableColor(color) ? color : null;
+  }
+  return null;
+}
+
+function isTransparent(color: string): boolean {
+  const c = color.replace(/\s+/g, '').toLowerCase();
+  return c === '' || c === 'none' || c === 'transparent' || /^rgba\(\d+,\d+,\d+,0(\.0*)?\)$/.test(c);
+}
+
 class PaintEngine implements IPaintEngine {
   private config: PaintConfig;
   private readonly layers: PaintLayer[] = [];
@@ -137,6 +159,8 @@ class PaintEngine implements IPaintEngine {
   private rasterizer: Rasterizer | GpuRasterizer;
   private scrollY = 0;
   private documentHeight = 0;
+  /** The page's own canvas colour (root, else body background); null → config.backgroundColor. */
+  private canvasBackground: string | null = null;
   /** A page taller than the viewport is rasterised whole, once, into this (scrolling then only crops it). */
   private tall: { readonly rasterizer: Rasterizer | GpuRasterizer; readonly height: number } | null = null;
   private fullFrame: ImageData | null = null;
@@ -170,6 +194,7 @@ class PaintEngine implements IPaintEngine {
     this.stackingTree = buildStackingContextTree(root, this.stackingBuildOptions());
     this.renderTree = buildRenderObject(root);
     this.documentHeight = measureDocumentHeight(document);
+    this.canvasBackground = propagatedCanvasBackground(document);
     this.fullFrameStale = true;
 
     // Build compositing layer tree from stacking context
@@ -211,6 +236,7 @@ class PaintEngine implements IPaintEngine {
     this.stackingTree = buildStackingContextTree(root, this.stackingBuildOptions());
     this.renderTree = buildRenderObject(root);
     this.documentHeight = measureDocumentHeight(document);
+    this.canvasBackground = propagatedCanvasBackground(document);
     this.fullFrameStale = true;
 
     const allElements: DomElement[] = [];
@@ -254,7 +280,7 @@ class PaintEngine implements IPaintEngine {
       zIndex: -1,
       opacity: 1,
       commands: [
-        { type: 'setFillStyle', params: [this.config.backgroundColor] },
+        { type: 'setFillStyle', params: [this.canvasBackground ?? this.config.backgroundColor] },
         { type: 'fillRect', params: [0, 0, this.config.width, this.config.height] },
       ],
       bounds: null,
@@ -294,7 +320,7 @@ class PaintEngine implements IPaintEngine {
     const height = this.rasterHeight();
     const allCommands: PaintCommand[] = [
       { type: 'clearRect', params: [0, 0, this.config.width, height] },
-      { type: 'setFillStyle', params: [this.config.backgroundColor] },
+      { type: 'setFillStyle', params: [this.canvasBackground ?? this.config.backgroundColor] },
       { type: 'fillRect', params: [0, 0, this.config.width, height] },
     ];
 

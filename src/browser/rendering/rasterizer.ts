@@ -149,7 +149,38 @@ export function parseColor(color: string): RGBA {
     };
   }
 
+  // hsl()/hsla(), comma or space syntax, optional deg and "/ alpha". Used to fall through to BLACK.
+  const hslMatch = lower.match(/^hsla?\(\s*([\d.]+)(?:deg)?[\s,]+([\d.]+)%[\s,]+([\d.]+)%(?:[\s,\/]+([\d.]+%?))?\s*\)$/);
+  if (hslMatch) {
+    const h = (parseFloat(hslMatch[1]) % 360) / 360;
+    const s = clamp01(parseFloat(hslMatch[2]) / 100);
+    const l = clamp01(parseFloat(hslMatch[3]) / 100);
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const hue = (t: number): number => {
+      const u = t < 0 ? t + 1 : t > 1 ? t - 1 : t;
+      if (u < 1 / 6) return p + (q - p) * 6 * u;
+      if (u < 1 / 2) return q;
+      if (u < 2 / 3) return p + (q - p) * (2 / 3 - u) * 6;
+      return p;
+    };
+    const a = hslMatch[4];
+    return {
+      r: clamp255(Math.round(hue(h + 1 / 3) * 255)),
+      g: clamp255(Math.round(hue(h) * 255)),
+      b: clamp255(Math.round(hue(h - 1 / 3) * 255)),
+      a: a !== undefined ? clamp01(a.endsWith('%') ? parseFloat(a) / 100 : parseFloat(a)) : 1,
+    };
+  }
+
   return BLACK;
+}
+
+/** True when parseColor understands the value (it falls back to black otherwise). */
+export function isParsableColor(color: string): boolean {
+  const lower = color.toLowerCase().trim();
+  return lower === 'transparent' || !!NAMED_COLORS[lower] || /^#([\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/.test(lower) ||
+    /^rgba?\(/.test(lower) || /^hsla?\(/.test(lower);
 }
 
 function clamp01(n: number): number {

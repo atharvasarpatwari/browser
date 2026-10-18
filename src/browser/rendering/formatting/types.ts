@@ -101,6 +101,8 @@ export interface InlineLevelBox {
   fontFamily?: string;
   /** Font weight for this box. */
   fontWeight?: string;
+  /** For text: the inline element (a, b, span…) whose content this is; it paints the run. Null → the IFC's block. */
+  owner?: DomElement | null;
 }
 
 /** A single line box within an inline formatting context.**

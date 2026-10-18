@@ -586,10 +586,9 @@ function specificityWeight(s: CssSpecificity): number {
 // SHORTHAND EXPANSION
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Whitespace-separated tokens, keeping functions whole: "1px solid rgb(1, 2, 3)" is 3 tokens, not 5. */
 function splitTokenList(value: string): string[] {
-  const trimmed = value.trim();
-  if (!trimmed) return [];
-  return trimmed.split(/\s+/).filter((s) => s.length > 0);
+  return splitTopLevel(value, false);
 }
 
 function expandBoxShorthand(
@@ -816,9 +815,11 @@ function expandBackgroundShorthand(value: string): Map<string, string> {
   let repeat = 'repeat';
   let attachment = 'scroll';
 
-  const tokens = trimmed.split(/[\s,]+/).filter((s) => s.length > 0);
+  // Split on spaces/commas outside parentheses: a plain split broke rgb(1, 2, 3),
+  // linear-gradient(to right, …) and light-dark(#eee,#222) into fragments ("#222)").
+  const tokens = splitTopLevel(trimmed);
   for (const t of tokens) {
-    if (t.startsWith('url(') || t.startsWith('linear-') || t.startsWith('radial-') || t.startsWith('repeating-')) {
+    if (t.startsWith('url(') || t.startsWith('linear-') || t.startsWith('radial-') || t.startsWith('repeating-') || t.startsWith('conic-')) {
       image = t;
     } else if (/^(repeat|no-repeat|repeat-x|repeat-y|space|round)$/i.test(t)) {
       repeat = t;
@@ -840,6 +841,25 @@ function expandBackgroundShorthand(value: string): Map<string, string> {
   result.set('background-repeat', repeat);
   result.set('background-attachment', attachment);
   return result;
+}
+
+/** Splits a value on whitespace (and, by default, commas) that are not inside parentheses. */
+function splitTopLevel(value: string, commas = true): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of value) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (depth === 0 && ((commas && ch === ',') || /\s/.test(ch))) {
+      if (cur) out.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
 }
 
 function expandFontShorthand(value: string): Map<string, string> {
@@ -1576,11 +1596,13 @@ export function computeComputedStyles(
   // Per CSS spec, inline !important beats stylesheet !important.
   if (inlineDecls.length > 0) {
     // Resolve var() in inline declarations using the custom properties collected so far.
-    const inlineResolved = inlineDecls.map((d) => ({
-      property: d.property,
+    // Inline shorthands (style="margin: 0 auto; background: red") are expanded like stylesheet
+    // ones; they used to be stored as-is, so layout and paint never saw their longhands.
+    const inlineResolved = expandShorthands(inlineDecls.map((d) => ({
+      property: d.property.toLowerCase(),
       value: d.property.startsWith('--') ? d.value : resolveVarReferences(d.value, earlyCustomProps),
       important: d.important,
-    }));
+    })));
     // Non-important inline styles apply first (override cascade but can be overridden by stylesheet !important)
     for (const decl of inlineResolved) {
       if (!decl.important) {

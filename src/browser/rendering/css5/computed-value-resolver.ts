@@ -365,6 +365,9 @@ export function resolveComputedValue(
     }
   }
 
+  // light-dark(a, b) (CSS Color 5): Nova paints pages with the light colour scheme.
+  if (v.includes('light-dark(')) v = resolveLightDark(v);
+
   // ── Special values ──────────────────────────────────────────────────
   if (v === '' || v === 'initial') return v;
   if (v === 'auto' || v === 'normal' || v === 'none') return v;
@@ -591,6 +594,26 @@ export function resolveVarReferences(
 // ─────────────────────────────────────────────────────────────────────────────
 // VALUE RESOLUTION
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Replaces each light-dark(a, b) with a (ponytail: no dark page scheme yet; pick b when there is one). */
+function resolveLightDark(value: string): string {
+  let out = value;
+  for (let i = out.indexOf('light-dark('); i !== -1; i = out.indexOf('light-dark(')) {
+    const start = i + 'light-dark('.length;
+    let depth = 1;
+    let comma = -1;
+    let j = start;
+    for (; j < out.length && depth > 0; j++) {
+      if (out[j] === '(') depth++;
+      else if (out[j] === ')') depth--;
+      else if (out[j] === ',' && depth === 1 && comma === -1) comma = j;
+    }
+    const end = j - 1; // index of the closing paren
+    const light = out.slice(start, comma === -1 ? end : comma).trim();
+    out = out.slice(0, i) + light + out.slice(end + 1);
+  }
+  return out;
+}
 
 /**
  * Resolves a color value — named colors to hex, hex/rgb/hsl pass through.

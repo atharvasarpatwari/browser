@@ -1734,16 +1734,18 @@ class Html5Tokenizer {
         offset:  this.tokenStart,
       });
 
-      // Enter RAWTEXT/RCDATA/SCRIPT/PLAINTEXT if appropriate.
-      if (!this.endTagMode) {
-        this.setupRawTextMode(this.tagName);
-      }
+    }
+    // Back to DATA, then enter RAWTEXT/RCDATA/SCRIPT/PLAINTEXT if the tag calls for it. This
+    // reset used to come *after* setupRawTextMode, cancelling it: <script> contents were then
+    // tokenized as markup, so `if (a<b)` opened a tag "b)" that swallowed the rest of the page.
+    this.state = S.DATA;
+    if (this.tagName && !this.endTagMode) {
+      this.setupRawTextMode(this.tagName);
     }
     this.tagName = '';
     this.attrs = new Map();
     this.selfClosing = false;
     this.endTagMode = false;
-    this.state = S.DATA;
   }
 
   private emitCloseTag(): void {

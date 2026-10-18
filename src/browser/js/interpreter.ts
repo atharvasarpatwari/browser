@@ -984,7 +984,8 @@ export class Interpreter {
         thisObj = this.evalExpr(expr.callee.object, env);
         if (thisObj === undefined || thisObj === null) {
           if (expr.callee.optional) return undefined;
-          throw new TypeError(`Cannot read properties of ${thisObj}`);
+          const missing = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+          throw new TypeError(`Cannot read properties of ${thisObj} (reading '${missing}')`);
         }
         const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
         callee = this.getPropertyValue(thisObj, key);
@@ -1162,7 +1163,8 @@ export class Interpreter {
     const obj = this.evalExpr(expr.object, env);
     if (obj === undefined || obj === null) {
       if (expr.optional) return undefined;
-      throw new TypeError(`Cannot read properties of ${obj}`);
+      const missing = expr.computed ? String(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;
+      throw new TypeError(`Cannot read properties of ${obj} (reading '${missing}')`);
     }
     if (typeof obj === 'string') {
       const key = expr.computed ? String(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;

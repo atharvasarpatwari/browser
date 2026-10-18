@@ -45,3 +45,27 @@ describe('UA stylesheet: elements that never render', () => {
     expect(getUserAgentDefaults(tag).get('display')).toBe('none');
   });
 });
+
+describe('raw text elements (script/style/title/textarea)', () => {
+  // emitTag reset the tokenizer to DATA right after entering SCRIPT_DATA/RAWTEXT/RCDATA, so
+  // `if (a<b)` in an inline script opened a tag "b)" that swallowed the rest of the page.
+  const parse = (html: string) => new HtmlParser().parse(html).document;
+  // The tree builder keeps raw-text element contents on `rawContent` (DomTree turns it into a text child).
+  const textOf = (el: HtmlElement | undefined) => (el as { rawContent?: string } | undefined)?.rawContent ?? '';
+
+  it('keeps a "<" comparison inside <script> as script text, not a tag', () => {
+    const doc = parse('<html><body><script>if (a<b) x();</script><p>after</p></body></html>');
+    expect(tree('<html><body><script>if (a<b) x();</script><p>after</p></body></html>')).toBe('html(head,body(script,p))');
+    const script = doc.bodyElement?.children.find((c): c is HtmlElement => 'tagName' in c && c.tagName === 'script');
+    expect(textOf(script)).toBe('if (a<b) x();');
+  });
+
+  it('keeps HTML inside a script string out of the DOM', () => {
+    expect(tree('<html><body><script>var s="<p>x</p><a href=y>L</a>";</script></body></html>')).toBe('html(head,body(script))');
+  });
+
+  it('treats <style>, <title> and <textarea> contents as text', () => {
+    expect(tree('<html><head><title>a<b>c</title><style>a::before{content:"<i>"}</style></head><body><textarea><b>x</b></textarea></body></html>'))
+      .toBe('html(head(title,style),body(textarea))');
+  });
+});

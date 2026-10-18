@@ -389,8 +389,9 @@ describe('computeComputedStyles — Custom Properties', () => {
     const child = el('div', {}, [], root);
     const rc = computeComputedStyles(root, sheet);
     const cc = computeComputedStyles(child, sheet, undefined, rc);
-    // var() is resolved before calc() — the result is calc(10px + 5px)
-    expect(cc.get('padding-top')).toContain('calc');
+    // var() is resolved before calc(), then calc(10px + 5px) computes to 15px. (This used to
+    // "contain calc" only because the padding shorthand split it into "calc(10px", "+", "5px)".)
+    expect(cc.get('padding-top')).toBe('15px');
   });
 
   // ── var() fallback with quoted string ──
