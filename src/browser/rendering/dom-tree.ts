@@ -132,6 +132,8 @@ interface TextRun {
   readonly color: string;
   /** The width layout gave this run; the painter fits the glyphs into it so text never overruns its box. */
   readonly width?: number;
+  /** text-decoration lines that apply to this run (from its element or a decorating ancestor). */
+  readonly decoration?: { readonly underline: boolean; readonly lineThrough: boolean; readonly color: string };
 }
 
 type DomMutationType =

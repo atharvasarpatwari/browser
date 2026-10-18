@@ -72,6 +72,31 @@ const NAMED_FONT_SIZES: Record<string, number> = {
 // LAYOUT ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * CSS Text Decoration §2: an element's text-decoration also draws through its descendants'
+ * text, in the decorating element's colour. Walks from the run's owner up to its block.
+ */
+function textDecorationFor(owner: DomElement, block: DomElement): TextRun['decoration'] | undefined {
+  let underline = false;
+  let lineThrough = false;
+  let color: string | null = null;
+  for (let n: DomElement | null = owner; n; n = n === block ? null : (n.parent as DomElement | null)) {
+    const style = n.computedStyle;
+    if (!style) continue;
+    const longhand = style.get('text-decoration-line');
+    const line = longhand && longhand !== 'none' ? longhand : (style.get('text-decoration') ?? '');
+    const u = /\bunderline\b/.test(line);
+    const t = /\bline-through\b/.test(line);
+    if ((u || t) && color === null) {
+      const c = style.get('text-decoration-color');
+      color = c && c !== 'currentcolor' && c !== 'currentColor' ? c : (style.get('color') ?? '#000000');
+    }
+    underline ||= u;
+    lineThrough ||= t;
+  }
+  return underline || lineThrough ? { underline, lineThrough, color: color ?? '#000000' } : undefined;
+}
+
 /** white-space: pre / pre-wrap / pre-line / break-spaces keep source whitespace (inherited, so the parent's value applies). */
 function preservesWhitespace(el: DomElement): boolean {
   const ws = el.computedStyle?.get('white-space') ?? 'normal';
@@ -1532,6 +1557,7 @@ class LayoutEngine implements ILayoutEngine {
           // Each run is painted by its owning inline element (its colour, weight, and paint order).
           const owner = ilBox.owner ?? el;
           const ownerStyle = owner.computedStyle ?? new Map();
+          const decoration = textDecorationFor(owner, el);
           const run: TextRun = {
             text: ilBox.textContent,
             x: ilBox.box.x,
@@ -1541,6 +1567,7 @@ class LayoutEngine implements ILayoutEngine {
             fontWeight: ownerStyle.get('font-weight') ?? ilBox.fontWeight ?? 'normal',
             color: ownerStyle.get('color') ?? '#000000',
             width: ilBox.box.width,
+            ...(decoration ? { decoration } : {}),
           };
           if (owner === el) { runs.push(run); continue; }
           if (!ownerRuns.has(owner)) ownerRuns.set(owner, []);

@@ -200,8 +200,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
       this.deps.sanitizer.sanitize(doc, domTree);
     }
 
-    // 4. Extract and compute CSS styles
-    const rules = cssParser.extractStylesFromDocument(htmlDoc);
+    // 4. Extract and compute CSS styles (fetching <link rel=stylesheet> sheets first)
+    const rules = await this.loadExternalStylesheets(cssParser.extractStylesFromDocument(htmlDoc), result.url, signal);
     this._lastRules = rules;
     this.applyComputedStyles(rules);
 
@@ -213,7 +213,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
       paintEngine.paint(doc);
       this.deps.onFrameRendered?.();
       await this.executeAllScripts(doc, result.url, signal);
-      this.applyComputedStyles(rules); // Re-apply after script execution
+      // Re-read <style> from the live DOM: scripts add and edit stylesheets (example.com's s.js
+      // inserts its p+p/svg rules). Re-applying the pre-script rules ignored all of that.
+      this._lastRules = this.rulesFromDomStyles(rules);
+      this.applyComputedStyles(this._lastRules);
     }
 
     // 6. Run layout
@@ -328,6 +331,44 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Also builds a UsedStyle object for each element with pixel-resolved
    * box-model values for faster layout.
    */
+  /** Rules from the document's current <style> elements, plus the original external-sheet entries. */
+  private rulesFromDomStyles(original: readonly CssRule[]): readonly CssRule[] {
+    const { domTree, cssParser } = this.deps;
+    const fromStyles = domTree.getElementsByTagName('style').flatMap((el) => {
+      const css = el.children.map((c) => (c.nodeType === 'text' ? (c as { text?: string }).text ?? '' : '')).join('');
+      return css.trim() ? cssParser.parseStylesheet(css).rules : [];
+    });
+    // External sheets first: <link>s normally precede the page's own <style> in <head>.
+    return [...original.filter((r) => r.source === 'external'), ...fromStyles];
+  }
+
+  /**
+   * Fetches each <link rel=stylesheet> and splices its rules in at the link's position.
+   * They used to stay "__external__" placeholders that nothing loaded, so sites that keep
+   * their CSS in files (nearly all of them) rendered unstyled. Render-blocking, as in browsers.
+   * ponytail: @import, the link's media attribute and CSP style-src aren't applied yet.
+   */
+  private async loadExternalStylesheets(rules: readonly CssRule[], baseUrl: string, signal: AbortSignal): Promise<readonly CssRule[]> {
+    const { resourceLoader, cssParser, securityLayer } = this.deps;
+    const expanded = await Promise.all(rules.map(async (rule): Promise<readonly CssRule[]> => {
+      if (rule.selector !== '__external__' || !rule.sourceUrl) return [rule];
+      const url = PageRenderer.resolveUrl(rule.sourceUrl, baseUrl);
+      if (securityLayer && !securityLayer.checkSubresource(baseUrl, url, 'style').allowed) {
+        console.warn(`[Security] Blocked stylesheet: ${url}`);
+        return [rule];
+      }
+      try {
+        const css = await resourceLoader.loadStylesheet(url);
+        if (signal.aborted || !css) return [rule];
+        return [rule, ...cssParser.parseStylesheet(css, url).rules.map((r) => ({ ...r, source: 'external' as const }))];
+      } catch (err) {
+        console.warn(`[CSS] Failed to load stylesheet ${url}:`, err instanceof Error ? err.message : err);
+        return [rule];
+      }
+    }));
+    return expanded.flat();
+  }
+
   private applyComputedStyles(rules: readonly CssRule[]): void {
     const { domTree, cssParser } = this.deps;
     const doc = domTree.getDocument();

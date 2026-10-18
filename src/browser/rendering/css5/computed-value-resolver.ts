@@ -625,6 +625,10 @@ function resolveColor(value: string): string {
   const hex = NAMED_COLORS[v];
   if (hex !== undefined) return hex;
 
+  // UA link colours (CSS Color 4 system colours): unresolved, the rasterizer drew links black.
+  if (v === '-webkit-link' || v === 'linktext') return '#0000ee';
+  if (v === 'visitedtext' || v === '-webkit-visited-link') return '#551a8b';
+
   // Pass through hex, rgb(), rgba(), hsl(), hsla(), currentcolor, transparent
   return v;
 }

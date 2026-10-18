@@ -17,13 +17,13 @@ import type { DomElement } from '../src/browser/rendering/dom-tree';
 
 const PAGE = readFileSync(path.resolve(__dirname, 'fixtures/example-domain.html'), 'utf8');
 
-async function renderAtPhoneWidth(page = PAGE, script = '') {
+async function renderAtPhoneWidth(page = PAGE, script = '', sheets: Record<string, string> = {}) {
   const domTree = new DomTree();
   const paintEngine = new PaintEngine();
   const renderer = new PageRenderer({
     htmlParser: new HtmlParser(), domTree, cssParser: new CssParser(), layoutEngine: new LayoutEngine(), paintEngine,
     resourceLoader: {
-      loadResource: vi.fn(), loadBatch: vi.fn(), loadStylesheet: vi.fn().mockResolvedValue(''), loadScript: vi.fn().mockResolvedValue(script),
+      loadResource: vi.fn(), loadBatch: vi.fn(), loadStylesheet: vi.fn(async (url: string) => sheets[url] ?? ''), loadScript: vi.fn().mockResolvedValue(script),
       loadImage: vi.fn(), getPriority: vi.fn(), setMaxConcurrent: vi.fn(), on: vi.fn(), off: vi.fn(), dispose: vi.fn(),
     },
     prioritizer: { submit: vi.fn(), submitBatch: vi.fn(), submitPreload: vi.fn(), submitPrefetch: vi.fn(), submitPreconnect: vi.fn(), clear: vi.fn(), dispose: vi.fn() },
@@ -253,5 +253,74 @@ describe('the 2026 example.com script (s.js), loaded as <script src>', () => {
     } finally {
       errors.mockRestore();
     }
+  });
+});
+
+describe('styles added by scripts, link colour, underlines', () => {
+  it('applies a <style> a script inserts (example.com s.js: p+p { font-size: .875em; opacity: .6 })', async () => {
+    const { find } = await renderAtPhoneWidth(`<html><body><p id="a">a</p><p id="b">b</p>
+      <script>document.body.insertAdjacentHTML('afterbegin', '<style>p+p{font-size:10px;color:rgb(1, 2, 3)}</style>')</script></body></html>`);
+    const ps = find('body').children.filter((c): c is DomElement => c.nodeType === 'element').filter((c) => c.tagName === 'p');
+    expect(ps[1]!.computedStyle?.get('font-size')).toBe('10px');
+    expect(ps[1]!.computedStyle?.get('color')).toBe('rgb(1, 2, 3)');
+    expect(ps[0]!.computedStyle?.get('font-size')).not.toBe('10px');
+  });
+
+  it('paints an unstyled link in link blue, not black', async () => {
+    const { paintEngine } = await renderAtPhoneWidth('<html><body><p><a href="/x">Link</a></p></body></html>');
+    const cmds = paintEngine.compositeFrame();
+    const i = cmds.findIndex((c) => c.type === 'fillText' && c.params[0] === 'Link');
+    const fill = cmds.slice(0, i).reverse().find((c) => c.type === 'setFillStyle')!;
+    expect(fill.params[0]).toBe('#0000ee');
+  });
+
+  it('underlines link text under the baseline, across the run width', async () => {
+    const { paintEngine } = await renderAtPhoneWidth('<html><body style="margin:0"><p style="margin:0"><a href="/x">Link</a> plain</p></body></html>');
+    const cmds = paintEngine.compositeFrame();
+    const i = cmds.findIndex((c) => c.type === 'fillText' && c.params[0] === 'Link');
+    const [, x, y, w] = cmds[i]!.params as [string, number, number, number];
+    const line = cmds.slice(i + 1).find((c) => c.type === 'fillRect')!;
+    const [lx, ly, lw, lh] = line.params as number[];
+    expect(lx).toBeCloseTo(x, 0);
+    expect(lw).toBeCloseTo(w, 0);
+    expect(ly).toBeGreaterThan(y);
+    expect(lh).toBeGreaterThanOrEqual(1);
+    // "plain" is not underlined
+    const j = cmds.findIndex((c) => c.type === 'fillText' && c.params[0] === 'plain');
+    expect(cmds[j + 1]?.type).not.toBe('fillRect');
+  });
+});
+
+describe('opacity', () => {
+  it('fades an element\'s text with its opacity (example.com: p+p { opacity: .6 })', async () => {
+    const { paintEngine } = await renderAtPhoneWidth('<html><body><p style="opacity:0.5">Faded</p><p>Solid</p></body></html>');
+    const cmds = paintEngine.compositeFrame();
+    const alphaBefore = (word: string) => {
+      const i = cmds.findIndex((c) => c.type === 'fillText' && c.params[0] === word);
+      const a = cmds.slice(0, i).reverse().find((c) => c.type === 'setGlobalAlpha');
+      return a ? (a.params[0] as number) : 1;
+    };
+    expect(alphaBefore('Faded')).toBeCloseTo(0.5, 2);
+    expect(alphaBefore('Solid')).toBe(1);
+  });
+});
+
+describe('external stylesheets (<link rel=stylesheet>)', () => {
+  // They were recorded as "__external__" placeholders and never fetched: most real sites,
+  // which keep their CSS in files, rendered unstyled.
+  it('fetches the sheet (resolved against the page URL) and applies its rules', async () => {
+    const { find } = await renderAtPhoneWidth(
+      '<html><head><link rel="stylesheet" href="/css/site.css"></head><body><p>x</p></body></html>', '',
+      { 'https://example.com/css/site.css': 'p { color: rgb(0, 100, 0); font-size: 22px }' });
+    expect(find('p').computedStyle?.get('color')).toBe('rgb(0, 100, 0)');
+    expect(find('p').computedStyle?.get('font-size')).toBe('22px');
+  });
+
+  it('keeps cascade order: a later <style> overrides the linked sheet, and survives scripts', async () => {
+    const { find } = await renderAtPhoneWidth(
+      '<html><head><link rel="stylesheet" href="a.css"><style>p { color: rgb(9, 9, 9) }</style></head><body><p>x</p><script>1</script></body></html>', '1',
+      { 'https://example.com/a.css': 'p { color: rgb(0, 100, 0); font-weight: 700 }' });
+    expect(find('p').computedStyle?.get('color')).toBe('rgb(9, 9, 9)');
+    expect(find('p').computedStyle?.get('font-weight')).toBe('700');
   });
 });

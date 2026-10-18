@@ -672,6 +672,13 @@ class PaintEngine implements IPaintEngine {
             type: 'fillText',
             params: run.width !== undefined ? [run.text, run.x, run.y, run.width] : [run.text, run.x, run.y],
           });
+          // text-decoration: was never painted (links had no underline). Skip whitespace-only runs.
+          if (run.decoration && run.width && run.text.trim()) {
+            const thickness = Math.max(1, Math.round(run.fontSize / 16));
+            commands.push({ type: 'setFillStyle', params: [run.decoration.color] });
+            if (run.decoration.underline) commands.push({ type: 'fillRect', params: [run.x, run.y + Math.round(run.fontSize * 0.12), run.width, thickness] });
+            if (run.decoration.lineThrough) commands.push({ type: 'fillRect', params: [run.x, run.y - Math.round(run.fontSize * 0.3), run.width, thickness] });
+          }
         }
       }
 
