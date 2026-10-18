@@ -77,14 +77,46 @@ fun TabSwitcher(
             modifier = Modifier.fillMaxSize(),
         ) {
             items(tabs, key = { it.id }) { tab ->
-                TabCard(
-                    tab = tab,
-                    active = tab.id == activeTabId,
-                    onOpen = { onSelect(tab.id); onDismiss() },
-                    onClose = { onClose(tab.id) },
+                // Swipe a card either way to close it; the ✕ stays for anyone who prefers tapping.
+                val swipe = rememberSwipeToDismissBoxState(
+                    confirmValueChange = { value ->
+                        if (value == SwipeToDismissBoxValue.Settled) false else { onClose(tab.id); true }
+                    },
                 )
+                SwipeToDismissBox(
+                    state = swipe,
+                    backgroundContent = { SwipeToCloseBackground(swipe.dismissDirection) },
+                ) {
+                    TabCard(
+                        tab = tab,
+                        active = tab.id == activeTabId,
+                        onOpen = { onSelect(tab.id); onDismiss() },
+                        onClose = { onClose(tab.id) },
+                    )
+                }
             }
         }
+    }
+}
+
+/** What shows behind a card being swiped away: the close icon on the side the finger came from. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeToCloseBackground(direction: SwipeToDismissBoxValue) {
+    val alignment = if (direction == SwipeToDismissBoxValue.EndToStart) Alignment.CenterEnd else Alignment.CenterStart
+    Box(
+        contentAlignment = alignment,
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.errorContainer)
+            .padding(horizontal = 20.dp),
+    ) {
+        Icon(
+            Icons.Filled.Close,
+            contentDescription = null, // the gesture itself is the action; the ✕ button carries the label
+            tint = MaterialTheme.colorScheme.onErrorContainer,
+        )
     }
 }
 

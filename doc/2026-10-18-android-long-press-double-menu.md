@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-18
 **Session:** "perform the to-do list in `doc/analytics.html` … solve the issues daily from today, get the problem fixed." Worked the four `2026-10-18-*` items seeded by the nightly task into `doc/analytics-todos.js`.
-**Status:** Completed for the two items that do not need the phone (r2 fixed, r4 confirmed fixed); r1 and r3 are blocked — no device attached (`adb devices` is empty).
+**Status:** Completed for everything that does not need the phone, an emulator hypervisor or a signing key. Of the 11 items on the board: 3 fixed (long-press double menu, PNG decode on `main`, swipe-to-close), 1 confirmed already fixed, 1 triaged with findings, 6 blocked on hardware or on your decision.
 
 ---
 
@@ -106,6 +106,57 @@ E:
 ova_1> npx tsc --noEmit -> 22 pre-existing errors, all in the untracked src/browser/service-worker/
                                 (someone else's in-progress work); none in the files touched here
 ```
+
+## Second pass — the other seven to-dos on the board
+
+The dashboard list holds 11 items, not 4 (two earlier nightly runs plus today's). Worked the rest:
+
+### Fixed: PNG decode in Electron, on `main` this time
+**Files:** `src/platform/shared/node-builtin-shims/{buffer,stream,zlib}.cts` in `E:\nova_1`
+`3930751` only ever existed on `claude/search-subsystem` and the branches that merged it, so every `<img>` in the Electron app on `main` still fell back to the placeholder checkerboard. All three shim files in `E:\nova_1` were byte-identical to that commit's parent (CRLF aside), so the fix ported cleanly — same diffstat as the original (99 insertions, 14 deletions).
+```
+E:\nova_1> npm run build:web && AUDIT_FIXTURE=images npx playwright test --config=playwright-electron.config.cjs tests/e2e/fidelity-audit.spec.ts
+  [fidelity] images: rendered load=1883ms 1920x1080 nonWhite=0.0051 clusters=6
+    top=#383838x285718 #000000x3762 #002800x1688 #380000x1687 #000038x1687 #383000x1687
+  1 passed (24.5s)
+```
+
+### Added: swipe-to-close in the Android tab switcher
+**File:** `android/.../ui/components/TabSwitcher.kt` (branch `claude/ecstatic-fermi-f08bd5`)
+Left open on 2026-10-17 ("swipe-to-close skipped, add if wanted"). Material3 1.2.1 — the version compose-bom 2024.06.00 resolves — already ships `SwipeToDismissBox`, so this is that component plus a background, not a hand-rolled drag gesture: swipe a card either way and `confirmValueChange` calls `onClose(tab.id)`; the ✕ button stays for tapping. `SwipeToCloseBackground` shows the close icon on the side the finger came from.
+```
+gradlew :app:assembleDebug :app:testDebugUnitTest -> BUILD SUCCESSFUL in 1m 48s, 0 warnings
+gradlew :app:assembleRelease                      -> BUILD SUCCESSFUL in 5m 13s
+  R8 mapping: 523 SwipeToDismiss lines, 146 SwipeToCloseBackground lines
+```
+The project has no Compose UI-test harness (JVM unit tests only), so the gesture itself is unverified until it runs on a device or emulator.
+
+### Triage of `main`'s uncommitted changes — two load-bearing files are not in git
+`git status` on `main` lists 19 modified files and 28 untracked paths. The finding that matters:
+
+- **`src/browser/networking/crypto-utils.ts` is untracked, and `main`'s own committed code imports it** — `engine/telemetry.ts`, `engine/auto-updater.ts`, `networking/tls-handler.ts` and `research/research-service.ts` all do (checked against `HEAD:`, not the working copy).
+- **`src/browser/networking/{socket-owner,preload}.cjs` are untracked, and committed `electron/main.cjs` references them.**
+- Neither was removed by the dead-code sweep `ac6c172`; they were never added. **A fresh clone of `main` is missing them**, so it cannot typecheck or package.
+
+The rest of the untracked `src/` work (`search/`, `find/`, `dashboard/`, `webrtc/`, `service-worker/`, `extensions/`, `manifest.ts`, `opensearch-parser.ts`, `webgpu-context.ts`, `dns-preconnect.ts`, `privacy-gate.ts`, `tab-group-manager.ts`) exists in **no branch at all** — it is the 2026-10-02/03 search-engine and security/WebGPU sessions, alive only in this working tree. `src/browser/service-worker/` accounts for all 22 current `tsc --noEmit` errors; most of the others are imported by nothing.
+
+Four stray scratch files, all from 2026-10-03, none referenced anywhere:
+
+| File | Size | What it is |
+|------|------|-----------|
+| `tsc-errors.txt` | 0 B | empty |
+| `tsc-output.txt` | 1.2 KB | UTF-16 `tsc` dump, webgpu-context parse errors |
+| `router-read.txt` | 43 KB | a copy of `src/browser/navigation/router.ts` |
+| `_new-session-doc.md` | 729 B | draft of the search-subsystem doc |
+
+Nothing was deleted and nothing was committed on `main` — both need your say-so.
+
+### Still blocked
+| Item | Why |
+|------|-----|
+| Emulator test plan after AEHD install | `sc query aehd` → the service does not exist. The `NovaEmu` AVD is there; the hypervisor driver is not, and installing one is an elevated change to your machine. |
+| Sign the R8 release APK, smoke-test it | No `android/keystore.properties` and no `.jks`, so `assembleRelease` yields `app-release-unsigned.apk` (1,510,972 B). The signing identity is yours to create; `android:smoke-test` needs the phone regardless. |
+| The three on-device checks (×2 listed twice) | `adb devices` still empty. |
 
 ## Verification steps taken
 1. Read the four `2026-10-18-*` entries in `doc/analytics-todos.js` and the three docs they cite.
