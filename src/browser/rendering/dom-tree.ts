@@ -152,6 +152,8 @@ interface IDomTree extends IDisposable {
   getElementsByClassName(names: string): readonly DomElement[];
   querySelector(selector: string): DomElement | null;
   querySelectorAll(selector: string): readonly DomElement[];
+  /** Converts parsed HTML nodes (e.g. an innerHTML fragment) into detached DOM nodes. */
+  parseFragment?(nodes: readonly HtmlNode[]): DomNode[];
   insertBefore(parent: DomElement, newChild: DomNode, referenceChild: DomNode | null): void;
   appendChild(parent: DomElement, child: DomNode): void;
   removeChild(parent: DomElement, child: DomNode): void;
@@ -322,8 +324,20 @@ class DomTree implements IDomTree {
     return cached;
   }
 
+  parseFragment(nodes: readonly HtmlNode[]): DomNode[] {
+    return nodes.map((n) => this.convertNode(n, null)).filter((n): n is DomNode => n !== null);
+  }
+
+  /** DOM §4.2.3: inserting a node first removes it from its current parent (it used to be duplicated). */
+  private detach(node: DomNode): void {
+    if (node.parent && node.parent.nodeType === 'element') this.removeChild(node.parent as DomElement, node);
+  }
+
   insertBefore(parent: DomElement, newChild: DomNode, referenceChild: DomNode | null): void {
-    const idx = referenceChild ? parent.children.indexOf(referenceChild) : parent.children.length;
+    if (newChild === referenceChild) return;
+    this.detach(newChild);
+    const found = referenceChild ? parent.children.indexOf(referenceChild) : -1;
+    const idx = found === -1 ? parent.children.length : found;
     parent.children.splice(idx, 0, newChild);
     (newChild as { parent: DomNode | null }).parent = parent;
     this.indexNode(newChild);
@@ -331,6 +345,7 @@ class DomTree implements IDomTree {
   }
 
   appendChild(parent: DomElement, child: DomNode): void {
+    this.detach(child);
     parent.children.push(child);
     (child as { parent: DomNode | null }).parent = parent;
     this.indexNode(child);

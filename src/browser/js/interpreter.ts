@@ -1388,12 +1388,29 @@ export class Interpreter {
   }
 
   private evalArray(expr: AST.ArrayExpression, env: Environment): JSValue {
-    const elements = expr.elements.map(e => {
-      if (!e) return undefined;
-      if (e.type === 'SpreadElement') return this.evalExpr(e.argument, env);
-      return this.evalExpr(e, env);
-    });
+    const elements: JSValue[] = [];
+    for (const e of expr.elements) {
+      if (!e) { elements.push(undefined); continue; }
+      // [...x] used to put x itself in as one element: [...nodeList] was [nodeList].
+      if (e.type === 'SpreadElement') elements.push(...this.spreadValues(this.evalExpr(e.argument, env)));
+      else elements.push(this.evalExpr(e, env));
+    }
     return createArray(elements);
+  }
+
+  /** Values of a spread operand: arrays and array-likes by index, strings by character. */
+  private spreadValues(v: JSValue): JSValue[] {
+    if (v === undefined || v === null) throw new TypeError(`${v} is not iterable`);
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') return [...v];
+    if (typeof v === 'object') {
+      const obj = v as JSObject;
+      const len = Number(obj.properties.get('length')?.value ?? 0);
+      const out: JSValue[] = [];
+      for (let i = 0; i < len; i++) out.push(this.getPropertyValue(obj, String(i)));
+      return out;
+    }
+    throw new TypeError(`${typeof v} is not iterable`);
   }
 
   private evalObject(expr: AST.ObjectExpression, env: Environment): JSValue {

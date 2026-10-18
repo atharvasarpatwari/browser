@@ -16,7 +16,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.nova.browser.BrowserViewModel.FindState
@@ -32,6 +35,15 @@ fun FindBar(
 ) {
     BackHandler(onBack = onClose)
     var text by remember { mutableStateOf(state.query) }
+    // Opened from the menu, so nothing has focus yet: without this the bar appeared but
+    // typing went nowhere until the field was tapped (seen on the Realme, 1.14).
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        focus.requestFocus()
+        keyboard?.show()
+    }
     Surface(tonalElevation = 3.dp, color = MaterialTheme.colorScheme.surface) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 8.dp)) {
             Box(
@@ -48,7 +60,7 @@ fun FindBar(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { onNext() }),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
                 )
             }
             Text(

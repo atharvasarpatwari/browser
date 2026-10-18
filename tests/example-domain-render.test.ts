@@ -17,13 +17,13 @@ import type { DomElement } from '../src/browser/rendering/dom-tree';
 
 const PAGE = readFileSync(path.resolve(__dirname, 'fixtures/example-domain.html'), 'utf8');
 
-async function renderAtPhoneWidth(page = PAGE) {
+async function renderAtPhoneWidth(page = PAGE, script = '') {
   const domTree = new DomTree();
   const paintEngine = new PaintEngine();
   const renderer = new PageRenderer({
     htmlParser: new HtmlParser(), domTree, cssParser: new CssParser(), layoutEngine: new LayoutEngine(), paintEngine,
     resourceLoader: {
-      loadResource: vi.fn(), loadBatch: vi.fn(), loadStylesheet: vi.fn().mockResolvedValue(''), loadScript: vi.fn().mockResolvedValue(''),
+      loadResource: vi.fn(), loadBatch: vi.fn(), loadStylesheet: vi.fn().mockResolvedValue(''), loadScript: vi.fn().mockResolvedValue(script),
       loadImage: vi.fn(), getPriority: vi.fn(), setMaxConcurrent: vi.fn(), on: vi.fn(), off: vi.fn(), dispose: vi.fn(),
     },
     prioritizer: { submit: vi.fn(), submitBatch: vi.fn(), submitPreload: vi.fn(), submitPrefetch: vi.fn(), submitPreconnect: vi.fn(), clear: vi.fn(), dispose: vi.fn() },
@@ -232,5 +232,26 @@ describe('block widths: auto margins, max-width, margins with width:auto', () =>
   it('min-width wins over a smaller max-width-capped width', async () => {
     const b = await box('max-width: 100px; min-width: 150px');
     expect(b.width).toBe(150);
+  });
+});
+
+describe('the 2026 example.com script (s.js), loaded as <script src>', () => {
+  it('runs without errors and adds the translations, the link and the icon', async () => {
+    const html = readFileSync(path.resolve(__dirname, 'fixtures/example-com-2026/index.html'), 'utf8');
+    const js = readFileSync(path.resolve(__dirname, 'fixtures/example-com-2026/s.js'), 'utf8');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { find, texts } = await renderAtPhoneWidth(html, js);
+      expect(errors.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('[ScriptEngine]'))).toEqual([]);
+      const body = find('body');
+      const kids = body.children.filter((c): c is DomElement => c.nodeType === 'element').map((c) => c.tagName.toLowerCase());
+      // style + svg prepended, the English <p> moved first, 5 translations, the link
+      expect(kids.filter((t) => t === 'p')).toHaveLength(6);
+      expect(kids).toContain('a');
+      expect(kids.slice(0, 2)).toEqual(['style', 'svg']);
+      expect(texts.some((t) => t[0] === 'Learn')).toBe(true);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });

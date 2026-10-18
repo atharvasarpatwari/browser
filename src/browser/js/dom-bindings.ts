@@ -15,6 +15,7 @@ import type { CanvasPattern } from '../rendering/canvas/canvas-pattern';
 import { Path2D } from '../rendering/canvas/canvas-path';
 import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../security/blocked-url-schemes';
 import { getScriptCookieProvider } from '../networking/cookie-service';
+import { HtmlParser } from '../rendering/html-parser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DOM BINDINGS — Bridges the JS interpreter to the Nova DOM tree
@@ -628,45 +629,6 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     }),
   });
 
-  // children (element nodes only)
-  obj.properties.set('children', {
-    value: createArray(
-      el.children.filter((c): c is DomElement => c.nodeType === 'element')
-        .map(c => wrapElement(c, domTree))
-    ),
-    writable: false, enumerable: true, configurable: false,
-  });
-
-  // childNodes (all nodes)
-  obj.properties.set('childNodes', {
-    value: createArray(el.children.map(c =>
-      c.nodeType === 'element' ? wrapElement(c as DomElement, domTree) : wrapTextNode(c)
-    )),
-    writable: false, enumerable: true, configurable: false,
-  });
-
-  // parentNode
-  obj.properties.set('parentNode', {
-    value: el.parent && el.parent.nodeType === 'element'
-      ? wrapElement(el.parent as DomElement, domTree) : null,
-    writable: false, enumerable: true, configurable: false,
-  });
-
-  // firstChild
-  obj.properties.set('firstChild', {
-    value: el.children.length > 0
-      ? (el.children[0].nodeType === 'element'
-        ? wrapElement(el.children[0] as DomElement, domTree)
-        : wrapTextNode(el.children[0]))
-      : null,
-    writable: false, enumerable: true, configurable: false,
-  });
-
-  // innerHTML (read-only getter — returns concatenated child HTML)
-  obj.properties.set('innerHTML', {
-    value: getInnerHTML(el),
-    writable: true, enumerable: true, configurable: true,
-  });
 
   // style
   const styleObj = createObject(null);
@@ -900,13 +862,9 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     writable: true, enumerable: true, configurable: true,
   });
 
-  // matches (simple selector matching)
+  // matches — was `querySelector(sel) === el`, true only for the first match in the document
   obj.properties.set('matches', {
-    value: createNativeFunction('matches', (_this, args) => {
-      const sel = toString(args[0]);
-      const matched = domTree.querySelector(sel);
-      return matched === el;
-    }),
+    value: createNativeFunction('matches', (_this, args) => domTree.querySelectorAll(toString(args[0])).includes(el)),
     writable: true, enumerable: true, configurable: true,
   });
 
@@ -1152,6 +1110,8 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     }),
     writable: true, enumerable: true, configurable: true,
   });
+
+  defineTreeApis(obj, el, domTree);
 
   // ── Web Animations API: getAnimations() ──
   obj.properties.set('getAnimations', {
@@ -1581,6 +1541,152 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
   }
 
   return obj;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TREE APIS: live navigation getters, selectors, HTML insertion, ChildNode/ParentNode
+// ─────────────────────────────────────────────────────────────────────────────
+
+function wrapNode(node: DomNode | null | undefined, domTree: IDomTree): JSValue {
+  if (!node) return null;
+  return node.nodeType === 'element' ? wrapElement(node as DomElement, domTree) : wrapTextNode(node);
+}
+
+function isDescendantOf(node: DomNode, ancestor: DomElement): boolean {
+  for (let n = node.parent; n; n = n.parent) if (n === ancestor) return true;
+  return false;
+}
+
+/** Parses an HTML string into detached DOM nodes, applying setAttribute's safety rules. */
+function parseHtmlFragment(html: string, domTree: IDomTree): DomNode[] {
+  if (!domTree.parseFragment) return [];
+  const body = new HtmlParser().parse(`<!doctype html><html><body>${html}</body></html>`).document.bodyElement;
+  const nodes = domTree.parseFragment(body?.children ?? []);
+  const scrub = (n: DomNode): void => {
+    if (n.nodeType !== 'element') return;
+    const attrs = (n as DomElement).attributes as Map<string, string>;
+    for (const [name, value] of [...attrs]) {
+      if (isEventHandlerAttribute(name) || (isUrlAttribute(name) && isBlockedUrlScheme(value))) attrs.delete(name);
+    }
+    for (const c of n.children) scrub(c);
+  };
+  nodes.forEach(scrub);
+  return nodes;
+}
+
+/** ParentNode/ChildNode arguments: nodes as-is, anything else becomes a text node. */
+function argsToNodes(args: JSValue[]): DomNode[] {
+  return args.map((a) =>
+    typeof a === 'object' && a !== null && '__domNode' in a
+      ? (a as JSObject & { __domNode: DomNode }).__domNode
+      : makeTextNode(toString(a), null));
+}
+
+function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void {
+  const getter = (name: string, fn: () => JSValue): void => {
+    obj.properties.set(name, {
+      value: undefined, writable: false, enumerable: true, configurable: true,
+      getter: createNativeFunction(`get ${name}`, fn),
+    });
+  };
+  const method = (name: string, fn: (args: JSValue[]) => JSValue): void => {
+    obj.properties.set(name, {
+      value: createNativeFunction(name, (_this, args) => fn(args)),
+      writable: true, enumerable: true, configurable: true,
+    });
+  };
+  const elementChildren = (): DomElement[] => el.children.filter((c): c is DomElement => c.nodeType === 'element');
+  const parentEl = (): DomElement | null => (el.parent && el.parent.nodeType === 'element' ? el.parent as DomElement : null);
+  const siblings = (): DomNode[] => el.parent?.children ?? [];
+  const insertAll = (parent: DomElement, nodes: DomNode[], ref: DomNode | null): void => {
+    for (const n of nodes) domTree.insertBefore(parent, n, ref);
+  };
+
+  // Live navigation (these were values captured when the wrapper was first made, and the
+  // wrapper is cached per element, so scripts saw the old tree after every change).
+  getter('children', () => createArray(elementChildren().map((c) => wrapElement(c, domTree))));
+  getter('childNodes', () => createArray(el.children.map((c) => wrapNode(c, domTree))));
+  getter('childElementCount', () => elementChildren().length);
+  getter('parentNode', () => wrapNode(parentEl(), domTree));
+  getter('parentElement', () => wrapNode(parentEl(), domTree));
+  getter('firstChild', () => wrapNode(el.children[0], domTree));
+  getter('lastChild', () => wrapNode(el.children[el.children.length - 1], domTree));
+  getter('firstElementChild', () => wrapNode(elementChildren()[0], domTree));
+  getter('lastElementChild', () => { const c = elementChildren(); return wrapNode(c[c.length - 1], domTree); });
+  getter('nextSibling', () => { const s = siblings(); return wrapNode(s[s.indexOf(el) + 1], domTree); });
+  getter('previousSibling', () => { const s = siblings(); return wrapNode(s[s.indexOf(el) - 1], domTree); });
+  getter('nextElementSibling', () => {
+    const s = siblings(); return wrapNode(s.slice(s.indexOf(el) + 1).find((n) => n.nodeType === 'element'), domTree);
+  });
+  getter('previousElementSibling', () => {
+    const s = siblings(); return wrapNode(s.slice(0, s.indexOf(el)).reverse().find((n) => n.nodeType === 'element'), domTree);
+  });
+
+  // innerHTML: live getter + setter (the setter did nothing before)
+  obj.properties.set('innerHTML', {
+    value: undefined, writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get innerHTML', () => getInnerHTML(el)),
+    setter: createNativeFunction('set innerHTML', (_t, args) => {
+      for (const c of [...el.children]) domTree.removeChild(el, c);
+      for (const n of parseHtmlFragment(toString(args[0]), domTree)) domTree.appendChild(el, n);
+      return undefined;
+    }),
+  });
+
+  method('insertAdjacentHTML', (args) => {
+    const where = toString(args[0]).toLowerCase();
+    const nodes = parseHtmlFragment(toString(args[1]), domTree);
+    const parent = parentEl();
+    if (where === 'beforebegin' && parent) insertAll(parent, nodes, el);
+    else if (where === 'afterbegin') insertAll(el, nodes, el.children[0] ?? null);
+    else if (where === 'beforeend') insertAll(el, nodes, null);
+    else if (where === 'afterend' && parent) { const s = siblings(); insertAll(parent, nodes, s[s.indexOf(el) + 1] ?? null); }
+    else throw new SyntaxError(`insertAdjacentHTML: '${toString(args[0])}' is not a valid position`);
+    return undefined;
+  });
+
+  // Selectors scoped to this element. ponytail: a document-wide query filtered to descendants
+  // (O(document) per call); walk the subtree directly if it shows up in profiles.
+  method('querySelectorAll', (args) => createArray(
+    domTree.querySelectorAll(toString(args[0])).filter((e) => isDescendantOf(e, el)).map((e) => wrapElement(e, domTree))));
+  method('querySelector', (args) => wrapNode(domTree.querySelectorAll(toString(args[0])).find((e) => isDescendantOf(e, el)), domTree));
+  method('closest', (args) => {
+    const matches = new Set(domTree.querySelectorAll(toString(args[0])));
+    for (let n: DomNode | null = el; n && n.nodeType === 'element'; n = n.parent) if (matches.has(n as DomElement)) return wrapNode(n, domTree);
+    return null;
+  });
+
+  // ParentNode / ChildNode
+  method('append', (args) => { insertAll(el, argsToNodes(args), null); return undefined; });
+  method('prepend', (args) => { insertAll(el, argsToNodes(args), el.children[0] ?? null); return undefined; });
+  method('replaceChildren', (args) => {
+    for (const c of [...el.children]) domTree.removeChild(el, c);
+    insertAll(el, argsToNodes(args), null);
+    return undefined;
+  });
+  method('before', (args) => { const p = parentEl(); if (p) insertAll(p, argsToNodes(args), el); return undefined; });
+  method('after', (args) => {
+    const p = parentEl(); if (!p) return undefined;
+    const s = siblings(); insertAll(p, argsToNodes(args), s[s.indexOf(el) + 1] ?? null); return undefined;
+  });
+  method('remove', () => { const p = parentEl(); if (p) domTree.removeChild(p, el); return undefined; });
+
+  // Reflected attributes
+  for (const name of ['lang', 'dir', 'title']) {
+    obj.properties.set(name, {
+      value: undefined, writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction(`get ${name}`, () => getAttr(el, name) ?? ''),
+      setter: createNativeFunction(`set ${name}`, (_t, args) => { domTree.setAttribute(el, name, toString(args[0])); return undefined; }),
+    });
+  }
+  obj.properties.set('hidden', {
+    value: undefined, writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get hidden', () => el.attributes.has('hidden')),
+    setter: createNativeFunction('set hidden', (_t, args) => {
+      if (toBoolean(args[0])) domTree.setAttribute(el, 'hidden', ''); else domTree.removeAttribute(el, 'hidden');
+      return undefined;
+    }),
+  });
 }
 
 function wrapTextNode(node: DomNode): JSObject {
