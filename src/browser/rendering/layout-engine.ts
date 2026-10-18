@@ -72,6 +72,12 @@ const NAMED_FONT_SIZES: Record<string, number> = {
 // LAYOUT ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** white-space: pre / pre-wrap / pre-line / break-spaces keep source whitespace (inherited, so the parent's value applies). */
+function preservesWhitespace(el: DomElement): boolean {
+  const ws = el.computedStyle?.get('white-space') ?? 'normal';
+  return ws.startsWith('pre') || ws === 'break-spaces';
+}
+
 class LayoutEngine implements ILayoutEngine {
   private config: LayoutConfig;
   private readonly layoutBoxes = new Map<string, LayoutBox>();
@@ -747,6 +753,7 @@ class LayoutEngine implements ILayoutEngine {
     const ifc = new InlineFormattingContext(availableWidth, startY, {
       exclusionZones,
       defaultFontSize: parentFontSize,
+      originX: contentX,
     });
     const parentStyle = parent.computedStyle ?? new Map();
     const parentLineHeight = this.resolveLineHeight(parentStyle, parentFontSize);
@@ -756,7 +763,7 @@ class LayoutEngine implements ILayoutEngine {
         const textNode = child.node as DomElement & { text?: string };
         const text = textNode.text ?? (child.node as unknown as { text: string }).text ?? '';
         if (text) {
-          ifc.addTextRun(text, parentFontSize, parentLineHeight, 'sans-serif');
+          ifc.addTextRun(text, parentFontSize, parentLineHeight, 'sans-serif', undefined, preservesWhitespace(parent));
         }
         continue;
       }
@@ -1429,9 +1436,12 @@ class LayoutEngine implements ILayoutEngine {
     domTree?: IDomTree,
   ): number {
     const exclusionZones = this.floatContext?.getExclusionZones() ?? [];
+    // ponytail: an inline element's own children (layoutInlineElement → here) start at the
+    // parent's contentX, not at the element's x on its line; exact only for line-start inlines.
     const ifc = new InlineFormattingContext(availableWidth, contentY, {
       exclusionZones,
       defaultFontSize: parentFontSize,
+      originX: contentX,
     });
 
     for (const child of parent.children) {
@@ -1439,7 +1449,7 @@ class LayoutEngine implements ILayoutEngine {
         const text = (child as DomNode & { text: string }).text ?? '';
         if (text) {
           const lineHeight = this.resolveLineHeight(parent.computedStyle ?? new Map(), parentFontSize);
-          ifc.addTextRun(text, parentFontSize, lineHeight, 'sans-serif');
+          ifc.addTextRun(text, parentFontSize, lineHeight, 'sans-serif', undefined, preservesWhitespace(parent));
         }
         continue;
       }
@@ -1588,8 +1598,10 @@ class LayoutEngine implements ILayoutEngine {
 
     // If the inline element has children, layout them recursively
     if (el.children.length > 0) {
-      const childHeight = this.layoutInlineChildren(el, contentX, contentY, contentW, elFontSize, domTree);
-      box.height = Math.max(box.height, childHeight);
+      // layoutInlineChildren returns the bottom y, not a height (this made inline boxes
+      // as tall as their distance from the top of the page).
+      const childBottom = this.layoutInlineChildren(el, contentX, contentY, contentW, elFontSize, domTree);
+      box.height = Math.max(box.height, childBottom - contentY);
     }
   }
 

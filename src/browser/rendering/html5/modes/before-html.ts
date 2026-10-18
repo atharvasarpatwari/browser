@@ -24,7 +24,6 @@ export function handleBeforeHtml(ctx: TreeBuilderContext, token: Token): void {
         ctx.insertHTMLElement(token);
         ctx.htmlElement = ctx.currentNode();
         ctx.setMode(Im.BEFORE_HEAD);
-        ctx.processToken(token);
         return;
       }
       ctx.setMode(Im.BEFORE_HEAD);

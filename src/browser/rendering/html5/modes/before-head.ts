@@ -25,15 +25,19 @@ export function handleBeforeHead(ctx: TreeBuilderContext, token: Token): void {
       ctx.parseError(token);
       break;
     case 'open':
+      if (token.tagName === 'html') {
+        ctx.processInBodyToken(token);
+        return;
+      }
       if (token.tagName === 'head') {
         ctx.insertHTMLElement(token);
         ctx.headElement = ctx.currentNode();
         ctx.setMode(Im.IN_HEAD);
         return;
       }
-      // Any other start tag: insert <head> element, then reprocess
+      // Any other start tag: insert an implied (attribute-less) <head>, then reprocess
       {
-        const headToken: Token = { ...token, tagName: 'head' };
+        const headToken: Token = { tagName: 'head', kind: 'open', attrs: new Map(), offset: token.offset };
         ctx.insertHTMLElement(headToken);
         ctx.headElement = ctx.currentNode();
       }
@@ -41,6 +45,15 @@ export function handleBeforeHead(ctx: TreeBuilderContext, token: Token): void {
       ctx.processToken(token);
       break;
     case 'close':
+      if (!['head', 'body', 'html', 'br'].includes(token.tagName!)) {
+        ctx.parseError(token); // §13.2.6.3: any other end tag is ignored
+        break;
+      }
+      {
+        const headToken: Token = { tagName: 'head', kind: 'open', attrs: new Map(), offset: token.offset };
+        ctx.insertHTMLElement(headToken);
+        ctx.headElement = ctx.currentNode();
+      }
       ctx.setMode(Im.IN_HEAD);
       ctx.processToken(token);
       break;

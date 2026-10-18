@@ -30,6 +30,9 @@ export class InlineFormattingContext {
   /** The Y position where the first line box starts. */
   readonly startY: number;
 
+  /** Left edge of the containing block's content box; line x positions start here (like startY for y). */
+  readonly originX: number;
+
   /** Float exclusion zones that affect available width. */
   private exclusionZones: FloatExclusionZone[] = [];
 
@@ -53,10 +56,12 @@ export class InlineFormattingContext {
       defaultFontSize?: number;
       fontFamily?: string;
       fontWeight?: string;
+      originX?: number;
     },
   ) {
     this.availableWidth = availableWidth;
     this.startY = startY;
+    this.originX = options?.originX ?? 0;
     this.exclusionZones = options?.exclusionZones ?? [];
     this.defaultFontSize = options?.defaultFontSize ?? 16;
     this.fontFamily = options?.fontFamily ?? 'sans-serif';
@@ -132,7 +137,7 @@ export class InlineFormattingContext {
     }
 
     // Position the box horizontally on the current line
-    lb.x = leftOffset + this.currentLine.usedWidth + lb.marginLeft;
+    lb.x = this.originX + leftOffset + this.currentLine.usedWidth + lb.marginLeft;
 
     // Update the line box with this element
     this.currentLine.boxes.push(box);
@@ -158,6 +163,7 @@ export class InlineFormattingContext {
     lineHeight: number,
     fontFamily: string,
     fontWeight?: string,
+    preserveWhitespace = false,
   ): void {
     if (!text) return;
 
@@ -166,6 +172,10 @@ export class InlineFormattingContext {
     if (trimmed.length === 0 && text !== ' ' && text !== '\u00A0') {
       return;
     }
+
+    // white-space: normal collapses runs of spaces/tabs/newlines to one space (CSS Text §4.1.1);
+    // source indentation used to show up as wide gaps mid-sentence. pre* keeps them.
+    if (!preserveWhitespace) text = text.replace(/[ \t\n\r\f]+/g, ' ');
 
     const measurer = getTextMeasurer();
     const weight = fontWeight ?? this.fontWeight;
@@ -276,7 +286,7 @@ export class InlineFormattingContext {
     const box: InlineLevelBox = {
       element: null,
       box: {
-        x: this.currentLine.usedWidth,
+        x: this.originX + this.currentLine.usedWidth,
         y: this.startY + this.currentLine.y,
         width,
         height: lineHeight,

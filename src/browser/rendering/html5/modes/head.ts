@@ -7,6 +7,12 @@ import type { TreeBuilderContext } from './types';
  */
 export function handleInHead(ctx: TreeBuilderContext, token: Token): void {
   switch (token.kind) {
+    case 'text':
+      if (/^[\t\n\f\r ]*$/.test(token.data ?? '')) {
+        ctx.insertText(token);
+        return;
+      }
+      break;
     case 'comment':
       ctx.insertComment(token);
       return;
@@ -142,7 +148,10 @@ export function handleInHeadNoscript(ctx: TreeBuilderContext, token: Token): voi
 export function handleAfterHead(ctx: TreeBuilderContext, token: Token): void {
   switch (token.kind) {
     case 'text':
-      if (/^[\t\n\f\r ]*$/.test(token.data ?? '')) break;
+      if (/^[\t\n\f\r ]*$/.test(token.data ?? '')) {
+        ctx.insertText(token);
+        return;
+      }
       ctx.parseError(token);
       // Insert <body> element
       {
@@ -191,9 +200,10 @@ export function handleAfterHead(ctx: TreeBuilderContext, token: Token): void {
       }
       break;
     case 'close':
-      if (token.tagName === 'head') {
-        ctx.popCurrentNode();
-        ctx.setMode(Im.IN_BODY);
+      // §13.2.6.6: only </body>, </html>, </br> act as "anything else"; other end tags
+      // (including a second </head>, which used to pop <html>) are ignored.
+      if (!['body', 'html', 'br'].includes(token.tagName!)) {
+        ctx.parseError(token);
         return;
       }
       break;

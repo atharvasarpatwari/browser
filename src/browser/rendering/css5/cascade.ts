@@ -1172,6 +1172,16 @@ const INLINE_ELEMENTS = new Set([
   'picture',
 ]);
 
+/**
+ * HTML §15.3.1 "Hidden elements": never rendered. Without this, any of them that ended up
+ * in <body> (or a page styling `head` visible) had their text painted as page content.
+ * noscript is included because Nova runs page scripts.
+ */
+const NON_RENDERED_ELEMENTS = new Set([
+  'head', 'title', 'style', 'script', 'meta', 'link', 'base', 'basefont', 'template',
+  'noscript', 'datalist', 'noembed', 'noframes', 'param', 'rp', 'area',
+]);
+
 /** Returns user-agent default declarations for a given element tag. */
 export function getUserAgentDefaults(
   tagName: string,
@@ -1180,7 +1190,9 @@ export function getUserAgentDefaults(
   const styles = new Map<string, string>();
 
   // Display
-  if (BLOCK_ELEMENTS.has(tag)) {
+  if (NON_RENDERED_ELEMENTS.has(tag)) {
+    styles.set('display', 'none');
+  } else if (BLOCK_ELEMENTS.has(tag)) {
     styles.set('display', 'block');
   } else if (INLINE_ELEMENTS.has(tag)) {
     styles.set('display', 'inline');
@@ -1637,6 +1649,14 @@ export function computeComputedStyles(
   // Second pass: resolve all remaining values with the resolved currentcolor.
   const resCtx: ResolutionContext = { parentFontSize, parentFontWeight, currentColor, customProperties: customProps };
   resolveAllComputedValues(computed, resCtx);
+
+  // CSS Backgrounds §3.3: a border-*-width computes to 0 when its style is none or hidden.
+  // Layout and paint read these widths directly; leaving the initial `medium` (3px) here
+  // painted a 3px currentColor frame around every box on every page.
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    const borderStyle = computed.get(`border-${side}-style`) ?? 'none';
+    if (borderStyle === 'none' || borderStyle === 'hidden') computed.set(`border-${side}-width`, '0px');
+  }
 
   return computed;
 }
