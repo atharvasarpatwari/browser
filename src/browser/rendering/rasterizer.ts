@@ -10,6 +10,8 @@ import type { ClipShape, MaskInfo } from './clip-mask';
 import { compositeBuffer } from './blend-modes';
 import type { BlendMode } from './blend-modes';
 import type { BorderRadius } from './borders-enhanced';
+import { rasterizeTextRun } from './text-raster';
+import type { TextMask } from './text-raster';
 
 // ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 // RGBA COLOR
@@ -787,6 +789,10 @@ export class Rasterizer {
     const [text, x, y, width] = params;
     const c = this.state.fillStyle;
     const a = c.a * this.state.globalAlpha;
+    // Real device font where a 2D canvas exists (any script, layout-exact widths); the 8x8
+    // ASCII bitmap below is only the fallback for headless/Node runs.
+    const mask = rasterizeTextRun(text, this.state.font, width);
+    if (mask) { this.blendTextMask(mask, x, y, c.r, c.g, c.b, a); return; }
     const scale = this.state.fontSize / FONT_H;
     // Layout measured this run with real font advances (~0.5 em per character); the 8x8 bitmap font is 1 em wide.
     // Fit the glyphs into the laid-out width, or neighbouring words are painted over each other.
@@ -816,6 +822,9 @@ export class Rasterizer {
     const [text, x, y] = params;
     const c = this.state.strokeStyle;
     const a = c.a * this.state.globalAlpha;
+    // ponytail: stroked text is drawn filled with the real font (outline-only glyphs are rare on pages).
+    const mask = rasterizeTextRun(text, this.state.font);
+    if (mask) { this.blendTextMask(mask, x, y, c.r, c.g, c.b, a); return; }
     const scale = this.state.fontSize / FONT_H;
     const charW = FONT_W * scale;
     let startX = x;
@@ -833,6 +842,30 @@ export class Rasterizer {
       if (bitmap) {
         const chX = Math.round(startX + i * charW);
         this.strokeCharBitmap(bitmap, chX, baseY, scale, c.r, c.g, c.b, a);
+      }
+    }
+  }
+
+  /** Blends a glyph coverage mask at pen position (x, baseline y), honouring text-align and the clip. */
+  private blendTextMask(mask: TextMask, x: number, y: number, r: number, g: number, b: number, a: number): void {
+    if (a <= 0) return;
+    let penX = x;
+    if (this.state.textAlign === 'center') penX -= mask.advance / 2;
+    else if (this.state.textAlign === 'right' || this.state.textAlign === 'end') penX -= mask.advance;
+    const ox = Math.round(penX + mask.left);
+    const oy = Math.round(y + mask.top);
+    let x0 = Math.max(0, ox), y0 = Math.max(0, oy);
+    let x1 = Math.min(this.width, ox + mask.width), y1 = Math.min(this.height, oy + mask.height);
+    const clip = this.state.clipRect;
+    if (clip) {
+      x0 = Math.max(x0, clip.x | 0); y0 = Math.max(y0, clip.y | 0);
+      x1 = Math.min(x1, (clip.x + clip.w) | 0); y1 = Math.min(y1, (clip.y + clip.h) | 0);
+    }
+    for (let py = y0; py < y1; py++) {
+      const row = (py - oy) * mask.width - ox;
+      for (let px = x0; px < x1; px++) {
+        const coverage = mask.alpha[row + px]!;
+        if (coverage > 0) this.setPixelRaw(px, py, r, g, b, (coverage / 255) * a);
       }
     }
   }

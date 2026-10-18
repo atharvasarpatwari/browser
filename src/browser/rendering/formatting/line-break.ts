@@ -88,13 +88,16 @@ function classify(code: number): LB {
   if (code >= 0x2030 && code <= 0x2034) return LB.PO; // permille, etc.
   if (code === 0x2035) return LB.PO;     // prime
   if (code >= 0x2038 && code <= 0x203B) return LB.AI;
-  if (code >= 0x203C || code <= 0x203D) return LB.AI;
+  if (code >= 0x203C && code <= 0x203D) return LB.AI; // was `||`: true for every code point, so CJK never broke
 
   // CJK Unified Ideographs (U+4E00–U+9FFF)
   if (code >= 0x4E00 && code <= 0x9FFF) return LB.ID;
 
   // CJK Extension A
   if (code >= 0x3400 && code <= 0x4DBF) return LB.ID;
+
+  // Hiragana, Katakana, Katakana phonetic extensions: break between characters like ideographs
+  if ((code >= 0x3040 && code <= 0x30FF) || (code >= 0x31F0 && code <= 0x31FF)) return LB.ID;
 
   // CJK Compatibility Ideographs
   if (code >= 0xF900 && code <= 0xFAFF) return LB.ID;
@@ -118,7 +121,7 @@ function classify(code: number): LB {
   if (code === 0xFF0D) return LB.BA; // fullwidth hyphen
   if (code === 0xFF0C || code === 0xFF0E) return LB.IS;
   if (code >= 0xFF10 && code <= 0xFF19) return LB.NU;
-  if (code >= 0xFF1A || code <= 0xFF1B) return LB.IS;
+  if (code >= 0xFF1A && code <= 0xFF1B) return LB.IS; // was `||`: matched every remaining code point
   if (code === 0xFF1F || code === 0xFF01) return LB.EX;
   if (code >= 0xFF3B && code <= 0xFF3D) return LB.OP;
   if (code >= 0xFF5B && code <= 0xFF5D) return LB.OP;
