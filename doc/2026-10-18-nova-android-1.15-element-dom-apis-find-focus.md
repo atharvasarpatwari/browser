@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-18
 **Session:** "keep improving the nova app and note the changes and update E:\nova_1\doc\analytics.html", round 5. Before this, 1.14 was verified on the phone. Then the approved plan `2026-10-18-nova-element-dom-apis-plan.md` ("Implement the full plan") was carried out.
-**Status:** Completed (the 1.15 install to the phone is queued and waits for the user to unlock and approve)
+**Status:** Completed, and verified on the phone (1.15 installed after the user approved the install check)
 
 ---
 
@@ -102,7 +102,12 @@ Checked on 1.14 before this round's code changes. Every tap went through a guard
 | Reload button | **Pass**: `fetch[4] GET https://example.com/` |
 | Find in page | **Pass** after tapping the field: "domain" highlighted, 1/1, scroll-track marker. The missing auto-focus is root cause 5, fixed in 1.15 |
 | example.com script | still failed on 1.14 (`reading 'lang'`), as expected; fixed in 1.15 (end-to-end test) |
-| 1.15 on the device | install queued; phone locked |
+| 1.15 installed | **Pass**: `Success`, versionName 1.15 |
+| example.com script on 1.15 | **Pass**: no `[ScriptEngine]` errors in logcat; the translations were added (French visible) and the page now scrolls |
+| Find opened from the menu, typed immediately | **Pass**: the field took focus and showed the keyboard; "domain" gave 1/2 (with the French "domaine") |
+
+## Found on the phone, not fixed
+- **Non-ASCII text is blank:** the rasterizer draws glyphs from a built-in 8×8 bitmap font that covers ASCII 32–126 only. Arabic, Chinese and Russian text come out empty, and accented letters drop out ("réservé" shows as "r serv"). Next candidate: draw text through the WebView's own canvas `fillText`, or ship a Unicode bitmap font.
 
 ## What's new in Nova 1.15 (user-facing)
 - Sites whose scripts add or move content (menus, translations, "load more", widgets) now work far more often.
