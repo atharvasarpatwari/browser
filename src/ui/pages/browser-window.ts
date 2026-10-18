@@ -616,7 +616,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
           find: () => { this.search?.openFindBar(); },
         },
       });
-      this.pageContextMenu.attach();
+      // Android drives its own native long-press sheet (android-native-bridge.ts); attaching here too would open both.
+      if (!this.config.hideChromeUI) this.pageContextMenu.attach();
       this.search?.enableSelection();
 
       // Wheel, keys and a scrollbar for pages taller than the viewport (desktop only).

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { BrowserWindowPage } from '../src/ui/pages/browser-window';
 import type { IBrowserWindowPage } from '../src/ui/pages/browser-window';
 import type { DomElement } from '../src/browser/rendering/dom-tree';
@@ -873,6 +873,38 @@ describe('android-native-bridge', () => {
     const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
     document.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('a long-press dwell and the contextmenu event that follows it open one menu, not two', () => {
+    const menuCalls: string[] = [];
+    (window as any).NovaStateBridge = {
+      onStateChanged: () => {},
+      onBookmarksChanged: () => {},
+      onHistoryChanged: () => {},
+      onContextMenuRequested: (json: string) => menuCalls.push(json),
+    };
+    installAndroidNativeBridge(makeFakePage());
+
+    vi.useFakeTimers();
+    try {
+      document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 30, clientY: 40 }));
+      vi.advanceTimersByTime(600); // dwell fires -> native sheet
+      expect(menuCalls.length).toBe(1);
+
+      // Chrome then fires its own contextmenu for the same press.
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 40 });
+      document.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(menuCalls.length).toBe(1);
+
+      // A fresh press asks again.
+      document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 30, clientY: 40 }));
+      document.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 40 }));
+      expect(menuCalls.length).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('contextmenu push is robust when the page has no layout engine (null target)', () => {
