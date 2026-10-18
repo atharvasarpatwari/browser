@@ -207,6 +207,68 @@ describe('ResourceLoader â€” Error handling with cache', () => {
   });
 });
 
+describe('ResourceLoader — binary bodies and revalidation', () => {
+  /** Serves `body` with `headers`; answers 304 when the request's If-None-Match matches `etag`. */
+  function validatingClient(body: string, headers: Record<string, string>, binary: Uint8Array | null = null) {
+    const sent: HttpRequestSpec[] = [];
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec): Promise<HttpResponseSpec> {
+        sent.push(spec);
+        const notModified = headers.etag !== undefined && spec.headers.get('if-none-match') === headers.etag;
+        return {
+          url: spec.url, statusCode: notModified ? 304 : 200, statusText: notModified ? 'Not Modified' : 'OK',
+          body: notModified ? '' : body, bodyBinary: notModified ? null : binary,
+          headers: new Map(Object.entries(headers)), redirected: false, redirectChain: [],
+        };
+      },
+    };
+    return { client, sent };
+  }
+
+  it('keeps the binary body of a cached image, so a revisit can still decode it', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const { client } = validatingClient('\u0089PNG', { 'content-type': 'image/png', 'cache-control': 'max-age=600' }, png);
+    const loader = new ResourceLoader(client, undefined, undefined, undefined, new CacheManager());
+    await loader.loadImage('https://example.com/a.png');
+    const again = await loader.loadImage('https://example.com/a.png');
+    expect(again.fromCache).toBe(true);
+    expect(again.bodyBinary).toEqual(png);
+  });
+
+  it('revalidates an expired entry with If-None-Match and reuses the body on 304', async () => {
+    const cache = new CacheManager();
+    const { client, sent } = validatingClient('body{}', { 'content-type': 'text/css', etag: '"v1"' });
+    const loader = new ResourceLoader(client, undefined, undefined, undefined, cache);
+    await cache.set('https://example.com/a.css', {
+      url: 'https://example.com/a.css', body: 'body{}', contentType: 'text/css', statusCode: 200,
+      headers: new Map(), etag: '"v1"', lastModified: null, immutable: false, expiresAt: 1,
+    });
+    const result = await loader.loadResource('https://example.com/a.css', 'stylesheet');
+    expect(sent[0]?.headers.get('if-none-match')).toBe('"v1"');
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toBe('body{}');
+    expect(result.fromCache).toBe(true);
+  });
+
+  it('stores a no-cache response that has a validator, and revalidates it on every use', async () => {
+    const { client, sent } = validatingClient('<p>hi</p>', { 'content-type': 'text/html', 'cache-control': 'no-cache', etag: '"p1"' });
+    const loader = new ResourceLoader(client, undefined, undefined, undefined, new CacheManager());
+    await loader.loadResource('https://example.com/', 'document');
+    const second = await loader.loadResource('https://example.com/', 'document');
+    expect(sent).toHaveLength(2);
+    expect(sent[1]?.headers.get('if-none-match')).toBe('"p1"');
+    expect(second.body).toBe('<p>hi</p>');
+  });
+
+  it('a reload skips revalidation and fetches the full response', async () => {
+    const { client, sent } = validatingClient('<p>hi</p>', { 'cache-control': 'no-cache', etag: '"p1"' });
+    const loader = new ResourceLoader(client, undefined, undefined, undefined, new CacheManager());
+    await loader.loadResource('https://example.com/', 'document');
+    await loader.loadResource('https://example.com/', 'document', { bypassCache: true });
+    expect(sent[1]?.headers.has('if-none-match')).toBe(false);
+  });
+});
+
 describe('ResourceLoader — Redirect following', () => {
   it('follows a 301 redirect and returns the final body', async () => {
     const requested: string[] = [];

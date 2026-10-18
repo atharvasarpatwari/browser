@@ -5,7 +5,7 @@ import type { IResponseParser } from './response-parser';
 import { ResponseParser } from './response-parser';
 import type { DiscoveredResource, DiscoveredResourceKind } from '../rendering/html-parser';
 import type { ITrackerBlocker } from '../security/tracker-blocker';
-import type { ICacheManager } from './cache-manager';
+import type { CacheEntry, ICacheManager } from './cache-manager';
 import type { ICorsEngine, CorsRequest } from '../security/cors';
 import { CorsMode, CorsCredentials, CorsBlockedError, CorsViolationError } from '../security/cors';
 import { parseOrigin, isSameOrigin, isSameSite } from '../security/origin-service';
@@ -56,6 +56,23 @@ interface IResourceLoader extends IDisposable {
   off(type: RequestEventType, handler: (event: RequestEvent) => void): void;
 }
 
+
+function fromCacheEntry(entry: CacheEntry, kind: DiscoveredResourceKind, durationMs: number): ResourceLoadResult {
+  return {
+    url: entry.url,
+    kind,
+    statusCode: entry.statusCode,
+    contentType: entry.contentType,
+    body: entry.body,
+    bodyBinary: entry.bodyBinary ?? null,
+    headers: entry.headers,
+    loadedAt: Date.now(),
+    durationMs,
+    fromCache: true,
+    error: null,
+  };
+}
+
 class ResourceLoader implements IResourceLoader {
   private readonly client: IHttpClient;
   private readonly responseParser: IResponseParser;
@@ -94,23 +111,11 @@ class ResourceLoader implements IResourceLoader {
 
   async loadResource(url: string, _kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
     // ── Cache check ─────────────────────────────────────────────────────────
+    let stale: CacheEntry | null = null;
     if (this.cache && !options?.bypassCache) {
       const cached = await this.cache.get(url);
-      if (cached) {
-        return {
-          url,
-          kind: _kind,
-          statusCode: cached.statusCode,
-          contentType: cached.contentType,
-          body: cached.body,
-          bodyBinary: null,
-          headers: cached.headers,
-          loadedAt: Date.now(),
-          durationMs: 0,
-          fromCache: true,
-          error: null,
-        };
-      }
+      if (cached) return fromCacheEntry(cached, _kind, 0);
+      stale = (await this.cache.getStale?.(url)) ?? null;
     }
 
     const priorityWeight = options?.priority ? this.priorityWeight(options.priority) : 2;
@@ -157,7 +162,6 @@ class ResourceLoader implements IResourceLoader {
         const preCheck = this.cors.checkRequest(corsReq);
 
         if (preCheck.decision === 'blocked') {
-          this.releaseSlot();
           return {
             url,
             kind: _kind,
@@ -184,7 +188,6 @@ class ResourceLoader implements IResourceLoader {
             await this.cors.performPreflight(corsReq, { send: this.client.send.bind(this.client) } as never, signal);
             corsPreflightDone = true;
           } catch (err) {
-            this.releaseSlot();
             const reason = err instanceof Error ? err.message : String(err);
             return {
               url,
@@ -203,9 +206,14 @@ class ResourceLoader implements IResourceLoader {
         }
       }
 
+      // Conditional request for an expired entry: a 304 lets us reuse the cached body.
+      const requestHeaders = new Map(headers);
+      if (stale?.etag) requestHeaders.set('if-none-match', stale.etag);
+      if (stale?.lastModified) requestHeaders.set('if-modified-since', stale.lastModified);
+
       const specBase: Omit<HttpRequestSpec, 'url'> = {
         method: 'GET',
-        headers,
+        headers: requestHeaders,
         timeoutMs: options?.timeoutMs ?? 15_000,
       };
 
@@ -247,8 +255,28 @@ class ResourceLoader implements IResourceLoader {
         throw err;
       }
 
-      const parsed = this.responseParser.parse(res);
       const durationMs = Date.now() - start;
+      const cacheControl = (res.headers.get('cache-control') ?? '').toLowerCase();
+      const maxAgeMatch = /(?:^|[,\s])max-age=(\d+)/.exec(cacheControl);
+      const ttlMs = maxAgeMatch ? parseInt(maxAgeMatch[1]!) * 1000 : undefined;
+      // no-cache / max-age=0: store only with a validator, already expired, so every use revalidates.
+      const mustRevalidate = /no-cache/.test(cacheControl) || ttlMs === 0;
+      const expiresAt = mustRevalidate ? 0 : ttlMs ? Date.now() + ttlMs : null;
+
+      if (res.statusCode === 304 && stale && this.cache) {
+        const headers304 = new Map([...stale.headers, ...res.headers]);
+        const { key: _k, createdAt: _c, lastAccessedAt: _l, sizeBytes: _s, ...kept } = stale;
+        await this.cache.set(url, {
+          ...kept,
+          headers: headers304,
+          etag: res.headers.get('etag') ?? stale.etag,
+          lastModified: res.headers.get('last-modified') ?? stale.lastModified,
+          expiresAt,
+        });
+        return fromCacheEntry({ ...stale, headers: headers304 }, _kind, durationMs);
+      }
+
+      const parsed = this.responseParser.parse(res);
 
       // ── CORS post-response check ────────────────────────────────────────
       if (this.cors && this.pageOrigin && !corsPreflightDone) {
@@ -264,7 +292,6 @@ class ResourceLoader implements IResourceLoader {
           this.cors.checkResponse(corsReq, res);
         } catch (err) {
           if (err instanceof CorsViolationError) {
-            this.releaseSlot();
             return {
               url,
               kind: _kind,
@@ -292,7 +319,6 @@ class ResourceLoader implements IResourceLoader {
         if (isCrossOrigin && corp) {
           const corpValue = corp.trim().toLowerCase();
           if (corpValue === 'same-origin') {
-            this.releaseSlot();
             return {
               url,
               kind: _kind,
@@ -308,7 +334,6 @@ class ResourceLoader implements IResourceLoader {
             };
           }
           if (corpValue === 'same-site' && !isSameSite(this.pageOrigin, requestOrigin)) {
-            this.releaseSlot();
             return {
               url,
               kind: _kind,
@@ -331,28 +356,25 @@ class ResourceLoader implements IResourceLoader {
       this.bandwidth.record(res.body.length, durationMs);
 
       // ── Populate cache ────────────────────────────────────────────────────
-      // no-store / no-cache / max-age=0 mark dynamic responses (most HTML pages); keeping them
-      // served a stale page for the 5-minute default TTL. ponytail: no-cache really means
-      // "revalidate" (If-None-Match); skipping the cache is the safe subset until 304s are handled.
-      const cacheControl = (res.headers.get('cache-control') ?? '').toLowerCase();
-      const maxAgeMatch = /(?:^|[,\s])max-age=(\d+)/.exec(cacheControl);
-      const ttlMs = maxAgeMatch ? parseInt(maxAgeMatch[1]!) * 1000 : undefined;
-      const storable = !/no-store|no-cache/.test(cacheControl) && ttlMs !== 0;
+      // no-store is never kept; no-cache / max-age=0 (most HTML pages) only with a validator,
+      // since without one the 5-minute default TTL would serve a stale page.
+      const etag = res.headers.get('etag') ?? null;
+      const lastModified = res.headers.get('last-modified') ?? null;
+      const storable = !/no-store/.test(cacheControl) && (!mustRevalidate || etag !== null || lastModified !== null);
       if (this.cache && storable && res.statusCode >= 200 && res.statusCode < 400) {
-        const etag = res.headers.get('etag') ?? null;
-        const lastModified = res.headers.get('last-modified') ?? null;
         const immutable = cacheControl.includes('immutable');
 
         await this.cache.set(url, {
           url,
           body: res.body,
+          bodyBinary: res.bodyBinary,
           contentType: parsed.mimeType.full || 'application/octet-stream',
           statusCode: res.statusCode,
           headers: res.headers,
           etag,
           lastModified,
           immutable,
-          expiresAt: ttlMs ? Date.now() + ttlMs : null,
+          expiresAt,
         });
       }
 

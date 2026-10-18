@@ -10,13 +10,13 @@ const SHIM = readFileSync(path.resolve(__dirname, '../android/bridge/nova-bridge
 interface NativeCall { id: string; method: string; url: string; headers: Record<string, string>; body: Buffer | null }
 
 /** Loads the shim into a fake `window` whose NovaFetchBridge records calls and answers 200 "ok". */
-function loadShim() {
+function loadShim(reply: Record<string, unknown> = { status: 200, headers: { 'Content-Type': 'text/plain' }, bodyText: 'ok' }) {
   const calls: NativeCall[] = [];
   const win: Record<string, any> = { fetch: async () => new Response('real fetch') };
   win.NovaFetchBridge = {
     fetch(id: string, method: string, url: string, headersJson: string, _redirect: string, bodyBase64: string | null) {
       calls.push({ id, method, url, headers: JSON.parse(headersJson), body: bodyBase64 == null ? null : Buffer.from(bodyBase64, 'base64') });
-      queueMicrotask(() => win.__novaFetchResolve(id, { status: 200, headers: { 'Content-Type': 'text/plain' }, bodyText: 'ok' }));
+      queueMicrotask(() => win.__novaFetchResolve(id, reply));
     },
     abort() {},
   };
@@ -77,5 +77,16 @@ describe('nova-bridge.js request bodies', () => {
     ctl.abort();
     await expect(fetch('https://example.com/x', { method: 'POST', body: 'x', signal: ctl.signal })).rejects.toThrow(/Aborted/);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('nova-bridge.js responses', () => {
+  // Kotlin sends bodyText "" for an empty body; new Response("", { status: 304 }) throws, which
+  // rejected every 204/304 (and so every cache revalidation) on Android.
+  it.each([204, 304])('resolves a %i with an empty body instead of rejecting', async (status) => {
+    const { fetch } = loadShim({ status, headers: { ETag: '"v1"' }, bodyText: '' });
+    const res = await fetch('https://example.com/a.css', { headers: { 'If-None-Match': '"v1"' } });
+    expect(res.status).toBe(status);
+    expect(res.headers.get('etag')).toBe('"v1"');
   });
 });

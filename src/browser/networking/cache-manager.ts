@@ -4,6 +4,8 @@ interface CacheEntry {
   readonly key: string;
   readonly url: string;
   readonly body: string;
+  /** Raw bytes for binary bodies (images, fonts); the image decoder needs these, not `body`. */
+  readonly bodyBinary?: Uint8Array | null;
   readonly headers: ReadonlyMap<string, string>;
   readonly contentType: string;
   readonly statusCode: number;
@@ -48,6 +50,8 @@ interface CacheStats {
 
 interface ICacheManager extends IDisposable {
   get(url: string): Promise<CacheEntry | null>;
+  /** An expired entry kept for revalidation (it has an ETag or Last-Modified), or null. */
+  getStale?(url: string): Promise<CacheEntry | null>;
   set(url: string, entry: Omit<CacheEntry, 'key' | 'createdAt' | 'lastAccessedAt' | 'sizeBytes'>): Promise<void>;
   delete(url: string): Promise<boolean>;
   clear(): Promise<void>;
@@ -79,8 +83,11 @@ class CacheManager implements ICacheManager {
     }
 
     if (entry.expiresAt !== null && entry.expiresAt < Date.now()) {
-      this.store.delete(url);
-      this.totalSizeBytes -= entry.sizeBytes;
+      // Keep it if it can be revalidated with a conditional request (304 = reuse the body).
+      if (!this.canRevalidate(entry)) {
+        this.store.delete(url);
+        this.totalSizeBytes -= entry.sizeBytes;
+      }
       this.missCount++;
       return null;
     }
@@ -94,8 +101,17 @@ class CacheManager implements ICacheManager {
     return updated;
   }
 
+  async getStale(url: string): Promise<CacheEntry | null> {
+    const entry = this.store.get(url);
+    return entry && this.canRevalidate(entry) ? entry : null;
+  }
+
+  private canRevalidate(entry: CacheEntry): boolean {
+    return this.policy.enableEtagRevalidation && (entry.etag !== null || entry.lastModified !== null);
+  }
+
   async set(url: string, data: Omit<CacheEntry, 'key' | 'createdAt' | 'lastAccessedAt' | 'sizeBytes'>): Promise<void> {
-    const sizeBytes = data.body.length;
+    const sizeBytes = data.bodyBinary?.length ?? data.body.length;
     const createdAt = Date.now();
 
     const expiresAt = data.expiresAt ?? (createdAt + this.policy.defaultTtlMs);
@@ -104,6 +120,7 @@ class CacheManager implements ICacheManager {
       key: url,
       url,
       body: data.body,
+      bodyBinary: data.bodyBinary ?? null,
       headers: data.headers,
       contentType: data.contentType,
       statusCode: data.statusCode,
@@ -195,7 +212,7 @@ class CacheManager implements ICacheManager {
     let pruned = 0;
 
     for (const [url, entry] of this.store) {
-      if (entry.expiresAt !== null && entry.expiresAt < now) {
+      if (entry.expiresAt !== null && entry.expiresAt < now && !this.canRevalidate(entry)) {
         this.store.delete(url);
         this.totalSizeBytes -= entry.sizeBytes;
         pruned++;

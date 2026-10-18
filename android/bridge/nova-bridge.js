@@ -117,7 +117,11 @@
     }
 
     var body = null;
-    if (payload.bodyBase64) {
+    // 101/103/204/205/304 must have a null body: Response("", {status: 304}) throws.
+    var nullBodyStatus = [101, 103, 204, 205, 304].indexOf(payload.status) !== -1;
+    if (nullBodyStatus) {
+      body = null;
+    } else if (payload.bodyBase64) {
       body = base64ToBytes(payload.bodyBase64);
     } else if (payload.bodyText !== undefined && payload.bodyText !== null) {
       body = payload.bodyText;
