@@ -71,6 +71,24 @@ describe('ResourceLoader â€” Cache integration', () => {
     expect(after.body).toBe('body{color:red}');
   });
 
+  it.each(['no-store', 'no-cache', 'private, max-age=0, must-revalidate'])(
+    'does not keep a response marked "%s" (dynamic pages stay fresh)',
+    async (cacheControl) => {
+      const url = 'https://example.com/news';
+      const l = new ResourceLoader(mockClient({ [url]: { body: 'today', headers: { 'content-type': 'text/html', 'cache-control': cacheControl } } }), undefined, undefined, undefined, cache);
+      await l.loadResource(url, 'document');
+      expect(await cache.get(url)).toBeNull();
+    },
+  );
+
+  it('honours max-age as the freshness lifetime', async () => {
+    const url = 'https://example.com/app.js';
+    const l = new ResourceLoader(mockClient({ [url]: { body: 'x', headers: { 'cache-control': 'public, max-age=3600' } } }), undefined, undefined, undefined, cache);
+    await l.loadResource(url, 'script');
+    const entry = await cache.get(url);
+    expect(entry?.expiresAt).toBeGreaterThan(Date.now() + 3500 * 1000);
+  });
+
   it('cache miss triggers network fetch', async () => {
     const result = await loader.loadResource('https://example.com/a.css', 'stylesheet');
     expect(result.fromCache).toBe(false);

@@ -37,8 +37,8 @@ const PAGE = `<html><head><style>
   @media (max-width: 600px) { p { color: rgb(255, 0, 0); } }
 </style></head><body><p id="t">Hello</p></body></html>`;
 
-const load = (url = 'https://example.com/') => ({
-  url, statusCode: 200, contentType: 'text/html', body: PAGE, headers: new Map([['content-type', 'text/html']]), loadedAt: Date.now(),
+const load = (url = 'https://example.com/', body = PAGE) => ({
+  url, statusCode: 200, contentType: 'text/html', body, headers: new Map([['content-type', 'text/html']]), loadedAt: Date.now(),
 });
 
 const colorOf = (domTree: DomTree) => (domTree.getElementById('t')?.computedStyle as Map<string, string> | undefined)?.get('color');
@@ -72,5 +72,35 @@ describe('PageRenderer.setViewport', () => {
     expect(onFrameRendered).toHaveBeenCalledTimes(1);
     renderer.setViewport(400, 800, 2);
     expect(onFrameRendered).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Modern sites wrap most of their CSS in @supports / @layer (Tailwind v4, Bootstrap 5.3, …);
+// the legacy pipe used to drop both, so those pages rendered unstyled on Android.
+const colorById = (domTree: DomTree, id: string) => (domTree.getElementById(id)?.computedStyle as Map<string, string> | undefined)?.get('color');
+
+describe('PageRenderer conditional and layered CSS', () => {
+  it('applies @supports blocks whose condition holds and skips the rest', async () => {
+    const { renderer, domTree } = makeRenderer();
+    await renderer.render(load(undefined, `<html><head><style>
+      @supports (display: grid) { #yes { color: rgb(0, 128, 0); } }
+      @supports (not-a-property: 1) { #no { color: rgb(255, 0, 0); } }
+      @supports not (not-a-property: 1) { #not { color: rgb(0, 0, 255); } }
+    </style></head><body><p id="yes">a</p><p id="no">b</p><p id="not">c</p></body></html>`), new AbortController().signal);
+    expect(colorById(domTree, 'yes')).toBe('rgb(0, 128, 0)');
+    expect(colorById(domTree, 'no')).not.toBe('rgb(255, 0, 0)');
+    expect(colorById(domTree, 'not')).toBe('rgb(0, 0, 255)');
+  });
+
+  it('applies rules inside @layer blocks, and @media nested in them', async () => {
+    const { renderer, domTree } = makeRenderer();
+    renderer.setViewport(412, 800, 2);
+    await renderer.render(load(undefined, `<html><head><style>
+      @layer base, utilities;
+      @layer base { #a { color: rgb(0, 128, 0); } }
+      @layer utilities { @media (max-width: 600px) { #b { color: rgb(0, 0, 255); } } }
+    </style></head><body><p id="a">a</p><p id="b">b</p></body></html>`), new AbortController().signal);
+    expect(colorById(domTree, 'a')).toBe('rgb(0, 128, 0)');
+    expect(colorById(domTree, 'b')).toBe('rgb(0, 0, 255)');
   });
 });

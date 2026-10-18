@@ -331,13 +331,17 @@ class ResourceLoader implements IResourceLoader {
       this.bandwidth.record(res.body.length, durationMs);
 
       // ── Populate cache ────────────────────────────────────────────────────
-      if (this.cache && res.statusCode >= 200 && res.statusCode < 400) {
+      // no-store / no-cache / max-age=0 mark dynamic responses (most HTML pages); keeping them
+      // served a stale page for the 5-minute default TTL. ponytail: no-cache really means
+      // "revalidate" (If-None-Match); skipping the cache is the safe subset until 304s are handled.
+      const cacheControl = (res.headers.get('cache-control') ?? '').toLowerCase();
+      const maxAgeMatch = /(?:^|[,\s])max-age=(\d+)/.exec(cacheControl);
+      const ttlMs = maxAgeMatch ? parseInt(maxAgeMatch[1]!) * 1000 : undefined;
+      const storable = !/no-store|no-cache/.test(cacheControl) && ttlMs !== 0;
+      if (this.cache && storable && res.statusCode >= 200 && res.statusCode < 400) {
         const etag = res.headers.get('etag') ?? null;
         const lastModified = res.headers.get('last-modified') ?? null;
-        const cacheControl = res.headers.get('cache-control') ?? '';
         const immutable = cacheControl.includes('immutable');
-        const maxAgeMatch = /max-age=(\d+)/.exec(cacheControl);
-        const ttlMs = maxAgeMatch ? parseInt(maxAgeMatch[1]!) * 1000 : undefined;
 
         await this.cache.set(url, {
           url,

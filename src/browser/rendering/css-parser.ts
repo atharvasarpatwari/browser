@@ -13,7 +13,7 @@ import { getElementsByTagName } from './html-parser';
 import { CssParser as Css5Parser, computeSelectorSpecificity } from './css5/parser';
 import { matchesSelector, querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll } from './css5/selector';
 import type { SelectableElement } from './css5/selector';
-import { computeComputedStyles, expandShorthands } from './css5/cascade';
+import { computeComputedStyles, evaluateSupportsCondition, expandShorthands } from './css5/cascade';
 import type { StyleableElement } from './css5/cascade';
 import type { CssStylesheet as Css5Stylesheet, CssRule as Css5Rule, CssSelector, CssSpecificity as Css5Specificity, CssCompoundSelector, CssMediaQuery } from './css5/types';
 
@@ -216,6 +216,18 @@ class CssParser implements ICssParser {
   ): CssRule[] {
     if (rule.type === 'media') {
       return rule.rules.flatMap((inner) => this.convertRule(inner, order, sourceUrl, [...media, rule.mediaQueries]));
+    }
+    // @supports is static (it doesn't depend on the viewport), so it's settled here.
+    if (rule.type === 'supports') {
+      return evaluateSupportsCondition(rule.condition)
+        ? rule.rules.flatMap((inner) => this.convertRule(inner, order, sourceUrl, media))
+        : [];
+    }
+    // ponytail: @layer contents are flattened in source order, so layer precedence is lost
+    // (layered rules should lose to unlayered ones). Fine for base/components/utilities stacks
+    // declared in order; carry the layer name on CssRule if a site needs the real ordering.
+    if (rule.type === 'layer') {
+      return rule.rules.flatMap((inner) => this.convertRule(inner, order, sourceUrl, media));
     }
     if (rule.type === 'keyframes') {
       return [{

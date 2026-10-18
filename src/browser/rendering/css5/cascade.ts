@@ -310,7 +310,7 @@ function evaluateSupportsAtom(condition: string): boolean {
  *   andExpr   = atom ('and' atom)*
  *   atom      = '(' condition ')' | 'not' atom | declaration
  */
-function evaluateSupportsCondition(condition: string): boolean {
+export function evaluateSupportsCondition(condition: string): boolean {
   const trimmed = condition.trim();
   if (!trimmed) return true;
 
