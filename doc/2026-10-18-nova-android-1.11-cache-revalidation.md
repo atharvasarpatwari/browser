@@ -96,3 +96,18 @@ apksigner verify Nova-1.11.apk                                          -> verif
 - Images no longer break when you come back to a page.
 - Coming back to a page uses less data: unchanged files are confirmed with the server rather than downloaded again.
 - Sites that answer with "204 No Content" (analytics beacons, some web apps) no longer error.
+
+## Follow-up — `E:\nova_1\doc\analytics.html` (main checkout, uncommitted)
+Asked for after 1.11 ("update E:\nova_1\doc\analytics.html").
+- **New entries:** registered the 1.10 and 1.11 docs and copied both `.md` files into `E:\nova_1\doc`, so the entries resolve. That makes 302 entries with full disk coverage both ways and no duplicates.
+- **Stale fallback stats:** the hardcoded values still said 295 documents. Recomputed them: 302 docs · 58 days · 10,573 tests · 567 root causes · 1,782 files. Updated the stamp to `2026-10-18 16:55:00`.
+- **Lost in the branch→main merge:**
+  - **Glassmorphism CSS:** the block added on 2026-10-17 was gone, because the merge took the branch copy of the file. Restored before `@media print` from this session's transcript.
+  - **Stray `see`:** `requestAnimationFrame(sweep);see` was back. It throws a ReferenceError at runtime; removed again.
+- **Verified:**
+  - `node --check` on the inline script passes.
+  - Loaded over `http://127.0.0.1:8765` in the built-in browser:
+    - KPIs render 302 / 10,573 / 567 / 1,782;
+    - the "Nova Android 1.11" row is present;
+    - `.glass` has `backdrop-filter: blur(22px) saturate(1.65)`;
+    - 0 console errors.
