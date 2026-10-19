@@ -45,6 +45,7 @@ import type {
 
 export class CssParser {
   private tokens: CssToken[];
+  private source = '';
   private pos: number;
   private sourceOrder: number;
   private sourceUrl: string | null;
@@ -62,6 +63,7 @@ export class CssParser {
     this.sourceOrder = 0;
     const tokens = this.cleanTokens(css);
     this.tokens = tokens;
+    this.source = css;
     this.pos = 0;
 
     const rules = this.consumeRuleList();
@@ -525,7 +527,16 @@ export class CssParser {
   // ───────────────────────────────────────────────────────────────────────────
 
   private consumeAtRule(keyword: string): CssRule | null {
-    const prelude = this.collectTokensUntil(CssTokenType.CurlyBracketOpen);
+    // CSS Syntax §5.4.2: an at-rule's prelude ends at '{' *or* ';'. Stopping only at '{' made a
+    // statement rule (@import/@charset/@namespace/@layer a, b;) swallow the following at-rules
+    // and the next style rule's selector: a sheet starting with @import lost its first rule.
+    const prelude: CssToken[] = [];
+    while (this.pos < this.tokens.length) {
+      const tok = this.current()!;
+      if (tok.type === CssTokenType.CurlyBracketOpen || tok.type === CssTokenType.Semicolon) break;
+      prelude.push(tok);
+      this.pos++;
+    }
 
     switch (keyword) {
       case 'media':
@@ -545,13 +556,14 @@ export class CssParser {
       case 'container':
         return this.consumeContainerRule(prelude);
       default:
-        this.skipAtRuleBody();
+        if (this.current()?.type === CssTokenType.Semicolon) this.pos++; // statement at-rule: no block
+        else this.skipAtRuleBody();
         return { type: 'unknown', atKeyword: keyword, prelude: tokensToText(prelude), body: '' };
     }
   }
 
   private consumeMediaRule(preludeTokens: CssToken[]): CssMediaRule {
-    const mediaQueries = parseMediaQueriesFromTokens(preludeTokens);
+    const mediaQueries = parseMediaQueries(this.sourceOf(preludeTokens));
 
     // Consume block
     if (this.current()?.type === CssTokenType.CurlyBracketOpen) {
@@ -564,27 +576,22 @@ export class CssParser {
   }
 
   private consumeImportRule(preludeTokens: CssToken[]): CssImportRule | null {
-    const preludeText = tokensToText(preludeTokens).trim();
-    // Extract URL
+    // Read the URL from the tokens themselves: url(...) and "..." arrive as Url/String tokens whose
+    // values have no wrapper or quotes, so the old regex over tokensToText() never matched and
+    // every @import was dropped. The media list is parsed from tokens, like @media's.
+    const [first, second] = preludeTokens;
     let url = '';
-    let afterUrl = preludeText;
-    const urlMatch = preludeText.match(/^url\((['"]?)(.+?)\1\)\s*(.*)/);
-    if (urlMatch) {
-      url = urlMatch[2]!;
-      afterUrl = urlMatch[3] ?? '';
-    } else {
-      const strMatch = preludeText.match(/^(['"])(.+?)\1\s*(.*)/);
-      if (strMatch) {
-        url = strMatch[2]!;
-        afterUrl = strMatch[3] ?? '';
-      }
+    let rest = preludeTokens.slice(1);
+    if (first && (first.type === CssTokenType.Url || first.type === CssTokenType.String)) {
+      url = first.value;
+    } else if (first?.type === CssTokenType.Function && first.value.replace(/\($/, '').toLowerCase() === 'url'
+      && second?.type === CssTokenType.String) {
+      url = second.value;
+      rest = preludeTokens.slice(2).filter((t, k) => !(k === 0 && t.type === CssTokenType.ParenthesisClose));
     }
     if (!url) return null;
 
-    // Parse media queries from remaining text
-    const mediaQueries = afterUrl.trim()
-      ? parseMediaQueries(afterUrl.trim())
-      : [];
+    const mediaQueries = rest.length > 0 ? parseMediaQueries(this.sourceOf(rest)) : [];
 
     // Consume ;
     if (this.current()?.type === CssTokenType.Semicolon) this.pos++;
@@ -922,6 +929,13 @@ export class CssParser {
 
   private cleanTokens(css: string): CssToken[] {
     return tokenizeClean(css);
+  }
+
+  /** The original text a token run came from. Whitespace tokens are dropped, so joining token
+   * values turned "screen and (max-width: 600px)" into "screenand(max-width:600px)". */
+  private sourceOf(tokens: readonly CssToken[]): string {
+    if (tokens.length === 0) return '';
+    return this.source.slice(tokens[0]!.start, tokens[tokens.length - 1]!.end);
   }
 }
 
@@ -1949,11 +1963,6 @@ function parseMediaQueries(prelude: string): CssMediaQuery[] {
   return queries.length > 0 ? queries : [{ modifier: null, mediaType: 'all', features: [], conjunction: null }];
 }
 
-function parseMediaQueriesFromTokens(tokens: CssToken[]): CssMediaQuery[] {
-  const text = tokensToText(tokens);
-  return parseMediaQueries(text);
-}
-
 function parseSingleMediaQuery(query: string): CssMediaQuery | null {
   if (!query) return null;
 
@@ -2152,4 +2161,4 @@ function tokenizeClean(css: string): CssToken[] {
   );
 }
 
-export { stripComments };
+export { stripComments, parseMediaQueries };

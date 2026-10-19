@@ -39,6 +39,7 @@ import type {
   CssStylesheet as Css5Stylesheet,
   CssRule as Css5Rule,
   CssStyleRule,
+  CssMediaQuery,
 } from '../rendering/css5/types';
 import type { IPageRenderer, PageLoadResult } from './browser-engine';
 import { CssTransitionEngine } from '../rendering/css-transitions';
@@ -346,27 +347,58 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Fetches each <link rel=stylesheet> and splices its rules in at the link's position.
    * They used to stay "__external__" placeholders that nothing loaded, so sites that keep
    * their CSS in files (nearly all of them) rendered unstyled. Render-blocking, as in browsers.
-   * ponytail: @import, the link's media attribute and CSP style-src aren't applied yet.
+   * The link's media attribute and @import media lists wrap the sheet's rules, so the cascade
+   * applies them only where they match. ponytail: CSP style-src isn't applied to sheets yet.
    */
   private async loadExternalStylesheets(rules: readonly CssRule[], baseUrl: string, signal: AbortSignal): Promise<readonly CssRule[]> {
-    const { resourceLoader, cssParser, securityLayer } = this.deps;
     const expanded = await Promise.all(rules.map(async (rule): Promise<readonly CssRule[]> => {
       if (rule.selector !== '__external__' || !rule.sourceUrl) return [rule];
       const url = PageRenderer.resolveUrl(rule.sourceUrl, baseUrl);
-      if (securityLayer && !securityLayer.checkSubresource(baseUrl, url, 'style').allowed) {
-        console.warn(`[Security] Blocked stylesheet: ${url}`);
-        return [rule];
-      }
-      try {
-        const css = await resourceLoader.loadStylesheet(url);
-        if (signal.aborted || !css) return [rule];
-        return [rule, ...cssParser.parseStylesheet(css, url).rules.map((r) => ({ ...r, source: 'external' as const }))];
-      } catch (err) {
-        console.warn(`[CSS] Failed to load stylesheet ${url}:`, err instanceof Error ? err.message : err);
-        return [rule];
-      }
+      return [rule, ...await this.fetchStylesheet(url, baseUrl, rule.media ?? [], new Set(), signal)];
     }));
     return expanded.flat();
+  }
+
+  /**
+   * One sheet plus its @imports, in cascade order: imported sheets first (they sit at the top of
+   * the importing sheet), then its own rules. `media` holds the enclosing link/import media lists.
+   */
+  private async fetchStylesheet(
+    url: string,
+    pageUrl: string,
+    media: readonly (readonly CssMediaQuery[])[],
+    seen: Set<string>,
+    signal: AbortSignal,
+  ): Promise<CssRule[]> {
+    const { resourceLoader, cssParser, securityLayer } = this.deps;
+    if (seen.has(url) || seen.size >= 16) return []; // @import cycles and runaway chains
+    seen.add(url);
+    if (securityLayer && !securityLayer.checkSubresource(pageUrl, url, 'style').allowed) {
+      console.warn(`[Security] Blocked stylesheet: ${url}`);
+      return [];
+    }
+    let css: string;
+    try {
+      css = await resourceLoader.loadStylesheet(url);
+    } catch (err) {
+      console.warn(`[CSS] Failed to load stylesheet ${url}:`, err instanceof Error ? err.message : err);
+      return [];
+    }
+    if (signal.aborted || !css) return [];
+
+    const imports = (cssParser as CssParser).getCss5Parser().parseStylesheetRobust(css, url).rules
+      .filter((r): r is Extract<Css5Rule, { type: 'import' }> => r.type === 'import');
+    const imported = await Promise.all(imports.map((imp) => this.fetchStylesheet(
+      PageRenderer.resolveUrl(imp.url, url), pageUrl,
+      imp.mediaQueries.length > 0 && !imp.mediaQueries.every((q) => q.mediaType === 'all' && q.features.length === 0 && !q.modifier)
+        ? [...media, imp.mediaQueries] : media,
+      seen, signal)));
+    const own = cssParser.parseStylesheet(css, url).rules.map((r) => ({
+      ...r,
+      source: 'external' as const,
+      ...(media.length > 0 ? { media: [...media, ...(r.media ?? [])] } : {}),
+    }));
+    return [...imported.flat(), ...own];
   }
 
   private applyComputedStyles(rules: readonly CssRule[]): void {

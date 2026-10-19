@@ -324,3 +324,52 @@ describe('external stylesheets (<link rel=stylesheet>)', () => {
     expect(find('p').computedStyle?.get('font-weight')).toBe('700');
   });
 });
+
+describe('@import and <link media>', () => {
+  it('loads @import-ed sheets (relative to the importing sheet), before the importer\'s own rules', async () => {
+    const { find } = await renderAtPhoneWidth(
+      '<html><head><link rel="stylesheet" href="/css/main.css"></head><body><p>x</p></body></html>', '',
+      {
+        'https://example.com/css/main.css': '@import url("base.css");\np { color: rgb(1, 1, 1) }',
+        'https://example.com/css/base.css': 'p { color: rgb(2, 2, 2); font-size: 21px }',
+      });
+    expect(find('p').computedStyle?.get('font-size')).toBe('21px');      // from the import
+    expect(find('p').computedStyle?.get('color')).toBe('rgb(1, 1, 1)');  // importer wins: it comes later
+  });
+
+  it('applies an @import media list and a <link media> only when they match', async () => {
+    const { find } = await renderAtPhoneWidth(
+      `<html><head>
+        <link rel="stylesheet" href="/print.css" media="print">
+        <link rel="stylesheet" href="/phone.css" media="(max-width: 600px)">
+        <link rel="stylesheet" href="/i.css"></head><body><p>x</p><h1>h</h1></body></html>`, '',
+      {
+        'https://example.com/print.css': 'p { color: rgb(9, 0, 0) }',
+        'https://example.com/phone.css': 'p { font-size: 13px }',
+        'https://example.com/i.css': '@import "wide.css" (min-width: 2000px);',
+        'https://example.com/wide.css': 'h1 { color: rgb(0, 9, 0) }',
+      });
+    expect(find('p').computedStyle?.get('color')).not.toBe('rgb(9, 0, 0)');
+    expect(find('p').computedStyle?.get('font-size')).toBe('13px');
+    expect(find('h1').computedStyle?.get('color')).not.toBe('rgb(0, 9, 0)');
+  });
+
+  it('survives an @import cycle', async () => {
+    const { find } = await renderAtPhoneWidth(
+      '<html><head><link rel="stylesheet" href="/a.css"></head><body><p>x</p></body></html>', '',
+      { 'https://example.com/a.css': '@import "b.css"; p { font-size: 19px }', 'https://example.com/b.css': '@import "a.css";' });
+    expect(find('p').computedStyle?.get('font-size')).toBe('19px');
+  });
+});
+
+describe('CSS5 parser @import', () => {
+  it('reads url("…"), url(…) and "…" forms, with a media list', async () => {
+    const { CssParser: Css5 } = await import('../src/browser/rendering/css5/parser');
+    const rules = new Css5().parseStylesheet('@import url("a.css");\n@import url(b.css) screen and (max-width: 600px);\n@import \'c.css\';\np{}').rules;
+    const imports = rules.flatMap((r) => (r.type === 'import' ? [r] : []));
+    expect(imports.map((i) => i.url)).toEqual(['a.css', 'b.css', 'c.css']);
+    expect(imports[1]!.mediaQueries[0]).toMatchObject({ mediaType: 'screen' });
+    expect(imports[1]!.mediaQueries[0]!.features).toHaveLength(1);
+    expect(rules.some((r) => r.type === 'style')).toBe(true);
+  });
+});

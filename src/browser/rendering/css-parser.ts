@@ -10,7 +10,7 @@ import type { IDisposable } from '../../app/dependency-container';
 import type { HtmlDocument, HtmlElement } from './html-parser';
 import { getElementsByTagName } from './html-parser';
 
-import { CssParser as Css5Parser, computeSelectorSpecificity } from './css5/parser';
+import { CssParser as Css5Parser, computeSelectorSpecificity, parseMediaQueries } from './css5/parser';
 import { matchesSelector, querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll } from './css5/selector';
 import type { SelectableElement } from './css5/selector';
 import { computeComputedStyles, evaluateSupportsCondition, expandShorthands } from './css5/cascade';
@@ -132,6 +132,7 @@ class CssParser implements ICssParser {
       const rel = link.attributes.get('rel')?.toLowerCase();
       if (rel === 'stylesheet') {
         const href = link.attributes.get('href');
+        const media = link.attributes.get('media')?.trim();
         if (href) {
           allRules.push({
             selector: '__external__',
@@ -139,6 +140,8 @@ class CssParser implements ICssParser {
             declarations: new Map(),
             source: 'external',
             sourceUrl: href,
+            // <link media="print"> etc.: the loader applies the sheet's rules only where this matches
+            ...(media && media.toLowerCase() !== 'all' ? { media: [parseMediaQueries(media)] } : {}),
           });
         }
       }
