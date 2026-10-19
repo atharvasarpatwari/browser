@@ -2,7 +2,7 @@ import type { DomElement, DomDocument, IDomTree } from './dom-tree';
 import { IntersectionObserver, type IntersectionObserverEntry } from './intersection-observer';
 import { FrameScheduler } from './frame-scheduler';
 import type { IResourceLoader } from '../networking/resource-loader';
-import { ImageDecoder, isSupportedImageType } from '../image/decoder';
+import { ImageDecoder } from '../image/decoder';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -271,8 +271,9 @@ export class LazyLoader {
         return;
       }
 
-      // Decode the binary data
-      if (isSupportedImageType(result.contentType)) {
+      // Decode the binary data. No MIME pre-filter: the decoder returns null for what it can't
+      // read, and with platform codecs it reads GIF, SVG and AVIF too (the filter dropped them).
+      {
         const decoded = await this.decoder!.decode(result.bodyBinary, result.contentType);
         if (decoded) {
           el.imageData = { data: decoded.data as unknown as ImageDataArray, width: decoded.width, height: decoded.height, colorSpace: 'srgb' };
