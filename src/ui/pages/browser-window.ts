@@ -383,8 +383,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.container.className = 'browser-window';
     this.container.style.cssText = 'display:flex;flex-direction:column;height:100%;width:100%;overflow:hidden;';
 
-    // Detect mobile viewport: use MobileLayout when width < 768px
-    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+    // Detect mobile viewport: use MobileLayout when width < 768px. Inside the Android app
+    // (hideChromeUI) always: a tablet's WebView is wider than 768 px, and the desktop layout then
+    // showed its status strip above the native bottom bar and a white sidebar column.
+    const isMobile = this.config.hideChromeUI || (typeof window !== 'undefined' && window.innerWidth < 768);
     this.layoutType = isMobile ? 'mobile' : 'desktop';
 
     if (isMobile) {

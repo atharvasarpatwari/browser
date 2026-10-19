@@ -13,7 +13,8 @@ describe('BrowserWindowPage — page context menu per platform', () => {
       document.body.appendChild(host);
       const page = new BrowserWindowPage({ hideChromeUI });
       await page.mount(host);
-      const area = host.querySelector('.content-area') as HTMLElement;
+      // Desktop layout: .content-area; the Android app (hideChromeUI) always uses the mobile layout's .mobile-content.
+      const area = host.querySelector('.content-area, .mobile-content') as HTMLElement;
       const canvas = document.createElement('canvas');
       canvas.width = 400; canvas.height = 400;
       area.appendChild(canvas);
