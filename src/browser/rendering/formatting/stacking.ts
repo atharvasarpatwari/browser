@@ -76,7 +76,14 @@ function getZIndexRaw(style: ReadonlyMap<string, string>): string | undefined {
 }
 
 function getOpacity(style: ReadonlyMap<string, string>): number {
-  return parseFloat(style.get('opacity') ?? '1') || 1;
+  return cssOpacity(style.get('opacity'));
+}
+
+/** Computed opacity in [0, 1]; `parseFloat(v) || 1` used to turn opacity:0 into fully opaque. */
+export function cssOpacity(value: string | undefined): number {
+  if (!value) return 1;
+  const v = parseFloat(value) / (value.trim().endsWith('%') ? 100 : 1);
+  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
 }
 
 function getTransform(style: ReadonlyMap<string, string>): string | undefined {
@@ -348,6 +355,8 @@ export function renderStackingContext(
   paintElement: (el: DomElement) => PaintCmd[],
 ): PaintCmd[] {
   const commands: PaintCmd[] = [];
+  // An opacity:0 group (fade-in overlays, closed menus' masks) paints nothing.
+  if (ctx.isGrouped && ctx.groupOpacity <= 0) return commands;
 
   const hasTranslate = ctx.translate && (ctx.translate.x !== 0 || ctx.translate.y !== 0);
   const groupOpened = ctx.isGrouped || hasTranslate;

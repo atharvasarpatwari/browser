@@ -1,3 +1,4 @@
+import { controlIntrinsicSize, skipsChildLayout } from './form-controls';
 import type { IDisposable } from '../../app/dependency-container';
 import type { IDomTree, DomDocument, DomElement, DomNode, DomTextNode, LayoutBox, TextRun } from './dom-tree';
 import { DamageTracker } from './damage-tracker';
@@ -108,6 +109,10 @@ class LayoutEngine implements ILayoutEngine {
   private readonly layoutBoxes = new Map<string, LayoutBox>();
   private readonly elementPositions: Array<{ element: DomElement; box: LayoutBox }> = [];
   private rootFontSize = DEFAULT_LAYOUT_CONFIG.defaultFontSize;
+  /** Inline-blocks whose content waits to be moved to where their line puts them (see placeInlineBlocks). */
+  private pendingInlineBlocks: DomElement[] = [];
+  /** True while an inline-block's content is measured for shrink-to-fit: lines are not aligned. */
+  private measuringShrinkToFit = false;
 
   /** Queue of absolute/fixed elements to lay out after normal flow. */
   private positionedQueue: Array<{
@@ -428,8 +433,14 @@ class LayoutEngine implements ILayoutEngine {
       childY = this.layoutFlexContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
     } else if (fmtType === 'grid' || fmtType === 'inline-grid') {
       childY = this.layoutGridContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
-    } else if (fmtType === 'table' || fmtType === 'inline-table') {
+    } else if ((fmtType === 'table' || fmtType === 'inline-table') && display !== 'table-cell' && display !== 'table-caption') {
       childY = this.layoutTableContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
+    } else if (fmtType === 'table') {
+      // A cell's (or caption's) content is an ordinary block formatting context. It was sent back
+      // through table layout, which found no rows in it, so content such as Wikipedia's search
+      // field (an inline-block in a display:table-cell div) was never laid out.
+      // ponytail: consecutive orphan cells stack instead of sharing an anonymous row.
+      childY = this.layoutBlockChildren(node, contentX, contentY, contentWidth, fontSize, domTree);
     } else if (isBlock) {
       childY = this.layoutBlockChildren(node, contentX, contentY, contentWidth, fontSize, domTree);
     } else {
@@ -800,6 +811,7 @@ class LayoutEngine implements ILayoutEngine {
       defaultFontSize: parentFontSize,
       originX: contentX,
     });
+    const inlineBlocksFrom = this.pendingInlineBlocks.length;
     const parentStyle = parent.computedStyle ?? new Map();
     const parentLineHeight = this.resolveLineHeight(parentStyle, parentFontSize);
 
@@ -838,8 +850,9 @@ class LayoutEngine implements ILayoutEngine {
       }
     }
 
-    const totalHeight = ifc.finalize(parentStyle.get('text-align'));
+    const totalHeight = ifc.finalize(this.measuringShrinkToFit ? 'start' : parentStyle.get('text-align'));
     this.populateTextRuns(parent, ifc, parentFontSize);
+    this.placeInlineBlocks(inlineBlocksFrom);
     return startY + Math.max(totalHeight, parentLineHeight);
   }
 
@@ -1486,6 +1499,7 @@ class LayoutEngine implements ILayoutEngine {
       defaultFontSize: parentFontSize,
       originX: contentX,
     });
+    const inlineBlocksFrom = this.pendingInlineBlocks.length;
 
     for (const child of parent.children) {
       if (child.nodeType === 'text') {
@@ -1527,10 +1541,11 @@ class LayoutEngine implements ILayoutEngine {
       }
     }
 
-    const totalHeight = ifc.finalize(parent.computedStyle?.get('text-align'));
+    const totalHeight = ifc.finalize(this.measuringShrinkToFit ? 'start' : parent.computedStyle?.get('text-align'));
 
     // Populate text runs on the parent's LayoutBox for painting
     this.populateTextRuns(parent, ifc, parentFontSize);
+    this.placeInlineBlocks(inlineBlocksFrom);
 
     return contentY + Math.max(totalHeight, this.resolveLineHeight(parent.computedStyle ?? new Map(), parentFontSize));
   }
@@ -1748,9 +1763,7 @@ class LayoutEngine implements ILayoutEngine {
   ): void {
     const elStyle = el.computedStyle ?? new Map();
     const elFontSize = this.resolveFontSize(elStyle, parentFontSize);
-    const lineHeight = this.resolveLineHeight(elStyle, elFontSize);
 
-    // Resolve the element's width (for the inline box width)
     const resolve = (prop: string, fallback: string): number =>
       this.resolveLength(elStyle.get(prop) ?? fallback, elFontSize, availableWidth);
 
@@ -1758,83 +1771,141 @@ class LayoutEngine implements ILayoutEngine {
     const marginR = resolve('margin-right', elStyle.get('margin') ?? '0');
     const padL = resolve('padding-left', elStyle.get('padding') ?? '0');
     const padR = resolve('padding-right', elStyle.get('padding') ?? '0');
+    const padT = resolve('padding-top', elStyle.get('padding') ?? '0');
+    const padB = resolve('padding-bottom', elStyle.get('padding') ?? '0');
     const borderL = this.parseBorderWidth(elStyle.get('border-left-width') ?? '0');
     const borderR = this.parseBorderWidth(elStyle.get('border-right-width') ?? '0');
+    const borderT = this.parseBorderWidth(elStyle.get('border-top-width') ?? '0');
+    const borderB = this.parseBorderWidth(elStyle.get('border-bottom-width') ?? '0');
+    const boxSizing = elStyle.get('box-sizing') ?? 'content-box';
 
     const specWidth = elStyle.get('width');
     const intrinsic = this.resolveIntrinsicSize(el);
+    const autoWidth = !(specWidth && specWidth !== 'auto') && intrinsic.width == null;
     let innerWidth: number;
-    if (specWidth && specWidth !== 'auto') {
+    if (!autoWidth && specWidth && specWidth !== 'auto') {
       const specified = resolve('width', '0');
-      const boxSizing = elStyle.get('box-sizing') ?? 'content-box';
-      if (boxSizing === 'border-box') {
-        innerWidth = Math.min(specified, availableWidth) - padL - padR - borderL - borderR;
-      } else {
-        innerWidth = Math.min(specified, availableWidth);
-      }
+      innerWidth = boxSizing === 'border-box'
+        ? Math.min(specified, availableWidth) - padL - padR - borderL - borderR
+        : Math.min(specified, availableWidth);
     } else if (intrinsic.width != null) {
       innerWidth = intrinsic.width;
     } else {
       innerWidth = availableWidth - marginL - marginR - padL - padR - borderL - borderR;
     }
+    innerWidth = Math.max(0, innerWidth);
 
-    const totalWidth = marginL + padL + borderL + innerWidth + borderR + padR + marginR;
-
-    // Create a preliminary box for hit testing
+    // Register before the children so they come later in hit-testing order (deepest first).
     const box: LayoutBox = {
-      x: 0, y: 0,
-      width: totalWidth,
-      height: 0, // updated after internal layout
+      x: 0, y: 0, width: 0, height: 0,
       marginTop: 0, marginRight: marginR, marginBottom: 0, marginLeft: marginL,
-      paddingTop: 0, paddingRight: padR, paddingBottom: 0, paddingLeft: padL,
-      borderTop: 0, borderRight: borderR, borderBottom: 0, borderLeft: borderL,
+      paddingTop: padT, paddingRight: padR, paddingBottom: padB, paddingLeft: padL,
+      borderTop: borderT, borderRight: borderR, borderBottom: borderB, borderLeft: borderL,
     };
-
-    const inlineBox = {
-      element: el,
-      box,
-      baselineOffset: elFontSize * 0.8,
-      isAnonymous: false,
-    };
-
-    ifc.addBox(inlineBox);
-
-    // Register element for hit testing
     this.layoutBoxes.set(el.domId, box);
     this.elementPositions.push({ element: el, box });
+    if (domTree) domTree.setLayoutBox(el, box);
 
-    // Write back to DOM tree
-    if (domTree) {
-      domTree.setLayoutBox(el, box);
+    // Content first, at a local origin (the border box's top-left is 0,0). The line decides where
+    // the box goes; placeInlineBlocks() then moves the content there. It used to stay at the
+    // origin, so every inline-block's content (button labels, nav pills) was drawn at the page's
+    // top-left, and the box was added to the line before its size was known.
+    const childX = borderL + padL;
+    const childY = borderT + padT;
+    const layoutContent = (width: number): number => (skipsChildLayout(el)
+      ? childY
+      : this.layoutBlockChildren(el, childX, childY, width, elFontSize, domTree));
+    let childBottom: number;
+    if (autoWidth) {
+      // Shrink-to-fit (CSS 2.2 §10.3.9): measure the content with text-align off (centred text
+      // would report where it was centred, not how wide it is), then lay it out at that width so
+      // alignment happens inside the final box. ponytail: block children still report the full
+      // available width, so a <div> inside an inline-block keeps it wide.
+      const positionsMark = this.elementPositions.length;
+      const pendingMark = this.pendingInlineBlocks.length;
+      const wasMeasuring = this.measuringShrinkToFit;
+      this.measuringShrinkToFit = true;
+      layoutContent(innerWidth);
+      this.measuringShrinkToFit = wasMeasuring;
+      // min(max(min-content, available), preferred): content laid out at the available width is
+      // already as wide as that (an unbreakable or nowrap label overflows to its min-content), so
+      // the measured extent is the answer. Capping it at the available width squeezed a nowrap
+      // button in a narrow cell to its border (Wikipedia's Search button was 8px wide).
+      innerWidth = Math.max(0, this.contentExtent(el) - childX);
+      this.elementPositions.length = positionsMark;
+      this.pendingInlineBlocks.length = pendingMark;
+      this.clearTextRuns(el);
+      childBottom = layoutContent(innerWidth);
+    } else {
+      childBottom = layoutContent(innerWidth);
     }
-
-    // Layout children as block formatting context
-    const childContentX = marginL + padL + borderL;
-    const childContentY = 0;
-    const childHeight = this.layoutBlockChildren(el, childContentX, childContentY, innerWidth, elFontSize, domTree);
-
-    // Update height based on content
-    const padT = resolve('padding-top', elStyle.get('padding') ?? '0');
-    const padB = resolve('padding-bottom', elStyle.get('padding') ?? '0');
-    const borderT = this.parseBorderWidth(elStyle.get('border-top-width') ?? '0');
-    const borderB = this.parseBorderWidth(elStyle.get('border-bottom-width') ?? '0');
 
     const specHeight = elStyle.get('height');
     let contentHeight: number;
     if (specHeight && specHeight !== 'auto') {
-      const boxSizing = elStyle.get('box-sizing') ?? 'content-box';
-      if (boxSizing === 'border-box') {
-        contentHeight = resolve('height', '0') - padT - padB - borderT - borderB;
-      } else {
-        contentHeight = resolve('height', '0');
-      }
+      contentHeight = boxSizing === 'border-box'
+        ? resolve('height', '0') - padT - padB - borderT - borderB
+        : resolve('height', '0');
     } else if (intrinsic.height != null) {
       contentHeight = intrinsic.height;
     } else {
-      contentHeight = childHeight;
+      contentHeight = Math.max(0, childBottom - childY);
     }
 
-    box.height = padT + borderT + contentHeight + borderB + padB;
+    box.width = borderL + padL + innerWidth + padR + borderR;
+    box.height = borderT + padT + Math.max(0, contentHeight) + padB + borderB;
+
+    ifc.addBox({ element: el, box, baselineOffset: Math.min(box.height, elFontSize * 0.8 + borderT + padT), isAnonymous: false });
+    this.pendingInlineBlocks.push(el);
+  }
+
+  /** Drops text runs left by a measuring pass so the real layout doesn't inherit stale runs. */
+  private clearTextRuns(el: DomElement): void {
+    const visit = (node: DomElement): void => {
+      const b = this.layoutBoxes.get(node.domId);
+      if (b) b.textRuns = undefined;
+      for (const c of node.children) if (c.nodeType === 'element') visit(c as DomElement);
+    };
+    visit(el);
+  }
+
+  /** Right-most edge of an element's laid-out content (descendant boxes and text runs), local coordinates. */
+  private contentExtent(el: DomElement): number {
+    let right = 0;
+    const visit = (node: DomElement): void => {
+      const b = this.layoutBoxes.get(node.domId);
+      if (b && node !== el) right = Math.max(right, b.x + b.width);
+      for (const run of b?.textRuns ?? []) right = Math.max(right, run.x + (run.width ?? 0));
+      for (const c of node.children) if (c.nodeType === 'element') visit(c as DomElement);
+    };
+    visit(el);
+    return right;
+  }
+
+  /**
+   * Moves the content of inline-blocks placed by the IFC that just finished (entries from `from`)
+   * to where the line put their boxes. Nested inline-blocks were already placed relative to their
+   * parent's origin, so moving the whole subtree keeps them right.
+   */
+  private placeInlineBlocks(from: number): void {
+    const placed = this.pendingInlineBlocks.splice(from);
+    for (const el of placed) {
+      const box = this.layoutBoxes.get(el.domId);
+      if (box) this.translateContent(el, box.x, box.y);
+    }
+  }
+
+  private translateContent(el: DomElement, dx: number, dy: number): void {
+    if (dx === 0 && dy === 0) return;
+    const visit = (node: DomElement): void => {
+      const b = this.layoutBoxes.get(node.domId);
+      if (b) {
+        if (node !== el) { b.x += dx; b.y += dy; }
+        if (b.textRuns) b.textRuns = b.textRuns.map((r) => ({ ...r, x: r.x + dx, y: r.y + dy }));
+      }
+      for (const c of node.children) if (c.nodeType === 'element') visit(c as DomElement);
+    };
+    visit(el);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1904,6 +1975,9 @@ class LayoutEngine implements ILayoutEngine {
    */
   private resolveIntrinsicSize(node: DomElement): { width: number | null; height: number | null } {
     const tag = node.tagName.toLowerCase();
+    // Form controls have default sizes (a text input is ~20 characters wide); they used to be 0 wide.
+    const control = controlIntrinsicSize(node, parseFloat(node.computedStyle?.get('font-size') ?? '') || 13.333);
+    if (control) return control;
     const isReplaced =
       tag === 'img' || tag === 'iframe' || tag === 'video' || tag === 'canvas' ||
       tag === 'embed' || tag === 'object' || tag === 'svg';

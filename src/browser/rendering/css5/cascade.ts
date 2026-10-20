@@ -26,6 +26,7 @@ import type {
 } from './types';
 
 import { matchesSelectorList } from './selector';
+import { controlUaDefaults } from '../form-controls';
 import { isInheritedProperty, getInitialValue, getInheritedProperties, getAllPropertyDefinitions } from './property-definitions';
 import { processCSSWideKeywords, type KeywordContext } from './css-wide-keywords';
 import { resolveComputedValue, resolveAllComputedValues, resolveVarReferences, type ResolutionContext } from './computed-value-resolver';
@@ -1205,9 +1206,17 @@ const NON_RENDERED_ELEMENTS = new Set([
 /** Returns user-agent default declarations for a given element tag. */
 export function getUserAgentDefaults(
   tagName: string,
+  inputType = '',
 ): Map<string, string> {
   const tag = tagName.toLowerCase();
   const styles = new Map<string, string>();
+  // Form controls: bordered boxes with a background (they rendered as nothing at all).
+  const control = controlUaDefaults(tag, inputType.trim().toLowerCase());
+  if (control) {
+    for (const [k, v] of Object.entries(control)) styles.set(k, v);
+    styles.set('color-scheme', 'light dark');
+    return styles;
+  }
 
   // Display
   if (NON_RENDERED_ELEMENTS.has(tag)) {
@@ -1582,7 +1591,7 @@ export function computeComputedStyles(
   const computed = new Map<string, string>();
 
   // Apply user-agent defaults first.
-  const uaDefaults = getUserAgentDefaults(element.tagName);
+  const uaDefaults = getUserAgentDefaults(element.tagName, element.attributes.get('type') ?? '');
   for (const [prop, val] of uaDefaults) {
     computed.set(prop, val);
   }

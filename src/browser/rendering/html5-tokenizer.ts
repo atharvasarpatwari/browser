@@ -778,7 +778,8 @@ class Html5Tokenizer {
         this.emitTag();
         break;
       default:
-        this.attrValue = ch;
+        this.attrValue = '';
+        this.pos--; // reconsume in the unquoted state (a leading `&` is a reference there)
         this.state = S.ATTR_VALUE_UQ;
         break;
     }
@@ -1208,6 +1209,22 @@ class Html5Tokenizer {
   // CHARACTER REFERENCE STATES  (§13.6.1)
   // ──────────────────────────────────────────────────────────────────
 
+  /**
+   * "Flush code points consumed as a character reference" (§13.2.5.72): inside an attribute value
+   * they belong to the value. They always went to the text buffer, so `href="?a=1&amp;b=2"` lost
+   * the `&` from the URL and emitted it as page text after the tag; in <head> that text closed the
+   * head and opened <body> (Wikipedia rendered as "&&&" with its content in a third <body>).
+   */
+  private refOut(s: string): void {
+    if (this.inAttrValueRef()) this.attrValue += s;
+    else this.charBuf += s;
+  }
+
+  private inAttrValueRef(): boolean {
+    const r = this.charRefReturnState;
+    return r === S.ATTR_VALUE_DQ || r === S.ATTR_VALUE_SQ || r === S.ATTR_VALUE_UQ;
+  }
+
   private handleCharRef(ch: string): void {
     if (ch === '#') {
       this.charRefCode = 0;
@@ -1216,7 +1233,7 @@ class Html5Tokenizer {
       this.charRefBuf = ch;
       this.state = S.NAMED_CHAR_REF;
     } else {
-      this.appendChar('&');
+      this.refOut('&');
       this.state = this.charRefReturnState;
       this.pos--; // reconsume
     }
@@ -1227,40 +1244,25 @@ class Html5Tokenizer {
       this.charRefBuf += ch;
       return;
     }
-
-    // Try to match the accumulated buffer against known references.
-    const matched = this.resolveNamedRef(ch);
-    if (matched) {
-      this.state = this.charRefReturnState;
-    } else {
-      // No match — emit '&' and the buffered characters literally.
-      this.appendChar('&');
-      this.appendString(this.charRefBuf);
-      this.state = this.charRefReturnState;
-      this.pos--; // reconsume the non-matching character
-    }
+    this.state = this.charRefReturnState;
+    const buf = this.charRefBuf;
     this.charRefBuf = '';
-  }
-
-  private resolveNamedRef(following: string): boolean {
-    // Try the full buffer first, then progressively shorter.
-    for (let len = this.charRefBuf.length; len > 0; len--) {
-      const candidate = this.charRefBuf.slice(0, len);
-      const code = NAMED_CHAR_REFS.get(candidate);
-      if (code) {
-        const rest = this.charRefBuf.slice(len);
-        this.appendString(code);
-        if (rest.length > 0) {
-          this.appendString(rest);
-        }
-        // If followed by ';' it's a consumed reference; otherwise ambiguous ampersand.
-        if (len === this.charRefBuf.length && following !== ';') {
-          // Ambiguous — do not consume the following char.
-        }
-        return true;
-      }
+    // Longest known name that prefixes the buffer.
+    let len = buf.length;
+    while (len > 0 && !NAMED_CHAR_REFS.has(buf.slice(0, len))) len--;
+    const full = len === buf.length;
+    if (len > 0 && full && ch === ';') {
+      this.refOut(NAMED_CHAR_REFS.get(buf)!); // ';' consumed
+      return;
     }
-    return false;
+    this.pos--; // reconsume the character after the name (it used to be swallowed)
+    // Historical rule: in an attribute, `&copy=2` / `&notit` without ';' stays literal (URLs).
+    const next = full ? ch : buf[len];
+    if (len === 0 || (this.inAttrValueRef() && (next === '=' || isAsciiAlphanumeric(next)))) {
+      this.refOut('&' + buf);
+      return;
+    }
+    this.refOut(NAMED_CHAR_REFS.get(buf.slice(0, len))! + buf.slice(len));
   }
 
   private handleNumericCharRef(ch: string): void {
@@ -1272,7 +1274,7 @@ class Html5Tokenizer {
       this.charRefCode = ch.charCodeAt(0) - 0x30;
       this.state = S.DEC_CHAR_REF;
     } else {
-      this.appendChar('&#');
+      this.refOut('&#');
       this.state = this.charRefReturnState;
       this.pos--; // reconsume
     }
@@ -1283,7 +1285,7 @@ class Html5Tokenizer {
       this.charRefCode = hexValue(ch);
       this.state = S.HEX_CHAR_REF;
     } else {
-      this.appendChar('&#x');
+      this.refOut('&#x');
       this.state = this.charRefReturnState;
       this.pos--;
     }
@@ -1294,7 +1296,7 @@ class Html5Tokenizer {
       this.charRefCode = ch.charCodeAt(0) - 0x30;
       this.state = S.DEC_CHAR_REF;
     } else {
-      this.appendChar('&#');
+      this.refOut('&#');
       this.state = this.charRefReturnState;
       this.pos--;
     }
@@ -1304,6 +1306,7 @@ class Html5Tokenizer {
     if (ch === ';') {
       this.charRefSeenSemicolon = true;
       this.flushNumericCharRef();
+      this.state = this.charRefReturnState;
     } else if (isAsciiHexDigit(ch)) {
       this.charRefCode = this.charRefCode * 16 + hexValue(ch);
     } else {
@@ -1317,6 +1320,7 @@ class Html5Tokenizer {
     if (ch === ';') {
       this.charRefSeenSemicolon = true;
       this.flushNumericCharRef();
+      this.state = this.charRefReturnState;
     } else if (isAsciiDigit(ch)) {
       this.charRefCode = this.charRefCode * 10 + (ch.charCodeAt(0) - 0x30);
     } else {
@@ -1333,9 +1337,9 @@ class Html5Tokenizer {
         (code >= 0xD800 && code <= 0xDFFF) ||
         (code >= 0xFDD0 && code <= 0xFDEF) ||
         (code & 0xFFFE) === 0xFFFE) {
-      this.appendChar(REPLACEMENT_CHAR);
+      this.refOut(REPLACEMENT_CHAR);
     } else {
-      this.appendChar(String.fromCodePoint(code));
+      this.refOut(String.fromCodePoint(code));
     }
     this.charRefCode = 0;
   }
@@ -1716,7 +1720,9 @@ class Html5Tokenizer {
   }
 
   private commitAttr(): void {
-    this.attrs.set(this.attrName, this.attrValue);
+    // §13.2.5.33: a duplicate attribute is dropped (the first wins); no name means no attribute
+    // (every tag used to carry a stray "" attribute).
+    if (this.attrName && !this.attrs.has(this.attrName)) this.attrs.set(this.attrName, this.attrValue);
     this.attrName = '';
     this.attrValue = '';
   }

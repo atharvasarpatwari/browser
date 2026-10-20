@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-19
 **Session:** "keep improving the nova app…", round 10.
-**Status:** Planned (awaiting approval)
+**Status:** Round A completed in 1.23 (see 2026-10-20-nova-android-1.23-form-controls-real-page-fixes.md); Round B planned
 
 ---
 

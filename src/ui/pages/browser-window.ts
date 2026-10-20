@@ -13,7 +13,11 @@ import type { IUrlParser, ParsedUrl } from '../../browser/navigation/url-parser'
 import type { IContentRenderer } from '../components/content-renderer/content-renderer';
 import type { INavigationBridge } from '../components/navigation-bridge';
 import type { IBrowserEngine, EngineEvent } from '../../browser/engine/browser-engine';
-import { computeViewTransform, pointToFrame } from '../components/find-bar/find-overlay';
+import { computeViewTransform, mapRect, pointToFrame } from '../components/find-bar/find-overlay';
+import {
+  controlKind, controlValue, setControlValue, isTextEditable, isSubmitButton, isDisabled, toggleControl,
+  formOf, formDataEntries, firstMissingRequired,
+} from '../../browser/rendering/form-controls';
 import type { INavigationController } from '../../browser/navigation/navigation-controller';
 import type { IPaintEngine } from '../../browser/rendering/paint-engine';
 import type { IDownloadManager } from '../../browser/downloads/download-manager';
@@ -184,7 +188,7 @@ interface IBrowserWindowPage extends IDisposable {
   /** A viewport (client) point → page coordinates (canvas offset, object-fit scaling, scroll), or null off the page. */
   clientToPage(x: number, y: number): { x: number; y: number } | null;
   /** A tap on the page at a viewport point: fires click for page scripts, then follows a link. */
-  activateAt(clientX: number, clientY: number): 'link' | 'scripted' | 'none';
+  activateAt(clientX: number, clientY: number): 'link' | 'scripted' | 'field' | 'submit' | 'none';
 
   // ── Bookmarks/history for external chrome (shared with desktop's own data) ──
   onLibraryChanged(handler: () => void): void;
@@ -1718,7 +1722,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
    * scripts (preventDefault() is honoured, so JS-driven buttons work), then follows the
    * nearest link. ponytail: javascript: links are ignored rather than run.
    */
-  activateAt(clientX: number, clientY: number): 'link' | 'scripted' | 'none' {
+  activateAt(clientX: number, clientY: number): 'link' | 'scripted' | 'field' | 'submit' | 'none' {
     const layout: ILayoutEngine | null = this.browserEngine?.getPageLayoutEngine?.() ?? null;
     const point = this.clientToPage(clientX, clientY);
     if (!layout || !point) return 'none';
@@ -1726,6 +1730,23 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (!hit) return 'none';
     const notCanceled = this.browserEngine?.dispatchPageEvent(hit, 'click') ?? true;
     if (!notCanceled) return 'scripted';
+
+    // Form controls: type into fields, tick boxes, pick options, submit.
+    let control: DomElement | null = null;
+    for (let n: DomElement | null = hit, guard = 0; n && guard < 16; n = n.parent as DomElement | null, guard++) {
+      if (typeof n.tagName === 'string' && controlKind(n)) { control = n; break; }
+    }
+    if (control && !isDisabled(control)) {
+      const kind = controlKind(control);
+      if (isTextEditable(control) || kind === 'select') { this.openFieldEditor(control); return 'field'; }
+      if (kind === 'checkbox' || kind === 'radio') {
+        toggleControl(control);
+        this.browserEngine?.dispatchPageEvent(control, 'input');
+        this.browserEngine?.dispatchPageEvent(control, 'change');
+        return 'field';
+      }
+      if (isSubmitButton(control)) { this.submitForm(formOf(control), control); return 'submit'; }
+    }
 
     let link: DomElement | null = null;
     for (let node: DomElement | null = hit, guard = 0; node && guard < 64; node = node.parent as DomElement | null, guard++) {
@@ -1739,6 +1760,127 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if ((link.attributes.get('target') ?? '').toLowerCase() === '_blank') this.createTab(url);
     else void this.navigate(url);
     return 'link';
+  }
+
+  // ── Form fields: a real input over the painted one, form submission ─────────
+
+  private fieldEditor: { el: DomElement; field: HTMLElement; close: () => void } | null = null;
+
+  /**
+   * Lays a real <input>/<textarea>/<select> exactly over the painted control so the platform
+   * keyboard, cursor, selection, autocorrect and paste all work. Each change is written back to
+   * the page element (and repainted, with an `input` event for its scripts); Enter submits.
+   */
+  private openFieldEditor(el: DomElement): void {
+    this.fieldEditor?.close();
+    const canvas = this.contentArea?.querySelector('canvas:not(.nova-find-overlay)') as HTMLCanvasElement | null;
+    const box = el.layoutBox;
+    if (!canvas || !box) return;
+    const rect = canvas.getBoundingClientRect();
+    const view = computeViewTransform({ width: rect.width, height: rect.height }, { width: canvas.width, height: canvas.height }, this.paintEngine?.getScroll().y ?? 0);
+    const inner = mapRect({ x: box.x + box.borderLeft, y: box.y + box.borderTop, width: box.width - box.borderLeft - box.borderRight, height: box.height - box.borderTop - box.borderBottom }, view);
+    const style = el.computedStyle ?? new Map<string, string>();
+    const kind = controlKind(el);
+
+    let field: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+    if (kind === 'textarea') {
+      field = document.createElement('textarea');
+    } else if (kind === 'select') {
+      const select = document.createElement('select');
+      const opts = el.children.filter((c): c is DomElement => c.nodeType === 'element' && (c as DomElement).tagName.toLowerCase() === 'option');
+      for (const o of opts) {
+        const option = document.createElement('option');
+        option.value = o.attributes.get('value') ?? o.children.map((c) => (c as { text?: string }).text ?? '').join('').trim();
+        option.textContent = o.children.map((c) => (c as { text?: string }).text ?? '').join('').trim();
+        select.appendChild(option);
+      }
+      field = select;
+    } else {
+      const input = document.createElement('input');
+      const type = (el.attributes.get('type') ?? 'text').toLowerCase();
+      input.type = kind === 'password' ? 'password' : ['email', 'url', 'tel', 'number', 'search'].includes(type) ? type : 'text';
+      if (kind === 'password') input.autocomplete = 'off';
+      const max = el.attributes.get('maxlength');
+      if (max) input.maxLength = parseInt(max, 10) || -1;
+      field = input;
+    }
+    field.value = controlValue(el);
+    if (!(field instanceof HTMLSelectElement)) field.placeholder = el.attributes.get('placeholder') ?? '';
+    const px = (prop: string): number => parseFloat(style.get(prop) ?? '0') || 0;
+    field.className = 'nova-field-editor';
+    field.style.cssText = [
+      'position:fixed', `left:${rect.left + inner.x}px`, `top:${rect.top + inner.y}px`,
+      `width:${inner.width}px`, `height:${inner.height}px`, 'box-sizing:border-box', 'margin:0', 'border:none',
+      'outline:2px solid #1a73e8', 'border-radius:2px', 'z-index:2147483000', 'resize:none',
+      `padding:${px('padding-top') * view.scale}px ${px('padding-right') * view.scale}px ${px('padding-bottom') * view.scale}px ${px('padding-left') * view.scale}px`,
+      `font-size:${(px('font-size') || 13.333) * view.scale}px`, `font-family:${style.get('font-family') ?? 'sans-serif'}`,
+      `color:${style.get('color') ?? '#000'}`, `background:${style.get('background-color') ?? '#fff'}`,
+    ].join(';');
+
+    const initial = controlValue(el);
+    const commit = (): void => {
+      if (field.value === controlValue(el)) return;
+      setControlValue(el, field.value);
+      this.browserEngine?.dispatchPageEvent(el, 'input');
+    };
+    const close = (): void => {
+      if (this.fieldEditor?.field !== field) return;
+      this.fieldEditor = null;
+      commit();
+      if (controlValue(el) !== initial) this.browserEngine?.dispatchPageEvent(el, 'change');
+      field.remove();
+    };
+    field.addEventListener('input', commit);
+    field.addEventListener('change', commit);
+    field.addEventListener('blur', close);
+    field.addEventListener('keydown', (e) => {
+      const key = (e as KeyboardEvent).key;
+      if (key === 'Enter' && kind !== 'textarea') {
+        e.preventDefault();
+        commit();
+        const form = formOf(el);
+        close();
+        this.submitForm(form, null);
+      } else if (key === 'Escape') {
+        field.value = initial;
+        close();
+      }
+    });
+    document.body.appendChild(field);
+    this.fieldEditor = { el, field, close };
+    field.focus();
+    if (field instanceof HTMLSelectElement) {
+      try { (field as HTMLSelectElement & { showPicker?: () => void }).showPicker?.(); } catch { /* needs a user gesture on some engines */ }
+    }
+  }
+
+  /**
+   * Submits a form (HTML §4.10.21.3): `submit` event for page scripts (preventDefault() honoured),
+   * `required` checked, then GET navigates to action?query. ponytail: POST forms are not sent yet
+   * (logged); they need a request body on navigation.
+   */
+  private submitForm(form: DomElement | null, submitter: DomElement | null): void {
+    if (!form) return;
+    if (!(this.browserEngine?.dispatchPageEvent(form, 'submit') ?? true)) return;
+    const missing = firstMissingRequired(form);
+    if (missing) {
+      if (isTextEditable(missing)) this.openFieldEditor(missing);
+      return;
+    }
+    const method = (submitter?.attributes.get('formmethod') ?? form.attributes.get('method') ?? 'get').toLowerCase();
+    if (method !== 'get') {
+      console.warn('[Forms] POST submission is not supported yet:', form.attributes.get('action') ?? '');
+      return;
+    }
+    const action = submitter?.attributes.get('formaction') ?? form.attributes.get('action') ?? '';
+    let url: URL;
+    try {
+      url = new URL(action ? this.resolveContextUrl(action) : (this.navigationBridge?.currentUrl ?? ''));
+    } catch {
+      return;
+    }
+    url.search = new URLSearchParams(formDataEntries(form, submitter)).toString();
+    void this.navigate(url.href);
   }
 
   // ── Context-menu (long-press) element resolution ───────────────────────────

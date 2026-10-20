@@ -476,13 +476,40 @@ function inBodyEndTag(ctx: TreeBuilderContext, token: Token): void {
       return;
     }
 
+    // </form> (§13.2.6.4.7) clears the form element pointer. It was handled like </div>, so the
+    // pointer stayed set and every later <form> on the page was dropped (Wikipedia's search form).
+    case 'form': {
+      if (ctx.templateInsertionModes.length > 0) {
+        if (!ctx.isInScope('form')) { ctx.parseError(token); return; }
+        ctx.generateImpliedEndTags();
+        for (let i = ctx.openElements.length - 1; i >= 0; i--) {
+          if (ctx.openElements.elementAt(i).tagName === 'form') {
+            while (ctx.openElements.length > i) ctx.popCurrentNode();
+            break;
+          }
+        }
+        return;
+      }
+      const node = ctx.formElement;
+      ctx.formElement = null;
+      const at = node ? ctx.openElements.indexOf(node) : -1;
+      if (!node || at < 0 || !ctx.isInScope('form')) { ctx.parseError(token); return; }
+      ctx.generateImpliedEndTags();
+      if (ctx.currentNode() !== node) ctx.parseError(token);
+      ctx.openElements.remove(node);
+      return;
+    }
+
     case 'address': case 'article': case 'aside': case 'blockquote':
     case 'center': case 'details': case 'dialog': case 'dir':
     case 'div': case 'fieldset': case 'figcaption': case 'figure':
-    case 'footer': case 'form': case 'header': case 'hgroup':
+    case 'footer': case 'header': case 'hgroup':
     case 'hr': case 'listing': case 'main': case 'menu': case 'nav':
     case 'ol': case 'p': case 'search': case 'section': case 'summary':
-    case 'ul': {
+    case 'ul':
+    // §13.2.6.4.7 lists these too; without them </button>, </dl> and </pre> closed nothing, and
+    // everything after a <button> on a page was nested inside it.
+    case 'button': case 'dl': case 'pre': {
       if (!ctx.isInScope(tag)) {
         ctx.parseError(token);
         return;
@@ -640,5 +667,18 @@ function inBodyEndTag(ctx: TreeBuilderContext, token: Token): void {
     }
   }
 
+  // "Any other end tag" (§13.2.6.4.7). This was a bare parse error, so </span>, </label>, </em>,
+  // </abbr>... closed nothing and every later sibling nested inside them (Wikipedia's search
+  // field ended up inside an empty <label>).
+  for (let i = ctx.openElements.length - 1; i >= 0; i--) {
+    const node = ctx.openElements.elementAt(i);
+    if (node.tagName === tag) {
+      ctx.generateImpliedEndTags(tag);
+      if (ctx.currentNode() !== node) ctx.parseError(token);
+      while (ctx.openElements.length > i) ctx.popCurrentNode();
+      return;
+    }
+    if (SPECIAL_ELEMENTS.has(node.tagName)) break;
+  }
   ctx.parseError(token);
 }

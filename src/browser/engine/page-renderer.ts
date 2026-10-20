@@ -957,6 +957,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
   dispatchPageEvent(el: DomElement, type: string): boolean {
     const fire = (): boolean => dispatchDomEvent(el, type, this.deps.domTree);
     const notCanceled = this.pageEventLoop ? this.pageEventLoop.runWithInterpreter(fire) : fire();
+    this.reflowController?.invalidatePaint(el);
     this.requestReflow();
     return notCanceled;
   }

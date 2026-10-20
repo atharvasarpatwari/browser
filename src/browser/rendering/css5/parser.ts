@@ -196,53 +196,55 @@ export class CssParser {
   // ───────────────────────────────────────────────────────────────────────────
 
   private consumeSelector(): CssSelector | null {
-    const left = this.consumeCompoundSelector();
+    let left: CssSelector | null = this.consumeCompoundSelector();
     if (!left) return null;
 
-    // Check for combinator BEFORE skipping whitespace
-    const tok = this.current();
-    if (!tok) return left;
+    // One combinator + compound per step, left-associative (`a b c` is ((a b) c)). This read a
+    // single step and stopped, so `.a .b .c` parsed as `.a .b` and matched far too much
+    // (Wikipedia's `.client-nojs .mw-footer .indicator {display:none}` hid the whole footer).
+    for (;;) {
+      const tok = this.current();
+      if (!tok) return left;
 
-    let combinator: CssCombinator | null = null;
-
-    if (tok.type === CssTokenType.Whitespace) {
-      // Skip whitespace, then check what follows
-      this.skipWs();
-      const next = this.current();
-      if (!next || next.type === CssTokenType.EOF || next.type === CssTokenType.Semicolon) {
-        // Trailing whitespace — no combinator
-      } else if (next.type === CssTokenType.GreaterThan) {
+      let combinator: CssCombinator | null = null;
+      if (tok.type === CssTokenType.Whitespace) {
+        // Skip whitespace, then check what follows
+        this.skipWs();
+        const next = this.current();
+        if (!next || next.type === CssTokenType.EOF || next.type === CssTokenType.Semicolon) {
+          // Trailing whitespace — no combinator
+        } else if (next.type === CssTokenType.GreaterThan) {
+          combinator = '>';
+          this.pos++;
+        } else if (next.type === CssTokenType.Plus) {
+          combinator = '+';
+          this.pos++;
+        } else if (next.type === CssTokenType.Tilde) {
+          combinator = '~';
+          this.pos++;
+        } else if (next.type === CssTokenType.Comma) {
+          // End of this selector in a list
+        } else {
+          // Another selector follows — descendant combinator
+          combinator = ' ';
+        }
+      } else if (tok.type === CssTokenType.GreaterThan) {
         combinator = '>';
         this.pos++;
-      } else if (next.type === CssTokenType.Plus) {
+      } else if (tok.type === CssTokenType.Plus) {
         combinator = '+';
         this.pos++;
-      } else if (next.type === CssTokenType.Tilde) {
+      } else if (tok.type === CssTokenType.Tilde) {
         combinator = '~';
         this.pos++;
-      } else {
-        // Another selector follows — descendant combinator
-        combinator = ' ';
       }
-    } else if (tok.type === CssTokenType.GreaterThan) {
-      combinator = '>';
-      this.pos++;
-    } else if (tok.type === CssTokenType.Plus) {
-      combinator = '+';
-      this.pos++;
-    } else if (tok.type === CssTokenType.Tilde) {
-      combinator = '~';
-      this.pos++;
-    }
 
-    if (combinator) {
+      if (!combinator) return left;
+      this.skipWs();
       const right = this.consumeCompoundSelector();
-      if (right) {
-        return { type: 'complex', left, combinator, right };
-      }
+      if (!right) return left;
+      left = { type: 'complex', left, combinator, right };
     }
-
-    return left;
   }
 
   /** Parse a comma-separated selector list. */

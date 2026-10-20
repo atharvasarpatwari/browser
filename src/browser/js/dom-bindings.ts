@@ -16,6 +16,7 @@ import { Path2D } from '../rendering/canvas/canvas-path';
 import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../security/blocked-url-schemes';
 import { getScriptCookieProvider } from '../networking/cookie-service';
 import { HtmlParser } from '../rendering/html-parser';
+import { controlKind, controlValue, setControlValue, controlChecked, formOf } from '../rendering/form-controls';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DOM BINDINGS — Bridges the JS interpreter to the Nova DOM tree
@@ -1679,6 +1680,30 @@ function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void 
       setter: createNativeFunction(`set ${name}`, (_t, args) => { domTree.setAttribute(el, name, toString(args[0])); return undefined; }),
     });
   }
+  // Form controls: the live value/checked state the page UI types and ticks into (scripts read
+  // what the user typed, and setting .value repaints the field).
+  if (controlKind(el)) {
+    obj.properties.set('value', {
+      value: undefined, writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction('get value', () => controlValue(el)),
+      setter: createNativeFunction('set value', (_t, args) => {
+        setControlValue(el, toString(args[0]));
+        domTree.markDirty(el, 'paint');
+        return undefined;
+      }),
+    });
+    obj.properties.set('checked', {
+      value: undefined, writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction('get checked', () => controlChecked(el)),
+      setter: createNativeFunction('set checked', (_t, args) => {
+        el.formChecked = toBoolean(args[0]);
+        domTree.markDirty(el, 'paint');
+        return undefined;
+      }),
+    });
+    getter('form', () => wrapNode(formOf(el), domTree));
+  }
+
   obj.properties.set('hidden', {
     value: undefined, writable: true, enumerable: true, configurable: true,
     getter: createNativeFunction('get hidden', () => el.attributes.has('hidden')),

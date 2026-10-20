@@ -30,6 +30,10 @@ interface DomElement extends DomNode {
   naturalHeight: number;
   /** Lazy loading state. */
   loadingState: 'none' | 'lazy' | 'loading' | 'loaded' | 'error';
+  /** A form control's current value once typed or set by script (null/undefined: its initial value). */
+  formValue?: string | null;
+  /** A checkbox/radio's checked state once toggled (undefined: the `checked` attribute). */
+  formChecked?: boolean;
   /** Cached will-change computed value (populated by CSS cascade). */
   willChange: string | null;
 }
