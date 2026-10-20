@@ -373,3 +373,41 @@ describe('CSS5 parser @import', () => {
     expect(rules.some((r) => r.type === 'style')).toBe(true);
   });
 });
+
+describe('font-size units (iana.org rendered 100% text at 100px)', () => {
+  const sizes = async (css: string, html: string) => {
+    const { find, texts } = await renderAtPhoneWidth(`<html><head><style>${css}</style></head><body>${html}</body></html>`);
+    return { find, texts };
+  };
+
+  it('a percentage is relative to the parent font size, not a pixel count', async () => {
+    const { texts } = await sizes('body { font-size: 20px } p { font-size: 100% } span { font-size: 50% }', '<p>Hi <span>small</span></p>');
+    const cmdsFont = texts.find((t) => t[0] === 'Hi');
+    expect(cmdsFont).toBeTruthy();
+    const { paintEngine } = await renderAtPhoneWidth('<html><head><style>body{font-size:20px} p{font-size:100%} span{font-size:50%}</style></head><body><p>Hi <span>small</span></p></body></html>');
+    const fonts = paintEngine.compositeFrame().filter((c) => c.type === 'setFont').map((c) => String(c.params[0]));
+    expect(fonts.some((f) => / 20px /.test(f))).toBe(true);
+    expect(fonts.some((f) => / 10px /.test(f))).toBe(true);
+    expect(fonts.some((f) => / 100px /.test(f))).toBe(false);
+  });
+
+  it('rem is relative to the root font size, em to the parent', async () => {
+    const { paintEngine } = await renderAtPhoneWidth('<html style="font-size:10px"><body style="font-size:30px"><p style="font-size:2rem">r</p><p style="font-size:0.5em">e</p></body></html>');
+    const fonts = paintEngine.compositeFrame().filter((c) => c.type === 'setFont').map((c) => String(c.params[0]));
+    expect(fonts.some((f) => / 20px /.test(f))).toBe(true);  // 2rem = 2 x 10px
+    expect(fonts.some((f) => / 15px /.test(f))).toBe(true);  // 0.5em of 30px
+  });
+});
+
+describe('inherited relative font sizes do not compound', () => {
+  it('a span inside font-size:2em (or 150%) draws at the parent size, not twice it', async () => {
+    const { paintEngine } = await renderAtPhoneWidth('<html><body style="font-size:16px"><div style="font-size:2em"><span>a</span></div><div style="font-size:150%"><b>b</b></div></body></html>');
+    const fontBefore = (word: string) => {
+      const cmds = paintEngine.compositeFrame();
+      const i = cmds.findIndex((c) => c.type === 'fillText' && c.params[0] === word);
+      return String(cmds.slice(0, i).reverse().find((c) => c.type === 'setFont')!.params[0]);
+    };
+    expect(fontBefore('a')).toMatch(/ 32px /);
+    expect(fontBefore('b')).toMatch(/ 24px /);
+  });
+});

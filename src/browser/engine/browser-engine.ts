@@ -54,6 +54,7 @@ import type {
 import type { IRouter, RouteResult } from '../navigation/router';
 import { isEngineRendered }           from '../navigation/router';
 import type { ILayoutEngine }         from '../rendering/layout-engine';
+import type { DomElement }            from '../rendering/dom-tree';
 import type { IPageLoader, PageLoadResult } from './engine-types';
 
 // Re-export shared types (also imported by networking to avoid circular dep).
@@ -129,6 +130,8 @@ interface IPageRenderer {
   render(result: PageLoadResult, signal: AbortSignal): Promise<void>;
   /** The layout engine backing the most recently rendered page (null before any page / for the null renderer). */
   getLayoutEngine(): ILayoutEngine | null;
+  /** Fires a UI event at a page element; false when a script cancelled it. */
+  dispatchPageEvent?(el: DomElement, type: string): boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -199,6 +202,8 @@ interface IBrowserEngine extends ISharedService {
   setPageRenderer(renderer: IPageRenderer): void;
   /** The layout engine of the currently rendered page (null before any page renders). */
   getPageLayoutEngine(): ILayoutEngine | null;
+  /** Fires a UI event (a tap's click) at a page element; false when a page script cancelled it. */
+  dispatchPageEvent(el: DomElement, type: string): boolean;
   /** Add a middleware that runs after routing, before fetching. */
   addMiddleware(mw: EngineMiddleware): void;
 
@@ -419,6 +424,10 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   getPageLayoutEngine(): ILayoutEngine | null {
     return this.renderer.getLayoutEngine();
+  }
+
+  dispatchPageEvent(el: DomElement, type: string): boolean {
+    return this.renderer.dispatchPageEvent?.(el, type) ?? true;
   }
 
   addMiddleware(mw: EngineMiddleware): void {

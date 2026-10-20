@@ -207,7 +207,9 @@ function wireContextMenuDetection(page: IBrowserWindowPage): void {
     if (!page) return;
     let target: ReturnType<IBrowserWindowPage['resolveContextTarget']>;
     try {
-      target = page.resolveContextTarget(x, y);
+      // resolveContextTarget takes page coordinates; client points missed after scrolling.
+      const p = page.clientToPage(x, y);
+      target = p ? page.resolveContextTarget(p.x, p.y) : null;
     } catch (err) {
       console.error('[AndroidNativeBridge] resolveContextTarget failed:', err);
       target = null;
@@ -243,6 +245,8 @@ function wireContextMenuDetection(page: IBrowserWindowPage): void {
     pressX = e.clientX;
     pressY = e.clientY;
     dwellOpenedMenu = false;
+    // A new press: a long-press that ended without a click must not swallow this tap's click.
+    suppressNextClick = false;
     cancelPress();
     pressTimer = window.setTimeout(() => {
       dwellOpenedMenu = true;
@@ -260,10 +264,20 @@ function wireContextMenuDetection(page: IBrowserWindowPage): void {
   const onPointerEnd = (): void => cancelPress();
 
   const onClick = (e: Event): void => {
-    if (!suppressNextClick) return;
-    suppressNextClick = false;
-    e.preventDefault();
-    e.stopImmediatePropagation();
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+    // A plain tap on the page bitmap: hit-test it, let page scripts see the click, follow links.
+    const mouse = e as MouseEvent;
+    if (!(mouse.target instanceof HTMLCanvasElement)) return;
+    try {
+      activeContextPage?.activateAt(mouse.clientX, mouse.clientY);
+    } catch (err) {
+      console.error('[AndroidNativeBridge] activateAt failed:', err);
+    }
   };
 
   document.addEventListener('contextmenu', onContextMenuEvent, true);

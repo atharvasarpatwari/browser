@@ -134,7 +134,7 @@ class LayoutEngine implements ILayoutEngine {
 
   layout(document: DomDocument, domTree?: IDomTree, config?: Partial<LayoutConfig>): void {
     if (config) this.config = { ...this.config, ...config };
-    this.rootFontSize = this.config.defaultFontSize;
+    this.rootFontSize = this.documentRootFontSize(document);
     this.layoutBoxes.clear();
     this.elementPositions.length = 0;
     this.positionedQueue.length = 0;
@@ -183,7 +183,7 @@ class LayoutEngine implements ILayoutEngine {
    */
   layoutIncremental(document: DomDocument, domTree: IDomTree, config?: Partial<LayoutConfig>): DamageTracker {
     if (config) this.config = { ...this.config, ...config };
-    this.rootFontSize = this.config.defaultFontSize;
+    this.rootFontSize = this.documentRootFontSize(document);
     const damage = new DamageTracker();
 
     domTree.processMutations();
@@ -1921,6 +1921,15 @@ class LayoutEngine implements ILayoutEngine {
     return { width: parseAttr('width'), height: parseAttr('height') };
   }
 
+  /** `rem` is relative to <html>'s font size (the `html { font-size: 62.5% }` pattern); it was always 16px. */
+  private documentRootFontSize(document: DomDocument): number {
+    const html = (document as { htmlElement?: DomElement | null }).htmlElement;
+    const style = html?.computedStyle;
+    if (!style) return this.config.defaultFontSize;
+    const size = this.resolveFontSize(style, this.config.defaultFontSize);
+    return size > 0 ? size : this.config.defaultFontSize;
+  }
+
   private resolveFontSize(style: ReadonlyMap<string, string>, parentFontSize: number): number {
     const raw = style.get('font-size');
     if (!raw) return parentFontSize;
@@ -1928,14 +1937,20 @@ class LayoutEngine implements ILayoutEngine {
     const named = NAMED_FONT_SIZES[raw];
     if (named !== undefined) return named;
 
+    // rem before em: "1.5rem".endsWith('em') is true, so rem sizes were taken from the parent.
+    if (raw.endsWith('rem')) {
+      const n = parseFloat(raw);
+      return isFinite(n) ? n * this.rootFontSize : parentFontSize;
+    }
+
     if (raw.endsWith('em')) {
       const n = parseFloat(raw);
       return isFinite(n) ? n * parentFontSize : parentFontSize;
     }
 
-    if (raw.endsWith('rem')) {
+    if (raw.endsWith('%')) {
       const n = parseFloat(raw);
-      return isFinite(n) ? n * this.rootFontSize : parentFontSize;
+      return isFinite(n) ? (n / 100) * parentFontSize : parentFontSize;
     }
 
     if (raw.endsWith('px')) {

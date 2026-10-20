@@ -890,7 +890,8 @@ describe('computeComputedStyles — UA Defaults', () => {
 
   it('applies h1 font-size and font-weight', () => {
     const c = computeComputedStyles(el('h1'), parse(''));
-    expect(c.get('font-size')).toBe('2em');
+    // CSS Fonts 4 §2.5: the computed font-size is an absolute length (relative values compounded when inherited raw).
+    expect(c.get('font-size')).toBe('32px');
     // font-weight 'bold' is resolved to '700' by computed value resolver
     expect(c.get('font-weight')).toBe('700');
   });

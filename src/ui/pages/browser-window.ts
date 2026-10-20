@@ -13,6 +13,7 @@ import type { IUrlParser, ParsedUrl } from '../../browser/navigation/url-parser'
 import type { IContentRenderer } from '../components/content-renderer/content-renderer';
 import type { INavigationBridge } from '../components/navigation-bridge';
 import type { IBrowserEngine, EngineEvent } from '../../browser/engine/browser-engine';
+import { computeViewTransform, pointToFrame } from '../components/find-bar/find-overlay';
 import type { INavigationController } from '../../browser/navigation/navigation-controller';
 import type { IPaintEngine } from '../../browser/rendering/paint-engine';
 import type { IDownloadManager } from '../../browser/downloads/download-manager';
@@ -180,6 +181,10 @@ interface IBrowserWindowPage extends IDisposable {
   // ── Context-menu (long-press) element resolution for external chrome ───────
   /** Resolve the link/image under page coordinates, if any. Returns null when no target is found. */
   resolveContextTarget(x: number, y: number): ContextTarget | null;
+  /** A viewport (client) point → page coordinates (canvas offset, object-fit scaling, scroll), or null off the page. */
+  clientToPage(x: number, y: number): { x: number; y: number } | null;
+  /** A tap on the page at a viewport point: fires click for page scripts, then follows a link. */
+  activateAt(clientX: number, clientY: number): 'link' | 'scripted' | 'none';
 
   // ── Bookmarks/history for external chrome (shared with desktop's own data) ──
   onLibraryChanged(handler: () => void): void;
@@ -1694,6 +1699,46 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   isIncognito(): boolean {
     return this.incognitoManager?.isActive() ?? false;
+  }
+
+  // ── Taps on the rendered page ───────────────────────────────────────────────
+
+  clientToPage(x: number, y: number): { x: number; y: number } | null {
+    const canvas = this.contentArea?.querySelector('canvas:not(.nova-find-overlay)') as HTMLCanvasElement | null;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const frame = { width: canvas.width, height: canvas.height };
+    const view = computeViewTransform({ width: rect.width, height: rect.height }, frame, this.paintEngine?.getScroll().y ?? 0);
+    return pointToFrame({ x: x - rect.left, y: y - rect.top }, view, frame);
+  }
+
+  /**
+   * The page is one painted bitmap, so nothing happened on a tap: links could only be opened
+   * from the long-press menu. Now a tap hit-tests the layout, fires `click` through the page's
+   * scripts (preventDefault() is honoured, so JS-driven buttons work), then follows the
+   * nearest link. ponytail: javascript: links are ignored rather than run.
+   */
+  activateAt(clientX: number, clientY: number): 'link' | 'scripted' | 'none' {
+    const layout: ILayoutEngine | null = this.browserEngine?.getPageLayoutEngine?.() ?? null;
+    const point = this.clientToPage(clientX, clientY);
+    if (!layout || !point) return 'none';
+    const hit = layout.getElementAtPoint(point.x, point.y);
+    if (!hit) return 'none';
+    const notCanceled = this.browserEngine?.dispatchPageEvent(hit, 'click') ?? true;
+    if (!notCanceled) return 'scripted';
+
+    let link: DomElement | null = null;
+    for (let node: DomElement | null = hit, guard = 0; node && guard < 64; node = node.parent as DomElement | null, guard++) {
+      const tag = typeof node.tagName === 'string' ? node.tagName.toLowerCase() : '';
+      if (tag === 'a' && node.attributes.has('href')) { link = node; break; }
+    }
+    if (!link) return 'none';
+    const href = link.attributes.get('href')!.trim();
+    if (!href || href.startsWith('#') || /^javascript:/i.test(href)) return 'none';
+    const url = this.resolveContextUrl(href);
+    if ((link.attributes.get('target') ?? '').toLowerCase() === '_blank') this.createTab(url);
+    else void this.navigate(url);
+    return 'link';
   }
 
   // ── Context-menu (long-press) element resolution ───────────────────────────

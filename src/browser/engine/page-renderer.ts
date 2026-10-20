@@ -63,7 +63,7 @@ import type { SecurityLayer } from '../media/security-layer';
 import { ReflowRepaintController } from '../rendering/reflow-repaint-controller';
 import type { LayerCompositor } from '../rendering/compositing/layer-compositor';
 import { CssAnimationAnimator } from '../rendering/css-animations';
-import { setAnimationRuntime, dispatchAnimationEventToElement } from '../js/dom-bindings';
+import { setAnimationRuntime, dispatchAnimationEventToElement, dispatchDomEvent } from '../js/dom-bindings';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTRUCTOR PARAMETERS
@@ -465,6 +465,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
   }
 
   private _lastRules: readonly CssRule[] = [];
+  /** The current page's script event loop (null for pages without scripts). */
+  private pageEventLoop: JsEventLoop | null = null;
   private _lastStylesheet: Css5Stylesheet | null = null;
 
   /**
@@ -538,6 +540,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     signal: AbortSignal,
   ): Promise<void> {
     const { domTree, resourceLoader, scriptEnforcer } = this.deps;
+    this.pageEventLoop = null; // never dispatch into the previous page's scripts
     const scripts = domTree.getElementsByTagName('script');
     if (scripts.length === 0) return;
 
@@ -545,6 +548,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     const origin = parseOrigin(baseUrl);
 
     const eventLoop = new JsEventLoop();
+    this.pageEventLoop = eventLoop;
     // One global environment per page: what one script defines (e.g. a library)
     // must be visible to the scripts after it, as in a browser.
     const env = createGlobalEnv(
@@ -947,6 +951,14 @@ class PageRenderer implements IPageRenderer, IDisposable {
    */
   getReflowController(): ReflowRepaintController | null {
     return this.reflowController;
+  }
+
+  /** Fires a UI event (e.g. a tap's click) into the page's scripts, then repaints what they changed. */
+  dispatchPageEvent(el: DomElement, type: string): boolean {
+    const fire = (): boolean => dispatchDomEvent(el, type, this.deps.domTree);
+    const notCanceled = this.pageEventLoop ? this.pageEventLoop.runWithInterpreter(fire) : fire();
+    this.requestReflow();
+    return notCanceled;
   }
 
   /**

@@ -1785,6 +1785,18 @@ function deepClone(el: DomElement): DomElement {
   return clone;
 }
 
+/**
+ * Dispatches a trusted UI event (a tap's `click`) at an element through the same capture/bubble
+ * path page scripts use. Returns false when a listener called preventDefault().
+ */
+export function dispatchDomEvent(el: DomElement, type: string, domTree: IDomTree): boolean {
+  const target = wrapElement(el, domTree);
+  const event = createEventObject(type, target, { bubbles: true, cancelable: true });
+  const dispatch = target.properties.get('dispatchEvent')?.value;
+  if (!dispatch || typeof dispatch !== 'object') return true;
+  return callJSFunction(dispatch as JSFunction, target, [event]) !== false;
+}
+
 export function createEventObject(type: string, target: JSValue, options?: { bubbles?: boolean; cancelable?: boolean; composed?: boolean }): JSObject {
   const evt = createObject(null);
   evt.properties.set('type', { value: type, writable: false, enumerable: true, configurable: false });

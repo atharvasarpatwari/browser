@@ -632,6 +632,9 @@ describe('android-native-bridge', () => {
       setIncognitoExternal: (_enabled: boolean) => {},
       isIncognito: () => false,
       resolveContextTarget: (_x: number, _y: number) => null,
+      // Identity: these tests pass page coordinates already (the real page maps canvas offset + scroll).
+      clientToPage: (x: number, y: number) => ({ x, y }),
+      activateAt: () => 'none',
       ...overrides,
     } as unknown as IBrowserWindowPage;
   }
@@ -816,6 +819,23 @@ describe('android-native-bridge', () => {
     installAndroidNativeBridge(fakePage);
     window.novaNative!.openInNewTab('https://example.com/new');
     expect(createdUrl).toBe('https://example.com/new');
+  });
+
+  it('a plain tap on the page canvas reaches activateAt with its client point (links used to do nothing)', () => {
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: () => {}, onContextMenuRequested: () => {} };
+    const taps: Array<[number, number]> = [];
+    const fakePage = makeFakePage({ activateAt: (x: number, y: number) => { taps.push([x, y]); return 'link'; } });
+    installAndroidNativeBridge(fakePage);
+    const canvas = document.createElement('canvas');
+    document.body.appendChild(canvas);
+    // A real tap: press, release, click. (An earlier test's long-press left "swallow the next click"
+    // set; a new press must clear it, or the user's next tap after a long-press was eaten.)
+    canvas.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 33, clientY: 44 }));
+    canvas.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 33, clientY: 44 }));
+    canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 33, clientY: 44 }));
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 1, clientY: 1 })); // not the page
+    canvas.remove();
+    expect(taps).toEqual([[33, 44]]);
   });
 
   it('contextmenu event on the document pushes onContextMenuRequested with the resolved target', () => {

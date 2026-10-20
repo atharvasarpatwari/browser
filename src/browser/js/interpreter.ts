@@ -23,6 +23,34 @@ import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
 // INTERPRETER — Tree-walking evaluator
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A string method's pattern argument: the native RegExp behind a regex object, else the
+ * argument as a string. split/replace/match/search used to stringify regex objects, so
+ * "a-b".split(/-/) or s.replace(/x/g, …) searched for the literal text "/-/".
+ */
+function patternArg(v: JSValue): RegExp | string {
+  const re = (v as { nativeRegExp?: unknown } | null | undefined)?.nativeRegExp;
+  return re instanceof RegExp ? re : toString(v);
+}
+
+function regexArg(v: JSValue): RegExp {
+  const p = patternArg(v);
+  return p instanceof RegExp ? p : new RegExp(p);
+}
+
+/** String.prototype.replace, including a regex pattern and a replacer function. */
+function stringReplace(str: string, pattern: JSValue, replacement: JSValue): string {
+  const pat = patternArg(pattern);
+  const fn = replacement as { type?: string } | null;
+  if (fn && typeof fn === 'object' && (fn.type === 'closure' || fn.type === 'function')) {
+    return str.replace(pat as string, (...args: unknown[]) => {
+      // (match, ...groups, offset, input): pass them through like a browser does
+      return toString(callJSFunction(replacement as JSFunction, undefined, args.map((x) => x as JSValue)));
+    });
+  }
+  return str.replace(pat as string, toString(replacement ?? ''));
+}
+
 export class Interpreter {
   private globalEnv: Environment;
   private eventLoop?: EventLoop;
@@ -671,7 +699,7 @@ export class Interpreter {
 
   private evalExpr(expr: AST.Expression, env: Environment): JSValue {
     switch (expr.type) {
-      case 'Literal': return this.evalLiteral(expr);
+      case 'Literal': return this.evalLiteral(expr, env);
       case 'Identifier': return this.evalIdentifier(expr, env);
       case 'ThisExpression': return env.get('this') ?? undefined;
       case 'SuperExpression': {
@@ -703,8 +731,13 @@ export class Interpreter {
     }
   }
 
-  private evalLiteral(expr: AST.Literal): JSValue {
+  private evalLiteral(expr: AST.Literal, env: Environment): JSValue {
     if (expr.value && typeof expr.value === 'object' && 'type' in expr.value) {
+      // A regex literal: build a real RegExp through the page's RegExp constructor. It used to
+      // evaluate to its source string, so /re/.test() was undefined and "s".match(/re/) failed.
+      const re = expr.value as { type: string; pattern?: string; flags?: string };
+      const ctor = env.get('RegExp') as { nativeFn?: (t: JSValue, a: JSValue[]) => JSValue } | undefined;
+      if (re.type === 'RegExp' && ctor?.nativeFn) return ctor.nativeFn(undefined, [re.pattern ?? '', re.flags ?? '']);
       return expr.raw;
     }
     return expr.value as JSValue;
@@ -1182,11 +1215,11 @@ export class Interpreter {
         substring: (_t, a) => (obj as string).substring(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         split: (_t, a) => {
-          const sep = a[0] !== undefined ? toString(a[0]) : undefined;
-          const parts = sep !== undefined ? (obj as string).split(sep) : [obj as string];
+          const sep = a[0] !== undefined ? patternArg(a[0]) : undefined;
+          const parts = sep !== undefined ? (obj as string).split(sep as string) : [obj as string];
           return createArray(parts.map(p => p as unknown as JSValue));
         },
-        replace: (_t, a) => (obj as string).replace(toString(a[0]), toString(a[1] ?? '')),
+        replace: (_t, a) => stringReplace(obj as string, a[0], a[1]),
         trim: (_t, _a) => (obj as string).trim(),
         trimStart: (_t, _a) => (obj as string).trimStart(),
         trimEnd: (_t, _a) => (obj as string).trimEnd(),
@@ -1198,10 +1231,10 @@ export class Interpreter {
         padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
         padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
         match: (_t, a) => {
-          const m = (obj as string).match(new RegExp(toString(a[0])));
+          const m = (obj as string).match(regexArg(a[0]));
           return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
         },
-        search: (_t, a) => (obj as string).search(new RegExp(toString(a[0]))),
+        search: (_t, a) => (obj as string).search(regexArg(a[0])),
         valueOf: (_t: JSValue, _a: JSValue[]) => obj,
         toString: (_t: JSValue, _a: JSValue[]) => obj,
       };
@@ -1277,11 +1310,11 @@ export class Interpreter {
         substring: (_t, a) => (obj as string).substring(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
         split: (_t, a) => {
-          const sep = a[0] !== undefined ? toString(a[0]) : undefined;
-          const parts = sep !== undefined ? (obj as string).split(sep) : [obj as string];
+          const sep = a[0] !== undefined ? patternArg(a[0]) : undefined;
+          const parts = sep !== undefined ? (obj as string).split(sep as string) : [obj as string];
           return createArray(parts.map(p => p as unknown as JSValue));
         },
-        replace: (_t, a) => (obj as string).replace(toString(a[0]), toString(a[1] ?? '')),
+        replace: (_t, a) => stringReplace(obj as string, a[0], a[1]),
         trim: (_t, _a) => (obj as string).trim(),
         trimStart: (_t, _a) => (obj as string).trimStart(),
         trimEnd: (_t, _a) => (obj as string).trimEnd(),
@@ -1293,9 +1326,10 @@ export class Interpreter {
         padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
         padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
         match: (_t, a) => {
-          const m = (obj as string).match(new RegExp(toString(a[0])));
+          const m = (obj as string).match(regexArg(a[0]));
           return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
         },
+        search: (_t, a) => (obj as string).search(regexArg(a[0])),
         valueOf: (_t: JSValue, _a: JSValue[]) => obj,
         toString: (_t: JSValue, _a: JSValue[]) => obj,
       };
@@ -1429,6 +1463,17 @@ export class Interpreter {
         ? String(this.evalExpr(prop.key, env))
         : prop.key.type === 'Identifier' ? prop.key.name : String(prop.key);
       const value = prop.value ? this.evalExpr(prop.value, env) : undefined;
+      if (prop.kind === 'get' || prop.kind === 'set') {
+        // `get x() {}` / `set x(v) {}`: accessor descriptors (they used to be stored as plain
+        // values, so reading o.x returned the function itself).
+        const existing = obj.properties.get(key);
+        obj.properties.set(key, {
+          value: undefined, writable: true, enumerable: true, configurable: true,
+          getter: prop.kind === 'get' ? value as JSFunction : existing?.getter,
+          setter: prop.kind === 'set' ? value as JSFunction : existing?.setter,
+        });
+        continue;
+      }
       obj.properties.set(key, { value, writable: true, enumerable: true, configurable: true });
     }
     return obj;

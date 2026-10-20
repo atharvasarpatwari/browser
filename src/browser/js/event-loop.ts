@@ -91,6 +91,23 @@ export class EventLoop {
     this.nextTickQueue.push(fn);
   }
 
+  /**
+   * Runs host code that calls into page scripts from outside a script run (a tap's click
+   * listeners). Interpreter.run() clears the global caller when it finishes, so without this
+   * every listener call failed ("No JS interpreter registered") and was swallowed.
+   */
+  runWithInterpreter<T>(fn: () => T): T {
+    const caller = this._interpreter;
+    if (caller) setGlobalCaller(caller);
+    try {
+      const result = fn();
+      this.drainMicrotasks();
+      return result;
+    } finally {
+      if (caller) setGlobalCaller(null);
+    }
+  }
+
   /** Drain all microtask queues. Returns total number of microtasks executed. */
   drainMicrotasks(): number {
     let count = 0;

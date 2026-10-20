@@ -290,7 +290,8 @@ describe('CSS Nesting — Basic', () => {
 
     const computedC = computeComputedStyles(child, stylesheet, { width: 1920, height: 1080 });
     expect(computedC.get('color')).toBe('#0000ff');
-    expect(computedC.get('font-size')).toBe('1.2em');
+    // CSS Fonts 4 §2.5: the computed font-size is an absolute length (relative values compounded when inherited raw).
+    expect(computedC.get('font-size')).toBe('19.2px');
   });
 
   it('handles multiple & selectors in one rule', () => {

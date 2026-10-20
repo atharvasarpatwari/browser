@@ -70,7 +70,11 @@ export class Parser {
     while (!this.is(TokenType.EOF) && !this.is(TokenType.Semicolon) && !this.is(TokenType.RBrace) && !this.is(TokenType.RBracket) && !this.is(TokenType.RParen) && !this.is(TokenType.Colon)) {
       const prec = this.infixPrecedence(this.peek().type);
       if (prec === 0 || prec < minPrec) break;
+      const before = this.pos;
       left = this.parseInfix(left, prec);
+      // An operator with a precedence but no parseInfix case consumes nothing: stop (the statement
+      // then fails to parse) instead of spinning forever and freezing the page's thread.
+      if (this.pos === before) break;
     }
 
     return left;
@@ -155,7 +159,8 @@ export class Parser {
 
       case TokenType.RegExp:
         this.advance();
-        return { type: 'Literal', value: { type: 'RegExp', pattern: tok.value.split('/')[1] ?? '', flags: tok.value.split('/').pop() ?? '' }, raw: tok.value, loc: { line: tok.line, column: tok.column } };
+        // `/pattern/flags`: the pattern runs to the LAST slash (split('/') broke on escaped slashes, `/a\/b/`)
+        return { type: 'Literal', value: { type: 'RegExp', pattern: tok.value.slice(1, tok.value.lastIndexOf('/')), flags: tok.value.slice(tok.value.lastIndexOf('/') + 1) }, raw: tok.value, loc: { line: tok.line, column: tok.column } };
 
       case TokenType.Identifier:
         this.advance();
@@ -260,6 +265,7 @@ export class Parser {
       case TokenType.EqualEqualEqual:
       case TokenType.BangEqualEqual:
       case TokenType.Instanceof:
+      case TokenType.In: // had a precedence but no case here: `x in o` looped forever (froze iana.org)
         this.advance();
         const right = this.parseExpression(prec);
         return { type: 'BinaryExpression', operator: tok.value, left, right, loc: { line: tok.line, column: tok.column } };
@@ -469,15 +475,24 @@ export class Parser {
     let isMethod = false;
     let isShorthand = false;
 
-    if (this.is(TokenType.Get)) { this.advance(); kind = 'get'; }
-    else if (this.is(TokenType.Set)) { this.advance(); kind = 'set'; }
+    // `get`/`set` start an accessor only when a property name follows. `get: fn`, `get() {}`,
+    // `{ get }` and `get,` are ordinary properties named "get" (jQuery's `get:function(e){…}`
+    // used to fail with "Expected LBrace").
+    const next = this.peek(1)?.type;
+    const accessorFollows = next !== TokenType.Colon && next !== TokenType.LParen && next !== TokenType.Comma && next !== TokenType.RBrace;
+    if (this.is(TokenType.Get) && accessorFollows) { this.advance(); kind = 'get'; }
+    else if (this.is(TokenType.Set) && accessorFollows) { this.advance(); kind = 'set'; }
 
     const key = this.parsePropertyKey();
     const computed = this.peek(-1)?.type === TokenType.RBracket;
 
     if (this.is(TokenType.LParen)) {
       isMethod = true;
+      // parseParams expects the parentheses consumed by its caller (as every other caller does);
+      // without this, every object method shorthand `{ foo() {} }` and getter/setter failed.
+      this.expect(TokenType.LParen);
       const params = this.parseParams();
+      this.expect(TokenType.RParen);
       const body = this.parseBlock();
       return {
         type: 'PropertyDefinition', key, value: {
@@ -914,13 +929,22 @@ export class Parser {
         const body = this.parseStatement()!;
         return { type: 'ForOfStatement', left: { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init: null }], kind: kind as 'var' | 'let' | 'const' }, right, body, await: false, loc: { line: tok.line, column: tok.column } };
       }
-      // for (var x = ...)
-      let init: AST.Expression | null = null;
-      if (this.is(TokenType.Equal)) {
+      // for (var x = ..., y = ...; ...): every declarator, not just the first (jQuery's
+      // `for (var n = +t.length, r = 0, i = e.length; ...)` failed with "Expected Semicolon").
+      const declarations: AST.VariableDeclarator[] = [];
+      let declId = id;
+      for (;;) {
+        let init: AST.Expression | null = null;
+        if (this.is(TokenType.Equal)) {
+          this.advance();
+          init = this.parseExpression(2);
+        }
+        declarations.push({ type: 'VariableDeclarator', id: declId, init });
+        if (!this.is(TokenType.Comma)) break;
         this.advance();
-        init = this.parseExpression(2);
+        declId = this.parseBindingName();
       }
-      const decl: AST.VariableDeclaration = { type: 'VariableDeclaration', declarations: [{ type: 'VariableDeclarator', id, init }], kind: kind as 'var' | 'let' | 'const' };
+      const decl: AST.VariableDeclaration = { type: 'VariableDeclaration', declarations, kind: kind as 'var' | 'let' | 'const' };
       this.expect(TokenType.Semicolon);
       const test = this.is(TokenType.Semicolon) ? null : this.parseExpression();
       this.expect(TokenType.Semicolon);

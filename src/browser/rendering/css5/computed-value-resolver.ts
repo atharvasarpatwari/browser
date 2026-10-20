@@ -224,6 +224,15 @@ export function resolveFontSizeKeyword(value: string, parentFontSize: number): s
   if (v === 'smaller') return `${Math.round(parentFontSize * 0.8)}px`;
   if (v === 'larger') return `${Math.round(parentFontSize * 1.2)}px`;
 
+  // Percentages and em are relative to the parent's font size; the computed value is px.
+  // Left as "100%", layout read it as parseFloat → a 100px font (iana.org's giant text).
+  const rel = /^(-?\d*\.?\d+)(%|em)$/.exec(v);
+  if (rel) {
+    const n = parseFloat(rel[1]!);
+    const px = rel[2] === '%' ? (n / 100) * parentFontSize : n * parentFontSize;
+    return `${Math.round(px * 100) / 100}px`;
+  }
+
   return null;
 }
 

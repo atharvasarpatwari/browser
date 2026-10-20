@@ -117,8 +117,9 @@ describe('Computed Value Resolver — Font-Size Keywords', () => {
 
   it('returns null for non-keywords', () => {
     expect(resolveFontSizeKeyword('16px', 16)).toBeNull();
-    expect(resolveFontSizeKeyword('1.5em', 16)).toBeNull();
-    expect(resolveFontSizeKeyword('100%', 16)).toBeNull();
+    // CSS Fonts 4 §2.5: the computed font-size is an absolute length (relative values compounded when inherited raw).
+    expect(resolveFontSizeKeyword('1.5em', 16)).toBe('24px');
+    expect(resolveFontSizeKeyword('100%', 16)).toBe('16px');
     expect(resolveFontSizeKeyword('auto', 16)).toBeNull();
   });
 
@@ -127,7 +128,7 @@ describe('Computed Value Resolver — Font-Size Keywords', () => {
     expect(resolveComputedValue('font-size', 'large', CTX)).toBe('18px');
     expect(resolveComputedValue('font-size', 'medium', CTX)).toBe('16px');
     expect(resolveComputedValue('font-size', '16px', CTX)).toBe('16px');
-    expect(resolveComputedValue('font-size', '1.5em', CTX)).toBe('1.5em');
+    expect(resolveComputedValue('font-size', '1.5em', CTX)).toBe('24px'); // computed font-size is absolute
   });
 });
 
@@ -323,7 +324,7 @@ describe('Computed Value Resolver — Pass-Through', () => {
   it('passes through unit values', () => {
     expect(resolveComputedValue('width', '100px', CTX)).toBe('100px');
     expect(resolveComputedValue('width', '50%', CTX)).toBe('50%');
-    expect(resolveComputedValue('font-size', '1.5em', CTX)).toBe('1.5em');
+    expect(resolveComputedValue('font-size', '1.5em', CTX)).toBe('24px'); // font-size is the exception: computed to px
     expect(resolveComputedValue('margin-top', '2rem', CTX)).toBe('2rem');
   });
 

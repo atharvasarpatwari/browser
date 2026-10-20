@@ -52,7 +52,22 @@ export class Lexer {
     return tokens;
   }
 
+  /**
+   * The next significant token. Skips comments and records the token type that the
+   * regex-vs-division decision reads. The parser streams tokens through here, and that
+   * bookkeeping used to live only in tokenize(): mid-file `x = /re/` lexed as division
+   * (jQuery: "Expected RBracket, got Illegal") and `a / b` could lex as a regex.
+   */
   nextToken(): Token {
+    for (;;) {
+      const tok = this.readToken();
+      if (tok.type === TokenType.Whitespace || tok.type === TokenType.Comment) continue;
+      this.lastTokenType = tok.type;
+      return tok;
+    }
+  }
+
+  private readToken(): Token {
     this.skipWhitespace();
     if (this.pos >= this.source.length) {
       return this.makeToken(TokenType.EOF, '', this.line, this.column);
@@ -325,7 +340,14 @@ export class Lexer {
     return this.makeToken(TokenType.TemplateEnd, this.source.slice(start, this.pos), line, col);
   }
 
+  /** The rest of a template literal after a `${...}` part; records its type like nextToken(). */
   readTemplatePart(line: number, col: number): Token {
+    const tok = this.readTemplatePartRaw(line, col);
+    this.lastTokenType = tok.type;
+    return tok;
+  }
+
+  private readTemplatePartRaw(line: number, col: number): Token {
     const start = this.pos;
     while (this.pos < this.source.length) {
       const ch = this.source[this.pos]!;
