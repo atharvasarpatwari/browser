@@ -1,3 +1,4 @@
+import { EMPTY_CLIP, clipFromAncestors } from './clip';
 import { controlIntrinsicSize, skipsChildLayout } from './form-controls';
 import type { IDisposable } from '../../app/dependency-container';
 import type { IDomTree, DomDocument, DomElement, DomNode, DomTextNode, LayoutBox, TextRun } from './dom-tree';
@@ -219,12 +220,27 @@ class LayoutEngine implements ILayoutEngine {
       const { element, box } = this.elementPositions[i]!;
       if (
         x >= box.x && x <= box.x + box.width &&
-        y >= box.y && y <= box.y + box.height
+        y >= box.y && y <= box.y + box.height &&
+        this.isHitTestable(element, x, y)
       ) {
         return element;
       }
     }
     return null;
+  }
+
+  /**
+   * Only what is actually visible at the point takes a tap: hidden (visibility, pointer-events:none)
+   * and clipped-away boxes used to be hit too, so a tap on Wikipedia's Search button followed the
+   * invisible "Log in" link of the closed user menu laid out over it.
+   */
+  private isHitTestable(el: DomElement, x: number, y: number): boolean {
+    const style = el.computedStyle;
+    const visibility = style?.get('visibility');
+    if (visibility === 'hidden' || visibility === 'collapse' || style?.get('pointer-events') === 'none') return false;
+    const clip = clipFromAncestors(el);
+    if (!clip) return true;
+    return clip !== EMPTY_CLIP && x >= clip.x && x <= clip.x + clip.w && y >= clip.y && y <= clip.y + clip.h;
   }
 
   getConfig(): LayoutConfig {
@@ -429,7 +445,11 @@ class LayoutEngine implements ILayoutEngine {
 
     let childY: number;
 
-    if (fmtType === 'flex' || fmtType === 'inline-flex') {
+    if (skipsChildLayout(node)) {
+      // A control's children are its data (<option>s, a textarea's text), painted by the control:
+      // a block-level <select> listed every option as page text.
+      childY = contentY;
+    } else if (fmtType === 'flex' || fmtType === 'inline-flex') {
       childY = this.layoutFlexContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
     } else if (fmtType === 'grid' || fmtType === 'inline-grid') {
       childY = this.layoutGridContainer(node, contentX, contentY, contentWidth, fontSize, domTree);
@@ -597,14 +617,18 @@ class LayoutEngine implements ILayoutEngine {
   ): number {
     const style = parent.computedStyle ?? new Map();
     const oldFloatContext = this.floatContext;
+    // Only a block formatting context root starts with no floats. Every block used to, so a float
+    // never reached its parent's later siblings: `clear` saw nothing and content flowed over it
+    // (Wikipedia's floated search box overlapped the footer, which then took the button's taps).
+    const bfcRoot = !oldFloatContext || this.establishesBfc(parent);
 
-    // Create a float context for this BFC
     this.floatContext = new FloatContext(
       contentX,
       contentY,
       availableWidth,
       0, // height computed during layout
     );
+    if (!bfcRoot) this.floatContext.takeFloatsFrom(oldFloatContext!);
 
     let childY = contentY;
     let inlineRun: ClassifiedChild[] = [];
@@ -669,8 +693,30 @@ class LayoutEngine implements ILayoutEngine {
     }
     flushInlineRun();
 
+    if (bfcRoot) {
+      // A BFC root grows to contain its floats (CSS 2.2 §10.6.7), e.g. the overflow:hidden clearfix.
+      if (this.floatContext.hasFloats()) childY = Math.max(childY, this.floatContext.getCurrentBottom());
+    } else {
+      oldFloatContext!.takeFloatsFrom(this.floatContext);
+    }
     this.floatContext = oldFloatContext;
     return childY;
+  }
+
+  /** CSS 2.2 §9.4.1: boxes whose contents are laid out in a new block formatting context. */
+  private establishesBfc(el: DomElement): boolean {
+    const style = el.computedStyle;
+    if (!style || el.tagName.toLowerCase() === 'html') return true;
+    const display = style.get('display') ?? 'block';
+    if (['flow-root', 'inline-block', 'table-cell', 'table-caption', 'flex', 'inline-flex', 'grid', 'inline-grid', 'table', 'inline-table'].includes(display)) return true;
+    const float = style.get('float');
+    if (float === 'left' || float === 'right') return true;
+    const position = style.get('position');
+    if (position === 'absolute' || position === 'fixed') return true;
+    const overflow = style.get('overflow-x') ?? style.get('overflow') ?? 'visible';
+    if (overflow !== 'visible' && overflow !== 'clip') return true;
+    const parentDisplay = (el.parent as DomElement | null)?.computedStyle?.get('display') ?? '';
+    return parentDisplay.includes('flex') || parentDisplay.includes('grid');
   }
 
   /**
@@ -1079,19 +1125,30 @@ class LayoutEngine implements ILayoutEngine {
           item.flexBasis = parts[2] === 'auto' ? 0 : rc('flex-basis', '0');
         }
       }
+      let autoBasis = !flexShorthand || /\bauto\b|^\s*(none|initial)\s*$/.test(flexShorthand);
 
       // Resolve flex-basis if not set by shorthand
       if (!flexShorthand || item.flexBasis === 0) {
         const childFlexBasis = childStyle.get('flex-basis');
         if (childFlexBasis && childFlexBasis !== 'auto') {
           item.flexBasis = rc('flex-basis', '0');
+          autoBasis = false;
         } else {
           const mainSizeProp = isHorizontal ? 'width' : 'height';
           const rawMain = childStyle.get(mainSizeProp);
           if (rawMain && rawMain !== 'auto') {
             item.flexBasis = rc(mainSizeProp, '0');
+            autoBasis = false;
           }
         }
+      } else {
+        autoBasis = false;
+      }
+      // flex-basis:auto with width:auto is the item's max-content width (CSS Flexbox §9.2.3.E).
+      // It was 0, so a text column next to a thumbnail (Wikipedia search results) was laid out
+      // 0px wide, one word per line, and the results ran ~23,000px down the page.
+      if (autoBasis && isHorizontal && item.flexBasis === 0) {
+        item.flexBasis = this.measureContentWidth(childEl, availableWidth, this.resolveFontSize(childStyle, fontSize), domTree);
       }
 
       // Check if item has explicit cross size
@@ -1821,20 +1878,12 @@ class LayoutEngine implements ILayoutEngine {
       // would report where it was centred, not how wide it is), then lay it out at that width so
       // alignment happens inside the final box. ponytail: block children still report the full
       // available width, so a <div> inside an inline-block keeps it wide.
-      const positionsMark = this.elementPositions.length;
-      const pendingMark = this.pendingInlineBlocks.length;
-      const wasMeasuring = this.measuringShrinkToFit;
-      this.measuringShrinkToFit = true;
-      layoutContent(innerWidth);
-      this.measuringShrinkToFit = wasMeasuring;
+      const extent = this.measureLayout(el, () => layoutContent(innerWidth));
       // min(max(min-content, available), preferred): content laid out at the available width is
       // already as wide as that (an unbreakable or nowrap label overflows to its min-content), so
       // the measured extent is the answer. Capping it at the available width squeezed a nowrap
       // button in a narrow cell to its border (Wikipedia's Search button was 8px wide).
-      innerWidth = Math.max(0, this.contentExtent(el) - childX);
-      this.elementPositions.length = positionsMark;
-      this.pendingInlineBlocks.length = pendingMark;
-      this.clearTextRuns(el);
+      innerWidth = Math.max(0, extent - childX);
       childBottom = layoutContent(innerWidth);
     } else {
       childBottom = layoutContent(innerWidth);
@@ -1867,6 +1916,44 @@ class LayoutEngine implements ILayoutEngine {
       for (const c of node.children) if (c.nodeType === 'element') visit(c as DomElement);
     };
     visit(el);
+  }
+
+  /**
+   * Width an element's content wants when laid out in `availableWidth` (its max-content width,
+   * capped there), by a throwaway layout at a local origin that is then rolled back.
+   */
+  private measureContentWidth(el: DomElement, availableWidth: number, fontSize: number, domTree?: IDomTree): number {
+    if (skipsChildLayout(el)) return 0;
+    const prevBox = this.layoutBoxes.get(el.domId);
+    this.layoutBoxes.set(el.domId, {
+      x: 0, y: 0, width: availableWidth, height: 0,
+      marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0,
+      paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0,
+      borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
+    });
+    const width = this.measureLayout(el, () => this.layoutBlockChildren(el, 0, 0, availableWidth, fontSize, domTree));
+    if (prevBox) this.layoutBoxes.set(el.domId, prevBox);
+    else this.layoutBoxes.delete(el.domId);
+    return Math.min(availableWidth, width);
+  }
+
+  /** Runs a layout only to measure it: returns the content extent and undoes its side effects. */
+  private measureLayout(el: DomElement, layout: () => unknown): number {
+    const positionsMark = this.elementPositions.length;
+    const pendingMark = this.pendingInlineBlocks.length;
+    const positionedMark = this.positionedQueue.length;
+    const wasMeasuring = this.measuringShrinkToFit;
+    this.measuringShrinkToFit = true;
+    try {
+      layout();
+      return this.contentExtent(el);
+    } finally {
+      this.measuringShrinkToFit = wasMeasuring;
+      this.elementPositions.length = positionsMark;
+      this.pendingInlineBlocks.length = pendingMark;
+      this.positionedQueue.length = positionedMark;
+      this.clearTextRuns(el);
+    }
   }
 
   /** Right-most edge of an element's laid-out content (descendant boxes and text runs), local coordinates. */

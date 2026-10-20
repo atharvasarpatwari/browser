@@ -207,6 +207,19 @@ export class FloatContext {
   }
 
   /**
+   * Shares floats across the blocks of one block formatting context: a nested block that is not
+   * a BFC root sees the floats placed before it, and hands its own back so later siblings wrap
+   * around and clear them. Floats are kept in page coordinates, so they carry over as they are.
+   */
+  takeFloatsFrom(other: FloatContext): void {
+    for (const f of other.floats) {
+      if (this.floats.includes(f)) continue;
+      this.floats.push(f);
+      this.currentBottom = Math.max(this.currentBottom, f.y + f.height);
+    }
+  }
+
+  /**
    * Gets the current bottom of the float area.
    */
   getCurrentBottom(): number {

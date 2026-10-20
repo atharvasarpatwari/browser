@@ -1094,6 +1094,11 @@ export function expandShorthands(
       expanded = expandListStyleShorthand(decl.value);
     } else if (prop === 'animation') {
       expanded = expandAnimationShorthand(decl.value);
+    } else if (prop === 'overflow') {
+      // `overflow: hidden` never reached overflow-x/-y, which stayed `visible`: nothing that reads
+      // the longhands (clipping, BFC roots, hit testing) saw it. Keep the shorthand too.
+      const [x, y = x] = decl.value.trim().split(/\s+/);
+      if (x) expanded = new Map([['overflow', decl.value], ['overflow-x', x], ['overflow-y', y]]);
     }
 
     if (expanded && expanded.size > 0) {

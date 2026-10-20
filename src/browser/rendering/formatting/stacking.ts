@@ -45,6 +45,12 @@ export interface StackingContext {
   readonly positionedAutoEntries: DomElement[];
   /** Whether this context has opacity < 1 (needs group compositing). */
   readonly isGrouped: boolean;
+  /**
+   * A positioned box with z-index:auto: painted as if it made a stacking context (its in-flow
+   * descendants paint with it, CSS 2.1 Appendix E step 8) but its z-indexed descendants belong to
+   * the real parent context. Its own commands come from the paint callback at render time.
+   */
+  pseudo?: boolean;
   /** The resolved opacity for group compositing. */
   readonly groupOpacity: number;
   /** Pure-translation overlay (e.g. animated transform) to apply at paint time. */
@@ -271,6 +277,16 @@ function classifyChildrenIntoContext(
         childCtx.zIndex = 0;
       }
       ctx.children.push(childCtx);
+    } else if (isPositionedElement(childStyle)) {
+      // Positioned, z-index:auto. Its descendants used to be spread over the parent's layers, so
+      // a relative button's label (an inline, layer 4) painted *before* the button's own
+      // background (layer 5) and vanished under it (Wikipedia's blue "Search" button).
+      const pseudo = createContext(childEl, false, options);
+      pseudo.pseudo = true;
+      pseudo.zIndex = 0;
+      const hoisted = pseudo.children.filter((c) => c.zIndex !== 0);
+      pseudo.children.splice(0, pseudo.children.length, ...pseudo.children.filter((c) => c.zIndex === 0));
+      ctx.children.push(pseudo, ...hoisted);
     } else {
       // Child participates in parent context — classify into sub-layer
       classifyElementIntoLayer(ctx, childEl);
@@ -372,7 +388,7 @@ export function renderStackingContext(
 
   // ── Layer 0: Background/borders of the context-forming element ─────
   // (bgCommands are populated externally by the paint engine)
-  commands.push(...ctx.bgCommands);
+  commands.push(...(ctx.pseudo ? paintElement(ctx.element) : ctx.bgCommands));
 
   // ── Layer 1: Child contexts with negative z-index ──────────────────
   for (const child of ctx.children) {

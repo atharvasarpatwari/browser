@@ -18,8 +18,9 @@ const F = 'tests/fixtures/wikipedia-search-2026/';
 async function render(body: string, sheets: (url: string) => string = () => '', width = 800) {
   const domTree = new DomTree();
   const paintEngine = new PaintEngine();
+  const layoutEngine = new LayoutEngine();
   const renderer = new PageRenderer({
-    htmlParser: new HtmlParser(), domTree, cssParser: new CssParser(), layoutEngine: new LayoutEngine(), paintEngine,
+    htmlParser: new HtmlParser(), domTree, cssParser: new CssParser(), layoutEngine, paintEngine,
     resourceLoader: {
       loadResource: vi.fn(), loadBatch: vi.fn(), loadStylesheet: vi.fn(async (u: string) => sheets(u)), loadScript: vi.fn().mockResolvedValue(''),
       loadImage: vi.fn(), getPriority: vi.fn(), setMaxConcurrent: vi.fn(), on: vi.fn(), off: vi.fn(), dispose: vi.fn(),
@@ -31,7 +32,7 @@ async function render(body: string, sheets: (url: string) => string = () => '', 
   const q = (sel: string) => domTree.querySelector(sel) as DomElement;
   const cmds = paintEngine.compositeFrame();
   const texts = cmds.filter((c) => c.type === 'fillText').map((c) => c.params[0] as string);
-  return { q, cmds, texts };
+  return { q, cmds, texts, layoutEngine };
 }
 const page = (html: string) => `<html><body>${html}</body></html>`;
 const kids = (el: DomElement) => el.children.filter((c) => c.nodeType === 'element').map((c) => (c as DomElement).tagName);
@@ -86,6 +87,57 @@ describe('layout', () => {
     expect(b).toBeTruthy();
     expect(b.width).toBeGreaterThan(40);
   });
+
+  it('a float nested in a block is cleared by a later sibling, and an overflow:hidden box contains its floats', async () => {
+    const { q } = await render(page(`<div id="w"><div><div style="float:left;width:100px;height:80px"></div></div><div id="clear" style="clear:both">after</div></div>
+      <div id="bfc" style="overflow:hidden"><div style="float:left;width:50px;height:60px"></div></div>`));
+    const wy = q('#w').layoutBox!.y;
+    expect(q('#clear').layoutBox!.y).toBeGreaterThanOrEqual(wy + 80);
+    expect(q('#bfc').layoutBox!.height).toBeGreaterThanOrEqual(60);
+  });
+
+  it('a block-level <select> shows its chosen option, not every option as page text', async () => {
+    const { texts } = await render(page('<select style="display:block"><option>20 items</option><option>50 items</option></select>'));
+    expect(texts.join(' ')).toContain('20 items');
+    expect(texts.join(' ')).not.toContain('50');
+  });
+
+  it('a flex item with auto basis and width is as wide as its content, not 0', async () => {
+    const { q } = await render(page(`<div style="display:flex"><div id="t">A web browser is an application for accessing websites.</div></div>`));
+    expect(q('#t').layoutBox!.width).toBeGreaterThan(200);
+    expect(q('#t').layoutBox!.height).toBeLessThan(40); // one line, not one word per line
+  });
+});
+
+describe('hit testing', () => {
+  it('a tap goes to what is visible: not to hidden or clipped-away boxes over it', async () => {
+    const { q, layoutEngine } = await render(page(`<div style="position:relative">
+      <button id="b" style="width:120px;height:40px">Search</button>
+      <a id="hidden" href="/login" style="position:absolute;top:0;left:0;width:200px;height:50px;visibility:hidden">Log in</a>
+      <div style="position:absolute;top:0;left:0;width:1px;height:1px;overflow:hidden"><a id="clipped" href="/x" style="display:block;width:200px;height:50px">x</a></div>
+    </div>`));
+    const b = q('#b').layoutBox!;
+    const hit = layoutEngine.getElementAtPoint(b.x + 20, b.y + 20);
+    expect(hit?.attributes.get('id')).toBe('b');
+  });
+});
+
+describe('paint order', () => {
+  it('a positioned (z-index:auto) box paints its in-flow children after its own background', async () => {
+    const { cmds } = await render(page('<button style="position:relative;background:#36c;color:#fff;border:0"><span>Go</span></button>'));
+    const bg = cmds.findIndex((c) => c.type === 'setFillStyle' && /#36c|51,\s*102,\s*204/i.test(String(c.params[0])));
+    const label = cmds.findIndex((c) => c.type === 'fillText' && c.params[0] === 'Go');
+    expect(bg).toBeGreaterThanOrEqual(0);
+    expect(label).toBeGreaterThan(bg);
+  });
+
+  it('a z-indexed descendant of a z-index:auto box still stacks above later siblings', async () => {
+    const { cmds } = await render(page(`<div style="position:relative"><div style="position:absolute;z-index:5;top:0;left:0;width:50px;height:50px;background:#f00"></div></div>
+      <div style="position:relative;width:100px;height:100px;background:#0f0"></div>`));
+    const red = cmds.findIndex((c) => c.type === 'setFillStyle' && /#f00|255,\s*0,\s*0/.test(String(c.params[0])));
+    const green = cmds.findIndex((c) => c.type === 'setFillStyle' && /#0f0|0,\s*255,\s*0/.test(String(c.params[0])));
+    expect(red).toBeGreaterThan(green);
+  });
 });
 
 describe('Wikipedia Special:Search with its own CSS', () => {
@@ -97,5 +149,14 @@ describe('Wikipedia Special:Search with its own CSS', () => {
     expect(q('#searchText input').layoutBox!.width).toBeGreaterThan(300);
     expect(texts.filter((t) => t === 'Search')).toHaveLength(2); // the page heading and the button
     expect(texts).toEqual(expect.arrayContaining(['Privacy', 'Terms', 'Desktop']));
+  }, 30000);
+
+  it('the results page lays out each result in a line or two, with its snippet text', async () => {
+    const R = 'tests/fixtures/wikipedia-results-2026/';
+    const html = readFileSync(R + 'index.html', 'utf8');
+    const css = (u: string) => readFileSync(R + (u.includes('site.styles') ? 'style2.css' : 'style1.css'), 'utf8');
+    const { q, texts } = await render(html, css, 1000);
+    expect(q('.mw-search-results-container').layoutBox!.height).toBeLessThan(4000); // was ~23,000px
+    expect(texts).toEqual(expect.arrayContaining(['application', 'accessing']));
   }, 30000);
 });
