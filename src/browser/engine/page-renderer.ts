@@ -183,6 +183,16 @@ class PageRenderer implements IPageRenderer, IDisposable {
       }
     }
 
+    // Phase timings, logged once per page (on Android they reach logcat): the only way to see
+    // where a slow page's time goes on a device.
+    const timings: string[] = [];
+    let mark = performance.now();
+    const lap = (name: string): void => {
+      const now = performance.now();
+      timings.push(`${name} ${Math.round(now - mark)}`);
+      mark = now;
+    };
+
     // 1. Parse HTML
     const parseResult = htmlParser.parse(result.body, result.url);
     const htmlDoc = parseResult.document;
@@ -202,26 +212,35 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     // 4. Extract and compute CSS styles (fetching <link rel=stylesheet> sheets first)
+    lap('html');
     const rules = await this.loadExternalStylesheets(cssParser.extractStylesFromDocument(htmlDoc), result.url, signal);
+    lap('css');
     this._lastRules = rules;
     this.applyComputedStyles(rules);
+    lap('style');
 
     // 5. Execute scripts: inline synchronously, external fetched via ResourceLoader.
     //    Paint the script-free page first, so a slow script never delays seeing it;
     //    the full layout+paint below then picks up whatever the scripts changed.
     if (domTree.getElementsByTagName('script').length > 0) {
       layoutEngine.layout(doc, domTree);
+      lap('layout');
       paintEngine.paint(doc);
+      lap('paint');
       this.deps.onFrameRendered?.();
+      lap('frame');
       await this.executeAllScripts(doc, result.url, signal);
+      lap('scripts');
       // Re-read <style> from the live DOM: scripts add and edit stylesheets (example.com's s.js
       // inserts its p+p/svg rules). Re-applying the pre-script rules ignored all of that.
       this._lastRules = this.rulesFromDomStyles(rules);
       this.applyComputedStyles(this._lastRules);
+      lap('style2');
     }
 
     // 6. Run layout
     layoutEngine.layout(doc, domTree);
+    lap('layout2');
 
     // 7. Lazy load images/iframes via IntersectionObserver
     const lazyLoader = new LazyLoader();
@@ -238,6 +257,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 8. Paint
     paintEngine.paint(doc);
+    lap('paint2');
+    console.info(`[render] ${timings.join(' · ')} ms — ${result.url.slice(0, 120)}`);
 
     // 9. Clear mutations recorded during the initial full style pass. They are
     //    stale (already reflected in the laid-out, painted tree) and would

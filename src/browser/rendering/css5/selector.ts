@@ -72,9 +72,11 @@ function matchesCompound(element: SelectableElement, sel: CssCompoundSelector): 
   }
 
   // Classes
-  const elementClasses = parseClassList(element);
-  for (const cls of sel.classes) {
-    if (!elementClasses.has(cls.toLowerCase())) return false;
+  if (sel.classes.length > 0) {
+    const elementClasses = parseClassList(element);
+    for (const cls of sel.classes) {
+      if (!elementClasses.has(cls.toLowerCase())) return false;
+    }
   }
 
   // Attributes
@@ -427,9 +429,19 @@ function parseSelectorString(str: string): CssSelector[] | null {
 // UTILITIES
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Parsed class lists by attribute value: the same few strings are matched against thousands of
+// selectors, and re-splitting them each time was a top cost of styling large pages.
+const classListCache = new Map<string, Set<string>>();
+
 function parseClassList(element: SelectableElement): Set<string> {
   const classStr = element.attributes.get('class') ?? '';
-  return new Set(classStr.split(/\s+/).filter(Boolean).map(c => c.toLowerCase()));
+  let set = classListCache.get(classStr);
+  if (!set) {
+    if (classListCache.size > 4096) classListCache.clear(); // ponytail: crude bound, fine for one page's distinct class strings
+    set = new Set(classStr.split(/\s+/).filter(Boolean).map(c => c.toLowerCase()));
+    classListCache.set(classStr, set);
+  }
+  return set;
 }
 
 function hasValue(element: SelectableElement): boolean {

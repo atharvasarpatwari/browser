@@ -29,10 +29,12 @@ interface Ctx2D {
   measureText(text: string): { width: number; actualBoundingBoxAscent?: number; actualBoundingBoxDescent?: number };
   fillText(text: string, x: number, y: number, maxWidth?: number): void;
   getImageData(x: number, y: number, w: number, h: number): { data: Uint8ClampedArray };
+  clearRect(x: number, y: number, w: number, h: number): void;
 }
-interface ScratchCanvas { width: number; height: number; getContext(type: '2d'): unknown }
+interface ScratchCanvas { width: number; height: number; getContext(type: '2d', options?: { willReadFrequently?: boolean }): unknown }
 
-const CACHE_LIMIT = 512;
+// A page of a few thousand words re-rasterizes every one of them after each change; 512 churned.
+const CACHE_LIMIT = 4096;
 const MAX_MASK_PIXELS = 2_000_000;
 const cache = new Map<string, TextMask | null>();
 let canvas: ScratchCanvas | null | undefined;
@@ -44,7 +46,10 @@ function scratchCanvas(): ScratchCanvas | null {
     if (Offscreen) canvas = new Offscreen(1, 1);
     else if (typeof document !== 'undefined') canvas = document.createElement('canvas') as unknown as ScratchCanvas;
     else canvas = null;
-    if (canvas && !canvas.getContext('2d')) canvas = null;
+    // willReadFrequently keeps the canvas in CPU memory. Without it Android's WebView backs it
+    // with the GPU, and the getImageData() after every run stalled the GPU each time: the
+    // first frame of Wikipedia's results page took ~10 s on a tablet, almost all in readbacks.
+    if (canvas && !canvas.getContext('2d', { willReadFrequently: true })) canvas = null;
   } catch {
     canvas = null;
   }
@@ -73,7 +78,7 @@ export function rasterizeTextRun(text: string, cssFont: string, maxWidth?: numbe
 
   const c = scratchCanvas();
   if (!c) return null;
-  let ctx = c.getContext('2d') as Ctx2D;
+  let ctx = c.getContext('2d', { willReadFrequently: true }) as Ctx2D;
   ctx.font = cssFont;
   const metrics = ctx.measureText(text);
   const size = parseFloat(/(\d+(?:\.\d+)?)px/.exec(cssFont)?.[1] ?? '16');
@@ -85,10 +90,18 @@ export function rasterizeTextRun(text: string, cssFont: string, maxWidth?: numbe
   const height = ascent + descent;
 
   let mask: TextMask | null = null;
-  if (width > 0 && height > 0 && width * height <= MAX_MASK_PIXELS) {
-    c.width = width;   // resizing clears the canvas and resets its state
-    c.height = height;
-    ctx = c.getContext('2d') as Ctx2D;
+  if (!text.trim()) {
+    // Spaces have an advance but no pixels: no draw, no readback.
+    mask = { alpha: new Uint8ClampedArray(0), width: 0, height: 0, left: 0, top: 0, advance };
+  } else if (width > 0 && height > 0 && width * height <= MAX_MASK_PIXELS) {
+    if (width > c.width || height > c.height) {
+      // Grow only (resizing reallocates the canvas and resets its state); a run uses a corner.
+      c.width = Math.max(c.width, width);
+      c.height = Math.max(c.height, height);
+      ctx = c.getContext('2d', { willReadFrequently: true }) as Ctx2D;
+    } else {
+      ctx.clearRect(0, 0, width, height);
+    }
     ctx.font = cssFont;
     ctx.fillStyle = '#ffffff';
     ctx.textBaseline = 'alphabetic';

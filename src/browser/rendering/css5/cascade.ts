@@ -1535,6 +1535,70 @@ function resolveParentFontWeight(parentComputed: Map<string, string> | undefined
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RULE INDEX (selector bucketing by rightmost compound)
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface RuleIndex {
+  ctx: CollectContext;
+  /** Rules that could match `element`, in stylesheet order; each is still fully matched. */
+  candidates(element: StyleableElement): CssStyleRule[];
+}
+
+const ruleIndexCache = new WeakMap<CssStylesheet, { key: string; index: RuleIndex }>();
+
+function ruleIndexFor(stylesheet: CssStylesheet, vp: Viewport): RuleIndex {
+  const key = `${vp.width}x${vp.height}:${stylesheet.rules.length}`;
+  const cached = ruleIndexCache.get(stylesheet);
+  if (cached && cached.key === key) return cached.index;
+
+  const ctx: CollectContext = {
+    viewport: vp,
+    rules: [],
+    sourceOrder: 0,
+    layerOrder: [],
+    currentLayer: null,
+    layerMap: new Map(),
+    keyframes: new Map(),
+  };
+  for (const rule of stylesheet.rules) collectStyleRules(rule, ctx);
+
+  const universal: number[] = [];
+  const byId = new Map<string, number[]>();
+  const byClass = new Map<string, number[]>();
+  const byTag = new Map<string, number[]>();
+  const add = (map: Map<string, number[]>, k: string, i: number): void => {
+    const list = map.get(k);
+    if (!list) map.set(k, [i]);
+    else if (list[list.length - 1] !== i) list.push(i);
+  };
+  ctx.rules.forEach((rule, i) => {
+    for (const sel of rule.selectors) {
+      const right = sel.type === 'complex' ? sel.right : sel;
+      if (right.id) add(byId, right.id, i);
+      else if (right.classes.length > 0) add(byClass, right.classes[0]!.toLowerCase(), i); // matched case-insensitively
+      else if (right.tagName && right.tagName !== '*') add(byTag, right.tagName.toLowerCase(), i);
+      else if (universal[universal.length - 1] !== i) universal.push(i);
+    }
+  });
+
+  const index: RuleIndex = {
+    ctx,
+    candidates(element) {
+      const picked = new Set<number>(universal);
+      const take = (list: number[] | undefined): void => { if (list) for (const i of list) picked.add(i); };
+      take(byTag.get(element.tagName.toLowerCase()));
+      const id = element.attributes.get('id');
+      if (id) take(byId.get(id));
+      const cls = element.attributes.get('class');
+      if (cls) for (const c of cls.split(/\s+/)) if (c) take(byClass.get(c.toLowerCase()));
+      return [...picked].sort((a, b) => a - b).map((i) => ctx.rules[i]!);
+    },
+  };
+  ruleIndexCache.set(stylesheet, { key, index });
+  return index;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // COMPUTED STYLES
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1546,22 +1610,14 @@ export function computeComputedStyles(
 ): Map<string, string> {
   const vp = viewport ?? DEFAULT_VIEWPORT;
 
-  // 1. Collect all matching style rules (flattened through media/supports/layers).
-  const ctx: CollectContext = {
-    viewport: vp,
-    rules: [],
-    sourceOrder: 0,
-    layerOrder: [],
-    currentLayer: null,
-    layerMap: new Map(),
-    keyframes: new Map(),
-  };
-  for (const rule of stylesheet.rules) {
-    collectStyleRules(rule, ctx);
-  }
+  // 1. The stylesheet flattened through media/supports/layers, and its rules bucketed by the key
+  //    of each selector's rightmost compound — built once per stylesheet + viewport. This used to
+  //    re-flatten every rule and test every selector for every element: Wikipedia's 3,142 rules ×
+  //    666 elements took ~4.5 s per page here and ~15 s on a tablet.
+  const index = ruleIndexFor(stylesheet, vp);
 
   // 2. Sort via computeCascade (specificity + source order + layer order).
-  const cascade = computeCascade(element, ctx.rules, ctx.layerOrder, ctx.layerMap);
+  const cascade = computeCascade(element, index.candidates(element), index.ctx.layerOrder, index.ctx.layerMap);
 
   // 3. Build custom properties map early (parent + local --* declarations + inline --*)
   //    so we can resolve var() BEFORE shorthand expansion.
@@ -1643,7 +1699,7 @@ export function computeComputedStyles(
     parentComputed: parentComputed ?? null,
     uaDefaults,
     cascadeEntries: cascade,
-    layerOrder: ctx.layerOrder,
+    layerOrder: index.ctx.layerOrder,
   };
   processCSSWideKeywords(computed, kwCtx);
 

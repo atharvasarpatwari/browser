@@ -70,6 +70,15 @@ const NAMED_FONT_SIZES: Record<string, number> = {
   'larger': 18,
 };
 
+/**
+ * Atomic inline-level boxes: placed on the line as one box, with their own formatting inside.
+ * inline-flex/inline-grid used to flow as plain inlines, ending up 0x0 (with overflow:hidden,
+ * invisible: Wikipedia's footer icon links).
+ */
+function isAtomicInline(classified: string): boolean {
+  return classified === 'inline-block' || classified === 'inline-flex' || classified === 'inline-grid';
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LAYOUT ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -496,7 +505,8 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     // ── Compute content height ────────────────────────────────────────────
-    const contentHeight = Math.max(specifiedContentHeight, childY - contentY);
+    const contentHeight = this.clampContentHeight(style, Math.max(specifiedContentHeight, childY - contentY),
+      resolve, boxSizing, paddingTop + paddingBottom + borderTop + borderBottom);
 
     // ── Update LayoutBox with final height ───────────────────────────────
     box.height = contentHeight + paddingTop + paddingBottom + borderTop + borderBottom;
@@ -797,6 +807,11 @@ class LayoutEngine implements ILayoutEngine {
       paddingTop, paddingRight, paddingBottom, paddingLeft,
       borderTop, borderRight, borderBottom, borderLeft,
     };
+    // Registered before the children: their text runs need the box (a float's own text was
+    // dropped), and hit testing wants children after their parent.
+    this.layoutBoxes.set(el.domId, box);
+    this.elementPositions.push({ element: el, box });
+    if (domTree) domTree.setLayoutBox(el, box);
 
     // Layout children to determine height
     const contentWidth = borderWidthBox - paddingLeft - paddingRight - borderLeft - borderRight;
@@ -820,19 +835,16 @@ class LayoutEngine implements ILayoutEngine {
     const contentHeight = Math.max(specifiedContentHeight, childY - childContentY);
     box.height = contentHeight + paddingTop + paddingBottom + borderTop + borderBottom;
 
-    // Place the float
+    // Place the float, then move its content there: placeFloat moves the box (below earlier
+    // floats, to the right edge), and the content used to stay where it was laid out, so every
+    // floated <li> after the first drew its text on top of the first (Wikipedia's sidebar).
     if (this.floatContext) {
       this.floatContext.placeFloat(box, side, contentY);
+    } else {
+      box.x = contentX + marginLeft;
+      box.y = contentY + marginTop;
     }
-
-    // Register for hit testing
-    this.layoutBoxes.set(el.domId, box);
-    this.elementPositions.push({ element: el, box });
-
-    // Write back to DOM tree
-    if (domTree) {
-      domTree.setLayoutBox(el, box);
-    }
+    this.translateContent(el, box.x + borderLeft + paddingLeft - childContentX, box.y + borderTop + paddingTop - childContentY);
   }
 
   /**
@@ -887,7 +899,7 @@ class LayoutEngine implements ILayoutEngine {
         continue;
       }
 
-      if (elClassified === 'inline-block') {
+      if (isAtomicInline(elClassified)) {
         // Layout as inline-block: block formatting inside, inline positioning outside
         this.layoutInlineBlockElement(el, ifc, contentX, startY, availableWidth, parentFontSize, domTree);
       } else {
@@ -1077,7 +1089,9 @@ class LayoutEngine implements ILayoutEngine {
       }
 
       const childFmtType = classifyDisplay(childDisplay);
-      if (childFmtType === 'inline' || childFmtType === 'none') continue;
+      // Children of a flex/grid container are blockified items (CSS Display §2.7); inline ones
+      // (an <img>, a <span>) used to be skipped, so Wikipedia's footer wordmark had no box.
+      if (childFmtType === 'none') continue;
 
       const rc = (prop: string, fallback: string): number =>
         this.resolveLength(childStyle.get(prop) ?? fallback, fontSize, availableWidth);
@@ -1350,7 +1364,9 @@ class LayoutEngine implements ILayoutEngine {
       }
 
       const childFmtType = classifyDisplay(childDisplay);
-      if (childFmtType === 'inline' || childFmtType === 'none') continue;
+      // Children of a flex/grid container are blockified items (CSS Display §2.7); inline ones
+      // (an <img>, a <span>) used to be skipped, so Wikipedia's footer wordmark had no box.
+      if (childFmtType === 'none') continue;
 
       const rc = (prop: string, fallback: string): number =>
         this.resolveLength(childStyle.get(prop) ?? fallback, fontSize, availableWidth);
@@ -1584,7 +1600,7 @@ class LayoutEngine implements ILayoutEngine {
         continue;
       }
 
-      if (elClassified === 'inline-block') {
+      if (isAtomicInline(elClassified)) {
         this.layoutInlineBlockElement(el, ifc, contentX, contentY, availableWidth, parentFontSize, domTree);
       } else if (elClassified === 'block') {
         // A block element inside an inline element creates a split:
@@ -1721,7 +1737,7 @@ class LayoutEngine implements ILayoutEngine {
       if (innerPosition === 'absolute' || innerPosition === 'fixed') {
         const containingBlock = innerPosition === 'fixed' ? null : findContainingBlockForScheme(inner, innerPosition as 'absolute' | 'fixed' | 'sticky');
         this.positionedQueue.push({ element: inner, containingBlock, fontSize: this.resolveFontSize(innerStyle, fontSize), availableWidth, domTree });
-      } else if (innerClassified === 'inline-block') {
+      } else if (isAtomicInline(innerClassified)) {
         this.layoutInlineBlockElement(inner, ifc, contentX, contentY, availableWidth, fontSize, domTree);
       } else if (innerClassified === 'block') {
         this.layoutNode(inner, contentX, ifc.getEndY(), availableWidth, fontSize, domTree);
@@ -1869,9 +1885,14 @@ class LayoutEngine implements ILayoutEngine {
     // top-left, and the box was added to the line before its size was known.
     const childX = borderL + padL;
     const childY = borderT + padT;
+    const innerDisplay = elStyle.get('display') ?? 'inline-block';
     const layoutContent = (width: number): number => (skipsChildLayout(el)
       ? childY
-      : this.layoutBlockChildren(el, childX, childY, width, elFontSize, domTree));
+      : innerDisplay === 'inline-flex'
+        ? this.layoutFlexContainer(el, childX, childY, width, elFontSize, domTree)
+        : innerDisplay === 'inline-grid'
+          ? this.layoutGridContainer(el, childX, childY, width, elFontSize, domTree)
+          : this.layoutBlockChildren(el, childX, childY, width, elFontSize, domTree));
     let childBottom: number;
     if (autoWidth) {
       // Shrink-to-fit (CSS 2.2 §10.3.9): measure the content with text-align off (centred text
@@ -1900,6 +1921,7 @@ class LayoutEngine implements ILayoutEngine {
     } else {
       contentHeight = Math.max(0, childBottom - childY);
     }
+    contentHeight = this.clampContentHeight(elStyle, contentHeight, resolve, boxSizing, padT + padB + borderT + borderB);
 
     box.width = borderL + padL + innerWidth + padR + borderR;
     box.height = borderT + padT + Math.max(0, contentHeight) + padB + borderB;
@@ -2060,10 +2082,32 @@ class LayoutEngine implements ILayoutEngine {
    * `width`/`height` HTML attributes (a CSS width/height takes precedence and
    * is handled separately). Non-numeric or missing attributes yield null.
    */
+  /**
+   * min-height / max-height (CSS 2.2 §10.7) on a content height; they were never applied, so a
+   * `min-height: 32px` control or a `min-height: 100vh` hero collapsed to its content.
+   * ponytail: percentages are skipped (they need a definite containing-block height).
+   */
+  private clampContentHeight(
+    style: ReadonlyMap<string, string>,
+    height: number,
+    resolve: (prop: string, fallback: string) => number,
+    boxSizing: string,
+    paddingAndBorder: number,
+  ): number {
+    const toContent = (v: number): number => (boxSizing === 'border-box' ? v - paddingAndBorder : v);
+    const max = style.get('max-height');
+    if (max && max !== 'none' && !max.endsWith('%')) height = Math.min(height, toContent(resolve('max-height', '0')));
+    const min = style.get('min-height');
+    if (min && min !== 'auto' && !min.endsWith('%')) height = Math.max(height, toContent(resolve('min-height', '0')));
+    return Math.max(0, height);
+  }
+
   private resolveIntrinsicSize(node: DomElement): { width: number | null; height: number | null } {
     const tag = node.tagName.toLowerCase();
     // Form controls have default sizes (a text input is ~20 characters wide); they used to be 0 wide.
-    const control = controlIntrinsicSize(node, parseFloat(node.computedStyle?.get('font-size') ?? '') || 13.333);
+    // font-size can still be `1rem` here; parseFloat read that as 1px (a 1px-tall <select>).
+    const parentSize = parseFloat((node.parent as DomElement | null)?.computedStyle?.get('font-size') ?? '') || 16;
+    const control = controlIntrinsicSize(node, this.resolveFontSize(node.computedStyle ?? new Map(), parentSize));
     if (control) return control;
     const isReplaced =
       tag === 'img' || tag === 'iframe' || tag === 'video' || tag === 'canvas' ||

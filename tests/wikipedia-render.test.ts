@@ -96,6 +96,36 @@ describe('layout', () => {
     expect(q('#bfc').layoutBox!.height).toBeGreaterThanOrEqual(60);
   });
 
+  it('a float placed below earlier floats takes its content with it, and keeps its own text', async () => {
+    const { q, cmds } = await render(page(`<ul style="margin:0;padding:0">
+      <li id="a" style="float:left;width:100%;list-style:none"><div>first</div></li>
+      <li id="b" style="float:left;width:100%;list-style:none"><div id="bd">second</div></li>
+      <li id="c" style="float:left;width:100%;list-style:none">third</li></ul>`));
+    expect(q('#b').layoutBox!.y).toBeGreaterThan(q('#a').layoutBox!.y);
+    expect(q('#bd').layoutBox!.y).toBe(q('#b').layoutBox!.y);
+    const third = cmds.find((c) => c.type === 'fillText' && c.params[0] === 'third');
+    expect(third).toBeTruthy();
+    expect(third!.params[2] as number).toBeGreaterThan(q('#c').layoutBox!.y);
+  });
+
+  it('an inline child of a flex container is a flex item, and inline-flex is an atomic inline box', async () => {
+    const { q } = await render(page(`<div style="display:flex"><img id="i" width="40" height="20" style="width:40px;height:20px"><span id="s">t</span></div>
+      <p>before <a id="f" style="display:inline-flex;overflow:hidden;padding:4px"><b>icon</b></a> after</p>`));
+    expect(q('#i').layoutBox!.width).toBe(40);
+    expect(q('#s').layoutBox!.x).toBeGreaterThanOrEqual(q('#i').layoutBox!.x + 40);
+    const f = q('#f').layoutBox!;
+    expect(f.width).toBeGreaterThan(20);
+    expect(f.height).toBeGreaterThan(10);
+  });
+
+  it('min-height and max-height apply (block, inline-block, border-box)', async () => {
+    const { q } = await render(page(`<div id="a" style="min-height:120px">x</div><div id="b" style="max-height:10px">tall<br>text<br>here</div>
+      <span id="c" style="display:inline-block;min-height:32px;padding:4px;box-sizing:border-box">s</span>`));
+    expect(q('#a').layoutBox!.height).toBe(120);
+    expect(q('#b').layoutBox!.height).toBe(10);
+    expect(q('#c').layoutBox!.height).toBe(32);
+  });
+
   it('a block-level <select> shows its chosen option, not every option as page text', async () => {
     const { texts } = await render(page('<select style="display:block"><option>20 items</option><option>50 items</option></select>'));
     expect(texts.join(' ')).toContain('20 items');
@@ -158,5 +188,7 @@ describe('Wikipedia Special:Search with its own CSS', () => {
     const { q, texts } = await render(html, css, 1000);
     expect(q('.mw-search-results-container').layoutBox!.height).toBeLessThan(4000); // was ~23,000px
     expect(texts).toEqual(expect.arrayContaining(['application', 'accessing']));
+    expect(q('select').layoutBox!.height).toBeGreaterThanOrEqual(32); // min-height, and font-size:1rem resolved
+    expect(texts).toContain('20 items');
   }, 30000);
 });

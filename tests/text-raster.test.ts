@@ -25,6 +25,7 @@ class StubCanvas {
       font: '', fillStyle: '', textBaseline: '',
       measureText: (t: string) => ({ width: [...t].length * GLYPH_W, actualBoundingBoxAscent: GLYPH_H, actualBoundingBoxDescent: 2 }),
       fillText(text: string, x: number, y: number) { fillTextCalls++; self.drawn = { text, x, y }; },
+      clearRect() { self.drawn = null; },
       getImageData(_x: number, _y: number, w: number, h: number) {
         const data = new Uint8ClampedArray(w * h * 4);
         const d = self.drawn;
@@ -90,6 +91,24 @@ describe('text drawn with the real font (canvas mask)', () => {
     expect(fillTextCalls).toBe(1);
     rasterizeTextRun('again', 'bold 16px sans-serif');
     expect(fillTextCalls).toBe(2);
+  });
+
+  it('is cheap on Android: CPU-backed canvas, no resize for a smaller run, no draw for spaces', () => {
+    const options: unknown[] = [];
+    class Spy extends StubCanvas {
+      getContext(_t?: string, o?: unknown) { options.push(o); return super.getContext(); }
+    }
+    (globalThis as { OffscreenCanvas?: unknown }).OffscreenCanvas = Spy;
+    resetTextRaster();
+    const big = rasterizeTextRun('a long run of text', '16px sans-serif')!;
+    const small = rasterizeTextRun('ab', '16px sans-serif')!;
+    expect(options.every((o) => (o as { willReadFrequently?: boolean } | undefined)?.willReadFrequently === true)).toBe(true);
+    expect(small.width).toBeLessThan(big.width);
+    expect([...small.alpha].filter((a) => a > 0).length).toBe(2 * GLYPH_W * GLYPH_H); // only "ab", nothing left from the long run
+    const calls = fillTextCalls;
+    const space = rasterizeTextRun('   ', '16px sans-serif')!;
+    expect(fillTextCalls).toBe(calls);
+    expect(space.advance).toBe(3 * GLYPH_W);
   });
 });
 
