@@ -21,14 +21,11 @@ import { cdpEvaluate } from './cdp-client.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const PKG = 'com.nova.browser';
-const ACTIVITY = `${PKG}/.MainActivity`;
 const APK_DIR = path.join(REPO_ROOT, 'android', 'app', 'build', 'outputs', 'apk');
-const DOWNLOADS = `/sdcard/Android/data/${PKG}/files/Downloads`;
-
 // ── args ───────────────────────────────────────────────────────────────────
 const opts = {
   adb: 'adb', serial: null, cdpPort: 9334, serverPort: 8765, ui: false, only: null,
+  package: 'com.nova.browser',
   debugApk: path.join(APK_DIR, 'debug', 'app-debug.apk'),
   releaseApk: path.join(APK_DIR, 'release', 'Nova-release.apk'),
   out: path.join(REPO_ROOT, 'android', 'build', 'emulator-test'),
@@ -41,11 +38,16 @@ for (let i = 2; i < process.argv.length; i++) {
   else if (a === '--only') opts.only = new Set(process.argv[++i].split(','));
   else if (a === '--release-apk') opts.releaseApk = path.resolve(process.argv[++i]);
   else if (a === '--debug-apk') opts.debugApk = path.resolve(process.argv[++i]);
+  else if (a === '--package') opts.package = process.argv[++i];
   else if (a === '--help' || a === '-h') {
-    console.log('Usage: emulator-feature-test.mjs [--adb <path>] [--serial <id>] [--ui] [--only 1,4,7] [--debug-apk p] [--release-apk p]');
+    console.log('Usage: emulator-feature-test.mjs [--adb <path>] [--serial <id>] [--ui] [--only 1,4,7] [--debug-apk p] [--release-apk p] [--package id]');
     process.exit(0);
   } else { console.error(`Unknown argument: ${a}`); process.exit(1); }
 }
+
+const PKG = opts.package; // the debug build installs as com.nova.browser.debug
+let ACTIVITY = `${PKG}/.MainActivity`; // resolved from the device in main()
+const DOWNLOADS = `/sdcard/Android/data/${PKG}/files/Downloads`;
 
 // ── adb helpers ────────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -222,13 +224,25 @@ async function main() {
   const rooted = /restarting adbd as root|already running as root/.test(rootOut);
   if (rooted) { adb(['wait-for-device']); await sleep(2000); }
   console.log(`  device: ${opts.serial ?? devices[0].split(/\s+/)[0]} emulator=${isEmulator} root=${rooted}`);
+  // The launcher class keeps its own package even when applicationId has a suffix
+  // (com.nova.browser.debug/com.nova.browser.MainActivity), so ask the device.
+  const resolved = sh(`cmd package resolve-activity --brief -c android.intent.category.LAUNCHER ${PKG}`)
+    .split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith(`${PKG}/`)).pop();
+  if (resolved) ACTIVITY = resolved;
 
   await new Promise((r) => server.listen(opts.serverPort, '127.0.0.1', r));
   adb(['reverse', `tcp:${opts.serverPort}`, `tcp:${opts.serverPort}`]);
 
-  const inst = adb(['install', '-r', opts.debugApk]).out;
+  // Fresh permissions, storage and downloads dir. `pm clear` is refused by some
+  // OEM builds (ColorOS: "does not have permission CLEAR_APP_USER_DATA"), which
+  // silently carried cookies, downloads and granted permissions between runs, so
+  // reinstall from scratch instead — that always resets them.
+  sh(`rm -rf '${DOWNLOADS}'`);
+  adb(['uninstall', PKG]);
+  const inst = adb(['install', opts.debugApk]).out;
   if (!/Success/.test(inst)) throw new Error(`install failed: ${inst}`);
-  sh(`pm clear ${PKG}`); // fresh permissions, storage, and downloads dir
+  const stillGranted = sh(`dumpsys package ${PKG}`).includes('android.permission.CAMERA: granted=true');
+  if (stillGranted) console.log('  warning: CAMERA still granted after reinstall — permission checks may not see a dialog');
   sh('cmd uimode night no');
   adb(['logcat', '-c']);
   const st0 = await launch();
@@ -439,6 +453,26 @@ async function main() {
   // UI checklist items (context menu, bookmarks, incognito, downloads sheet)
   if (opts.ui) {
     const findUi = (pred) => uiNodes(uiDump()).find(pred);
+    // The 1.9 redesign moved bookmarks / incognito / downloads out of the old
+    // top bar and into the bottom bar's overflow menu, so drive them from there.
+    const dismissDialog = async () => {
+      const btn = findUi((n) => n.text === "Don't allow" || n.text === 'Not now' || n.text === 'Allow');
+      if (!btn) return false;
+      tap(btn);
+      await sleep(900);
+      return true;
+    };
+    const menuItem = async (label) => {
+      const menu = findUi((n) => n.desc === 'Menu');
+      if (!menu) return false;
+      tap(menu);
+      await sleep(800);
+      const item = await poll(() => findUi((n) => n.text === label), 5000, 500);
+      if (!item) { sh('input keyevent 4'); return false; }
+      tap(item);
+      await sleep(1500);
+      return true;
+    };
     await check('U1', 'long-press a link shows the context menu', async () => {
       await js(`window.novaNative.navigate('${base}/page/menu')`);
       await sleep(4000);
@@ -454,44 +488,65 @@ async function main() {
     await check('U2', 'bookmark star adds the page to Bookmarks', async () => {
       await js(`window.novaNative.navigate('${base}/page/bookmarked')`);
       await sleep(3000);
-      const star = findUi((n) => n.desc === 'Bookmark');
-      if (!star) return { ok: false, detail: 'no Bookmark button' };
-      tap(star);
-      await sleep(1500);
-      const open = findUi((n) => n.desc === 'Bookmarks & History');
-      if (open) tap(open);
+      if (!await menuItem('Add bookmark')) return { ok: false, detail: 'no Add bookmark item in the menu' };
+      if (!await menuItem('Bookmarks')) return { ok: false, detail: 'no Bookmarks item in the menu' };
       const row = await poll(() => findUi((n) => /bookmarked/.test(n.text)), 6000);
       const shot = screenshot('bookmarks-sheet');
       sh('input keyevent 4');
       return { ok: !!row, detail: `${row ? 'bookmark listed' : 'not listed'}; screenshot ${path.basename(shot)}` };
     });
     await check('U3', 'incognito toggle switches engine session', async () => {
-      const btn = findUi((n) => n.desc === 'Incognito');
-      if (!btn) return { ok: false, detail: 'no Incognito button' };
-      tap(btn);
-      const on = await poll(async () => (await engineState())?.incognito === true, 8000);
+      if (!await menuItem('New incognito tab')) return { ok: false, detail: 'no New incognito tab item in the menu' };
+      const on = await poll(async () => (await engineState())?.incognito === true, 10000);
       const shot = screenshot('incognito');
-      const btn2 = findUi((n) => n.desc === 'Incognito');
-      if (btn2) tap(btn2);
-      const off = await poll(async () => (await engineState())?.incognito === false, 8000);
+      // Back to a normal session: switcher -> the "Tabs" section -> its first card.
+      const tabs = findUi((n) => n.desc.startsWith('Tabs,'));
+      if (tabs) { tap(tabs); await sleep(1500); }
+      const section = findUi((n) => n.text === 'Tabs');
+      if (section) { tap(section); await sleep(1200); }
+      const card = findUi((n) => /^127\.0\.0\.1/.test(n.text));
+      if (card) { tap(card); await sleep(1500); }
+      else { const done = findUi((n) => n.text === 'Done'); if (done) { tap(done); await sleep(900); } }
+      const off = await poll(async () => (await engineState())?.incognito === false, 10000);
       return { ok: !!on && !!off, detail: `on=${!!on} off=${!!off}; screenshot ${path.basename(shot)}` };
     });
     await check('U4', 'downloads sheet lists finished downloads', async () => {
-      const btn = findUi((n) => n.desc === 'Downloads');
-      if (!btn) return { ok: false, detail: 'no Downloads button' };
-      tap(btn);
-      const row = await poll(() => findUi((n) => /report \(1\)\.bin|report\.bin/.test(n.text)), 6000);
+      // The list is held in memory by BrowserViewModel, and checks #9/#13 restart
+      // the app, so download one now instead of relying on #7's files surviving.
+      await js(`window.novaNative.download('${base}/attach/report.bin', JSON.stringify({ filename: 'sheet.bin' }))`);
+      const onDisk = await poll(() => listDownloads().some((d) => d.name === 'sheet.bin'), 15000, 1000);
+      if (!onDisk) return { ok: false, detail: 'download never landed on disk' };
+      if (!await menuItem('Downloads')) return { ok: false, detail: 'no Downloads item in the menu' };
+      await dismissDialog(); // a download asks for notification permission the first time
+      const row = await poll(() => findUi((n) => /sheet\.bin/.test(n.text)), 8000);
       const shot = screenshot('downloads-sheet');
       sh('input keyevent 4');
-      return { ok: !!row, detail: `${row ? 'report.bin listed' : 'not listed'}; screenshot ${path.basename(shot)}` };
+      return { ok: !!row, detail: `${row ? 'sheet.bin listed' : 'not listed'}; screenshot ${path.basename(shot)}` };
     });
     screenshot('main-light');
   }
 
   // #3 release build has no devtools socket (v1.1) — last: it swaps the installed APK
   await check(3, 'release build exposes no WebView devtools socket', async () => {
-    if (!existsSync(opts.releaseApk)) return { skip: true, detail: `no ${opts.releaseApk}` };
     const debugSocket = sh('cat /proc/net/unix').includes(`webview_devtools_remote_${appPid()}`);
+    const base = PKG.replace(/\.debug$/, '');
+    if (!existsSync(opts.releaseApk)) {
+      // No release APK to install (the usual case on a phone, where signing keys
+      // live elsewhere). If a release build of the base package is already on the
+      // device — which is what `--package <id>.debug` implies — it answers the
+      // same question without installing anything.
+      const installed = sh(`pm list packages ${base}`).split(/\r?\n/).some((l) => l.trim() === `package:${base}`);
+      if (base === PKG || !installed) return { skip: true, detail: `no ${opts.releaseApk}` };
+      sh(`am start -W -n ${base}/.MainActivity`);
+      await sleep(6000);
+      const pid = sh(`pidof ${base}`).split(/\s+/)[0] || null;
+      const releaseSocket = sh('cat /proc/net/unix').includes(`webview_devtools_remote_${pid}`);
+      sh(`am start -W -n ${ACTIVITY}`); // back to the build under test
+      if (releaseSocket && sh('getprop ro.debuggable') === '1') {
+        return { skip: true, detail: 'device build is debuggable (ro.debuggable=1)' };
+      }
+      return { ok: debugSocket && !releaseSocket && !!pid, detail: `against the installed ${base} (nothing re-installed): debug socket=${debugSocket}, release socket=${releaseSocket}` };
+    }
     const inst = adb(['install', '-r', opts.releaseApk]).out;
     if (!/Success/.test(inst)) return { ok: false, detail: `release install failed: ${inst.trim()}` };
     sh(`am start -W -n ${ACTIVITY}`);

@@ -37,6 +37,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Own applicationId so a debug build can be installed next to a release
+            // one (device test runs do not clobber the build someone is using).
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
         release {
             minifyEnabled true
             shrinkResources true

@@ -76,8 +76,8 @@ import { cdpEvaluate } from './cdp-client.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-const PACKAGE_NAME = 'com.nova.browser'; // android/app/build.gradle applicationId
-const ACTIVITY = `${PACKAGE_NAME}/.MainActivity`;
+let PACKAGE_NAME = 'com.nova.browser'; // android/app/build.gradle applicationId (--package overrides)
+let ACTIVITY = `${PACKAGE_NAME}/.MainActivity`;
 const DEFAULT_APK = path.join(REPO_ROOT, 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
 const DEFAULT_CDP_PORT = 9333;
 const BOOT_MARKERS = [
@@ -88,7 +88,7 @@ const BOOT_MARKERS = [
 // ── CLI args ────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const opts = { serial: null, apk: DEFAULT_APK, port: DEFAULT_CDP_PORT, skipCdp: false, adb: 'adb' };
+  const opts = { serial: null, apk: DEFAULT_APK, port: DEFAULT_CDP_PORT, skipCdp: false, adb: 'adb', package: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--serial') opts.serial = argv[++i];
@@ -96,6 +96,7 @@ function parseArgs(argv) {
     else if (a === '--port') opts.port = Number(argv[++i]);
     else if (a === '--skip-cdp') opts.skipCdp = true;
     else if (a === '--adb') opts.adb = argv[++i];
+    else if (a === '--package') opts.package = argv[++i];
     else if (a === '--help' || a === '-h') { printHelp(); process.exit(0); }
     else { console.error(`Unknown argument: ${a} (--help for usage)`); process.exit(1); }
   }
@@ -108,10 +109,13 @@ function printHelp() {
   --apk <path>    Override APK path (default: android/app/build/outputs/apk/debug/app-debug.apk)
   --port <n>      Local port for CDP adb forward (default: ${DEFAULT_CDP_PORT})
   --skip-cdp      Run Tier 1 only (install/launch/boot-log/dumpsys)
-  --adb <path>    Path to adb binary if not on PATH`);
+  --adb <path>    Path to adb binary if not on PATH
+  --package <id>  Application id to drive (default com.nova.browser; the debug
+                  build installs as com.nova.browser.debug)`);
 }
 
 const opts = parseArgs(process.argv.slice(2));
+if (opts.package) { PACKAGE_NAME = opts.package; ACTIVITY = `${PACKAGE_NAME}/.MainActivity`; }
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
@@ -241,6 +245,9 @@ async function runTier1() {
 
   adb(['logcat', '-c']);
 
+  const resolved = adb(['shell', 'cmd', 'package', 'resolve-activity', '--brief', '-c', 'android.intent.category.LAUNCHER', PACKAGE_NAME])
+    .stdout?.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith(`${PACKAGE_NAME}/`)).pop();
+  if (resolved) ACTIVITY = resolved; // applicationIdSuffix keeps the class in its own package
   const start = adb(['shell', 'am', 'start', '-W', '-n', ACTIVITY]);
   const startOut = start.stdout + start.stderr;
   if (start.status !== 0 || !/Status:\s*ok/.test(startOut)) {
