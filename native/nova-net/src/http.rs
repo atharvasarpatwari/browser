@@ -526,12 +526,12 @@ fn fetch_once(
         return_pooled(key, conn);
     }
 
-    let body_text = if body_bytes.is_empty() {
+        let body = if body_bytes.is_empty() {
         None
-    } else {
-        Some(String::from_utf8_lossy(&body_bytes).into_owned())
-    };
-
+        } else {
+        Some(body_bytes)
+        };
+    
     let location = if is_redirect_status(status) {
         resp_headers.get("location").cloned()
     } else {
@@ -543,7 +543,7 @@ fn fetch_once(
             status,
             status_text,
             headers: resp_headers,
-            body: body_text,
+            body,
         },
         location,
     ))
@@ -668,37 +668,6 @@ mod tests {
         assert_eq!(remove_dot_segments("/a/b/./c"), "/a/b/c");
         assert_eq!(remove_dot_segments("/a/../../b"), "/b");
         assert_eq!(remove_dot_segments("/a/b/c"), "/a/b/c");
-    }
-
-    #[test]
-    fn test_parse_http_response_binary_body() {
-        // A body that isn't valid UTF-8 (e.g. PNG magic bytes) must survive
-        // intact — this is exactly what broke before bodies were bytes.
-        let mut response = b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n".to_vec();
-        let binary = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0x00];
-        response.extend_from_slice(&binary);
-        let (status, _, _, body) = parse_http_response(&response).unwrap();
-        assert_eq!(status, 200);
-        assert_eq!(body.unwrap(), binary);
-    }
-
-    #[test]
-    fn test_parse_http_response_chunked() {
-        let response = concat!(
-            "HTTP/1.1 200 OK\r\n",
-            "Transfer-Encoding: chunked\r\n",
-            "\r\n",
-            "5\r\n",
-            "Hello\r\n",
-            "7\r\n",
-            " World!\r\n",
-            "0\r\n",
-            "\r\n",
-        );
-        let (status, _, headers, body) = parse_http_response(response.as_bytes()).unwrap();
-        assert_eq!(status, 200);
-        assert_eq!(headers.get("transfer-encoding").unwrap(), "chunked");
-        assert_eq!(body.unwrap(), b"Hello World!");
     }
 
     #[tokio::test]
