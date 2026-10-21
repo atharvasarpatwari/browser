@@ -393,3 +393,28 @@ describe('TlsHandler', () => {
     });
   });
 });
+
+describe('TlsHandler — wildcard hostname matching (RFC 6125)', () => {
+  const matches = (host: string, pattern: string): boolean =>
+    (TlsHandler as unknown as { hostnameMatches(h: string, p: string): boolean }).hostnameMatches(host, pattern);
+
+  it('matches exactly one label under the wildcard', () => {
+    expect(matches('github.githubassets.com', '*.githubassets.com')).toBe(true);
+    expect(matches('en.wikipedia.org', '*.wikipedia.org')).toBe(true);
+  });
+
+  it('does not match the bare domain or deeper subdomains', () => {
+    expect(matches('githubassets.com', '*.githubassets.com')).toBe(false);
+    expect(matches('a.b.githubassets.com', '*.githubassets.com')).toBe(false);
+  });
+
+  it('does not match an unrelated host or an empty label', () => {
+    expect(matches('evil-githubassets.com', '*.githubassets.com')).toBe(false);
+    expect(matches('.githubassets.com', '*.githubassets.com')).toBe(false);
+  });
+
+  it('still requires exact equality for non-wildcard names', () => {
+    expect(matches('example.com', 'example.com')).toBe(true);
+    expect(matches('www.example.com', 'example.com')).toBe(false);
+  });
+});

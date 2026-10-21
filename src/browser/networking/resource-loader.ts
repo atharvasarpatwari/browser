@@ -137,9 +137,23 @@ class ResourceLoader implements IResourceLoader {
       }
     }
 
+    // Own the abort: FetchHttpClient never reads HttpRequestSpec.timeoutMs, so
+    // without this a blackholed host hangs the load forever.
+    const timeoutMs = options?.timeoutMs ?? 15_000;
+    const externalSignal = options?.signal;
+    const timeoutController = new AbortController();
+    const onExternalAbort = () => timeoutController.abort();
+    let timedOut = false;
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      timeoutController.abort();
+    }, timeoutMs);
+    if (externalSignal?.aborted) onExternalAbort();
+    else externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+
     try {
       const headers = new Map<string, string>([['accept', '*/*']]);
-      const signal = options?.signal ?? new AbortController().signal;
+      const signal = timeoutController.signal;
 
       // ── CORS pre-request check ──────────────────────────────────────────
       let corsPreflightDone = false;
@@ -155,7 +169,6 @@ class ResourceLoader implements IResourceLoader {
         const preCheck = this.cors.checkRequest(corsReq);
 
         if (preCheck.decision === 'blocked') {
-          this.releaseSlot();
           return {
             url,
             kind: _kind,
@@ -182,7 +195,6 @@ class ResourceLoader implements IResourceLoader {
             await this.cors.performPreflight(corsReq, { send: this.client.send.bind(this.client) } as never, signal);
             corsPreflightDone = true;
           } catch (err) {
-            this.releaseSlot();
             const reason = err instanceof Error ? err.message : String(err);
             return {
               url,
@@ -204,7 +216,7 @@ class ResourceLoader implements IResourceLoader {
       const specBase: Omit<HttpRequestSpec, 'url'> = {
         method: 'GET',
         headers,
-        timeoutMs: options?.timeoutMs ?? 15_000,
+        timeoutMs,
       };
 
       // Follow 3xx redirects here — ResourceLoader talks to IHttpClient directly
@@ -262,7 +274,6 @@ class ResourceLoader implements IResourceLoader {
           this.cors.checkResponse(corsReq, res);
         } catch (err) {
           if (err instanceof CorsViolationError) {
-            this.releaseSlot();
             return {
               url,
               kind: _kind,
@@ -290,7 +301,6 @@ class ResourceLoader implements IResourceLoader {
         if (isCrossOrigin && corp) {
           const corpValue = corp.trim().toLowerCase();
           if (corpValue === 'same-origin') {
-            this.releaseSlot();
             return {
               url,
               kind: _kind,
@@ -306,7 +316,6 @@ class ResourceLoader implements IResourceLoader {
             };
           }
           if (corpValue === 'same-site' && !isSameSite(this.pageOrigin, requestOrigin)) {
-            this.releaseSlot();
             return {
               url,
               kind: _kind,
@@ -364,7 +373,9 @@ class ResourceLoader implements IResourceLoader {
         error: null,
       };
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorMessage = timedOut
+        ? `Request to "${url}" timed out after ${timeoutMs}ms.`
+        : err instanceof Error ? err.message : String(err);
       return {
         url,
         kind: _kind,
@@ -379,6 +390,8 @@ class ResourceLoader implements IResourceLoader {
         error: errorMessage,
       };
     } finally {
+      clearTimeout(timeoutTimer);
+      externalSignal?.removeEventListener('abort', onExternalAbort);
       this.releaseSlot();
     }
   }

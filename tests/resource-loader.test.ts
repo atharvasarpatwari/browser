@@ -257,3 +257,74 @@ describe('ResourceLoader — Redirect following', () => {
     expect(calls).toBe(11);
   });
 });
+
+describe('ResourceLoader — Timeout enforcement', () => {
+  // Mirrors real fetch(): the connection hangs forever and the promise only
+  // settles through the AbortSignal.
+  const hangingClient = (onSend?: () => void): IHttpClient => ({
+    send(_spec: HttpRequestSpec, signal: AbortSignal): Promise<HttpResponseSpec> {
+      onSend?.();
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')));
+      });
+    },
+  });
+
+  it('fails fast when the client hangs and never reads timeoutMs itself', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader = new ResourceLoader(hangingClient());
+      const pending = loader.loadResource('https://example.com/', 'document', { timeoutMs: 50 });
+      await vi.advanceTimersByTimeAsync(50);
+      const result = await pending;
+      expect(result.statusCode).toBe(0);
+      expect(result.error).toContain('timed out after 50ms');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still reports a caller abort as an abort, not a timeout', async () => {
+    const loader = new ResourceLoader(hangingClient());
+    const controller = new AbortController();
+    const pending = loader.loadResource('https://example.com/', 'document', { signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+    const result = await pending;
+    expect(result.error).not.toContain('timed out');
+    expect(result.error).not.toBeNull();
+  });
+});
+
+describe('ResourceLoader — Concurrency slot accounting', () => {
+  it('releases a slot exactly once when CORS rejects a request', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const client: IHttpClient = {
+      async send(spec: HttpRequestSpec): Promise<HttpResponseSpec> {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        return { url: spec.url, statusCode: 200, statusText: 'OK', body: '', bodyBinary: null,
+          headers: new Map(), redirected: false, redirectChain: [] };
+      },
+    };
+    const loader = new ResourceLoader(client);
+    loader.setMaxConcurrent(1);
+    const blockAll = {
+      checkRequest: () => ({ decision: 'blocked', reason: 'test', requestHeaders: new Map(), requiresPreflight: false }),
+    };
+    loader.setCors(blockAll as never, 'https://page.test');
+    const blocked = await loader.loadResource('https://other.test/x', 'script');
+    expect(blocked.error).toContain('CORS blocked');
+
+    loader.setCors({ checkRequest: () => ({ decision: 'allowed', requestHeaders: new Map(), requiresPreflight: false }), checkResponse: () => undefined } as never, 'https://page.test');
+    await Promise.all([
+      loader.loadResource('https://other.test/a', 'script'),
+      loader.loadResource('https://other.test/b', 'script'),
+      loader.loadResource('https://other.test/c', 'script'),
+    ]);
+    expect(maxInFlight).toBe(1);
+  });
+});
