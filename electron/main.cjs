@@ -177,6 +177,17 @@ let quitting = false
 const WATCHDOG_INTERVAL_MS = 5000
 const PROBE_TIMEOUT_MS = 2000
 const UNRESPONSIVE_ESCALATION_MS = 15000
+// A page that has not answered its first probe is still booting, not hung. On a
+// slow machine the cold boot outlasts WATCHDOG_INTERVAL_MS, so reloading on
+// every missed probe restarts the boot each time and it never finishes.
+const STARTUP_GRACE_MS = 60000
+let pageLoadAt = Date.now()
+let aliveSincePageLoad = false
+
+function markPageLoad() {
+  pageLoadAt = Date.now()
+  aliveSincePageLoad = false
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -253,6 +264,11 @@ function createWindow() {
     writeHealthLog('RENDERER_RESPONSIVE')
   })
 
+  win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) markPageLoad()
+  })
+  win.webContents.on('did-finish-load', markPageLoad)
+
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     console.error(`[Nova] Failed to load: ${errorCode} ${errorDescription}`)
     writeHealthLog(`LOAD_FAILED code=${errorCode} desc=${errorDescription}`)
@@ -323,7 +339,10 @@ async function runWatchdog() {
 
   const probe = await probeRenderer(mainWindow)
   if (probe.alive) {
+    aliveSincePageLoad = true
     writeHealthLog(`ALIVE probe=${JSON.stringify(probe.result)}`)
+  } else if (!aliveSincePageLoad && Date.now() - pageLoadAt < STARTUP_GRACE_MS) {
+    writeHealthLog(`STARTING reason=${probe.reason} sinceLoadMs=${Date.now() - pageLoadAt} (no reload)`)
   } else {
     writeHealthLog(`UNRESPONSIVE reason=${probe.reason}`)
     if (!rendererCrashed) {

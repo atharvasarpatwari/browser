@@ -460,9 +460,15 @@ class ApplicationBootstrap {
     c.register<IResourceLoader>(
       Tokens.ResourceLoader,
       (ctx) => {
+        // A bridged Electron renderer (contextIsolation: true) never exposes a bare
+        // `process` global (electron/preload.cjs), so `window.nova.ipc` is the
+        // reliable signal that the socket proxy is usable here.
+        const hasNovaIpcBridge =
+          typeof (globalThis as { nova?: { ipc?: unknown } }).nova?.ipc !== 'undefined';
         const isNode =
-          typeof process !== 'undefined' &&
-          typeof (process as { versions?: { node?: string } }).versions?.node === 'string';
+          hasNovaIpcBridge ||
+          (typeof process !== 'undefined' &&
+            typeof (process as { versions?: { node?: string } }).versions?.node === 'string');
         const tlsHandler = ctx.resolve<ITlsHandler>(Tokens.TlsHandler);
         const proxyConfig = createProxyConfigFromEnv();
         let client: IHttpClient | undefined;
