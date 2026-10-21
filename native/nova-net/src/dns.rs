@@ -59,40 +59,32 @@ pub async fn resolve_with_options(
 
     let resolver = TokioAsyncResolver::tokio(config, opts);
 
-    let lookup = resolver
-        .lookup(domain, RecordType::A)
-        .await
-        .map_err(|e| DnsError::ResolutionFailed {
-            domain: domain.to_string(),
-            reason: e.to_string(),
-        })?;
+    // Query A and AAAA concurrently — a domain lacking one record type isn't
+    // a failure on its own, only both failing is.
+    let (a_result, aaaa_result) = tokio::join!(
+        resolver.lookup(domain, RecordType::A),
+        resolver.lookup(domain, RecordType::AAAA),
+    );
 
-    let records: Vec<DnsRecord> = lookup
-        .iter()
-        .map(|r| {
-            let record_type = match r {
-                hickory_proto::rr::RData::A(_) => "A",
-                hickory_proto::rr::RData::AAAA(_) => "AAAA",
-                hickory_proto::rr::RData::CNAME(_) => "CNAME",
-                hickory_proto::rr::RData::MX(_) => "MX",
-                hickory_proto::rr::RData::TXT(_) => "TXT",
-                _ => "OTHER",
-            };
-            DnsRecord {
-                record_type: record_type.to_string(),
-                ip: r.ip_addr(),
-                domain: r
-                    .as_aname()
-                    .map(|n| n.to_string()),
-                ttl: 0,
-            }
-        })
-        .collect();
+    let mut records = Vec::new();
+    let mut last_err = None;
+    for lookup_result in [a_result, aaaa_result] {
+        match lookup_result {
+            Ok(lookup) => records.extend(lookup_to_records(&lookup)),
+            Err(e) => last_err = Some(e),
+        }
+    }
 
     if records.is_empty() {
-        return Err(DnsError::NoRecords {
-            domain: domain.to_string(),
-            record_type: "A".to_string(),
+        return Err(match last_err {
+            Some(e) => DnsError::ResolutionFailed {
+                domain: domain.to_string(),
+                reason: e.to_string(),
+            },
+            None => DnsError::NoRecords {
+                domain: domain.to_string(),
+                record_type: "A/AAAA".to_string(),
+            },
         });
     }
 
@@ -103,6 +95,29 @@ pub async fn resolve_with_options(
         records,
         resolution_time_ms: elapsed,
     })
+}
+
+fn lookup_to_records(lookup: &hickory_resolver::lookup::Lookup) -> Vec<DnsRecord> {
+    lookup
+        .record_iter()
+        .map(|record| {
+            let rdata = record.data();
+            let record_type = match rdata {
+                Some(hickory_proto::rr::RData::A(_)) => "A",
+                Some(hickory_proto::rr::RData::AAAA(_)) => "AAAA",
+                Some(hickory_proto::rr::RData::CNAME(_)) => "CNAME",
+                Some(hickory_proto::rr::RData::MX(_)) => "MX",
+                Some(hickory_proto::rr::RData::TXT(_)) => "TXT",
+                _ => "OTHER",
+            };
+            DnsRecord {
+                record_type: record_type.to_string(),
+                ip: rdata.and_then(|d| d.ip_addr()),
+                domain: rdata.and_then(|d| d.as_aname()).map(|n| n.to_string()),
+                ttl: record.ttl(),
+            }
+        })
+        .collect()
 }
 
 pub async fn resolve_ips(domain: &str) -> Result<Vec<IpAddr>, DnsError> {

@@ -112,18 +112,36 @@ pub fn connect_tls(
         TlsError::InvalidServerName(e.to_string())
     })?;
 
-    let conn = ClientConnection::new(tls_config, server_name).map_err(|e| {
+    let mut conn = ClientConnection::new(tls_config, server_name).map_err(|e| {
         TlsError::ConnectionFailed {
             host: host.to_string(),
             reason: e.to_string(),
         }
     })?;
 
+    let mut tcp = tcp;
+    // Drive the handshake to completion now so protocol_version() and
+    // negotiated_cipher_suite() below report the real negotiated values
+    // instead of being unavailable (both return None mid-handshake).
+    conn.complete_io(&mut tcp).map_err(|e| TlsError::ConnectionFailed {
+        host: host.to_string(),
+        reason: e.to_string(),
+    })?;
+
+    let protocol_version = conn
+        .protocol_version()
+        .map(|v| format!("{v:?}"))
+        .unwrap_or_else(|| "unknown".to_string());
+    let cipher_suite = conn
+        .negotiated_cipher_suite()
+        .map(|s| format!("{:?}", s.suite()))
+        .unwrap_or_else(|| "unknown".to_string());
+
     let stream = StreamOwned::new(conn, tcp);
 
     let info = TlsInfo {
-        protocol_version: "TLSv1.2+".to_string(),
-        cipher_suite: "unknown".to_string(),
+        protocol_version,
+        cipher_suite,
         peer_certificates: Vec::new(),
     };
 

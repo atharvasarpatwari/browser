@@ -9,8 +9,9 @@ playwright-report/
 .DS_Store
 Thumbs.db
 
-# Rust build outputs
-native/target/
+# Rust build outputs (native/.cargo/config.toml redirects target-dir to
+# the repo root, so this is the actual output path, not native/target/)
+/target/
 native/dist/
 
 # Fidelity audit output (regenerated each run)
