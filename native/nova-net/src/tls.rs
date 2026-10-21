@@ -24,7 +24,7 @@ pub enum TlsError {
     Io(#[from] std::io::Error),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlsConfig {
     pub verify_certificates: bool,
     pub min_protocol_version: TlsVersion,
@@ -39,7 +39,7 @@ impl Default for TlsConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TlsVersion {
     Tls12,
     Tls13,

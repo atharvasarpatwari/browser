@@ -39,7 +39,7 @@ interface AnthropicResponse {
 
 interface ResearchServiceConfig {
   readonly client?: IHttpClient;
-  readonly apiKeyProvider?: () => string | null;
+  readonly apiKeyProvider?: () => string | null | Promise<string | null>;
 }
 
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
@@ -55,7 +55,7 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 class ResearchService implements IResearchService {
   private readonly client: IHttpClient;
-  private readonly apiKeyProvider: () => string | null;
+  private readonly apiKeyProvider: () => string | null | Promise<string | null>;
   private readonly handlers = new Map<ResearchEventType, ResearchEventHandler[]>();
   private readonly cache = new Map<string, CacheEntry>();
   private _state: ResearchState;
@@ -89,8 +89,20 @@ class ResearchService implements IResearchService {
     }
 
     this.cancel();
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
 
-    const apiKey = this.apiKeyProvider();
+    const apiKey = await this.apiKeyProvider();
+    if (signal.aborted) {
+      this.setState({
+        status: 'cancelled',
+        query: trimmed,
+        progress: '',
+        result: null,
+        error: null,
+      });
+      throw new Error('Research cancelled.');
+    }
     if (!apiKey) {
       this.setState({
         status: 'error',
@@ -121,9 +133,6 @@ class ResearchService implements IResearchService {
         return cached;
       }
     }
-
-    this.abortController = new AbortController();
-    const signal = this.abortController.signal;
 
     this.setState({
       status: 'searching',

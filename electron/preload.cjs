@@ -17,6 +17,11 @@
  *             `on`/`listeners`, so src/browser/engine/process-guard.ts takes
  *             its window.onerror browser branch (a bare `process` global is
  *             never installed, so `typeof process === 'undefined'` holds).
+ *   secureStorage — OS-keychain encrypt/decrypt for renderer-stored secrets
+ *             (e.g. the Anthropic API key), round-tripped through main's
+ *             safeStorage via electron/secure-store.cjs. Falls back to
+ *             passing the value through unchanged when unavailable (e.g. no
+ *             OS keychain) — src/browser/storage/secure-value.ts handles that.
  *
  * Buffer is intentionally absent: the page world gets its Buffer from
  * src/browser/buffer-polyfill.ts instead of a bridged Node Buffer.
@@ -65,6 +70,23 @@ const ipcBridge = Object.freeze({
 })
 
 /* -------------------------------------------------------------------------- */
+/*  secureStorage — nova:secure-storage OS-keychain bridge                    */
+/* -------------------------------------------------------------------------- */
+
+const SECURE_STORAGE_CHANNEL = 'nova:secure-storage'
+
+const secureStorageBridge = Object.freeze({
+  async encrypt(value) {
+    const result = await ipcRenderer.invoke(SECURE_STORAGE_CHANNEL, { action: 'encrypt', value })
+    return result.ok ? result.value : null
+  },
+  async decrypt(value) {
+    const result = await ipcRenderer.invoke(SECURE_STORAGE_CHANNEL, { action: 'decrypt', value })
+    return result.ok ? result.value : null
+  },
+})
+
+/* -------------------------------------------------------------------------- */
 /*  process — frozen diagnostics snapshot, no event-surface                   */
 /* -------------------------------------------------------------------------- */
 
@@ -89,4 +111,5 @@ contextBridge.exposeInMainWorld('nova', {
   ipc: ipcBridge,
   require: safeRequire,
   process: processSnapshot,
+  secureStorage: secureStorageBridge,
 })

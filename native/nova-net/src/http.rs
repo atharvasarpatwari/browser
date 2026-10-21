@@ -1,11 +1,13 @@
-//! Not currently wired into the running browser. Nothing in `src/` imports
-//! `src/native/index.ts`'s `httpFetch`/`resolveDns`/`tlsConnect` wrappers — the
-//! live networking path is the pure-TypeScript stack in
-//! `src/browser/networking/raw-socket-http-client.ts` +
-//! `redirect-handler.ts`. This module now also follows redirects, decodes
-//! chunked transfer-encoding, and reuses keep-alive connections, closing the
-//! gaps that used to separate it from the live stack — but it's still
-//! unintegrated, so don't treat it as the settled design until it's wired in.
+//! Wired into the running browser via
+//! `src/browser/networking/native-http-client.ts`. The live networking path
+//! otherwise is the pure-TypeScript stack in
+//! `src/browser/networking/raw-socket-http-client.ts`. `redirect-handler.ts`
+//! is unused -- don't assume it's where redirect logic lives; this module
+//! now follows redirects itself (so `native-http-client.ts` no longer needs
+//! `request-manager.ts` for that), decodes chunked transfer-encoding, and
+//! reuses keep-alive connections via a small per-(host,port,tls) pool,
+//! closing the gaps that used to send those cases to `RawSocketHttpClient`
+//! instead.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -63,7 +65,7 @@ pub struct HttpResponse {
     pub status: u16,
     pub status_text: String,
     pub headers: HashMap<String, String>,
-    pub body: Option<String>,
+    pub body: Option<Vec<u8>>,
 }
 
 pub async fn fetch(request: &HttpRequest) -> Result<HttpResponse, HttpError> {
@@ -666,6 +668,37 @@ mod tests {
         assert_eq!(remove_dot_segments("/a/b/./c"), "/a/b/c");
         assert_eq!(remove_dot_segments("/a/../../b"), "/b");
         assert_eq!(remove_dot_segments("/a/b/c"), "/a/b/c");
+    }
+
+    #[test]
+    fn test_parse_http_response_binary_body() {
+        // A body that isn't valid UTF-8 (e.g. PNG magic bytes) must survive
+        // intact — this is exactly what broke before bodies were bytes.
+        let mut response = b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n".to_vec();
+        let binary = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0x00];
+        response.extend_from_slice(&binary);
+        let (status, _, _, body) = parse_http_response(&response).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body.unwrap(), binary);
+    }
+
+    #[test]
+    fn test_parse_http_response_chunked() {
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Transfer-Encoding: chunked\r\n",
+            "\r\n",
+            "5\r\n",
+            "Hello\r\n",
+            "7\r\n",
+            " World!\r\n",
+            "0\r\n",
+            "\r\n",
+        );
+        let (status, _, headers, body) = parse_http_response(response.as_bytes()).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(headers.get("transfer-encoding").unwrap(), "chunked");
+        assert_eq!(body.unwrap(), b"Hello World!");
     }
 
     #[tokio::test]

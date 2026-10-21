@@ -1,6 +1,6 @@
 # Nova Browser — TODO
 
-Last updated: 2026-09-10
+Last updated: 2026-10-12
 
 > **2026-09-10 reference note:** a visual mockup of the browser UI (main window + new-tab page) was built on a Claude Design canvas in Cowork session `session_01W6wSGNKHuZ7Mv7nQRXAgXK` — see `doc/2026-09-10-browser-interface-design-mockup.md` for the published link and an open question it surfaced (two parallel, unreconciled CSS/component systems in the source — `themes.ts`'s small scheme vs. the richer `.nova-*` classes actually shipped in `dist/assets/main-DR04VOts.css`). No code changed; not an action item, just a pointer for whoever next touches the UI.
 
@@ -33,6 +33,24 @@ Last updated: 2026-09-10
 - [ ] Re-run `tests/e2e/fidelity-audit.spec.ts` after any future rendering-pipeline change (the 9-session pipeline rewrite finished 2026-08-27) to confirm this still holds — it's the kind of regression that fails silently otherwise.
 
 ## Priority: Medium
+
+### 5a. Dead/orphaned code audit (2026-10-11, ponytail-audit) — CLEANED UP 2026-10-12
+Re-verified every item before deleting (a day had passed; status can change). 96 files / 20,169 lines removed, 0 new tsc/eslint errors, full suite green afterward.
+
+**Deleted as confirmed-dead:**
+- `src/browser/rendering/pipeline/` (9 modules + 9 tests) — shadow render pipeline, only consumer was `src/benchmark/suites/index.ts`.
+- `new/analytics.html` — stale duplicate of `doc/analytics.html`.
+- `src/browser/navigation-controls/`, `src/browser/devtools/` (+ `accessibility-panel.ts`'s only remaining consumer of `screen-reader.ts`), `src/browser/credentials/`, `src/browser/omnibox/` (confirmed still unwired on this branch — the search-subsystem work lives on `claude/search-subsystem`, untouched by this), `src/browser/pdf-viewer/`, `src/browser/web-apis/web-apis-permissions.ts` (+ surgically trimmed the 2 describe blocks using it out of `tests/security-runtime-enforcement.test.ts`, which otherwise covers live CSP/CORS code), `src/browser/accessibility/screen-reader.ts` + its now-empty `index.ts` barrel.
+- `mini-browser-android/` — the separate unintegrated Kotlin/Compose app.
+- `native/nova-net/src/http.rs` + `native/nova-bindings/src/http.rs` + `src/native/http-client.ts` (the `NovaHttpClient` wrapper, also unused) — removed the `http` Cargo feature from both crates' `Cargo.toml`/`lib.rs`, updated `package.json`'s `native:build:*` scripts and `.github/workflows/native-build.yml` to drop `http` from the `--features` list.
+- `src/ui/pages/settings-page.ts` — removed the entire dead "Browser Menu" section (22 `menuShow*` + `menuSidebarAutohide` + `menuDefaultZoom`, all unread anywhere; several gated features Nova doesn't have — Leo AI, Brave VPN, Tor window, Wallet — copied wholesale from Brave's settings schema).
+
+**Excluded — status had changed or the original audit was wrong:**
+- `src/browser/extensions/` — no longer dead. The 2026-10-12 session wired `ExtensionLoader`/`Permissions`/`manifest.ts` into `main.ts` and built `nova://extensions`. The remaining pieces (`messaging.ts`, `storage-api.ts`, `content-scripts.ts`, `background-scripts.ts`) are the natural next step for that same feature (actually running extensions), not abandoned code — left in place.
+- `src/browser/image/` (`ImageDecoder`) — **the original audit was wrong here.** `src/browser/rendering/lazy-loader.ts` (used by the live `page-renderer.ts`) imports it via a relative path (`../image/decoder`) that the audit's substring grep missed. Caught by `tsc` immediately after deleting it; restored. A reminder that grep-based reachability checks can false-negative on relative imports — worth a second pass with an actual bundler/tsc check next time, not just grep.
+
+**Still open, not a deletion task:**
+- [ ] `src/browser/media/permission-manager.ts` (141 lines) vs. `src/browser/security/permission-manager.ts` (453 lines, the one wired into `main.ts`) — two independently hand-rolled permission-tracking systems with near-identical shape. Needs consolidation (route media's permission checks through the one real `PermissionManager`), not a straight delete.
 
 ### 5. Native Rust Wiring (Phase 3, parallel track)
 - `nova-net` (DNS/TLS/HTTP) + `nova-bindings` (napi-rs) build locally; cross-platform CI matrix mostly commented out in `native-build.yml`.

@@ -55,6 +55,27 @@ import type { IResearchPage } from './research-page';
 import type { ISettingsService } from '../../browser/storage/settings-service';
 import type { IBrowserName } from '../../browser/config/browser-name';
 import type { IResearchService } from '../../browser/research/research-types';
+import type { ExtensionLoader } from '../../browser/extensions/extension-loader';
+import type { Permissions } from '../../browser/extensions/permissions';
+import { ExtensionsPage } from './extensions-page';
+import type { IExtensionsPage } from './extensions-page';
+
+const PRIVACY_POLICY_HTML = `<html><body style="font-family:system-ui,-apple-system,sans-serif;max-width:680px;margin:40px auto;padding:0 24px;line-height:1.6;color:#2d2d2d;">
+  <h1 style="font-size:22px;">Privacy</h1>
+  <p>Nova Browser does not have user accounts and does not send your browsing activity to any Nova-operated server.</p>
+  <h2 style="font-size:16px;">What stays on this device</h2>
+  <ul>
+    <li>Browsing history and bookmarks — stored locally, deleted via Settings &rarr; Privacy &amp; Security &rarr; Clear browsing data.</li>
+    <li>Settings, including your Anthropic API key if you set one — encrypted on disk where the OS supports it.</li>
+  </ul>
+  <h2 style="font-size:16px;">What leaves this device</h2>
+  <ul>
+    <li><strong>AI Research (nova://research):</strong> when you run a research query, that query text is sent to Anthropic's API (using the key you configured) so it can search the web and summarize results. Nothing is sent unless you use this feature.</li>
+    <li><strong>Pages you visit:</strong> normal web requests go to the sites you navigate to, the same as any browser.</li>
+    <li><strong>Extensions:</strong> an installed extension can only access what its manifest's permissions declare.</li>
+  </ul>
+  <p>This page is generated locally and is not a substitute for legal advice.</p>
+</body></html>`;
 
 interface BrowserWindowPageConfig {
   readonly containerId: string;
@@ -145,6 +166,7 @@ interface IBrowserWindowPage extends IDisposable {
   setAdBlocker(blocker: IAdBlocker): void;
   setBrowserName(name: IBrowserName): void;
   setResearchService(service: IResearchService): void;
+  setExtensions(loader: ExtensionLoader, permissions: Permissions): void;
 
   // ── External chrome bridge (native shells driving this page's tabs/nav) ────
   /** Push-based state: fires on every syncAll() (tab created/removed/activated, url changed, etc). */
@@ -205,6 +227,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private activeDownloadsPage: DownloadsPage | null = null;
   private activeNewTabPage: NewTabPage | null = null;
   private activeResearchPage: IResearchPage | null = null;
+  private activeExtensionsPage: IExtensionsPage | null = null;
+  private extensionLoader: ExtensionLoader | null = null;
+  private extensionPermissions: Permissions | null = null;
   private activeContentPanel: HTMLElement | null = null;
   private settingsService: ISettingsService | null = null;
   private navigationBridge: INavigationBridge | null = null;
@@ -664,12 +689,20 @@ class BrowserWindowPage implements IBrowserWindowPage {
         this.renderResearchPanel();
         break;
 
+      case 'nova://extensions':
+        this.renderExtensionsPanel();
+        break;
+
       case 'nova://history':
         this.renderHistoryPanel();
         break;
 
       case 'nova://bookmarks':
         this.renderBookmarksPanel();
+        break;
+
+      case 'nova://privacy':
+        this.renderPrivacyPanel();
         break;
 
       default:
@@ -695,9 +728,18 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.activeContentPanel = container;
     this.activeSettingsPage = new SettingsPage();
     this.activeSettingsPage.mount(container);
+    this.activeSettingsPage.on('actionTriggered', (event) => {
+      if (event.key === 'openPrivacyPolicy') void this.navigate('nova://privacy');
+    });
     if (this.settingsService) {
       this.settingsService.init(this.activeSettingsPage);
     }
+  }
+
+  private renderPrivacyPanel(): void {
+    if (!this.contentArea) return;
+    this.cleanupContentPanel();
+    this.contentRenderer?.renderHtml(PRIVACY_POLICY_HTML, { title: 'Privacy Policy' });
   }
 
   private renderNewTabPage(): void {
@@ -813,6 +855,20 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.activeResearchPage.on('externalNavigation', (event) => {
       if (event.url) this.navigate(event.url);
     });
+  }
+
+  private renderExtensionsPanel(): void {
+    if (!this.contentArea) return;
+    this.cleanupContentPanel();
+    const container = document.createElement('div');
+    container.style.cssText = 'width:100%;height:100%;';
+    this.contentArea.appendChild(container);
+    this.activeContentPanel = container;
+    this.activeExtensionsPage = new ExtensionsPage();
+    this.activeExtensionsPage.mount(container);
+    if (this.extensionLoader && this.extensionPermissions) {
+      this.activeExtensionsPage.setExtensions(this.extensionLoader, this.extensionPermissions);
+    }
   }
 
   private renderHistoryPanel(): void {
@@ -1357,6 +1413,15 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setSettingsService(service: ISettingsService): void {
     this.settingsService = service;
+    const applyKeyboardNav = (): void => {
+      const enabled = service.getBoolean('enableKeyboardShortcuts', true);
+      this.tabStripView?.setKeyboardNavEnabled(enabled);
+      this.bookmarkBarView?.setKeyboardNavEnabled(enabled);
+    };
+    applyKeyboardNav();
+    service.onChange((key) => {
+      if (key === 'enableKeyboardShortcuts') applyKeyboardNav();
+    });
   }
 
   setBrowserEngine(engine: IBrowserEngine): void {
@@ -1550,6 +1615,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.researchService = service;
   }
 
+  setExtensions(loader: ExtensionLoader, permissions: Permissions): void {
+    this.extensionLoader = loader;
+    this.extensionPermissions = permissions;
+  }
+
   private cleanupSettingsPage(): void {
     if (this.activeSettingsPage) {
       this.activeSettingsPage.dispose();
@@ -1587,11 +1657,19 @@ class BrowserWindowPage implements IBrowserWindowPage {
     }
   }
 
+  private cleanupExtensionsPage(): void {
+    if (this.activeExtensionsPage) {
+      this.activeExtensionsPage.dispose();
+      this.activeExtensionsPage = null;
+    }
+  }
+
   private cleanupContentPanel(): void {
     this.cleanupSettingsPage();
     this.cleanupDownloadsPage();
     this.cleanupNewTabPage();
     this.cleanupResearchPage();
+    this.cleanupExtensionsPage();
     if (this.activeContentPanel) {
       this.activeContentPanel.remove();
       this.activeContentPanel = null;

@@ -80,10 +80,12 @@ import { ResourcePrioritizer } from '../browser/networking/resource-prioritizer'
 import { Firewall, applyBaselineRules } from '../browser/networking/firewall';
 import { createFirewallGuardedNetworking, type FirewallGuardedNetworking } from '../browser/networking/networking-setup';
 import { RawSocketHttpClient } from '../browser/networking/raw-socket-http-client';
+import { NativeHttpClient } from '../browser/networking/native-http-client';
 import { ProxyAwareHttpClient, createProxyConfigFromEnv } from '../browser/networking/request-manager';
 import type { IHttpClient } from '../browser/networking/request-manager';
 import { TlsHandler } from '../browser/networking/tls-handler';
 import type { ITlsHandler } from '../browser/networking/tls-handler';
+import { isNativeAvailable } from '../native/index';
 
 // Security
 import { CertificateValidator } from '../browser/security/certificate-validator';
@@ -138,6 +140,10 @@ import { BrowserName } from '../browser/config/browser-name';
 import { ResearchService } from '../browser/research/research-service';
 import type { IResearchService } from '../browser/research/research-types';
 import type { IBrowserName } from '../browser/config/browser-name';
+
+// Extensions
+import { ExtensionLoader } from '../browser/extensions/extension-loader';
+import { Permissions } from '../browser/extensions/permissions';
 
 // Platform
 import { RuntimeAdapter } from '../platform/shared/runtime-adapter';
@@ -228,6 +234,9 @@ const Tokens = Object.freeze({
   BrowserName: Symbol('BrowserName'),
   // AI Research
   ResearchService: Symbol('ResearchService'),
+  // Extensions
+  ExtensionLoader: Symbol('ExtensionLoader'),
+  ExtensionPermissions: Symbol('ExtensionPermissions'),
 } as const);
 
 // ── ConfigLoader ──────────────────────────────────────────────────────────────
@@ -438,9 +447,13 @@ class ApplicationBootstrap {
         const proxyConfig = createProxyConfigFromEnv();
         let client: IHttpClient | undefined;
         if (proxyConfig.socksProxy || proxyConfig.httpProxy || proxyConfig.httpsProxy) {
+          // Native has no proxy support, so proxied requests always go
+          // through the socket-based client regardless of isNativeAvailable().
           client = new ProxyAwareHttpClient(proxyConfig, undefined, tlsHandler);
         } else if (isNode) {
-          client = new RawSocketHttpClient({ tlsHandler });
+          client = isNativeAvailable()
+            ? new NativeHttpClient()
+            : new RawSocketHttpClient({ tlsHandler });
         }
         const cache = ctx.resolve<ICacheManager>(Tokens.CacheManager);
         const loader = new ResourceLoader(
@@ -557,16 +570,28 @@ class ApplicationBootstrap {
     c.register<IResearchService>(
       Tokens.ResearchService,
       (ctx) => new ResearchService({
-        apiKeyProvider: () => {
+        apiKeyProvider: async () => {
           const envKey = typeof process !== 'undefined'
             ? (process.env as Record<string, string | undefined>).ANTHROPIC_API_KEY
             : undefined;
           if (envKey) return envKey;
           const svc = ctx.resolve<ISettingsService>(Tokens.SettingsService);
-          const stored = svc.getString('anthropicApiKey', '');
+          const stored = await svc.getSecretString('anthropicApiKey', '');
           return stored || null;
         },
       }),
+      ServiceLifetime.Singleton,
+    );
+
+    // 9d. Extensions
+    c.register<Permissions>(
+      Tokens.ExtensionPermissions,
+      () => new Permissions(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<ExtensionLoader>(
+      Tokens.ExtensionLoader,
+      () => new ExtensionLoader(),
       ServiceLifetime.Singleton,
     );
 
@@ -892,10 +917,16 @@ class ApplicationBootstrap {
     // Wire SettingsService → BrowserWindowPage so nova://settings gets persistence
     const settingsService = this.container.resolve<ISettingsService>(Tokens.SettingsService);
     page.setSettingsService(settingsService);
+    settingsService.setHistoryService(historyServiceInstance);
 
     // Wire ResearchService → BrowserWindowPage so nova://research works
     const researchService = this.container.resolve<IResearchService>(Tokens.ResearchService);
     page.setResearchService(researchService);
+
+    // Wire extensions → BrowserWindowPage so nova://extensions works
+    const extensionLoader = this.container.resolve<ExtensionLoader>(Tokens.ExtensionLoader);
+    const extensionPermissions = this.container.resolve<Permissions>(Tokens.ExtensionPermissions);
+    page.setExtensions(extensionLoader, extensionPermissions);
 
     // Initialize BrowserName from settings
     const browserName = this.container.resolve<IBrowserName>(Tokens.BrowserName);
