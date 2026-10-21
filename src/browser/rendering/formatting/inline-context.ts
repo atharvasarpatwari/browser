@@ -133,9 +133,11 @@ export class InlineFormattingContext {
     const availWidth = this.getAvailableWidthAt(this.currentLine.usedWidth);
     const leftOffset = this.getLeftOffsetAt(this.currentLine.usedWidth);
 
-    // If this box doesn't fit, wrap to a new line
+    // If this box doesn't fit, wrap to a new line. Any content counts, not only boxes: a line
+    // holding just text never wrapped, so a width:100% inline-block sat after it and ran off the
+    // page (Wikipedia's sister-project sidebar, 900px wide at x=645).
     if (this.currentLine.usedWidth + marginBoxWidth > availWidth &&
-        this.currentLine.boxes.length > 0) {
+        this.currentLine.usedWidth > 0) {
       this.startNewLine();
     }
 
@@ -172,10 +174,13 @@ export class InlineFormattingContext {
     if (!text) return;
     this.textOwner = owner;
 
-    // Whitespace-only text handling
+    // Whitespace-only text: under white-space:normal it collapses to one space, which is dropped
+    // at the start of a line. It used to be dropped unless it was exactly " ", so a newline or
+    // two spaces between inline elements lost the word space entirely.
     const trimmed = text.trim();
-    if (trimmed.length === 0 && text !== ' ' && text !== '\u00A0') {
-      return;
+    if (trimmed.length === 0 && text !== '\u00A0' && !preserveWhitespace) {
+      if (this.currentLine.usedWidth === 0) return;
+      text = ' ';
     }
 
     // white-space: normal collapses runs of spaces/tabs/newlines to one space (CSS Text §4.1.1);

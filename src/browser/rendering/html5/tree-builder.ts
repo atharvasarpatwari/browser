@@ -361,9 +361,21 @@ class TreeBuilder implements TreeBuilderContext {
     this.processToken(token);
   }
 
+  /**
+   * "Process the token using the rules for the in head insertion mode" (§13.2.6): the rules,
+   * not the mode. This used to switch to IN_HEAD and stay there, so after any <link>/<meta>
+   * inside <body> the next tag "closed the head" and opened a spurious <body>: Wikipedia
+   * articles grew 59 nested bodies and a screen-tall gap above the lead.
+   */
   processInHeadToken(token: Token): void {
+    const saved = this.insertionMode;
     this.insertionMode = Im.IN_HEAD;
     this.processToken(token);
+    if (this.insertionMode === Im.IN_HEAD) {
+      this.insertionMode = saved;
+    } else if (this.insertionMode === Im.TEXT && this.originalInsertionMode === Im.IN_HEAD) {
+      this.originalInsertionMode = saved; // raw text (title, noframes…) returns to where it came from
+    }
   }
 
   processInBodyToken(token: Token): void {

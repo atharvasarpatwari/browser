@@ -152,6 +152,20 @@ describe('hit testing', () => {
   });
 });
 
+describe('hit testing follows paint order', () => {
+  it('a positioned box laid over later in-flow content takes the tap, even inside a relative page wrapper', async () => {
+    const { q, layoutEngine } = await render(page(`<div style="position:relative">
+      <div style="height:30px"><button id="b" style="position:relative;height:60px;width:100px">Go</button></div>
+      <div id="flow" style="height:100px;background:#eee">footer</div>
+      <div id="top" style="position:absolute;top:150px;left:0;width:50px;height:20px;z-index:2"></div>
+      <div id="under" style="position:absolute;top:150px;left:0;width:50px;height:20px;z-index:-1"></div></div>`));
+    const b = q('#b').layoutBox!;
+    expect(layoutEngine.getElementAtPoint(b.x + 10, b.y + b.height - 5)?.attributes.get('id')).toBe('b'); // overlaps #flow
+    const t = q('#top').layoutBox!;
+    expect(layoutEngine.getElementAtPoint(t.x + 5, t.y + 5)?.attributes.get('id')).toBe('top');
+  });
+});
+
 describe('paint order', () => {
   it('a positioned (z-index:auto) box paints its in-flow children after its own background', async () => {
     const { cmds } = await render(page('<button style="position:relative;background:#36c;color:#fff;border:0"><span>Go</span></button>'));

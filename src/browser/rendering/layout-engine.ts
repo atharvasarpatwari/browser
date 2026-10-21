@@ -75,6 +75,25 @@ const NAMED_FONT_SIZES: Record<string, number> = {
  * inline-flex/inline-grid used to flow as plain inlines, ending up 0x0 (with overflow:hidden,
  * invisible: Wikipedia's footer icon links).
  */
+/**
+ * Paint layer for hit testing (CSS 2.1 Appendix E, approximated): each positioned ancestor-or-self
+ * lifts a box by 1 (positioned boxes paint after in-flow ones in their context), plus its z-index
+ * (scaled so it outweighs nesting); a negative z-index sinks it below in-flow content. A whole page
+ * often sits inside one position:relative wrapper, so only counting the nearest one tied a nested
+ * positioned button with the in-flow footer around it.
+ * ponytail: an approximation of stacking-context order, not the paint tree itself.
+ */
+function paintLayerOf(el: DomElement): number {
+  let layer = 0;
+  for (let n: DomElement | null = el; n && n.nodeType === 'element'; n = n.parent as DomElement | null) {
+    const style = n.computedStyle;
+    if ((style?.get('position') ?? 'static') === 'static') continue;
+    const z = parseInt(style?.get('z-index') ?? '', 10);
+    layer += Number.isFinite(z) ? (z < 0 ? -1000 : 1 + z * 100) : 1;
+  }
+  return layer;
+}
+
 function isAtomicInline(classified: string): boolean {
   return classified === 'inline-block' || classified === 'inline-flex' || classified === 'inline-grid';
 }
@@ -225,6 +244,11 @@ class LayoutEngine implements ILayoutEngine {
   }
 
   getElementAtPoint(x: number, y: number): DomElement | null {
+    // Topmost in paint order: boxes in a positioned layer (higher z-index first) sit above in-flow
+    // ones; within a layer the last laid out wins. Taking the last laid-out box regardless sent a
+    // tap on Wikipedia's positioned Search button to the in-flow footer laid out after it.
+    let best: DomElement | null = null;
+    let bestLayer = -Infinity;
     for (let i = this.elementPositions.length - 1; i >= 0; i--) {
       const { element, box } = this.elementPositions[i]!;
       if (
@@ -232,10 +256,11 @@ class LayoutEngine implements ILayoutEngine {
         y >= box.y && y <= box.y + box.height &&
         this.isHitTestable(element, x, y)
       ) {
-        return element;
+        const layer = paintLayerOf(element);
+        if (layer > bestLayer) { best = element; bestLayer = layer; }
       }
     }
-    return null;
+    return best;
   }
 
   /**
@@ -654,8 +679,10 @@ class LayoutEngine implements ILayoutEngine {
         const textNode = child as DomTextNode;
         const text = textNode.text ?? '';
         // Pure-whitespace text nodes between block boxes render nothing and
-        // must not create empty anonymous blocks that add stray line height.
-        if (text.trim() === '') continue;
+        // must not create empty anonymous blocks that add stray line height. After inline
+        // content it is a word space: `<a>Wikipedia</a> <a>web</a>` and `<b>x</b> <i>y</i>`
+        // used to run together ("Wikipediaweb").
+        if (text.trim() === '' && inlineRun.length === 0) continue;
         inlineRun.push({ node: child, display: 'inline', isBlock: false });
         continue;
       }
@@ -2284,6 +2311,9 @@ class LayoutEngine implements ILayoutEngine {
       borderTop, borderRight, borderBottom, borderLeft,
     };
     this.layoutBoxes.set(node.domId, box);
+    // Hit-testable, before its children: absolutely positioned boxes were never registered, so a
+    // tap on an overlay, a dropdown or a positioned link fell through to whatever was beneath.
+    this.elementPositions.push({ element: node, box });
 
     // ── Resolve positioning via positioning module ──────────────────────
     const cbBox = containingBlock ? (this.layoutBoxes.get(containingBlock.domId) ?? null) : null;
