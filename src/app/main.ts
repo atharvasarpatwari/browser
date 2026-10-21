@@ -98,6 +98,7 @@ import type { ITrackerBlocker } from '../browser/security/tracker-blocker';
 import { AdBlocker } from '../browser/security/ad-blocker';
 import type { IAdBlocker } from '../browser/security/ad-blocker';
 import { ThirdPartySecurityManager, extractOrigin } from '../browser/security/third-party-security';
+import { PrivacyGate } from '../browser/security/privacy-gate';
 import type { IThirdPartySecurityManager } from '../browser/security/third-party-security';
 import { createCspEnforcement, type CspEnforcement } from '../browser/security/csp-enforcement';
 import { HtmlSanitizer } from '../browser/security/html-sanitizer';
@@ -219,6 +220,7 @@ const Tokens = Object.freeze({
   TrackerBlocker: Symbol('TrackerBlocker'),
   AdBlocker: Symbol('AdBlocker'),
   ThirdPartySecurityManager: Symbol('ThirdPartySecurityManager'),
+  PrivacyGate: Symbol('PrivacyGate'),
   SecurityLayer: Symbol('SecurityLayer'),
   CorsService: Symbol('CorsService'),
   DomTree: Symbol('DomTree'),
@@ -512,6 +514,11 @@ class ApplicationBootstrap {
     c.register<IPermissionManager>(
       Tokens.PermissionManager,
       () => new PermissionManager(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<PrivacyGate>(
+      Tokens.PrivacyGate,
+      (ctx) => new PrivacyGate(ctx.resolve<IPermissionManager>(Tokens.PermissionManager)),
       ServiceLifetime.Singleton,
     );
     c.register<ITrackerBlocker>(

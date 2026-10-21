@@ -462,6 +462,91 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 
 @media(max-width:900px){.kpi-row{grid-template-columns:repeat(2,1fr)}.kpi-row.secondary{grid-template-columns:repeat(2,1fr)}.chart-grid{grid-template-columns:1fr}.kpi-row .kpi:last-child{grid-column:1/-1}.insights-card ul{grid-template-columns:1fr}.nav-pills{position:static}}
 @media(max-width:600px){body{padding:16px}.kpi-row{grid-template-columns:1fr}.kpi .value{font-size:1.6rem}header h1{font-size:1.4rem}.modal-grid{grid-template-columns:1fr}.chart-card.maximized{inset:10px}.header-star-glow{width:40px;top:10px;left:10px}}
+/* ---------- Glassmorphism ----------
+   Frosted, translucent surfaces over a vivid moving backdrop. Overrides the flat
+   panels above; @media print (below) still wins, and surfaces turn opaque when
+   backdrop-filter is unsupported or the user asks for reduced transparency. */
+:root{
+  --glass-fill:linear-gradient(135deg,rgba(255,255,255,.11) 0%,rgba(255,255,255,.04) 55%,rgba(255,255,255,.02) 100%);
+  --glass-fill-hover:linear-gradient(135deg,rgba(255,255,255,.16) 0%,rgba(255,255,255,.06) 55%,rgba(255,255,255,.03) 100%);
+  --glass-edge:rgba(255,255,255,.14);
+  --glass-shine:rgba(255,255,255,.22);
+  --glass-shadow:0 12px 40px -14px rgba(0,0,0,.6),0 2px 6px rgba(0,0,0,.18);
+  --glass-blur:blur(22px) saturate(165%);
+  --glass-solid:rgba(16,16,40,.92);
+}
+html[data-theme="light"]{
+  --glass-fill:linear-gradient(135deg,rgba(255,255,255,.72) 0%,rgba(255,255,255,.48) 55%,rgba(255,255,255,.36) 100%);
+  --glass-fill-hover:linear-gradient(135deg,rgba(255,255,255,.86) 0%,rgba(255,255,255,.6) 55%,rgba(255,255,255,.46) 100%);
+  --glass-edge:rgba(255,255,255,.75);
+  --glass-shine:rgba(255,255,255,.95);
+  --glass-shadow:0 12px 36px -14px rgba(31,38,105,.28),0 2px 6px rgba(31,38,105,.08);
+  --glass-solid:rgba(250,251,255,.96);
+}
+
+/* A backdrop worth blurring: brighter, larger, more saturated blobs. */
+.bg-blob{opacity:.95;filter:blur(70px)}
+.bg-blob.b1{width:560px;height:560px;background:radial-gradient(circle,rgba(0,240,255,.5),transparent 68%)}
+.bg-blob.b2{width:620px;height:620px;background:radial-gradient(circle,rgba(168,85,247,.48),transparent 68%)}
+.bg-blob.b3{width:460px;height:460px;background:radial-gradient(circle,rgba(244,114,182,.32),transparent 68%)}
+html[data-theme="light"] .bg-blob{opacity:.8}
+html[data-theme="light"] .bg-blob.b1{background:radial-gradient(circle,rgba(56,189,248,.45),transparent 68%)}
+html[data-theme="light"] .bg-blob.b2{background:radial-gradient(circle,rgba(167,139,250,.45),transparent 68%)}
+html[data-theme="light"] .bg-blob.b3{background:radial-gradient(circle,rgba(244,114,182,.32),transparent 68%)}
+
+/* Panels: cards, KPI tiles, insights, charts. */
+.glass{
+  background:var(--glass-fill);
+  border:1px solid var(--glass-edge);
+  backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:inset 0 1px 0 var(--glass-shine),inset 1px 0 0 rgba(255,255,255,.05),var(--glass-shadow);
+}
+.glass:hover{background:var(--glass-fill-hover);box-shadow:inset 0 1px 0 var(--glass-shine),inset 1px 0 0 rgba(255,255,255,.07),0 18px 48px -14px rgba(0,0,0,.65)}
+html[data-theme="light"] .glass:hover{box-shadow:inset 0 1px 0 var(--glass-shine),0 18px 44px -14px rgba(31,38,105,.32)}
+
+/* Smaller frosted surfaces: pills, buttons, chips, tiles. */
+.nav-pills a,.tbtn,.badge-chip,.radar-chip,.momentum-item,.changelog-day-header,.changelog-filter-chip,.changelog-chip{
+  background:var(--glass-fill);
+  border-color:var(--glass-edge);
+  backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%);
+  box-shadow:inset 0 1px 0 var(--glass-shine);
+}
+.nav-pills a:hover,.tbtn:hover{background:var(--glass-fill-hover)}
+.nav-pills a.active,.tbtn.accent{box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 6px 20px -6px rgba(var(--accent-rgb),.55)}
+
+/* Logo panel and sticky table headers become frosted too. */
+.header-logo-wrap{
+  background:linear-gradient(135deg,rgba(5,5,15,.55),rgba(18,18,44,.4));
+  border:1px solid var(--glass-edge);
+  backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:inset 0 1px 0 var(--glass-shine),var(--glass-shadow);
+}
+html[data-theme="light"] .header-logo-wrap{background:linear-gradient(135deg,rgba(238,242,251,.7),rgba(221,229,245,.5))}
+thead th{background:rgba(10,10,26,.55);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+html[data-theme="light"] thead th{background:rgba(244,246,251,.7)}
+
+/* Modal: a frosted sheet over a blurred page. */
+.modal-overlay{backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%)}
+.modal{
+  background:linear-gradient(135deg,rgba(28,28,62,.72),rgba(14,14,36,.62));
+  border:1px solid var(--glass-edge);
+  backdrop-filter:blur(28px) saturate(170%);-webkit-backdrop-filter:blur(28px) saturate(170%);
+  box-shadow:inset 0 1px 0 var(--glass-shine),0 30px 80px -20px rgba(0,0,0,.7);
+}
+html[data-theme="light"] .modal{background:linear-gradient(135deg,rgba(255,255,255,.82),rgba(255,255,255,.66))}
+.lightbox .modal{background:transparent;border:none;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
+
+/* No backdrop blur, or the user wants less transparency: solid, readable surfaces. */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .glass,.modal,.header-logo-wrap,thead th{background:var(--glass-solid)}
+  .nav-pills a,.tbtn,.badge-chip,.radar-chip,.momentum-item,.changelog-day-header,.changelog-filter-chip,.changelog-chip{background:var(--glass-solid)}
+}
+@media (prefers-reduced-transparency: reduce){
+  .glass,.modal,.header-logo-wrap,thead th,.nav-pills a,.tbtn,.badge-chip,.radar-chip,.momentum-item,.changelog-day-header,.changelog-filter-chip,.changelog-chip{
+    background:var(--glass-solid);backdrop-filter:none;-webkit-backdrop-filter:none}
+  .bg-blob{opacity:.35}
+}
+
 @media print{.toolbar,.back-to-top,.table-header,.pagination,.modal-overlay,.metric-toggle,.nav-pills,.bg-blob,.scroll-progress,.expand-btn,.skip-link,.fav-toggle,.header-star-glow{display:none!important}body{padding:0;background:#fff;color:#000}.glass{border:1px solid #ccc;box-shadow:none;backdrop-filter:none;background:#fff}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
@@ -481,10 +566,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
   </div>
   <h1 class="sr-only">Nova Browser — Documentation Analytics</h1>
   <p class="stat-line">
-    <span><span class="num" id="statDocs">295</span> Documents</span>
-    <span><span class="num" id="statDays">56</span> Days</span>
-    <span><span class="num" id="statTests">10,540</span> Total Suite Tests</span>
-    <span>Generated <span class="num" id="statGenerated">2026-10-17 20:00:00</span></span>
+    <span><span class="num" id="statDocs">318</span> Documents</span>
+    <span><span class="num" id="statDays">60</span> Days</span>
+    <span><span class="num" id="statTests">10,704</span> Total Suite Tests</span>
+    <span>Generated <span class="num" id="statGenerated">2026-10-20 23:12:32</span></span>
   </p>
 </header>
 
@@ -516,10 +601,10 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </div>
 
 <div class="kpi-row" id="kpis">
-  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">295</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
-  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">10,540</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
-  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">553</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
-  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,733</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
+  <div class="kpi cyan glass"><span class="icon">📄</span><div class="value" id="kpiDocs">318</div><div class="label">Total Documents <span class="info" title="Count of all documentation entries in the dataset, including planning docs.">i</span></div></div>
+  <div class="kpi purple glass"><span class="icon">🧪</span><div class="value" id="kpiTests">10,704</div><div class="label">Tests Added <span class="info" title="Sum of automated test cases added across all completed sessions.">i</span></div></div>
+  <div class="kpi red glass"><span class="icon">🐞</span><div class="value" id="kpiRootCauses">640</div><div class="label">Root Causes Fixed <span class="info" title="Count of distinct root-cause bugs diagnosed and resolved.">i</span></div></div>
+  <div class="kpi green glass"><span class="icon">📁</span><div class="value" id="kpiFiles">1,923</div><div class="label">Files Touched <span class="info" title="Total files modified plus files newly created across all sessions.">i</span></div></div>
   <div class="kpi amber glass"><span class="icon">📐</span><div class="value" id="kpiCompliance">~78%</div><div class="label">Avg Spec Compliance <span class="info" title="Average compliance score across HTML5, CSS5, JS engine and DOM/Nav subsystems.">i</span></div></div>
 </div>
 
@@ -737,7 +822,7 @@ kbd{background:rgba(255,255,255,0.08);border:1px solid var(--glass-border);borde
 </main>
 
 <footer>
-  Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-10-17 20:00:00 (refreshed)
+  Nova Browser Documentation Analytics — Auto-generated from doc/ — 2026-10-20 23:12:32 (refreshed)
   <div class="kbd-hint">Press <kbd>/</kbd> to search · <kbd>Ctrl</kbd>+<kbd>K</kbd> for quick search · <kbd>?</kbd> for all shortcuts · click a row for details</div>
 </footer>
 
@@ -1181,14 +1266,37 @@ const DOCS = [
 {file:"2026-10-17-nova-android-ui-features-plan.md",date:"2026-10-17",title:"Nova Android — UI Redesign, Missing Features & Device Testing — Plan",category:"Plan",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
 {file:"2026-10-17-nova-android-ui-features.md",date:"2026-10-17",title:"Nova Android 1.9 — UI Redesign, Find, Scrolling, Pull-to-Refresh & Device-Found Fixes",category:"UI",tests:14,status:"Completed",rootCauses:8,filesModified:22,filesCreated:8},
 {file:"2026-10-17-page-script-execution.md",date:"2026-10-17",title:"Page Script Execution Enabled (Nova Android v1.8)",category:"JavaScript",tests:6,status:"Completed",rootCauses:4,filesModified:4,filesCreated:3},
-{file:"2026-10-21-electron-navigation-timeout-hang.md",date:"2026-10-21",title:"Electron Navigation Hang — Fetch Timeout, Transport Detection, Wildcard-Cert Matcher, Watchdog Startup Grace",category:"IPC/Networking",tests:7,status:"Completed",rootCauses:5,filesModified:6,filesCreated:1}
-
+{file:"2026-10-03-phase3-ui-extension-plan.md",date:"2026-10-03",title:"Phase 3: UI Features & Extension System",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:2,filesCreated:6},
+{file:"2026-10-03-search-engine-subsystem-implementation.md",date:"2026-10-03",title:"Search Engine Subsystem Implementation",category:"Architecture",tests:16,status:"Completed",rootCauses:5,filesModified:2,filesCreated:4},
+{file:"2026-10-03-security-and-webgpu-implementation.md",date:"2026-10-03",title:"Security & WebGPU Implementation",category:"Security",tests:0,status:"Completed",rootCauses:0,filesModified:2,filesCreated:4},
+{file:"2026-10-17-nightly-tomorrow-todos.md",date:"2026-10-17",title:"Nightly Tomorrow To-Dos (22:00)",category:"Tooling",tests:3,status:"Completed",rootCauses:0,filesModified:2,filesCreated:2},
+{file:"2026-10-18-android-long-press-double-menu.md",date:"2026-10-18",title:"Android Long-Press, PNG Decode on main, Swipe-to-Close",category:"UI",tests:2,status:"Completed",rootCauses:3,filesModified:7,filesCreated:2},
+{file:"2026-10-18-nova-android-1.10-css-supports-layer-cache.md",date:"2026-10-18",title:"Nova Android 1.10 — @supports/@layer CSS and Cache-Control Freshness",category:"Rendering",tests:6,status:"Completed",rootCauses:2,filesModified:7,filesCreated:1},
+{file:"2026-10-18-nova-android-1.11-cache-revalidation.md",date:"2026-10-18",title:"Nova Android 1.11 — Cached Images, 304 Revalidation & Null-Body Responses",category:"IPC/Networking",tests:6,status:"Completed",rootCauses:4,filesModified:7,filesCreated:1},
+{file:"2026-10-18-nova-android-1.12-paint-fidelity.md",date:"2026-10-18",title:"Nova Android 1.12 — Paint Fidelity: Head-in-Body, Phantom Borders, Clipped Text",category:"Rendering",tests:21,status:"Completed",rootCauses:7,filesModified:8,filesCreated:4},
+{file:"2026-10-18-nova-android-1.13-inline-flow-text-align.md",date:"2026-10-18",title:"Nova Android 1.13 — Inline Flow, text-align and Canvas Background",category:"Rendering",tests:9,status:"Completed",rootCauses:3,filesModified:7,filesCreated:1},
+{file:"2026-10-18-nova-android-1.14-device-found-black-page-script-rawtext.md",date:"2026-10-18",title:"Nova Android 1.14 — Device-Found Black Page, Script Raw Text, Block Widths",category:"Rendering",tests:14,status:"Completed",rootCauses:6,filesModified:13,filesCreated:3},
+{file:"2026-10-18-nova-android-1.15-element-dom-apis-find-focus.md",date:"2026-10-18",title:"Nova Android 1.15 — Element DOM APIs for Page Scripts, Find-Bar Focus",category:"JavaScript",tests:11,status:"Completed",rootCauses:5,filesModified:8,filesCreated:2},
+{file:"2026-10-18-nova-element-dom-apis-plan.md",date:"2026-10-18",title:"Nova — Element DOM APIs for Page Scripts — Plan",category:"Plan",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
+{file:"2026-10-18-nova-real-font-text-plan.md",date:"2026-10-18",title:"Nova — Draw Page Text With Real Fonts (Unicode) — Plan",category:"Plan",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1},
+{file:"2026-10-19-nova-android-1.16-real-font-text-cjk-wrap.md",date:"2026-10-19",title:"Nova Android 1.16 — Page Text in Real Fonts (Unicode), CJK Line Breaking",category:"Rendering",tests:6,status:"Completed",rootCauses:2,filesModified:5,filesCreated:3},
+{file:"2026-10-19-nova-android-1.17-external-css-scripted-styles-links.md",date:"2026-10-19",title:"Nova Android 1.17 — External Stylesheets Loaded, Script-Added Styles, Link Colour & Underlines",category:"CSS",tests:6,status:"Completed",rootCauses:4,filesModified:8,filesCreated:1},
+{file:"2026-10-19-nova-android-1.18-css-import-link-media.md",date:"2026-10-19",title:"Nova Android 1.18 — @import, link media, and the Token CSS Parser's At-Rule Bugs",category:"CSS",tests:4,status:"Completed",rootCauses:4,filesModified:5,filesCreated:1},
+{file:"2026-10-19-nova-android-1.19-native-image-decoding.md",date:"2026-10-19",title:"Nova Android 1.19 — Images Decoded With the Device's Own Codecs (GIF, SVG, AVIF)",category:"Rendering",tests:5,status:"Completed",rootCauses:2,filesModified:4,filesCreated:2},
+{file:"2026-10-19-nova-android-1.20-tablet-layout-device-checks.md",date:"2026-10-19",title:"Nova Android 1.20 — Tablet Layout Fix, First Full Device Run on the OPD2305 Tablet",category:"UI",tests:2,status:"Completed",rootCauses:1,filesModified:4,filesCreated:3},
+{file:"2026-10-19-nova-form-controls-plan.md",date:"2026-10-19",title:"Nova — Web Page Form Controls (inputs, buttons, checkboxes, select, submit) — Plan",category:"Plan",tests:0,status:"Planned",rootCauses:0,filesModified:0,filesCreated:1},
+{file:"2026-10-20-nova-android-1.22-link-taps-js-hang-font-sizes.md",date:"2026-10-20",title:"Nova Android 1.21-1.22 — Tapping Links Works, the jQuery Freeze, Font-Size Units",category:"JavaScript",tests:16,status:"Completed",rootCauses:9,filesModified:16,filesCreated:4},
+{file:"2026-10-20-nova-android-1.23-form-controls-real-page-fixes.md",date:"2026-10-20",title:"Nova Android 1.23 — Form Controls (Round A) and Ten Engine Bugs Found on Wikipedia",category:"Rendering",tests:22,status:"Completed",rootCauses:15,filesModified:13,filesCreated:5},
+{file:"2026-10-20-nova-android-1.24-wikipedia-search-end-to-end.md",date:"2026-10-20",title:"Nova Android 1.24 — Wikipedia Search Works End to End (Paint Order, Flex Basis, Floats, Hit Testing)",category:"Rendering",tests:7,status:"Completed",rootCauses:7,filesModified:7,filesCreated:2},
+{file:"2026-10-20-nova-android-1.25-page-speed-floats-flex-items.md",date:"2026-10-20",title:"Nova Android 1.25 — Wikipedia Results in ~3 s Instead of ~13 s; Floats, Flex Items, min-height",category:"Performance",tests:8,status:"Completed",rootCauses:8,filesModified:8,filesCreated:1},
+{file:"2026-10-21-electron-navigation-timeout-hang.md",date:"2026-10-21",title:"Electron Navigation Hang — Fetch Timeout, Transport Detection, Wildcard-Cert Matcher, Watchdog Startup Grace",category:"IPC/Networking",tests:7,status:"Completed",rootCauses:5,filesModified:6,filesCreated:1},
+{file:"2026-10-21-pull-refresh-find-device-recheck.md",date:"2026-10-21",title:"Pull-to-Refresh & Find-in-Page — On-Device Re-check (the two items left open by 1.9)",category:"UI",tests:0,status:"Completed",rootCauses:0,filesModified:0,filesCreated:1}
 ];
 
 /* Last-updated stamp: when the DOCS dataset is refreshed, bump these so the header
    stat-line and footer always show exactly when this dashboard version was generated. */
-const GEN_DATE='2026-10-07';
-const GEN_TIME='05:39:16';
+const GEN_DATE='2026-10-21';
+const GEN_TIME='06:45:00';
 
 const CAT_COLORS={CSS:'#60a5fa',HTML5:'#f472b6',JavaScript:'#fbbf24',Layout:'#34d399',Rendering:'#a855f7',Security:'#f87171','IPC/Networking':'#00f0ff',UI:'#f472b6',Architecture:'#94a3b8',Plan:'#fbbf24'};
 const CAT_CLASS={CSS:'cat-css',HTML5:'cat-html5',JavaScript:'cat-javascript',Layout:'cat-layout',Rendering:'cat-rendering',Security:'cat-security','IPC/Networking':'cat-ipc',UI:'cat-ui',Architecture:'cat-architecture',Plan:'cat-plan'};
@@ -3206,7 +3314,7 @@ renderTodos();
   function onScrollOrResize(){
     if(ticking)return;
     ticking=true;
-    requestAnimationFrame(sweep);see
+    requestAnimationFrame(sweep);
   }
   window.addEventListener('scroll',onScrollOrResize,{passive:true});
   window.addEventListener('resize',onScrollOrResize);

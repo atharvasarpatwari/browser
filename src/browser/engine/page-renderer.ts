@@ -235,14 +235,14 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // 8. Paint
     paintEngine.paint(doc);
 
-    // 9. Clear mutations recorded during the initial full style pass. They are
+    // 8. Clear mutations recorded during the initial full style pass. They are
     //    stale (already reflected in the laid-out, painted tree) and would
     //    otherwise make the first incremental frame re-layout the whole tree,
     //    wiping paint-dirty flags set by async loads (e.g. decoded images)
     //    before paintIncremental could re-rasterize them.
     domTree.clearMutations();
 
-    // 10. Render iframe child documents. Each iframe's src is fetched and
+    // 9. Render iframe child documents. Each iframe's src is fetched and
     //     rasterized through a fresh sub-pipeline into el.imageData so the
     //     parent paint pass composites the embedded page.
     const iframeCount = await this.renderIframeChildren(doc, result.url);
@@ -253,7 +253,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       domTree.clearMutations();
     }
 
-    // 11. Wire the incremental reflow/repaint controller for post-load DOM
+    // 10. Wire the incremental reflow/repaint controller for post-load DOM
     //     mutations (JS-triggered changes, scroll/scroll-triggered relayout).
     this.initReflowController(doc);
 

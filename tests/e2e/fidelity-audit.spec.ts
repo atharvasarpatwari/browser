@@ -294,7 +294,7 @@ async function canvasStats(page: Page): Promise<CanvasStats | null> {
     }
     const topColors = [...histogram.entries()]
       .sort((x, y) => y[1] - x[1])
-      .slice(0, 8)
+      .slice(0, 32)
       .map(([q, count]) => {
         const toHex = (v: number): string => (v * 8).toString(16).padStart(2, '0');
         const hex = `#${toHex((q >> 10) & 31)}${toHex((q >> 5) & 31)}${toHex(q & 31)}`;

@@ -1,5 +1,6 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { OmniboxProvider, OmniboxResult } from './omnibox';
+import { parseOpenSearchXml, extractSearchEngineFromOpenSearch, type OpenSearchDescription } from './opensearch-parser';
 
 interface SearchEngine {
   readonly id: string;
@@ -47,6 +48,10 @@ const BUILT_IN_ENGINES: Array<Omit<SearchEngine, 'id' | 'isDefault'>> = [
   { name: 'GitHub', url: 'https://github.com/search?q=%s', keyword: 'gh', icon: '🐙' },
   { name: 'Stack Overflow', url: 'https://stackoverflow.com/search?q=%s', keyword: 'so', icon: '📋' },
   { name: 'Reddit', url: 'https://www.reddit.com/search/?q=%s', keyword: 'r', icon: '👽' },
+  { name: 'Amazon', url: 'https://www.amazon.com/s?k=%s', keyword: 'am', icon: '🛒' },
+  { name: 'eBay', url: 'https://www.ebay.com/sch/i.html?_nkw=%s', keyword: 'ebay', icon: '🟦' },
+  { name: 'Yahoo', url: 'https://search.yahoo.com/search?p=%s', keyword: 'y', icon: '📰' },
+  { name: 'Yandex', url: 'https://yandex.com/search/?text=%s', keyword: 'yd', icon: '🐘' },
 ];
 
 let engineCounter = 0;
@@ -159,6 +164,55 @@ class SearchEngineManager implements ISearchEngineManager {
     const engine = this.getEngineByKeyword(keyword);
     if (!engine) return null;
     return { keyword, query };
+  }
+
+  async parseOpenSearchFromHtml(html: string): Promise<SearchEngine | null> {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(
+      html,
+      'text/html'
+    );
+
+    if (!doc) return null;
+
+    const linkEls = doc.querySelectorAll('link[rel="search"]');
+    for (const linkEl of linkEls) {
+      const type = linkEl.getAttribute('type');
+      if (type && type.includes('opensearchdescription')) {
+        const href = linkEl.getAttribute('href');
+        if (href) {
+          try {
+            const xmlDoc = parser.parseFromString(
+              await this.fetchXml(href),
+              'application/xml'
+            );
+            const desc = parseOpenSearchXml(
+              xmlDoc?.documentElement ? xmlDoc.documentElement.innerHTML : ''
+            );
+            if (desc) {
+              return extractSearchEngineFromOpenSearch(desc);
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        // Try parsing inline if no href or fetch fails
+        const xmlContent = linkEl.parentElement?.innerHTML || '';
+        const desc = parseOpenSearchXml(xmlContent);
+        if (desc) {
+          return extractSearchEngineFromOpenSearch(desc);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private async fetchXml(url: string): Promise<string> {
+    // In production, this would use the resource loader
+    // For now, return empty string to indicate fetch not implemented
+    return '';
   }
 
   onEvent(handler: EngineEventHandler): () => void {

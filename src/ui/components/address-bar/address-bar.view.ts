@@ -327,7 +327,7 @@ class AddressBarView implements IAddressBarView {
 
     this.inputElement = document.createElement('input');
     this.inputElement.type = 'text';
-    this.inputElement.className = 'nova-addressbar-input';
+    this.inputElement.className = 'nova-addressbar-input address-input';
     this.inputElement.placeholder = 'Search or enter URL';
     this.inputElement.autocomplete = 'off';
     this.inputElement.spellcheck = false;
