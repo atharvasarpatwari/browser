@@ -175,14 +175,107 @@ export function parseColor(color: string): RGBA {
     };
   }
 
+  // CSS Color 4: oklch()/oklab()/lab()/lch()/hwb()/color(srgb …). They used to fall through to
+  // BLACK, so a site styled with oklch() (iana.org's footer) drew black text on black.
+  const modern = parseModernColor(lower);
+  if (modern) return modern;
+
   return BLACK;
+}
+
+/** One numeric component: `50%` scaled to `percentOf`, `none` = 0, `deg`/`turn`/`rad` for hues. */
+function colorComponent(raw: string, percentOf: number): number {
+  if (raw === 'none') return 0;
+  if (raw.endsWith('%')) return (parseFloat(raw) / 100) * percentOf;
+  if (raw.endsWith('turn')) return parseFloat(raw) * 360;
+  if (raw.endsWith('rad')) return (parseFloat(raw) * 180) / Math.PI;
+  if (raw.endsWith('grad')) return parseFloat(raw) * 0.9;
+  return parseFloat(raw);
+}
+
+/** Linear-light sRGB (0..1) → 8-bit sRGB with the sRGB transfer curve. */
+function encodeSrgb(r: number, g: number, b: number, alpha: number): RGBA {
+  const enc = (c: number): number => {
+    const x = Math.min(1, Math.max(0, c));
+    return clamp255(Math.round((x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055) * 255));
+  };
+  return { r: enc(r), g: enc(g), b: enc(b), a: clamp01(alpha) };
+}
+
+function oklabToRgba(L: number, a: number, b: number, alpha: number): RGBA {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3;
+  return encodeSrgb(
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+    alpha,
+  );
+}
+
+/** CIE Lab (D50) → XYZ D50 → Bradford to D65 → linear sRGB. */
+function labToRgba(L: number, a: number, b: number, alpha: number): RGBA {
+  const fy = (L + 16) / 116, fx = fy + a / 500, fz = fy - b / 200;
+  const e = 216 / 24389, k = 24389 / 27;
+  const inv = (f: number): number => (f ** 3 > e ? f ** 3 : (116 * f - 16) / k);
+  const X = 0.3457 / 0.3585 * inv(fx), Y = L > k * e ? fy ** 3 : L / k, Z = (1 - 0.3457 - 0.3585) / 0.3585 * inv(fz);
+  const x = 0.9554734527042182 * X - 0.023098536874261423 * Y + 0.0632593086610217 * Z;
+  const y = -0.028369706963208136 * X + 1.0099954580058226 * Y + 0.021041398966943008 * Z;
+  const z = 0.012314001688319899 * X - 0.020507696433477912 * Y + 1.3303659366080753 * Z;
+  return encodeSrgb(
+    3.2409699419045226 * x - 1.537383177570094 * y - 0.4986107602930034 * z,
+    -0.9692436362808796 * x + 1.8759675015077202 * y + 0.04155505740717559 * z,
+    0.05563007969699366 * x - 0.20397695888897652 * y + 1.0569715142428786 * z,
+    alpha,
+  );
+}
+
+function parseModernColor(value: string): RGBA | null {
+  const m = /^(oklch|oklab|lab|lch|hwb|color)\(\s*(.*?)\s*\)$/.exec(value);
+  if (!m) return null;
+  const fn = m[1]!;
+  const [main, alphaRaw] = m[2]!.split('/').map((p) => p.trim());
+  const parts = main!.split(/[\s,]+/).filter(Boolean);
+  const alpha = alphaRaw ? colorComponent(alphaRaw, 1) : 1;
+  if (fn === 'color') {
+    // color(srgb r g b) and color(srgb-linear r g b); other spaces are rare enough to skip.
+    const space = parts.shift();
+    if (parts.length < 3 || (space !== 'srgb' && space !== 'srgb-linear')) return null;
+    const [r, g, b] = parts.map((p) => colorComponent(p, 1));
+    if (space === 'srgb-linear') return encodeSrgb(r!, g!, b!, alpha);
+    return { r: clamp255(Math.round(r! * 255)), g: clamp255(Math.round(g! * 255)), b: clamp255(Math.round(b! * 255)), a: clamp01(alpha) };
+  }
+  if (parts.length < 3 || parts.some((p) => !/^(-?[\d.]+(%|deg|turn|rad|grad)?|none)$/.test(p))) return null;
+  const [p0, p1, p2] = parts as [string, string, string];
+  switch (fn) {
+    case 'oklab': return oklabToRgba(colorComponent(p0, 1), colorComponent(p1, 0.4), colorComponent(p2, 0.4), alpha);
+    case 'oklch': {
+      const L = colorComponent(p0, 1), C = colorComponent(p1, 0.4), h = (colorComponent(p2, 360) * Math.PI) / 180;
+      return oklabToRgba(L, C * Math.cos(h), C * Math.sin(h), alpha);
+    }
+    case 'lab': return labToRgba(colorComponent(p0, 100), colorComponent(p1, 125), colorComponent(p2, 125), alpha);
+    case 'lch': {
+      const L = colorComponent(p0, 100), C = colorComponent(p1, 150), h = (colorComponent(p2, 360) * Math.PI) / 180;
+      return labToRgba(L, C * Math.cos(h), C * Math.sin(h), alpha);
+    }
+    case 'hwb': {
+      // hwb(h w b): an hsl colour mixed with white and black.
+      let w = colorComponent(p1, 1), bl = colorComponent(p2, 1);
+      if (w + bl >= 1) { const g = w / (w + bl); return { r: clamp255(Math.round(g * 255)), g: clamp255(Math.round(g * 255)), b: clamp255(Math.round(g * 255)), a: clamp01(alpha) }; }
+      const base = parseColor(`hsl(${((colorComponent(p0, 360) % 360) + 360) % 360} 100% 50%)`);
+      const mix = (c: number): number => clamp255(Math.round((c / 255) * (1 - w - bl) * 255 + w * 255));
+      return { r: mix(base.r), g: mix(base.g), b: mix(base.b), a: clamp01(alpha) };
+    }
+  }
+  return null;
 }
 
 /** True when parseColor understands the value (it falls back to black otherwise). */
 export function isParsableColor(color: string): boolean {
   const lower = color.toLowerCase().trim();
   return lower === 'transparent' || !!NAMED_COLORS[lower] || /^#([\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/.test(lower) ||
-    /^rgba?\(/.test(lower) || /^hsla?\(/.test(lower);
+    /^rgba?\(/.test(lower) || /^hsla?\(/.test(lower) || parseModernColor(lower) !== null;
 }
 
 function clamp01(n: number): number {

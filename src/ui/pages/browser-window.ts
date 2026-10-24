@@ -1664,6 +1664,14 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   closeTab(tabId: string): boolean {
     const result = this.tabManager?.removeTab(tabId) ?? false;
+    // Closing the last tab opens a fresh home tab (as Chrome does). It used to leave zero tabs:
+    // the screen still showed a page that belonged to no tab, and new navigations loaded
+    // invisibly until the user found "New tab" in the menu.
+    if (result && this.tabManager && this.tabManager.count === 0) {
+      const fresh = this.tabManager.createTab();
+      this.tabManager.activateTab(fresh.id);
+      this.navigationBridge?.syncFromActiveTab();
+    }
     this.syncAll();
     return result;
   }
@@ -2069,6 +2077,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
     service.on('bookmarkRemoved', notify);
     service.on('bookmarkUpdated', notify);
     service.on('bookmarkMoved', notify);
+    // Listeners (the Android bridge) may have read the library before this service existed and
+    // got an empty list: after every restart the native Bookmarks sheet said "No bookmarks yet"
+    // although they were all saved. Tell them to read it again.
+    this.emitLibraryChanged();
   }
 
   setHistoryService(service: IHistoryService): void {
@@ -2077,6 +2089,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     service.on('entryAdded', notify);
     service.on('entriesDeleted', notify);
     service.on('cleared', notify);
+    this.emitLibraryChanged(); // same as setBookmarkService: re-push the saved history
   }
 
   private emitLibraryChanged(): void {

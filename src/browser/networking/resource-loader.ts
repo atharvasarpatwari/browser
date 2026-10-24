@@ -145,7 +145,11 @@ class ResourceLoader implements IResourceLoader {
     }
 
     try {
-      const headers = new Map<string, string>([['accept', '*/*']]);
+      // A document asks for HTML like a browser does; some servers send an error or a different
+      // variant to a bare `*/*` page request.
+      const headers = new Map<string, string>([['accept', _kind === 'document'
+        ? 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        : '*/*']]);
       const signal = options?.signal ?? new AbortController().signal;
 
       // ── CORS pre-request check ──────────────────────────────────────────

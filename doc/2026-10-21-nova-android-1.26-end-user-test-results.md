@@ -303,3 +303,6 @@ npx vitest run tests/end-user-regressions.test.ts → Tests 5 passed (5)
 apksigner verify Nova-1.26.apk                → verified
 ```
 On-device: 41 cases executed on the Realme RMX5264 (results table above). The rebuilt 1.26, which includes RC-6 and RC-7, is not yet installed on the phone: on this device the install raises an approval prompt, and the owner was on a call.
+
+## Follow-up
+- 2026-10-24, Nova 1.27: RC-1, RC-3, RC-5, RC-8 and RC-13 fixed. See [2026-10-24-nova-android-1.27-user-agent-error-pages-tabs-colors.md](2026-10-24-nova-android-1.27-user-agent-error-pages-tabs-colors.md).

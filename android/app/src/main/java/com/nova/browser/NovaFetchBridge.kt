@@ -3,6 +3,7 @@ package com.nova.browser
 import android.util.Base64
 import android.util.Log
 import android.webkit.JavascriptInterface
+import android.webkit.WebSettings
 import android.webkit.WebView
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -40,6 +41,26 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
     private val executor: ExecutorService = Executors.newFixedThreadPool(8)
     private val active = ConcurrentHashMap<String, HttpURLConnection>()
 
+    /**
+     * The WebView's own Chrome UA plus Nova's token. Requests used to go out with
+     * HttpURLConnection's default `Dalvik/2.1.0 (Linux; U; Android …)`, which Wikimedia treats as
+     * an unidentified bot: after a burst of page loads it answered every request from the
+     * device's IP with 403 "Please respect our robot policy".
+     */
+    private val userAgent: String by lazy {
+        val context = webView.context
+        val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "1"
+        val base = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrNull()
+            ?: "Mozilla/5.0 (Linux; Android ${android.os.Build.VERSION.RELEASE}) AppleWebKit/537.36 (KHTML, like Gecko) Mobile Safari/537.36"
+        "$base NovaBrowser/$version"
+    }
+
+    private val acceptLanguage: String by lazy {
+        val tag = java.util.Locale.getDefault().toLanguageTag()
+        val lang = java.util.Locale.getDefault().language
+        if (lang.isEmpty() || tag == lang) "$tag,en;q=0.8" else "$tag,$lang;q=0.9,en;q=0.8"
+    }
+
     @JavascriptInterface
     fun fetch(id: String, method: String, url: String, headersJson: String, redirectMode: String, bodyBase64: String?) {
         Log.i(TAG, "fetch[$id] $method $url redirect=$redirectMode")
@@ -52,10 +73,16 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
                     instanceFollowRedirects = redirectMode != "manual"
                     val headers = try { JSONObject(headersJson) } catch (_: Exception) { JSONObject() }
                     val keys = headers.keys()
+                    var hasUserAgent = false
+                    var hasAcceptLanguage = false
                     while (keys.hasNext()) {
                         val key = keys.next()
                         setRequestProperty(key, headers.getString(key))
+                        if (key.equals("User-Agent", ignoreCase = true)) hasUserAgent = true
+                        if (key.equals("Accept-Language", ignoreCase = true)) hasAcceptLanguage = true
                     }
+                    if (!hasUserAgent) setRequestProperty("User-Agent", userAgent)
+                    if (!hasAcceptLanguage) setRequestProperty("Accept-Language", acceptLanguage)
                     setRequestProperty("Accept-Encoding", "identity")
                     if (!bodyBase64.isNullOrEmpty() && requestMethod != "GET" && requestMethod != "HEAD") {
                         doOutput = true
