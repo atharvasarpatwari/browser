@@ -660,7 +660,8 @@ class PaintEngine implements IPaintEngine {
       if (textRuns && textRuns.length > 0) {
         const textShadowVal = style.get('text-shadow');
         const textShadows = textShadowVal ? parseTextShadow(textShadowVal) : [];
-        for (const run of textRuns) {
+        for (let ri = 0; ri < textRuns.length; ri++) {
+          const run = textRuns[ri]!;
           const weight = run.fontWeight ?? 'normal';
           if (textShadows.length > 0) {
             for (const ts of textShadows) {
@@ -673,8 +674,13 @@ class PaintEngine implements IPaintEngine {
             type: 'fillText',
             params: run.width !== undefined ? [run.text, run.x, run.y, run.width] : [run.text, run.x, run.y],
           });
-          // text-decoration: was never painted (links had no underline). Skip whitespace-only runs.
-          if (run.decoration && run.width && run.text.trim()) {
+          // text-decoration: was never painted (links had no underline). A whitespace run is
+          // decorated only between two decorated runs on its line (the spaces inside one link):
+          // skipping every space broke a link's underline into one piece per word.
+          const prev = textRuns[ri - 1], next = textRuns[ri + 1];
+          const decorates = !!run.text.trim() ||
+            (!!prev?.decoration && !!next?.decoration && prev.y === run.y && next.y === run.y);
+          if (run.decoration && run.width && decorates) {
             const thickness = Math.max(1, Math.round(run.fontSize / 16));
             commands.push({ type: 'setFillStyle', params: [run.decoration.color] });
             if (run.decoration.underline) commands.push({ type: 'fillRect', params: [run.x, run.y + Math.round(run.fontSize * 0.12), run.width, thickness] });

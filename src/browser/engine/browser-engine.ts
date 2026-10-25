@@ -132,6 +132,8 @@ interface IPageRenderer {
   getLayoutEngine(): ILayoutEngine | null;
   /** Fires a UI event at a page element; false when a script cancelled it. */
   dispatchPageEvent?(el: DomElement, type: string): boolean;
+  /** The rendered document's <title> text (whitespace collapsed), or '' when it has none. */
+  getDocumentTitle?(): string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -478,7 +480,9 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
       await this.runPipeline(session);
       // The document finished loading — complete the committed navigation so
       // the controller's state machine matches the real page lifecycle.
-      this.navController.completeNavigation(session.entry.id);
+      // The real <title>: tabs, history and bookmarks used to show the host name ("httpbin.org")
+      // because nothing read it.
+      this.navController.completeNavigation(session.entry.id, this.renderer.getDocumentTitle?.() || undefined);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       if (session.abortController.signal.aborted) {

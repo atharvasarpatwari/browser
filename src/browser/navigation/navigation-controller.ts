@@ -320,7 +320,7 @@ interface INavigationController {
    * `Committed` until the document owner calls this after the page finishes
    * loading. No-op-safe when no navigation is pending.
    */
-  completeNavigation(entryId?: string): NavigationResult;
+  completeNavigation(entryId?: string, title?: string): NavigationResult;
   /**
    * Toggle deferred completion. When disabled (default), `navigateTo` marks
    * the navigation `Complete` immediately. When enabled, the engine calls
@@ -808,8 +808,8 @@ class NavigationController implements INavigationController {
    * rendering. Returns `failure` when there is nothing to complete or the
    * supplied entry id does not match the current entry.
    */
-  completeNavigation(entryId?: string): NavigationResult {
-    const current = this.stack.current();
+  completeNavigation(entryId?: string, title?: string): NavigationResult {
+    let current = this.stack.current();
     if (current === null) {
       return this.fail(
         { url: '', type: NavigationType.Reload, userInitiated: false },
@@ -830,6 +830,11 @@ class NavigationController implements INavigationController {
     }
 
     this._pendingEntryId = null;
+    if (title && title !== current.title) {
+      // The document's real title, known once it has rendered.
+      current = { ...current, title };
+      this.stack.replace(current);
+    }
     this._state = NavigationState.Complete;
     const elapsedMs = this._navStartTime > 0 ? Date.now() - this._navStartTime : 0;
     this.bus.emit({ kind: 'navigationCompleted', entry: current, elapsedMs });

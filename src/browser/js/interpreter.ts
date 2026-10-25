@@ -628,11 +628,31 @@ export class Interpreter {
     return undefined;
   }
 
+  /** A host Error as the page sees it: built with the page's own constructor of that name when there is one. */
+  private hostErrorToJS(err: Error, env: Environment): JSValue {
+    let ctor: JSValue;
+    try { ctor = env.get(err.name || 'Error'); } catch { ctor = undefined; }
+    const native = ctor as { nativeFn?: (t: JSValue, a: JSValue[]) => JSValue } | undefined;
+    if (native && typeof native === 'object' && typeof native.nativeFn === 'function') {
+      try {
+        const made = native.nativeFn(createObject(null), [err.message]);
+        if (made && typeof made === 'object') return made;
+      } catch { /* fall through to a plain object */ }
+    }
+    const obj = createObject(null);
+    const data = (value: JSValue) => ({ value, writable: true, enumerable: false, configurable: true });
+    obj.properties.set('name', data(err.name || 'Error'));
+    obj.properties.set('message', data(err.message));
+    return obj;
+  }
+
   private execTry(stmt: AST.TryStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     let pendingReturn: ReturnSignal | undefined;
     let pendingBreak: BreakSignal | undefined;
     let pendingContinue: ContinueSignal | undefined;
     let pendingThrow: ThrowSignal | undefined;
+    // A host exception still to rethrow once `finally` has run (it used to skip `finally`).
+    let rethrow: { error: unknown } | undefined;
 
     try {
       const result = this.execBlock(stmt.block.body, env);
@@ -657,31 +677,44 @@ export class Interpreter {
       } else if (isContinueSignal(result)) {
         pendingContinue = result;
       }
-    } catch (e) {
+    } catch (caught) {
+      // Errors the engine raises itself (`null.x`, calling a non-function, CSP blocks) arrive here
+      // as host TypeError/Error objects. They used to be rethrown past every catch, so a page's
+      // guarded feature test (`try { … } catch {}`) killed the whole script. Hand the page a
+      // real error object of the same type instead.
+      const e = caught instanceof Error && !(caught instanceof JSError) && stmt.handler
+        ? new JSError(this.hostErrorToJS(caught, env))
+        : caught;
       if (e instanceof JSError && stmt.handler) {
         const catchEnv = new Environment(env);
         if (stmt.handler.param) {
           catchEnv.setLocal(stmt.handler.param.name, e.value);
         }
-        const catchResult = this.execBlock(stmt.handler.body.body, catchEnv);
-        if (isThrowSignal(catchResult)) pendingThrow = catchResult;
-        else if (isReturnSignal(catchResult)) pendingReturn = catchResult;
-        else if (isBreakSignal(catchResult)) pendingBreak = catchResult;
-        else if (isContinueSignal(catchResult)) pendingContinue = catchResult;
-      } else if (!(e instanceof JSError)) {
-        throw e;
-      } else if (!stmt.handler) {
-        throw e;
+        try {
+          const catchResult = this.execBlock(stmt.handler.body.body, catchEnv);
+          if (isThrowSignal(catchResult)) pendingThrow = catchResult;
+          else if (isReturnSignal(catchResult)) pendingReturn = catchResult;
+          else if (isBreakSignal(catchResult)) pendingBreak = catchResult;
+          else if (isContinueSignal(catchResult)) pendingContinue = catchResult;
+        } catch (fromCatch) {
+          rethrow = { error: fromCatch };
+        }
+      } else {
+        rethrow = { error: e };
       }
     }
 
     if (stmt.finalizer) {
       const finResult = this.execBlock(stmt.finalizer.body, env);
+      // An abrupt `finally` (return/throw/break/continue) replaces whatever was pending.
+      const abrupt = isReturnSignal(finResult) || isBreakSignal(finResult) || isContinueSignal(finResult) || isThrowSignal(finResult);
+      if (abrupt) rethrow = undefined;
       if (isReturnSignal(finResult)) pendingReturn = finResult;
       else if (isBreakSignal(finResult)) pendingBreak = finResult;
       else if (isContinueSignal(finResult)) pendingContinue = finResult;
       else if (isThrowSignal(finResult)) pendingThrow = finResult;
     }
+    if (rethrow) throw rethrow.error;
 
     if (pendingReturn) return pendingReturn;
     if (pendingThrow) return pendingThrow;

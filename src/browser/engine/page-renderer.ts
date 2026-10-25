@@ -111,6 +111,29 @@ class PageRenderer implements IPageRenderer, IDisposable {
   /** Layout viewport in CSS px. Desktop keeps the 1920×1080 default; the Android shell sets the phone's size. */
   private viewport = { width: 1920, height: 1080 };
   private lastDocument: DomDocument | null = null;
+
+  /** Text of the document's <title> (the first one outside <svg>), whitespace collapsed. */
+  getDocumentTitle(): string {
+    const doc = this.lastDocument;
+    if (!doc) return '';
+    const find = (node: DomElement): DomElement | null => {
+      for (const child of node.children) {
+        if (child.nodeType !== 'element') continue;
+        const el = child as DomElement;
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'title') return el;
+        if (tag === 'svg' || tag === 'math') continue;
+        const hit = find(el);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const title = doc.htmlElement ? find(doc.htmlElement as DomElement) : null;
+    if (!title) return '';
+    const text = (title.children as readonly { nodeType: string; text?: string }[])
+      .map((c) => (c.nodeType === 'text' ? c.text ?? '' : '')).join('');
+    return text.replace(/\s+/g, ' ').trim();
+  }
   private disposed = false;
   private reflowController: ReflowRepaintController | null = null;
   private transitionEngine: CssTransitionEngine | null = null;

@@ -92,7 +92,7 @@ class HistoryService implements IHistoryService {
 
   async shutdown(): Promise<void> {
     for (const [controller, listener] of this.controllerListeners) {
-      controller.off('navigationCommitted', listener);
+      controller.off('navigationCompleted', listener);
     }
     this.controllerListeners.clear();
     this.bus.dispose();
@@ -147,20 +147,24 @@ class HistoryService implements IHistoryService {
   connectController(controller: INavigationController): void {
     if (this.controllerListeners.has(controller)) return;
 
+    // Record a visit once the page has loaded (navigationCompleted): at commit time the load
+    // could still fail and the title was only the host name, so history filled with
+    // "httpbin.org", DNS failures and about:newtab. Internal pages are not history.
     const listener = (event: NavigationEvent): void => {
-      if (event.kind === 'navigationCommitted' && !this.recordingPaused) {
-        void this.addVisit(event.entry.url, event.entry.title, false);
-      }
+      if (event.kind !== 'navigationCompleted' || this.recordingPaused) return;
+      const { url, title } = event.entry;
+      if (!/^https?:/i.test(url)) return;
+      void this.addVisit(url, title, false);
     };
 
     this.controllerListeners.set(controller, listener);
-    controller.on('navigationCommitted', listener);
+    controller.on('navigationCompleted', listener);
   }
 
   disconnectController(controller: INavigationController): void {
     const listener = this.controllerListeners.get(controller);
     if (!listener) return;
-    controller.off('navigationCommitted', listener);
+    controller.off('navigationCompleted', listener);
     this.controllerListeners.delete(controller);
   }
 

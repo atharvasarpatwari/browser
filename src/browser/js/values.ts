@@ -791,7 +791,31 @@ export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]
 export class JSError extends Error {
   value: JSValue;
   constructor(value: JSValue) {
-    super(toString(value));
+    super(describeThrown(value));
     this.value = value;
   }
+}
+
+/**
+ * Readable text for a thrown page value: an Error-like object gives "Name: message" (from own or
+ * inherited data properties). toString() gave "[object Object]", so every failing site's script
+ * error in logcat said only "[object Object]".
+ */
+function describeThrown(value: JSValue): string {
+  if (value && typeof value === 'object' && 'properties' in value) {
+    const read = (key: string): JSValue => {
+      for (let o: JSObject | null = value as JSObject, depth = 0; o && depth < 16; o = o.prototype, depth++) {
+        const d = o.properties?.get(key);
+        if (d && !d.getter) return d.value;
+      }
+      return undefined;
+    };
+    const message = read('message');
+    if (message !== undefined) {
+      const name = read('name');
+      const text = toString(message);
+      return name !== undefined && toString(name) ? `${toString(name)}: ${text}` : text;
+    }
+  }
+  return toString(value);
 }

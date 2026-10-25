@@ -1839,7 +1839,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
       field.remove();
     };
     field.addEventListener('input', commit);
-    field.addEventListener('change', commit);
+    // A picked <select> option is final: close the overlay (it used to sit on top of the page,
+    // outlined, until something else took focus).
+    field.addEventListener('change', kind === 'select' ? close : commit);
     field.addEventListener('blur', close);
     field.addEventListener('keydown', (e) => {
       const key = (e as KeyboardEvent).key;

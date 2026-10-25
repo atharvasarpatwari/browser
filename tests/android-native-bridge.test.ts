@@ -454,7 +454,8 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     // Fake controller: capture the listener HistoryService registers.
     let commit: ((e: unknown) => void) | null = null;
     historyService.connectController({ on: (_k: string, fn: (e: unknown) => void) => { commit = fn; } } as never);
-    const visit = (url: string) => commit!({ kind: 'navigationCommitted', entry: { url, title: url } });
+    // History records completed loads (with their title), not commits.
+    const visit = (url: string) => commit!({ kind: 'navigationCompleted', entry: { url, title: url }, elapsedMs: 1 });
     const flush = () => new Promise((r) => setTimeout(r, 0));
 
     page.setIncognitoExternal(true);

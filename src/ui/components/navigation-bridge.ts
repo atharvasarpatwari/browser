@@ -272,6 +272,8 @@ class NavigationBridge implements INavigationBridge {
           // navigate()'s own result path used to clear it, so after a reload the tab
           // (and the Android chrome, which reads it) stayed "loading" forever.
           this.tabs.activeTab?.setLoading(false);
+          // The page's <title> arrives with completion; tabs used to keep the host name.
+          if (this.tabs.activeTab && /^https?:/i.test(e.entry.url)) this.tabs.activeTab.setTitle(this._titleFor(e.entry));
           this._syncToolbarState();
           this.bus.emit({ kind: 'navigationCompleted', url: e.entry.url, elapsedMs: e.elapsedMs });
           break;
@@ -417,7 +419,7 @@ class NavigationBridge implements INavigationBridge {
       const tab = this.tabs.activeTab;
       if (tab) {
         tab.setUrl(result.entry.url);
-        tab.setTitle(result.entry.parsedUrl.hostname || result.entry.url);
+        tab.setTitle(this._titleFor(result.entry));
         tab.setLoading(false);
       }
 
@@ -458,7 +460,7 @@ class NavigationBridge implements INavigationBridge {
       const tab = this.tabs.activeTab;
       if (tab) {
         tab.setUrl(result.entry.url);
-        tab.setTitle(result.entry.parsedUrl.hostname || result.entry.url);
+        tab.setTitle(this._titleFor(result.entry));
       }
 
       if (this.config.updateStatusBar) {
@@ -485,7 +487,7 @@ class NavigationBridge implements INavigationBridge {
       const tab = this.tabs.activeTab;
       if (tab) {
         tab.setUrl(result.entry.url);
-        tab.setTitle(result.entry.parsedUrl.hostname || result.entry.url);
+        tab.setTitle(this._titleFor(result.entry));
       }
 
       if (this.config.updateStatusBar) {
@@ -613,6 +615,17 @@ class NavigationBridge implements INavigationBridge {
   }
 
   // ── Private: helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Title for a tab showing `entry`: the controller's current entry carries the document's
+   * <title> once the page has loaded, the host name before that. Using it everywhere means
+   * the order of the navigate() result and the completion event doesn't matter.
+   */
+  private _titleFor(entry: { url: string; title: string; parsedUrl?: { hostname?: string } }): string {
+    const current = this.nav.getCurrentEntry?.();
+    const title = current && current.url === entry.url ? current.title : entry.title;
+    return title || entry.parsedUrl?.hostname || entry.url;
+  }
 
   private _setLoading(loading: boolean): void {
     this._isLoading = loading;

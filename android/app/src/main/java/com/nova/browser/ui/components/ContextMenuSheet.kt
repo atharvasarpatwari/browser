@@ -1,6 +1,9 @@
 package com.nova.browser.ui.components
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -46,6 +49,10 @@ fun ContextMenuSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 8.dp)
                 .heightIn(max = 560.dp)
+                // The link menu is taller than 560dp, and the column neither scrolled nor
+                // cleared the gesture bar: its last row ("Cancel") was cut off.
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
         ) {
             target.linkUrl?.let { linkUrl ->
                 ListItem(
