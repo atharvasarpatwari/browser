@@ -48,3 +48,10 @@ if (typeof globalThis.GPUShaderStage === 'undefined') {
     COMPUTE: 0x0004,
   };
 }
+
+// Open tabs are saved to localStorage and restored on mount (1.32, RC-9). Each test starts like a
+// fresh install, so a tab one test opened does not reappear in the next.
+import { beforeEach } from 'vitest';
+beforeEach(() => {
+  try { globalThis.localStorage?.removeItem('nova-tab-persistence'); } catch { /* no storage in this environment */ }
+});

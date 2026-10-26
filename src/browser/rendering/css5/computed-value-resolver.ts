@@ -19,6 +19,7 @@
  */
 
 import { hasMathFunctions, resolveMathFunctions, type MathResolutionContext } from './math-functions.js';
+import { getPreferredColorScheme } from '../color-scheme';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NAMED COLOR TABLE (CSS Color Level 4 — 148 named colors)
@@ -374,8 +375,8 @@ export function resolveComputedValue(
     }
   }
 
-  // light-dark(a, b) (CSS Color 5): Nova paints pages with the light colour scheme.
-  if (v.includes('light-dark(')) v = resolveLightDark(v);
+  // light-dark(a, b) (CSS Color 5): the dark value when the user prefers dark.
+  if (v.includes('light-dark(')) v = resolveLightDark(v, getPreferredColorScheme() === 'dark');
 
   // ── Special values ──────────────────────────────────────────────────
   if (v === '' || v === 'initial') return v;
@@ -604,8 +605,12 @@ export function resolveVarReferences(
 // VALUE RESOLUTION
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Replaces each light-dark(a, b) with a (ponytail: no dark page scheme yet; pick b when there is one). */
-function resolveLightDark(value: string): string {
+/**
+ * Replaces each light-dark(a, b) with a, or b when `dark`.
+ * ponytail: follows the user's preference without checking the element's color-scheme property
+ * (pages that use light-dark() declare `color-scheme: light dark`); check it if a page needs that.
+ */
+function resolveLightDark(value: string, dark = false): string {
   let out = value;
   for (let i = out.indexOf('light-dark('); i !== -1; i = out.indexOf('light-dark(')) {
     const start = i + 'light-dark('.length;
@@ -619,7 +624,8 @@ function resolveLightDark(value: string): string {
     }
     const end = j - 1; // index of the closing paren
     const light = out.slice(start, comma === -1 ? end : comma).trim();
-    out = out.slice(0, i) + light + out.slice(end + 1);
+    const darkValue = comma === -1 ? light : out.slice(comma + 1, end).trim();
+    out = out.slice(0, i) + (dark ? darkValue : light) + out.slice(end + 1);
   }
   return out;
 }

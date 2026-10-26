@@ -94,12 +94,12 @@ describe('TabPersistenceManager', () => {
       expect(persistence.restoreTabs()).toBeNull();
     });
 
-    it('should return null when data is stale (>24h)', () => {
+    it('should return null when data is stale (>30 days; tabs now survive restarts that long)', () => {
       const staleData = {
         version: 1,
         tabs: [{ id: 't1', url: 'https://a.com', title: 'A' }],
         activeTabId: 't1',
-        savedAt: Date.now() - 25 * 60 * 60 * 1000,
+        savedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
       };
       store.write(JSON.stringify(staleData));
       expect(persistence.restoreTabs()).toBeNull();

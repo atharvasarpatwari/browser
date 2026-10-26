@@ -26,7 +26,7 @@ import type { IHistoryService } from '../../browser/history/history-service';
 
 import { TabManager } from '../../browser/tabs/tab-manager';
 import { TabSessionBridge } from '../../browser/tabs/tab-session-bridge';
-import { TabPersistenceManager, MemoryStore } from '../../browser/tabs/tab-persistence';
+import { TabPersistenceManager, LocalStorageStore } from '../../browser/tabs/tab-persistence';
 import { TabContextManager } from '../../browser/engine/tab-context';
 import { AddressBar } from '../components/address-bar/address-bar';
 import { AddressBarView } from '../components/address-bar/address-bar.view';
@@ -416,19 +416,27 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.tabManager = new TabManager();
     this.contextManager = new TabContextManager();
     this.tabSessionBridge = new TabSessionBridge(this.tabManager, this.contextManager);
-    this.tabPersistence = new TabPersistenceManager(new MemoryStore());
-    this.tabPersistence.startAutoSave(this.tabManager);
+    // Open tabs survive a restart (RC-9): saved to localStorage, never while incognito. The store
+    // was in-memory, so every launch started with one blank tab.
+    const disk = new LocalStorageStore();
+    this.tabPersistence = new TabPersistenceManager({
+      read: () => disk.read(),
+      write: (data) => { if (!this.incognitoManager?.isActive()) disk.write(data); },
+      clear: () => disk.clear(),
+    });
     const savedTabs = this.tabPersistence.restoreTabs();
     if (savedTabs && savedTabs.tabs.length > 0) {
-      for (const tabState of savedTabs.tabs) {
-        const tab = this.tabManager.createTab(tabState.url, tabState.pinned);
+      const restored = savedTabs.tabs.map((tabState) => {
+        const tab = this.tabManager!.createTab(tabState.url, tabState.pinned);
         if (tabState.title) tab.setTitle(tabState.title);
         if (tabState.groupId) tab.setGroupId(tabState.groupId);
-      }
-      if (savedTabs.activeTabId && this.tabManager.getTab(savedTabs.activeTabId)) {
-        this.tabManager.activateTab(savedTabs.activeTabId);
-      }
+        return tab;
+      });
+      // Restored tabs get new ids, so the saved active id is matched by position.
+      const activeIndex = savedTabs.tabs.findIndex((t) => t.id === savedTabs.activeTabId);
+      this.tabManager.activateTab((restored[activeIndex] ?? restored[restored.length - 1]!).id);
     }
+    this.tabPersistence.startAutoSave(this.tabManager);
     this.trackerBlocker = new TrackerBlocker();
     this.adBlocker = new AdBlocker();
     this.toolbar = new Toolbar();
@@ -540,6 +548,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
     // history service and CSP guards); otherwise fall back to a local controller.
     // The pipeline is re-synced when DI setters deliver services after mount().
     this.syncNavigationPipeline();
+    // Load the restored active tab's page (activation alone happened before the pipeline existed).
+    if (savedTabs && savedTabs.tabs.length > 0) this.navigationBridge?.syncFromActiveTab();
 
     // Wire toolbar events through the bridge (shield + bookmark remain local).
     this.toolbar.on('shieldToggle', (e) => {
@@ -579,7 +589,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     };
     document.addEventListener('keydown', this.tabKeyHandler);
 
-    if (!savedTabs) this.tabManager.createTab();
+    if (this.tabManager.count === 0) this.tabManager.createTab();
 
     if (areas.content) {
       this.contentArea = areas.content;

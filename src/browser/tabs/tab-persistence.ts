@@ -3,7 +3,8 @@ import type { TabSessionState } from './tab-session';
 import type { ITabManager } from './tab-manager';
 
 const STORAGE_KEY = 'nova-tab-persistence';
-const MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// Tabs are kept across restarts for 30 days (24 hours lost them after a day away).
+const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const DEBOUNCE_MS = 500;
 
 interface TabPersistenceData {

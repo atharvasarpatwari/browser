@@ -5,6 +5,7 @@ import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter, stringMethods, functionMethod } from './interpreter';
 import { createDocumentBinding, wrapElement, createEventObject, interfacePrototype, DOM_INTERFACE_NAMES } from './dom-bindings';
+import { getPreferredColorScheme } from '../rendering/color-scheme';
 import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
@@ -2061,7 +2062,7 @@ export function createGlobalEnv(
             case 'orientation': return raw === (height >= width ? 'portrait' : 'landscape');
             case 'min-resolution': return dpr * 96 >= (raw.endsWith('dppx') ? parseFloat(raw) * 96 : parseFloat(raw));
             case '-webkit-min-device-pixel-ratio': case 'min-device-pixel-ratio': return dpr >= parseFloat(raw);
-            case 'prefers-color-scheme': return raw === 'light';
+            case 'prefers-color-scheme': return raw === getPreferredColorScheme();
             case 'prefers-reduced-motion': case 'prefers-contrast': case 'forced-colors': return raw === 'no-preference' || raw === 'none';
             case 'hover': case 'any-hover': return raw === 'none';
             case 'pointer': case 'any-pointer': return raw === 'coarse';

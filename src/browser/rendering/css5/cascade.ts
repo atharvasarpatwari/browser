@@ -26,6 +26,7 @@ import type {
 } from './types';
 
 import { matchesSelectorList } from './selector';
+import { getPreferredColorScheme } from '../color-scheme';
 import { controlUaDefaults } from '../form-controls';
 import { isInheritedProperty, getInitialValue, getInheritedProperties, getAllPropertyDefinitions } from './property-definitions';
 import { processCSSWideKeywords, type KeywordContext } from './css-wide-keywords';
@@ -177,8 +178,7 @@ function evaluateMediaFeature(
   const val = feature.value.toLowerCase();
   switch (name) {
     case 'prefers-color-scheme':
-      // Default to light mode
-      return val === 'light';
+      return val === getPreferredColorScheme(); // the user's setting (it was always light)
     case 'prefers-contrast':
       return val === 'no-preference';
     case 'prefers-reduced-motion':

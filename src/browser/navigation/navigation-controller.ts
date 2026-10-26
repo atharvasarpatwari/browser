@@ -280,6 +280,8 @@ interface INavigationGuard {
   canNavigate(request: NavigationRequest): Promise<boolean>;
   /** Optional human-readable reason surfaced in the error and UI. */
   blockedReason?(request: NavigationRequest): string;
+  /** Optional: the URL to load instead (an http → https upgrade), or null to keep the request's. */
+  rewriteUrl?(request: NavigationRequest): string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -584,6 +586,13 @@ class NavigationController implements INavigationController {
   }
 
   async navigateTo(request: NavigationRequest): Promise<NavigationResult> {
+
+    // ── Step 0: guard rewrites (HTTPS upgrade) ───────────────────────────────
+    // An upgrade used to be a block that nobody followed: every http:// URL did nothing.
+    for (const guard of this.guards) {
+      const to = guard.rewriteUrl?.(request);
+      if (to && to !== request.url) request = { ...request, url: to };
+    }
 
     // ── Step 1: URL parsing ──────────────────────────────────────────────────
     let parsedUrl: ParsedUrl;

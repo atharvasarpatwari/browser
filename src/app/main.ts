@@ -36,6 +36,8 @@ import { UrlParser } from '../browser/navigation/url-parser';
 import type { IUrlParser } from '../browser/navigation/url-parser';
 import { NavigationController } from '../browser/navigation/navigation-controller';
 import type { INavigationController } from '../browser/navigation/navigation-controller';
+import { NavigationType } from '../browser/navigation/navigation-controller';
+import { setPreferredColorScheme } from '../browser/rendering/color-scheme';
 import { Router } from '../browser/navigation/router';
 import type { IRouter } from '../browser/navigation/router';
 import { BrowserEngine } from '../browser/engine/browser-engine';
@@ -820,6 +822,12 @@ class ApplicationBootstrap {
     // desktop/Electron/plain web, where NovaStateBridge is never present.
     installAndroidNativeBridge(page);
 
+    // Pages follow the phone's light/dark setting (the host WebView reports it). Applies to pages
+    // loaded from then on (RC-17).
+    const darkQuery = globalThis.matchMedia?.('(prefers-color-scheme: dark)');
+    setPreferredColorScheme(darkQuery?.matches ? 'dark' : 'light');
+    darkQuery?.addEventListener?.('change', (e) => setPreferredColorScheme(e.matches ? 'dark' : 'light'));
+
     // Wire navigation controller to history service
     const navController = this.container.resolve<INavigationController>(Tokens.NavigationController);
     const historyService = this.container.resolve<IHistoryService>(Tokens.HistoryService);
@@ -835,6 +843,16 @@ class ApplicationBootstrap {
 
     // Plug the networking layer into the browser engine as the page loader
     const engine = this.container.resolve<IBrowserEngine>(Tokens.BrowserEngine);
+    // http:// is upgraded to https:// (security-layer rewriteUrl). When the https load fails, the
+    // site has no HTTPS: load it over http:// instead, replacing the failed entry (RC-4).
+    engine.on('pageLoadError', (event) => {
+      const failed = (event as { session?: { entry?: { url?: string } } }).session?.entry?.url;
+      const retry = failed ? securityLayer.fallbackToHttp(failed) : null;
+      if (retry) {
+        console.warn(`[SecurityLayer] ${failed} failed; falling back to ${retry} (not secure)`);
+        void navController.navigateTo({ url: retry, type: NavigationType.Replace, userInitiated: true });
+      }
+    });
     const resourceLoader = this.container.resolve<IResourceLoader>(Tokens.ResourceLoader);
     engine.setPageLoader(new PageLoader(resourceLoader));
 

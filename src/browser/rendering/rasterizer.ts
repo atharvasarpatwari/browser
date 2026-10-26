@@ -1060,22 +1060,80 @@ export class Rasterizer {
     }
     if (x0 >= x1 || y0 >= y1) return;
 
-    const scaleX = src.width / dw;
-    const scaleY = src.height / dh;
+    // Draw from a copy resampled to the destination size (cached per image and size). Sampling the
+    // source with nearest-neighbour aliased shrunk images into stripes and checkerboards (RC-14:
+    // Wikipedia's wordmark, the IANA logo).
+    const tw = Math.max(1, Math.round(dw));
+    const th = Math.max(1, Math.round(dh));
+    // ponytail: past 4 MP the resampled copy would cost too much memory; sample directly instead.
+    const img = (src.width === tw && src.height === th) || tw * th > 4_000_000 ? src : resampled(src, tw, th);
+    const exact = img.width === tw && img.height === th;
+    const ox = Math.round(dx);
+    const oy = Math.round(dy);
+    const scaleX = img.width / dw;
+    const scaleY = img.height / dh;
 
     for (let py = y0; py < y1; py++) {
-      const srcY = Math.min(src.height - 1, Math.max(0, Math.floor((py - dy) * scaleY)));
+      const srcY = Math.min(img.height - 1, Math.max(0, exact ? py - oy : Math.floor((py - dy) * scaleY)));
       for (let px = x0; px < x1; px++) {
-        const srcX = Math.min(src.width - 1, Math.max(0, Math.floor((px - dx) * scaleX)));
-        const srcIdx = (srcY * src.width + srcX) * 4;
-        const r = src.data[srcIdx]!;
-        const g = src.data[srcIdx + 1]!;
-        const b = src.data[srcIdx + 2]!;
-        const a = (src.data[srcIdx + 3]! / 255) * alpha;
+        const srcX = Math.min(img.width - 1, Math.max(0, exact ? px - ox : Math.floor((px - dx) * scaleX)));
+        const srcIdx = (srcY * img.width + srcX) * 4;
+        const r = img.data[srcIdx]!;
+        const g = img.data[srcIdx + 1]!;
+        const b = img.data[srcIdx + 2]!;
+        const a = (img.data[srcIdx + 3]! / 255) * alpha;
         this.setPixelRaw(px, py, r, g, b, a);
       }
     }
   }
+}
+
+type Pixels = { data: Uint8ClampedArray; width: number; height: number };
+const resampleCache = new WeakMap<Uint8ClampedArray, Pixels>();
+
+/**
+ * `src` resampled to tw×th: an area average (box filter) when shrinking, bilinear when enlarging,
+ * both on premultiplied alpha so transparent edges don't darken. Cached per source, last size.
+ */
+function resampled(src: Pixels, tw: number, th: number): Pixels {
+  const cached = resampleCache.get(src.data);
+  if (cached && cached.width === tw && cached.height === th) return cached;
+  const out = new Uint8ClampedArray(tw * th * 4);
+  const sw = src.width, sh = src.height, sd = src.data;
+  const sx = sw / tw, sy = sh / th;
+  const shrink = sx > 1 || sy > 1;
+  for (let y = 0; y < th; y++) {
+    for (let x = 0; x < tw; x++) {
+      let r = 0, g = 0, b = 0, a = 0, n = 0;
+      if (shrink) {
+        const xs = Math.floor(x * sx), xe = Math.min(sw, Math.max(xs + 1, Math.ceil((x + 1) * sx)));
+        const ys = Math.floor(y * sy), ye = Math.min(sh, Math.max(ys + 1, Math.ceil((y + 1) * sy)));
+        for (let yy = ys; yy < ye; yy++) {
+          for (let xx = xs; xx < xe; xx++) {
+            const i = (yy * sw + xx) * 4;
+            const pa = sd[i + 3]!;
+            r += sd[i]! * pa; g += sd[i + 1]! * pa; b += sd[i + 2]! * pa; a += pa; n++;
+          }
+        }
+      } else {
+        const fx = Math.max(0, (x + 0.5) * sx - 0.5), fy = Math.max(0, (y + 0.5) * sy - 0.5);
+        const x0 = Math.min(sw - 1, Math.floor(fx)), y0 = Math.min(sh - 1, Math.floor(fy));
+        const x1 = Math.min(sw - 1, x0 + 1), y1 = Math.min(sh - 1, y0 + 1);
+        const wx = fx - x0, wy = fy - y0;
+        for (const [xx, yy, w] of [[x0, y0, (1 - wx) * (1 - wy)], [x1, y0, wx * (1 - wy)], [x0, y1, (1 - wx) * wy], [x1, y1, wx * wy]] as const) {
+          const i = (yy * sw + xx) * 4;
+          const pa = sd[i + 3]! * w;
+          r += sd[i]! * pa; g += sd[i + 1]! * pa; b += sd[i + 2]! * pa; a += pa; n += w;
+        }
+      }
+      const o = (y * tw + x) * 4;
+      if (a > 0) { out[o] = r / a; out[o + 1] = g / a; out[o + 2] = b / a; }
+      out[o + 3] = n > 0 ? a / n : 0;
+    }
+  }
+  const result = { data: out, width: tw, height: th };
+  resampleCache.set(src.data, result);
+  return result;
 }
 
 // ?????? Adapter functions for new rendering modules ??????????????????????????????????????????????????????????????????????????????

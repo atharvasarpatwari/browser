@@ -277,7 +277,7 @@ class SecurityLayer implements ISecurityLayer, IDisposable {
       // 2. HTTPS enforcement — HTTPS-only mode upgrades every http navigation.
       //    Loopback hosts (localhost/127.x/::1) are exempt, matching Chromium:
       //    local dev servers must stay reachable over plain HTTP.
-      if (this.https.isEnforceHttps() && url.startsWith('http://') && !isLoopbackHost(url)) {
+      if (this.https.isEnforceHttps() && url.startsWith('http://') && !isLoopbackHost(url) && !this.httpFallbackHosts.has(parseHost(url) ?? '')) {
         const target = this.https.upgradeUrl(url);
         return {
           allowed: false,
@@ -522,10 +522,42 @@ class SecurityLayer implements ISecurityLayer, IDisposable {
     };
   }
 
+  // ── HTTPS upgrade with HTTP fallback ──────────────────────────────────────
+  // Like Chrome's HTTPS-Upgrades: http:// navigations load over https://; when that fails (the
+  // site has no HTTPS), the browser falls back to http:// for that host. HSTS hosts never fall back.
+
+  /** Hosts whose HTTPS attempt failed this session; they load over http:// (shown as not secure). */
+  private readonly httpFallbackHosts = new Set<string>();
+  /** Upgraded https URL → the http URL it came from, for HTTPS-only-mode upgrades only. */
+  private readonly upgradedFrom = new Map<string, string>();
+
+  /** The https URL to load instead of an http one, or null. */
+  upgradeNavigation(url: string): string | null {
+    const check = this.checkNavigation(url);
+    if (check.decision !== 'upgrade' || !check.upgradeUrl) return null;
+    const hsts = (check.reason ?? '').startsWith('HSTS');
+    if (!hsts) this.upgradedFrom.set(check.upgradeUrl, url);
+    return check.upgradeUrl;
+  }
+
+  /**
+   * An upgraded https URL failed to load: allow http:// for its host and return the URL to retry,
+   * or null when the URL was not an HTTPS-only-mode upgrade.
+   */
+  fallbackToHttp(failedUrl: string): string | null {
+    const from = this.upgradedFrom.get(failedUrl);
+    if (!from) return null;
+    this.upgradedFrom.delete(failedUrl);
+    const host = parseHost(from);
+    if (host) this.httpFallbackHosts.add(host);
+    return from;
+  }
+
   // ── Navigation guard ───────────────────────────────────────────────────────
 
   readonly navigationGuard: INavigationGuard = {
     name: 'SecurityLayer',
+    rewriteUrl: (request) => this.upgradeNavigation(request.url),
     canNavigate: async (request) => this.checkNavigation(request.url).allowed,
     blockedReason: (request) => {
       const check = this.checkNavigation(request.url);
