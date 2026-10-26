@@ -6,7 +6,7 @@ import {
   createObject, createArray, createNativeFunction,
   toNumber, toString, toBoolean,
   Environment,
-  callJSFunction,
+  callJSFunction, ITERATOR_KEY, createIteratorArray, type PropertyDescriptor,
 } from './values';
 import { HTMLCanvasElement } from '../rendering/canvas/canvas-element';
 import { CanvasRenderingContext2D } from '../rendering/canvas/canvas-context';
@@ -145,7 +145,7 @@ export function createDocumentBinding(
   /** URL `document.cookie` is scoped to (the document's current URL). */
   cookieUrl: () => string = () => '',
 ): JSObject {
-  const docObj = createObject(null);
+  const docObj = createObject(interfacePrototype('Document'));
 
   // document.cookie — through the platform's ScriptCookieProvider (cookie-service.ts).
   // HttpOnly cookies are never visible or writable here.
@@ -216,6 +216,29 @@ export function createDocumentBinding(
       const el = makeElement(tag, null);
       return wrapElement(el, domTree);
     }),
+    writable: true, enumerable: true, configurable: true,
+  });
+
+  // createDocumentFragment / createComment / createElementNS / hasFocus (missing; calling them
+  // now throws, so pages that build DOM with fragments stopped at the first one).
+  docObj.properties.set('createDocumentFragment', {
+    value: createNativeFunction('createDocumentFragment', () => wrapElement(makeElement(FRAGMENT_TAG, null), domTree)),
+    writable: true, enumerable: true, configurable: true,
+  });
+  docObj.properties.set('createComment', {
+    // ponytail: a comment is an empty text node (nothing renders either way).
+    value: createNativeFunction('createComment', () => wrapTextNode(makeTextNode('', null))),
+    writable: true, enumerable: true, configurable: true,
+  });
+  docObj.properties.set('createElementNS', {
+    value: createNativeFunction('createElementNS', (_this, args) => {
+      const qname = toString(args[1]);
+      return wrapElement(makeElement(qname.includes(':') ? qname.split(':')[1]! : qname, null), domTree);
+    }),
+    writable: true, enumerable: true, configurable: true,
+  });
+  docObj.properties.set('hasFocus', {
+    value: createNativeFunction('hasFocus', () => true),
     writable: true, enumerable: true, configurable: true,
   });
 
@@ -330,6 +353,36 @@ export function createDocumentBinding(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const elementCache = new WeakMap<DomElement, JSObject>();
+
+// ── DOM interface prototypes ───────────────────────────────────────────────
+// EventTarget ← Node ← Element/HTMLElement ← HTMLInputElement…, Node ← Text, Node ← Document.
+// Wrappers link to them so `x instanceof HTMLElement` works and `Element.prototype.foo = …`
+// polyfills reach every element (the interfaces did not exist: instanceof threw).
+const INTERFACE_PARENT: Record<string, string | null> = {
+  EventTarget: null, Node: 'EventTarget', Element: 'Node', HTMLElement: 'Element', Text: 'Node', Document: 'Node',
+  HTMLMediaElement: 'HTMLElement', HTMLVideoElement: 'HTMLMediaElement', HTMLAudioElement: 'HTMLMediaElement',
+};
+const TAG_INTERFACE: Record<string, string> = {
+  a: 'HTMLAnchorElement', img: 'HTMLImageElement', input: 'HTMLInputElement', button: 'HTMLButtonElement', form: 'HTMLFormElement',
+  select: 'HTMLSelectElement', option: 'HTMLOptionElement', textarea: 'HTMLTextAreaElement', label: 'HTMLLabelElement',
+  div: 'HTMLDivElement', span: 'HTMLSpanElement', p: 'HTMLParagraphElement', ul: 'HTMLUListElement', ol: 'HTMLOListElement', li: 'HTMLLIElement',
+  table: 'HTMLTableElement', tr: 'HTMLTableRowElement', td: 'HTMLTableCellElement', th: 'HTMLTableCellElement',
+  script: 'HTMLScriptElement', style: 'HTMLStyleElement', link: 'HTMLLinkElement', meta: 'HTMLMetaElement', iframe: 'HTMLIFrameElement',
+  canvas: 'HTMLCanvasElement', video: 'HTMLVideoElement', audio: 'HTMLAudioElement', body: 'HTMLBodyElement', html: 'HTMLHtmlElement',
+  head: 'HTMLHeadElement', template: 'HTMLTemplateElement', h1: 'HTMLHeadingElement', h2: 'HTMLHeadingElement', h3: 'HTMLHeadingElement',
+  h4: 'HTMLHeadingElement', h5: 'HTMLHeadingElement', h6: 'HTMLHeadingElement', br: 'HTMLBRElement', hr: 'HTMLHRElement', svg: 'SVGElement',
+};
+export const DOM_INTERFACE_NAMES = [...new Set([...Object.keys(INTERFACE_PARENT), ...Object.values(TAG_INTERFACE)])];
+const interfaceProtos = new Map<string, JSObject>();
+export function interfacePrototype(name: string): JSObject {
+  let proto = interfaceProtos.get(name);
+  if (!proto) {
+    const parent = name in INTERFACE_PARENT ? INTERFACE_PARENT[name] : name === 'SVGElement' ? 'Element' : 'HTMLElement';
+    proto = createObject(parent ? interfacePrototype(parent) : null);
+    interfaceProtos.set(name, proto);
+  }
+  return proto;
+}
 
 // ── Animation Registry ─────────────────────────────────────────────────────
 // Maps element domId → active Animation[] for getAnimations().
@@ -581,7 +634,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
   const cached = elementCache.get(el);
   if (cached) return cached;
 
-  const obj = createObject(null);
+  const obj = createObject(interfacePrototype(TAG_INTERFACE[el.tagName.toLowerCase()] ?? 'HTMLElement'));
 
   // Cache immediately to prevent infinite recursion on circular parent/child references
   elementCache.set(el, obj);
@@ -630,14 +683,6 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     }),
   });
 
-
-  // style
-  const styleObj = createObject(null);
-  const elStyle = el.computedStyle ?? new Map();
-  for (const [k, v] of elStyle) {
-    styleObj.properties.set(k, { value: v, writable: true, enumerable: true, configurable: true });
-  }
-  obj.properties.set('style', { value: styleObj, writable: true, enumerable: true, configurable: true });
 
   // getAttribute
   obj.properties.set('getAttribute', {
@@ -695,7 +740,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       const child = args[0] as JSObject;
       if (typeof child === 'object' && child !== null && '__domNode' in child) {
         const domNode = (child as JSObject & { __domNode: DomNode }).__domNode;
-        domTree.appendChild(el, domNode);
+        for (const n of expandFragment(domNode)) domTree.appendChild(el, n);
       }
       return args[0];
     }),
@@ -725,7 +770,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
         const refNode = (typeof refChild === 'object' && refChild !== null && '__domNode' in refChild)
           ? (refChild as JSObject & { __domNode: DomNode }).__domNode
           : null;
-        domTree.insertBefore(el, newNode, refNode);
+        for (const n of expandFragment(newNode)) domTree.insertBefore(el, n, refNode);
       }
       return args[0];
     }),
@@ -1113,6 +1158,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
   });
 
   defineTreeApis(obj, el, domTree);
+  defineElementExtras(obj, el, domTree);
 
   // ── Web Animations API: getAnimations() ──
   obj.properties.set('getAnimations', {
@@ -1577,10 +1623,205 @@ function parseHtmlFragment(html: string, domTree: IDomTree): DomNode[] {
 
 /** ParentNode/ChildNode arguments: nodes as-is, anything else becomes a text node. */
 function argsToNodes(args: JSValue[]): DomNode[] {
-  return args.map((a) =>
+  return args.flatMap((a) =>
     typeof a === 'object' && a !== null && '__domNode' in a
-      ? (a as JSObject & { __domNode: DomNode }).__domNode
-      : makeTextNode(toString(a), null));
+      ? expandFragment((a as JSObject & { __domNode: DomNode }).__domNode)
+      : [makeTextNode(toString(a), null)]);
+}
+
+const FRAGMENT_TAG = '#document-fragment';
+
+/** A DocumentFragment inserts its children, and is left empty. */
+function expandFragment(node: DomNode): DomNode[] {
+  if (node.nodeType !== 'element' || (node as DomElement).tagName !== FRAGMENT_TAG) return [node];
+  const kids = [...(node as DomElement).children];
+  (node as { children: DomNode[] }).children = [];
+  return kids;
+}
+
+const camelToKebab = (k: string): string => (k === 'cssFloat' ? 'float' : k.startsWith('--') ? k : k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()));
+const kebabToCamel = (k: string): string => k.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase());
+
+function parseInlineStyle(css: string): Map<string, string> {
+  const m = new Map<string, string>();
+  // ponytail: splits on ';', so a ';' inside url("…") breaks; a real declaration parser if a site needs it.
+  for (const part of css.split(';')) {
+    const i = part.indexOf(':');
+    if (i > 0) m.set(part.slice(0, i).trim().toLowerCase(), part.slice(i + 1).trim());
+  }
+  return m;
+}
+
+/**
+ * element.style: reads and writes go to the element's style attribute, which the cascade applies.
+ * It was a snapshot of computed values, so `el.style.display = "none"` changed nothing on screen.
+ */
+class StyleDeclarationMap extends Map<string, PropertyDescriptor> {
+  constructor(private readonly el: DomElement, private readonly domTree: IDomTree) { super(); }
+  decls(): Map<string, string> { return parseInlineStyle(this.el.attributes.get('style') ?? ''); }
+  write(m: Map<string, string>): void {
+    const css = [...m].map(([k, v]) => `${k}: ${v}`).join('; ');
+    if (css) this.domTree.setAttribute(this.el, 'style', css);
+    else this.domTree.removeAttribute(this.el, 'style');
+  }
+  setDecl(name: string, value: JSValue): void {
+    const m = this.decls();
+    const v = value === null || value === undefined ? '' : toString(value).trim();
+    if (v === '') m.delete(camelToKebab(name)); else m.set(camelToKebab(name), v);
+    this.write(m);
+  }
+  override get(key: string): PropertyDescriptor | undefined {
+    const own = super.get(key);
+    if (own || key.startsWith('Symbol(')) return own;
+    return { value: this.decls().get(camelToKebab(key)) ?? '', writable: true, enumerable: true, configurable: true };
+  }
+  override has(key: string): boolean { return super.has(key) || this.decls().has(camelToKebab(key)); }
+  override set(key: string, desc: PropertyDescriptor): this {
+    if (super.has(key) || desc.getter || desc.setter) return super.set(key, desc);
+    this.setDecl(key, desc.value);
+    return this;
+  }
+  override *[Symbol.iterator](): MapIterator<[string, PropertyDescriptor]> {
+    yield* super[Symbol.iterator]();
+    for (const [k, v] of this.decls()) yield [kebabToCamel(k), { value: v, writable: true, enumerable: true, configurable: true }];
+  }
+}
+
+/** element.dataset: data-* attributes by camelCase name (it was missing). */
+class DatasetMap extends Map<string, PropertyDescriptor> {
+  constructor(private readonly el: DomElement, private readonly domTree: IDomTree) { super(); }
+  private attr(key: string): string { return 'data-' + key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()); }
+  override get(key: string): PropertyDescriptor | undefined {
+    const v = this.el.attributes.get(this.attr(key));
+    return v === undefined ? undefined : { value: v, writable: true, enumerable: true, configurable: true };
+  }
+  override has(key: string): boolean { return this.el.attributes.has(this.attr(key)); }
+  override set(key: string, desc: PropertyDescriptor): this { this.domTree.setAttribute(this.el, this.attr(key), toString(desc.value)); return this; }
+  override delete(key: string): boolean { const had = this.has(key); if (had) this.domTree.removeAttribute(this.el, this.attr(key)); return had; }
+  override *[Symbol.iterator](): MapIterator<[string, PropertyDescriptor]> {
+    for (const [k, v] of this.el.attributes) if (k.startsWith('data-')) yield [kebabToCamel(k.slice(5)), { value: v, writable: true, enumerable: true, configurable: true }];
+  }
+  override keys(): MapIterator<string> { return [...this].map(([k]) => k)[Symbol.iterator]() as MapIterator<string>; }
+  override entries(): MapIterator<[string, PropertyDescriptor]> { return [...this][Symbol.iterator]() as MapIterator<[string, PropertyDescriptor]>; }
+}
+
+/** Element APIs pages call constantly; calling a missing method now throws, so these matter. */
+function defineElementExtras(obj: JSObject, el: DomElement, domTree: IDomTree): void {
+  const method = (name: string, fn: (args: JSValue[]) => JSValue): void => {
+    obj.properties.set(name, { value: createNativeFunction(name, (_this, args) => fn(args)), writable: true, enumerable: true, configurable: true });
+  };
+  const nodeOf = (v: JSValue): DomNode | null => (typeof v === 'object' && v !== null && '__domNode' in v ? (v as JSObject & { __domNode: DomNode }).__domNode : null);
+
+  // style
+  const style = createObject(null);
+  const decls = new StyleDeclarationMap(el, domTree);
+  style.properties = decls;
+  // Methods and cssText go straight into the map (our set() would treat them as CSS properties).
+  Map.prototype.set.call(decls, 'setProperty', { value: createNativeFunction('setProperty', (_t, a) => { decls.setDecl(toString(a[0]), a[1]); return undefined; }), writable: true, enumerable: false, configurable: true });
+  Map.prototype.set.call(decls, 'getPropertyValue', { value: createNativeFunction('getPropertyValue', (_t, a) => decls.decls().get(camelToKebab(toString(a[0]))) ?? ''), writable: true, enumerable: false, configurable: true });
+  Map.prototype.set.call(decls, 'removeProperty', { value: createNativeFunction('removeProperty', (_t, a) => { const k = camelToKebab(toString(a[0])); const m = decls.decls(); const old = m.get(k) ?? ''; m.delete(k); decls.write(m); return old; }), writable: true, enumerable: false, configurable: true });
+  Map.prototype.set.call(decls, 'getPropertyPriority', { value: createNativeFunction('getPropertyPriority', () => ''), writable: true, enumerable: false, configurable: true });
+  Map.prototype.set.call(decls, 'cssText', {
+    value: undefined, writable: true, enumerable: false, configurable: true,
+    getter: createNativeFunction('get cssText', () => el.attributes.get('style') ?? ''),
+    setter: createNativeFunction('set cssText', (_t, a) => { decls.write(parseInlineStyle(toString(a[0]))); return undefined; }),
+  });
+  obj.properties.set('style', {
+    value: style, writable: true, enumerable: true, configurable: true,
+    getter: createNativeFunction('get style', () => style),
+    setter: createNativeFunction('set style', (_t, a) => { decls.write(parseInlineStyle(toString(a[0]))); return undefined; }),
+  });
+
+  // classList
+  const classes = (): string[] => (el.attributes.get('class') ?? '').split(/\s+/).filter(Boolean);
+  const writeClasses = (list: string[]): void => { domTree.setAttribute(el, 'class', list.join(' ')); };
+  const classList = createObject(null);
+  const cmethod = (name: string, fn: (args: JSValue[]) => JSValue) =>
+    classList.properties.set(name, { value: createNativeFunction(name, (_t, a) => fn(a)), writable: true, enumerable: false, configurable: true });
+  cmethod('add', (a) => { const l = classes(); for (const n of a.map(toString)) if (!l.includes(n)) l.push(n); writeClasses(l); return undefined; });
+  cmethod('remove', (a) => { const rm = a.map(toString); writeClasses(classes().filter((c) => !rm.includes(c))); return undefined; });
+  cmethod('contains', (a) => classes().includes(toString(a[0])));
+  cmethod('toggle', (a) => {
+    const n = toString(a[0]); const l = classes(); const has = l.includes(n);
+    const want = a.length > 1 && a[1] !== undefined ? toBoolean(a[1]) : !has;
+    if (want && !has) writeClasses([...l, n]);
+    if (!want && has) writeClasses(l.filter((c) => c !== n));
+    return want;
+  });
+  cmethod('replace', (a) => { const l = classes(); const i = l.indexOf(toString(a[0])); if (i < 0) return false; l[i] = toString(a[1]); writeClasses([...new Set(l)]); return true; });
+  cmethod('item', (a) => classes()[toNumber(a[0])] ?? null);
+  cmethod('forEach', (a) => { classes().forEach((c, i) => callJSFunction(a[0] as JSFunction, a[1], [c, i, classList])); return undefined; });
+  cmethod('toString', () => el.attributes.get('class') ?? '');
+  for (const name of ['values', 'keys', 'entries', ITERATOR_KEY]) {
+    cmethod(name, () => createIteratorArray(name === 'entries' ? classes().map((c, i) => createArray([i, c])) : name === 'keys' ? classes().map((_c, i) => i) : classes()));
+  }
+  classList.properties.set('length', { value: 0, writable: false, enumerable: false, configurable: true, getter: createNativeFunction('get length', () => classes().length) });
+  classList.properties.set('value', {
+    value: '', writable: true, enumerable: false, configurable: true,
+    getter: createNativeFunction('get value', () => el.attributes.get('class') ?? ''),
+    setter: createNativeFunction('set value', (_t, a) => { domTree.setAttribute(el, 'class', toString(a[0])); return undefined; }),
+  });
+  obj.properties.set('classList', { value: classList, writable: false, enumerable: true, configurable: true });
+
+  // dataset
+  const dataset = createObject(null);
+  dataset.properties = new DatasetMap(el, domTree);
+  obj.properties.set('dataset', { value: dataset, writable: false, enumerable: true, configurable: true });
+
+  const fire = (type: string, bubbles: boolean): void => {
+    const evt = createEventObject(type, obj, { bubbles, cancelable: true });
+    const dispatch = obj.properties.get('dispatchEvent')?.value;
+    if (dispatch && typeof dispatch === 'object') callJSFunction(dispatch as JSFunction, obj, [evt]);
+  };
+  method('contains', (a) => { for (let n = nodeOf(a[0]); n; n = n.parent as DomNode | null) if (n === el) return true; return false; });
+  method('click', () => { fire('click', true); return undefined; });
+  method('focus', () => { fire('focus', false); fire('focusin', true); return undefined; });
+  method('blur', () => { fire('blur', false); fire('focusout', true); return undefined; });
+  for (const name of ['scrollIntoView', 'scrollTo', 'scrollBy', 'scroll', 'setPointerCapture', 'releasePointerCapture', 'normalize']) method(name, () => undefined);
+  method('toggleAttribute', (a) => {
+    const n = toString(a[0]); const has = el.attributes.has(n);
+    const want = a.length > 1 && a[1] !== undefined ? toBoolean(a[1]) : !has;
+    if (want && !has) domTree.setAttribute(el, n, '');
+    if (!want && has) domTree.removeAttribute(el, n);
+    return want;
+  });
+  method('hasChildNodes', () => el.children.length > 0);
+  method('getClientRects', () => {
+    const rect = obj.properties.get('getBoundingClientRect')?.value;
+    return createArray(rect && typeof rect === 'object' ? [callJSFunction(rect as JSFunction, obj, [])] : []);
+  });
+  method('replaceWith', (a) => {
+    const parent = el.parent as DomElement | null;
+    if (!parent) return undefined;
+    for (const n of argsToNodes(a)) domTree.insertBefore(parent, n, el);
+    domTree.removeChild(parent, el);
+    return undefined;
+  });
+  method('insertAdjacentElement', (a) => {
+    const node = nodeOf(a[1]);
+    if (!node) return null;
+    const where = toString(a[0]).toLowerCase();
+    const parent = el.parent as DomElement | null;
+    if (where === 'beforebegin' && parent) domTree.insertBefore(parent, node, el);
+    else if (where === 'afterend' && parent) domTree.insertBefore(parent, node, (parent.children[parent.children.indexOf(el) + 1] as DomNode | undefined) ?? null);
+    else if (where === 'afterbegin') domTree.insertBefore(el, node, el.children[0] ?? null);
+    else if (where === 'beforeend') domTree.appendChild(el, node);
+    else return null;
+    return a[1];
+  });
+  method('getElementsByTagName', (a) => {
+    const tag = toString(a[0]).toLowerCase();
+    const out: JSValue[] = [];
+    const walk = (n: DomNode): void => {
+      for (const c of (n as DomElement).children ?? []) {
+        if (c.nodeType !== 'element') continue;
+        if (tag === '*' || (c as DomElement).tagName.toLowerCase() === tag) out.push(wrapElement(c as DomElement, domTree));
+        walk(c);
+      }
+    };
+    walk(el);
+    return createArray(out);
+  });
 }
 
 function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void {
@@ -1715,7 +1956,7 @@ function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void 
 }
 
 function wrapTextNode(node: DomNode): JSObject {
-  const obj = createObject(null);
+  const obj = createObject(interfacePrototype('Text'));
   obj.properties.set('nodeType', { value: 3, writable: false, enumerable: true, configurable: false });
   obj.properties.set('textContent', {
     value: (node as DomNode & { text?: string }).text ?? '',

@@ -785,19 +785,21 @@ describe('SharedArrayBuffer', () => {
 // â”€â”€ toString for typed arrays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('TypedArray toString', () => {
-  it('should toString as [object Uint8Array]', () => {
+  // Browsers: TypedArray.prototype.toString is Array.prototype.join, so '' + arr lists the elements.
+  it('should concatenate a Uint8Array as its elements, like a browser', () => {
     const val = evalExpr(`
       const arr = new Uint8Array(4);
       '' + arr;
     `);
-    expect(val).toBe('[object Uint8Array]');
+    expect(val).toBe('0,0,0,0');
   });
 
-  it('should toString as [object Float64Array]', () => {
+  // Browsers: TypedArray.prototype.toString is Array.prototype.join, so '' + arr lists the elements.
+  it('should concatenate a Float64Array as its elements, like a browser', () => {
     const val = evalExpr(`
       const arr = new Float64Array(4);
       '' + arr;
     `);
-    expect(val).toBe('[object Float64Array]');
+    expect(val).toBe('0,0,0,0');
   });
 });

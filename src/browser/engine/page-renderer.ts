@@ -599,6 +599,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       doc, domTree, eventLoop, this.deps.controller, undefined,
       this.deps.resourceEnforcer, scriptEnforcer, origin, this.deps.htmlParser,
       this.deps.storageDir, this.deps.corsEngine,
+      () => ({ ...this.viewport, dpr: this.dpr }),
     );
 
     type Entry = { source: string; inline: boolean; nonce?: string };

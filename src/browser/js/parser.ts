@@ -228,7 +228,7 @@ export class Parser {
     const tok = this.peek();
     this.advance();
     let isDelegate = delegate;
-    if (this.is(TokenType.Generator)) {
+    if (this.is(TokenType.Generator) || this.is(TokenType.Star)) { // the lexer emits `*` as Star
       this.advance();
       isDelegate = true;
     }
@@ -304,6 +304,12 @@ export class Parser {
       case TokenType.MinusMinus:
         this.advance();
         return { type: 'UpdateExpression', operator: tok.value, argument: left, prefix: false, loc: { line: tok.line, column: tok.column } };
+
+      case TokenType.TemplateEnd:
+      case TokenType.TemplateHead: {
+        const quasi = this.parsePrefix() as AST.TemplateLiteral;
+        return { type: 'TaggedTemplateExpression', tag: left, quasi, loc: { line: tok.line, column: tok.column } };
+      }
 
       // Member access
       case TokenType.Dot:
@@ -542,7 +548,7 @@ export class Parser {
     if (this.is(TokenType.Async)) { this.advance(); async = true; }
     this.expect(TokenType.Function);
     let generator = false;
-    if (this.is(TokenType.Generator)) { this.advance(); generator = true; }
+    if (this.is(TokenType.Generator) || this.is(TokenType.Star)) { this.advance(); generator = true; }
     let id: AST.Identifier | null = null;
     if (this.is(TokenType.Identifier)) {
       id = { type: 'Identifier', name: this.peek().value };
@@ -783,7 +789,7 @@ export class Parser {
     if (this.is(TokenType.Async)) { this.advance(); async = true; }
     this.expect(TokenType.Function);
     let generator = false;
-    if (this.is(TokenType.Generator)) { this.advance(); generator = true; }
+    if (this.is(TokenType.Generator) || this.is(TokenType.Star)) { this.advance(); generator = true; }
     const id: AST.Identifier = { type: 'Identifier', name: this.peek().value };
     this.advance();
     this.expect(TokenType.LParen);
@@ -1273,7 +1279,11 @@ export class Parser {
       case TokenType.Dot:
       case TokenType.QuestionDot:
       case TokenType.LBracket:
-      case TokenType.LParen: return 17;
+      case TokenType.LParen:
+      // tag`…`: a template right after an expression is a tagged template (it was parsed as the
+      // next statement, so the tag and everything before it on the line were dropped).
+      case TokenType.TemplateEnd:
+      case TokenType.TemplateHead: return 17;
 
       default: return 0;
     }

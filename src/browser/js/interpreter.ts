@@ -2,7 +2,7 @@ import type * as AST from './ast';
 import {
   Environment,
   type JSValue, type JSObject, type JSFunction, type NativeFunction,
-  toBoolean, toNumber, toString, getType, instanceofCheck,
+  toBoolean, toNumber, toString, toPrimitive, iterateJS, getType, instanceofCheck,
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
@@ -87,6 +87,35 @@ export function stringMethods(obj: string): Record<string, NativeFunction> {
     valueOf: (_t: JSValue, _a: JSValue[]) => obj,
     toString: (_t: JSValue, _a: JSValue[]) => obj,
   };
+}
+
+/**
+ * Relational comparison (§7.2.13): ToPrimitive(number) both sides, then compare as strings when both
+ * are strings, else as numbers. Raw host `<` on engine objects was always false (`{valueOf} > 3`).
+ */
+function compare(left: JSValue, right: JSValue, op: (a: number | string, b: number | string) => boolean): boolean {
+  const l = toPrimitive(left, 'number');
+  const r = toPrimitive(right, 'number');
+  if (typeof l === 'string' && typeof r === 'string') return op(l, r);
+  return op(toNumber(l), toNumber(r));
+}
+
+/** `continue label` is for this loop when unlabeled or naming one of the loop's labels. */
+function continuesHere(stmt: AST.Statement, sig: ContinueSignal): boolean {
+  return !sig.label || ((stmt as { __labels?: string[] }).__labels?.includes(sig.label) ?? false);
+}
+
+/** Source-ish text for a callee in "x is not a function" (a, a.b, a[...]). */
+function calleeText(e: AST.Expression | AST.Node): string {
+  const n = e as AST.Expression;
+  if (n.type === 'Identifier') return n.name;
+  if (n.type === 'MemberExpression') {
+    const obj = calleeText(n.object);
+    if (!n.computed) return `${obj}.${(n.property as AST.Identifier).name}`;
+    return `${obj}[...]`;
+  }
+  if (n.type === 'ThisExpression') return 'this';
+  return 'expression';
 }
 
 /** Function.prototype.call/apply/bind for a value read off a function (they were undefined). */
@@ -351,6 +380,9 @@ export class Interpreter {
       case 'EmptyStatement': return undefined;
       case 'DebuggerStatement': return undefined;
       case 'LabeledStatement': {
+        // The loop it labels needs its labels to tell `continue outer` from an inner continue.
+        const body = stmt.body as AST.Statement & { __labels?: string[] };
+        body.__labels = [...((stmt as { __labels?: string[] }).__labels ?? []), stmt.label.name];
         const result = this.exec(stmt.body, env);
         if (isBreakSignal(result) && result.label === stmt.label.name) return undefined;
         return result;
@@ -426,7 +458,7 @@ export class Interpreter {
       const name = pattern.name;
       if (kind === 'const' || kind === 'let') {
         // TDZ: initialize the binding (clears TDZ state)
-        env.initialize(name, value);
+        env.initialize(name, value, kind);
       } else {
         env.declare(name, value, 'var');
       }
@@ -434,7 +466,8 @@ export class Interpreter {
       const val = value === undefined || value === null ? this.evalExpr(pattern.right, env) : value;
       this.destructPattern(pattern.left, val, env, kind);
     } else if (pattern.type === 'ArrayPattern') {
-      const arr = value as JSObject;
+      // Any iterable destructures (`const [a, b] = "xy"`, `[k, v]` of a Map entry iterator).
+      const arr = (value && typeof value === 'object' && (value as JSObject).type === 'array') ? value as JSObject : createArray(this.spreadValues(value));
       let idx = 0;
       for (const elem of pattern.elements) {
         if (elem === null) {
@@ -470,7 +503,7 @@ export class Interpreter {
           }
           this.destructPattern(prop.argument, restObj, env, kind);
         } else {
-          const key = prop.key.type === 'Identifier' ? prop.key.name : String(this.evalExpr(prop.key, env));
+          const key = prop.key.type === 'Identifier' ? prop.key.name : toString(this.evalExpr(prop.key, env));
           const propVal = obj?.properties?.get(key)?.value;
           this.destructPattern(prop.value as any, propVal, env, kind);
         }
@@ -584,7 +617,7 @@ export class Interpreter {
       const result = this.exec(stmt.body, env);
       if (isBreakSignal(result) && !result.label) return undefined;
       if (isBreakSignal(result) && result.label) return result;
-      if (isContinueSignal(result)) continue;
+      if (isContinueSignal(result)) { if (!continuesHere(stmt, result)) return result; continue; }
       if (isReturnSignal(result) || isThrowSignal(result)) return result;
     }
     return undefined;
@@ -595,7 +628,7 @@ export class Interpreter {
       const result = this.exec(stmt.body, env);
       if (isBreakSignal(result) && !result.label) return undefined;
       if (isBreakSignal(result) && result.label) return result;
-      if (isContinueSignal(result)) continue;
+      if (isContinueSignal(result)) { if (!continuesHere(stmt, result)) return result; continue; }
       if (isReturnSignal(result) || isThrowSignal(result)) return result;
     } while (toBoolean(this.evalExpr(stmt.test, env)));
     return undefined;
@@ -610,36 +643,67 @@ export class Interpreter {
         this.evalExpr(stmt.init, loopEnv);
       }
     }
+    // `for (let i …)` gets a fresh binding per iteration (§14.7.4.4), so closures made in the body
+    // keep their own i; they all saw the final value.
+    const perIteration = stmt.init?.type === 'VariableDeclaration' && stmt.init.kind !== 'var'
+      ? stmt.init.declarations.flatMap((d) => (d.id.type === 'Identifier' ? [d.id.name] : []))
+      : [];
+    let iterEnv = loopEnv;
+    const nextIterEnv = () => {
+      const e = new Environment(env);
+      for (const n of perIteration) e.setLocal(n, iterEnv.get(n), (stmt.init as AST.VariableDeclaration).kind as 'let' | 'const');
+      return e;
+    };
+    if (perIteration.length) iterEnv = nextIterEnv();
     while (true) {
-      if (stmt.test && !toBoolean(this.evalExpr(stmt.test, loopEnv))) break;
-      const result = this.exec(stmt.body, loopEnv);
+      if (stmt.test && !toBoolean(this.evalExpr(stmt.test, iterEnv))) break;
+      const result = this.exec(stmt.body, iterEnv);
       if (isBreakSignal(result) && !result.label) return undefined;
       if (isBreakSignal(result) && result.label) return result;
-      if (isContinueSignal(result)) { /* fall through to update */ }
+      if (isContinueSignal(result)) { if (!continuesHere(stmt, result)) return result; /* else fall through to update */ }
       else if (isReturnSignal(result) || isThrowSignal(result)) return result;
-      if (stmt.update) this.evalExpr(stmt.update, loopEnv);
+      if (perIteration.length) iterEnv = nextIterEnv();
+      if (stmt.update) this.evalExpr(stmt.update, iterEnv);
     }
     return undefined;
   }
 
+  /** Bind a for-in/for-of target (`x`, `var x`, `const [k, v]`, `obj.p`) in a fresh per-iteration scope. */
+  private bindLoopTarget(left: AST.ForInStatement['left'], value: JSValue, env: Environment): Environment {
+    const iterEnv = new Environment(env);
+    if (left.type === 'VariableDeclaration') {
+      const kind = left.kind as 'var' | 'let' | 'const';
+      const id = left.declarations[0]!.id;
+      if (kind === 'var' && id.type === 'Identifier') { if (!env.set(id.name, value)) env.declare(id.name, value, 'var'); }
+      else this.destructPattern(id, value, iterEnv, kind);
+    } else if ((left as AST.Node).type === 'Identifier') {
+      env.set((left as AST.Identifier).name, value);
+    }
+    // ponytail: a member target (`for (o.k of xs)`) is not bound; add it if a site needs it.
+    return iterEnv;
+  }
+
   private execForIn(stmt: AST.ForInStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     const obj = this.evalExpr(stmt.right, env);
-    if (typeof obj !== 'object' || obj === null) return undefined;
-    const keys = [...(obj as JSObject).properties.keys()];
-    const loopEnv = new Environment(env);
-    const varName = stmt.left.type === 'VariableDeclaration'
-      ? (stmt.left.declarations[0]!.id as AST.Identifier).name
-      : (stmt.left as AST.Identifier).name;
-    if (stmt.left.type === 'VariableDeclaration') {
-      loopEnv.declareTDZ(varName, stmt.left.kind as 'let' | 'const');
-      loopEnv.initialize(varName, undefined);
+    if (obj === null || obj === undefined) return undefined;
+    // Enumerable string keys, own then inherited. It listed every key, so `for (k in arr)` gave
+    // "length", "push", "pop"…
+    const keys: string[] = [];
+    if (typeof obj === 'string') for (let i = 0; i < obj.length; i++) keys.push(String(i));
+    const seen = new Set<string>();
+    for (let p: JSObject | null = typeof obj === 'object' ? obj as JSObject : null, d = 0; p && d < 64; p = p.prototype, d++) {
+      for (const [k, desc] of p.properties ?? []) {
+        if (seen.has(k)) continue;
+        seen.add(k);
+        if (desc.enumerable !== false && typeof k === 'string' && !k.startsWith('Symbol(')) keys.push(k);
+      }
     }
     for (const key of keys) {
-      loopEnv.set(varName, key);
-      const result = this.exec(stmt.body, loopEnv);
+      const iterEnv = this.bindLoopTarget(stmt.left, key, env);
+      const result = this.exec(stmt.body, iterEnv);
       if (isBreakSignal(result) && !result.label) return undefined;
       if (isBreakSignal(result) && result.label) return result;
-      if (isContinueSignal(result)) continue;
+      if (isContinueSignal(result)) { if (!continuesHere(stmt, result)) return result; continue; }
       if (isReturnSignal(result) || isThrowSignal(result)) return result;
     }
     return undefined;
@@ -647,24 +711,12 @@ export class Interpreter {
 
   private execForOf(stmt: AST.ForOfStatement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     const iterable = this.evalExpr(stmt.right, env);
-    if (typeof iterable !== 'object' || iterable === null) return undefined;
-    const arr = iterable as JSObject;
-    const length = Number(arr.properties.get('length')?.value ?? 0);
-    const loopEnv = new Environment(env);
-    const varName = stmt.left.type === 'VariableDeclaration'
-      ? (stmt.left.declarations[0]!.id as AST.Identifier).name
-      : (stmt.left as AST.Identifier).name;
-    if (stmt.left.type === 'VariableDeclaration') {
-      loopEnv.declareTDZ(varName, stmt.left.kind as 'let' | 'const');
-      loopEnv.initialize(varName, undefined);
-    }
-    for (let i = 0; i < length; i++) {
-      const val = arr.properties.get(String(i))?.value;
-      loopEnv.set(varName, val);
-      const result = this.exec(stmt.body, loopEnv);
+    for (const val of iterateJS(iterable)) {
+      const iterEnv = this.bindLoopTarget(stmt.left, val, env);
+      const result = this.exec(stmt.body, iterEnv);
       if (isBreakSignal(result) && !result.label) return undefined;
       if (isBreakSignal(result) && result.label) return result;
-      if (isContinueSignal(result)) continue;
+      if (isContinueSignal(result)) { if (!continuesHere(stmt, result)) return result; continue; }
       if (isReturnSignal(result) || isThrowSignal(result)) return result;
     }
     return undefined;
@@ -823,6 +875,16 @@ export class Interpreter {
       case 'ArrowFunctionExpression': return this.evalArrowFunction(expr, env);
       case 'SequenceExpression': return this.evalSequence(expr, env);
       case 'TemplateLiteral': return this.evalTemplateLiteral(expr, env);
+      case 'TaggedTemplateExpression': {
+        // tag(strings, ...values) with strings.raw; called through evalCall so `obj.tag` keeps its this.
+        // ponytail: raw strings equal the cooked ones (the lexer keeps only cooked text).
+        const cooked = expr.quasi.quasis.map((q) => q.value as JSValue);
+        const strings = createArray(cooked);
+        strings.properties.set('raw', { value: createArray(cooked), writable: false, enumerable: false, configurable: false });
+        const tagEnv = new Environment(env);
+        tagEnv.setLocal('__nova_tpl_strings', strings);
+        return this.evalCall({ type: 'CallExpression', callee: expr.tag, arguments: [{ type: 'Identifier', name: '__nova_tpl_strings' } as AST.Identifier, ...expr.quasi.expressions], optional: false } as AST.CallExpression, tagEnv);
+      }
       case 'AwaitExpression': return this.evalAwait(expr, env);
       case 'YieldExpression': return this.evalYield(expr, env);
       default: return undefined;
@@ -847,7 +909,8 @@ export class Interpreter {
       result += expr.quasis[i]!.value;
       if (i < expr.expressions.length) {
         const val = this.evalExpr(expr.expressions[i]!, env);
-        result += val === undefined ? 'undefined' : val === null ? 'null' : String(val);
+        // The engine's ToString, not the host String(): objects and arrays came out "[object Object]".
+        result += toString(val);
       }
     }
     return result;
@@ -867,7 +930,17 @@ export class Interpreter {
       return undefined;
     }
     if (expr.operator === 'delete') {
-      // Simplified
+      // `delete o.k` / `delete o[k]` removes the property (it used to be a no-op returning true).
+      const target = expr.argument;
+      if (target.type !== 'MemberExpression') return target.type !== 'Identifier';
+      const obj = this.evalExpr(target.object, env);
+      const key = target.computed ? toString(this.evalExpr(target.property, env)) : (target.property as AST.Identifier).name;
+      if (obj === null || obj === undefined) throw new TypeError(`Cannot convert undefined or null to object`);
+      const props = typeof obj === 'object' ? (obj as JSObject).properties : undefined;
+      const desc = props?.get(key);
+      if (!desc) return true;
+      if (desc.configurable === false || (obj as { __frozen?: boolean }).__frozen) return false;
+      props!.delete(key);
       return true;
     }
     const val = this.evalExpr(expr.argument, env);
@@ -885,7 +958,7 @@ export class Interpreter {
       const obj = this.evalExpr(expr.argument.object, env) as JSObject;
       if (typeof obj !== 'object' || obj === null) return 0;
       const key = expr.argument.computed
-        ? String(this.evalExpr(expr.argument.property, env))
+        ? toString(this.evalExpr(expr.argument.property, env))
         : (expr.argument.property as AST.Identifier).name;
       const old = toNumber(obj.properties.get(key)?.value);
       const newVal = expr.operator === '++' ? old + 1 : old - 1;
@@ -905,18 +978,23 @@ export class Interpreter {
     const right = this.evalExpr(expr.right, env);
 
     switch (expr.operator) {
-      case '+':
-        if (typeof left === 'string' || typeof right === 'string') return toString(left) + toString(right);
-        return toNumber(left) + toNumber(right);
+      case '+': {
+        // ToPrimitive first: `obj + ""` uses the object's valueOf/toString, and a Date or an array
+        // concatenates as a string.
+        const l = toPrimitive(left, 'default');
+        const r = toPrimitive(right, 'default');
+        if (typeof l === 'string' || typeof r === 'string' || (l && typeof l === 'object') || (r && typeof r === 'object')) return toString(l) + toString(r);
+        return toNumber(l) + toNumber(r);
+      }
       case '-': return toNumber(left) - toNumber(right);
       case '*': return toNumber(left) * toNumber(right);
       case '/': return toNumber(left) / toNumber(right);
       case '%': return toNumber(left) % toNumber(right);
       case '**': return toNumber(left) ** toNumber(right);
-      case '<': return (left as unknown as number) < (right as unknown as number);
-      case '>': return (left as unknown as number) > (right as unknown as number);
-      case '<=': return (left as unknown as number) <= (right as unknown as number);
-      case '>=': return (left as unknown as number) >= (right as unknown as number);
+      case '<': return compare(left, right, (a, b) => a < b);
+      case '>': return compare(left, right, (a, b) => a > b);
+      case '<=': return compare(left, right, (a, b) => a <= b);
+      case '>=': return compare(left, right, (a, b) => a >= b);
       case '==': return left == right as unknown as boolean; // eslint-disable-line eqeqeq -- JS loose-equality semantics
       case '!=': return left != right as unknown as boolean; // eslint-disable-line eqeqeq -- JS loose-equality semantics
       case '===': return left === right;
@@ -987,7 +1065,7 @@ export class Interpreter {
       // (reading 'get')", killing the script; Google's search page died exactly there.
       if (!obj.properties) (obj as { properties: Map<string, unknown> }).properties = new Map();
       const key = expr.left.computed
-        ? String(this.evalExpr(expr.left.property, env))
+        ? toString(this.evalExpr(expr.left.property, env))
         : (expr.left.property as AST.Identifier).name;
       if (expr.operator === '=') {
         const existingDesc = obj.properties.get(key);
@@ -1132,17 +1210,17 @@ export class Interpreter {
       // super.method(): look up method on parent prototype, but use current 'this'
       if (expr.callee.object.type === 'SuperExpression') {
         const superProto = this.evalExpr(expr.callee.object, env);
-        const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+        const key = expr.callee.computed ? toString(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
         callee = this.getPropertyValue(superProto, key);
         thisObj = env.get('this');
       } else {
         thisObj = this.evalExpr(expr.callee.object, env);
         if (thisObj === undefined || thisObj === null) {
           if (expr.callee.optional) return undefined;
-          const missing = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+          const missing = expr.callee.computed ? toString(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
           throw new TypeError(`Cannot read properties of ${thisObj} (reading '${missing}')`);
         }
-        const key = expr.callee.computed ? String(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
+        const key = expr.callee.computed ? toString(this.evalExpr(expr.callee.property, env)) : (expr.callee.property as AST.Identifier).name;
         callee = this.getPropertyValue(thisObj, key);
       }
     } else {
@@ -1152,18 +1230,7 @@ export class Interpreter {
     const args: JSValue[] = [];
     for (const a of expr.arguments) {
       if (a.type === 'SpreadElement') {
-        const spreadVal = this.evalExpr(a.argument, env);
-        if (Array.isArray(spreadVal)) {
-          args.push(...spreadVal);
-        } else if (typeof spreadVal === 'object' && spreadVal !== null && 'type' in spreadVal && (spreadVal as any).type === 'array') {
-          const arr = spreadVal as JSObject;
-          const len = Number(arr.properties.get('length')?.value ?? 0);
-          for (let i = 0; i < len; i++) {
-            args.push(arr.properties.get(String(i))?.value);
-          }
-        } else {
-          args.push(spreadVal);
-        }
+        args.push(...this.spreadValues(this.evalExpr(a.argument, env)));
       } else {
         args.push(this.evalExpr(a, env));
       }
@@ -1177,8 +1244,8 @@ export class Interpreter {
           if (fn.async && this.eventLoop) return wrapAsyncResult(result, this.eventLoop);
           return result;
         } catch (err) {
-          if (err instanceof JSError) throw err;
-          throw new JSError(err instanceof Error ? err.message : String(err));
+          if (err instanceof JSError || err instanceof Error) throw err; // see callJSFunction
+          throw new JSError(String(err));
         }
       }
       if (fn.type === 'closure' && !fn.isNative) {
@@ -1234,12 +1301,18 @@ export class Interpreter {
       return (callee as Function)(...args) as JSValue;
     }
 
-    return undefined;
+    if (expr.optional && (callee === undefined || callee === null)) return undefined;
+    // Calling a non-function used to return undefined and carry on; browsers throw.
+    throw new TypeError(`${calleeText(expr.callee)} is not a function`);
   }
 
   private evalNew(expr: AST.NewExpression, env: Environment): JSValue {
     const ctor = this.evalExpr(expr.callee, env);
-    const args = expr.arguments.map(a => this.evalExpr(a, env));
+    // Spread arguments (`new F(...args)`) were evaluated as undefined.
+    const args = expr.arguments.flatMap(a => (a.type === 'SpreadElement' ? this.spreadValues(this.evalExpr(a.argument, env)) : [this.evalExpr(a, env)]));
+    if (ctor === undefined || ctor === null || (typeof ctor !== 'object' && typeof ctor !== 'function')) {
+      throw new TypeError(`${calleeText(expr.callee)} is not a constructor`);
+    }
 
     // Class constructor (type: 'class' on a JSObject)
     if (typeof ctor === 'object' && ctor !== null && 'type' in ctor && (ctor as JSObject).type === 'class') {
@@ -1320,11 +1393,11 @@ export class Interpreter {
     const obj = this.evalExpr(expr.object, env);
     if (obj === undefined || obj === null) {
       if (expr.optional) return undefined;
-      const missing = expr.computed ? String(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;
+      const missing = expr.computed ? toString(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;
       throw new TypeError(`Cannot read properties of ${obj} (reading '${missing}')`);
     }
     if (typeof obj === 'string') {
-      const key = expr.computed ? String(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;
+      const key = expr.computed ? toString(this.evalExpr(expr.property, env)) : (expr.property as AST.Identifier).name;
       if (key === 'length') return (obj as string).length;
       const idx = parseInt(key, 10);
       if (!isNaN(idx)) return (obj as string)[idx] ?? undefined;
@@ -1336,7 +1409,7 @@ export class Interpreter {
     }
     const nativeObj = obj as JSObject;
     const key = expr.computed
-      ? String(this.evalExpr(expr.property, env))
+      ? toString(this.evalExpr(expr.property, env))
       : (expr.property as AST.Identifier).name;
 
     // Closure (function) objects: provide .length, .name, .prototype, .constructor
@@ -1394,7 +1467,7 @@ export class Interpreter {
     }
     if (typeof obj === 'number') {
       const numMethods: Record<string, NativeFunction> = {
-        toString: (_t: JSValue, _a: JSValue[]) => obj.toString(),
+        toString: (_t: JSValue, a: JSValue[]) => a[0] === undefined ? toString(obj) : (obj as number).toString(toNumber(a[0])),
         valueOf: (_t: JSValue, _a: JSValue[]) => obj,
         toFixed: (_t, a) => (obj as number).toFixed(toNumber(a[0])),
         toPrecision: (_t, a) => (obj as number).toPrecision(toNumber(a[0])),
@@ -1490,17 +1563,8 @@ export class Interpreter {
 
   /** Values of a spread operand: arrays and array-likes by index, strings by character. */
   private spreadValues(v: JSValue): JSValue[] {
-    if (v === undefined || v === null) throw new TypeError(`${v} is not iterable`);
     if (Array.isArray(v)) return v;
-    if (typeof v === 'string') return [...v];
-    if (typeof v === 'object') {
-      const obj = v as JSObject;
-      const len = Number(obj.properties.get('length')?.value ?? 0);
-      const out: JSValue[] = [];
-      for (let i = 0; i < len; i++) out.push(this.getPropertyValue(obj, String(i)));
-      return out;
-    }
-    throw new TypeError(`${typeof v} is not iterable`);
+    return [...iterateJS(v)];
   }
 
   private evalObject(expr: AST.ObjectExpression, env: Environment): JSValue {
@@ -1509,14 +1573,15 @@ export class Interpreter {
       if (prop.type === 'SpreadElement') {
         const spread = this.evalExpr(prop.argument, env);
         if (typeof spread === 'object' && spread !== null) {
-          for (const [k, v] of (spread as JSObject).properties) {
-            obj.properties.set(k, v);
+          for (const [k, v] of (spread as JSObject).properties ?? []) {
+            if (v.enumerable === false) continue; // array methods / length are not copied
+            obj.properties.set(k, { value: v.getter ? callJSFunction(v.getter, spread, []) : v.value, writable: true, enumerable: true, configurable: true });
           }
         }
         continue;
       }
       const key = prop.computed
-        ? String(this.evalExpr(prop.key, env))
+        ? toString(this.evalExpr(prop.key, env))
         : prop.key.type === 'Identifier' ? prop.key.name : String(prop.key);
       const value = prop.value ? this.evalExpr(prop.value, env) : undefined;
       if (prop.kind === 'get' || prop.kind === 'set') {

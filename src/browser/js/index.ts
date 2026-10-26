@@ -4,12 +4,12 @@ import type { INavigationController } from '../navigation/navigation-controller'
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter, stringMethods, functionMethod } from './interpreter';
-import { createDocumentBinding, wrapElement } from './dom-bindings';
+import { createDocumentBinding, wrapElement, createEventObject, interfacePrototype, DOM_INTERFACE_NAMES } from './dom-bindings';
 import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, functionPrototypeObject, OBJECT_PROTOTYPE, ARRAY_PROTOTYPE } from './values';
+import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, functionPrototypeObject, OBJECT_PROTOTYPE, ARRAY_PROTOTYPE, ITERATOR_KEY, createIteratorArray, iterateJS } from './values';
 import type { JSValue, JSObject, JSObjectWithMeta } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
 import {
@@ -138,6 +138,8 @@ export function createGlobalEnv(
   htmlParser?: IHtmlParser,
   storageDir?: string,
   corsEngine?: ICorsEngine,
+  /** The page's viewport, for innerWidth/innerHeight/devicePixelRatio/matchMedia. */
+  viewport: () => { width: number; height: number; dpr: number } = () => ({ width: 1024, height: 768, dpr: 1 }),
 ): Environment {
   const env = new Environment(null);
 
@@ -187,6 +189,14 @@ export function createGlobalEnv(
     }),
     writable: true, enumerable: true, configurable: true,
   });
+  // The rest of the console API; calling a missing one now throws, as in browsers, so they are no-ops
+  // (time/count keep their state so timeEnd/countReset don't misbehave).
+  for (const name of ['debug', 'trace', 'dir', 'dirxml', 'table', 'group', 'groupCollapsed', 'groupEnd', 'time', 'timeEnd', 'timeLog', 'timeStamp', 'count', 'countReset', 'profile', 'profileEnd']) {
+    consoleObj.properties.set(name, {
+      value: createNativeFunction(name, (_this, args) => { if (name === 'debug' || name === 'trace' || name === 'dir' || name === 'table') logs.push(...args); return undefined; }),
+      writable: true, enumerable: true, configurable: true,
+    });
+  }
   env.setLocal('console', consoleObj);
 
   // Math
@@ -209,6 +219,8 @@ export function createGlobalEnv(
     asin: Math.asin, acos: Math.acos, atan: Math.atan, atan2: Math.atan2,
     sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh,
     hypot: Math.hypot, fround: Math.fround,
+    imul: Math.imul, clz32: Math.clz32, expm1: Math.expm1, log1p: Math.log1p,
+    asinh: Math.asinh, acosh: Math.acosh, atanh: Math.atanh,
   };
   for (const [name, fn] of Object.entries(mathFns)) {
     mathObj.properties.set(name, {
@@ -306,6 +318,36 @@ export function createGlobalEnv(
   env.setLocal('Number', createNativeFunction('Number', (_this, args) => args.length > 0 ? toNumber(args[0]) : 0));
   env.setLocal('Boolean', createNativeFunction('Boolean', (_this, args) => args.length > 0 ? toBoolean(args[0]) : false));
   env.setLocal('Array', createNativeFunction('Array', (_this, args) => createArray(args)));
+
+  // String and Number statics (String.fromCharCode, Number.isInteger…) were missing.
+  const statics = (ctor: JSValue, entries: Record<string, JSValue>) => {
+    const o = ctor as unknown as JSObject;
+    if (!o.properties) o.properties = new Map();
+    for (const [k, v] of Object.entries(entries)) o.properties.set(k, { value: v, writable: typeof v === 'object', enumerable: false, configurable: typeof v === 'object' });
+  };
+  const nativeFn = (name: string, fn: NativeFunction) => createNativeFunction(name, fn);
+  statics(env.get('String'), {
+    fromCharCode: nativeFn('fromCharCode', (_t, a) => String.fromCharCode(...a.map(toNumber))),
+    fromCodePoint: nativeFn('fromCodePoint', (_t, a) => String.fromCodePoint(...a.map(toNumber))),
+    raw: nativeFn('raw', (_t, a) => {
+      const raw = (a[0] as JSObject | undefined)?.properties?.get('raw')?.value as JSObject | undefined;
+      const parts = raw ? [...iterateJS(raw)].map(toString) : [];
+      return parts.map((p, i) => p + (i < parts.length - 1 && i + 1 < a.length ? toString(a[i + 1]) : '')).join('');
+    }),
+  });
+  statics(env.get('Number'), {
+    isInteger: nativeFn('isInteger', (_t, a) => Number.isInteger(a[0])),
+    isSafeInteger: nativeFn('isSafeInteger', (_t, a) => Number.isSafeInteger(a[0])),
+    isFinite: nativeFn('isFinite', (_t, a) => Number.isFinite(a[0])),
+    isNaN: nativeFn('isNaN', (_t, a) => Number.isNaN(a[0])),
+    parseFloat: nativeFn('parseFloat', (_t, a) => parseFloat(toString(a[0]))),
+    parseInt: nativeFn('parseInt', (_t, a) => parseInt(toString(a[0]), a[1] === undefined ? undefined : toNumber(a[1]))),
+    MAX_SAFE_INTEGER: Number.MAX_SAFE_INTEGER, MIN_SAFE_INTEGER: Number.MIN_SAFE_INTEGER,
+    MAX_VALUE: Number.MAX_VALUE, MIN_VALUE: Number.MIN_VALUE, EPSILON: Number.EPSILON,
+    POSITIVE_INFINITY: Infinity, NEGATIVE_INFINITY: -Infinity, NaN: NaN,
+  });
+  env.setLocal('escape', nativeFn('escape', (_t, a) => escape(toString(a[0]))));
+  env.setLocal('unescape', nativeFn('unescape', (_t, a) => unescape(toString(a[0]))));
 
   // Object constructor + static methods
   const objectCtor = createNativeFunction('Object', (_this, args) => {
@@ -500,6 +542,13 @@ export function createGlobalEnv(
       }
       return out;
     });
+    method('getOwnPropertyDescriptors', (_t, a) => {
+      const out = createObject(null);
+      const gopd = objectCtorObj.properties.get('getOwnPropertyDescriptor')?.value as JSFunction | undefined;
+      const o = asObj(a[0]);
+      if (gopd && o?.properties) for (const k of o.properties.keys()) out.properties.set(k, { value: callJSFunction(gopd, undefined, [o, k]), writable: true, enumerable: true, configurable: true });
+      return out;
+    });
     const defineProperty = objectCtorObj.properties.get('defineProperty')?.value as JSFunction | undefined;
     method('defineProperties', (_t, a) => {
       const props = asObj(a[1]);
@@ -512,6 +561,45 @@ export function createGlobalEnv(
   objectCtorObj.properties.set('prototype', { value: OBJECT_PROTOTYPE, writable: false, enumerable: false, configurable: false });
   OBJECT_PROTOTYPE.properties.set('constructor', { value: objectCtorObj, writable: true, enumerable: false, configurable: true });
   env.setLocal('Object', objectCtorObj);
+
+  // Reflect, built on the Object statics. Reflect.construct is left out on purpose: transpiled
+  // classes feature-test it and fall back to plain calls.
+  {
+    const objFn = (name: string) => objectCtorObj.properties.get(name)?.value as JSFunction;
+    const reflect = createObject(null);
+    const rmethod = (name: string, fn: NativeFunction) =>
+      reflect.properties.set(name, { value: createNativeFunction(name, fn), writable: true, enumerable: false, configurable: true });
+    const target = (v: JSValue): JSObject => {
+      if (!v || typeof v !== 'object') throw new TypeError('Reflect method called on non-object');
+      return v as JSObject;
+    };
+    const chainGet = (o: JSObject, key: string, receiver: JSValue): JSValue => {
+      for (let p: JSObject | null = o, d = 0; p && d < 64; p = p.prototype, d++) {
+        const desc = p.properties?.get(key);
+        if (desc) return desc.getter ? callJSFunction(desc.getter, receiver, []) : desc.value;
+      }
+      return undefined;
+    };
+    rmethod('ownKeys', (_t, a) => createArray([...(target(a[0]).properties?.keys() ?? [])]));
+    rmethod('apply', (_t, a) => callJSFunction(a[0] as JSFunction, a[1], a[2] ? [...iterateJS(a[2])] : []));
+    rmethod('has', (_t, a) => { const k = toString(a[1]); for (let p: JSObject | null = target(a[0]), d = 0; p && d < 64; p = p.prototype, d++) if (p.properties?.has(k)) return true; return false; });
+    rmethod('get', (_t, a) => chainGet(target(a[0]), toString(a[1]), a.length > 2 ? a[2] : a[0]));
+    rmethod('set', (_t, a) => {
+      const o = target(a[0]); const k = toString(a[1]);
+      const d = o.properties.get(k);
+      if (d?.setter) callJSFunction(d.setter, o, [a[2]]);
+      else if (d && d.writable === false) return false;
+      else o.properties.set(k, { value: a[2], writable: true, enumerable: d?.enumerable ?? true, configurable: true });
+      return true;
+    });
+    rmethod('deleteProperty', (_t, a) => { const o = target(a[0]); const d = o.properties.get(toString(a[1])); if (d?.configurable === false) return false; o.properties.delete(toString(a[1])); return true; });
+    rmethod('defineProperty', (_t, a) => { try { callJSFunction(objFn('defineProperty'), undefined, a); return true; } catch { return false; } });
+    for (const name of ['getPrototypeOf', 'setPrototypeOf', 'getOwnPropertyDescriptor', 'isExtensible', 'preventExtensions']) {
+      const fn = objFn(name);
+      if (fn) rmethod(name, (_t, a) => { target(a[0]); const r = callJSFunction(fn, undefined, a); return name === 'setPrototypeOf' || name === 'preventExtensions' ? true : r; });
+    }
+    env.setLocal('Reflect', reflect);
+  }
 
   // Error constructors. Errors are now linked to Error.prototype (TypeError.prototype → Error.prototype),
   // so `e instanceof Error` holds and String(e) / e.toString() give "Name: message"; they used to be
@@ -941,6 +1029,22 @@ export function createGlobalEnv(
   env.setLocal('Map', mapCtorObj);
 
   // Set constructor
+  // Map iterators: keys()/values()/entries() return arrays that are also iterators, and
+  // map[Symbol.iterator] is entries (for-of, spread and Array.from over a Map gave nothing).
+  const iterableMethods = (proto: JSObject, iteratorName: string) => {
+    for (const name of ['keys', 'values', 'entries']) {
+      const fn = proto.properties.get(name)?.value as JSFunction | undefined;
+      if (!fn?.nativeFn) continue;
+      const orig = fn.nativeFn;
+      fn.nativeFn = (t, a) => {
+        const r = orig(t, a);
+        return r && typeof r === 'object' && (r as JSObject).type === 'array' ? createIteratorArray([...iterateJS(r)]) : r;
+      };
+    }
+    proto.properties.set(ITERATOR_KEY, { value: proto.properties.get(iteratorName)!.value, writable: true, enumerable: false, configurable: true });
+  };
+  iterableMethods(mapProto, 'entries');
+
   const setProto = createObject(null);
   function setGetStore(s: JSObject) {
     const ss = s as JSObjectWithMeta;
@@ -1211,6 +1315,7 @@ export function createGlobalEnv(
   setCtorObj.callable = true;
   setCtorObj.nativeFn = setCtor.nativeFn;
   setCtorObj.properties.set('prototype', { value: setProto, writable: false, enumerable: false, configurable: false });
+  iterableMethods(setProto, 'values');
   env.setLocal('Set', setCtorObj);
 
   // WeakMap constructor
@@ -1350,7 +1455,12 @@ export function createGlobalEnv(
       value: createNativeFunction('from', (_this, args) => {
         const source = args[0];
         const mapFn = args[1] as JSFunction | undefined;
-        if (typeof source !== 'object' || source === null) return createArray([]);
+        if (source === null || source === undefined) throw new TypeError('Array.from requires an array-like or iterable');
+        // Strings, Sets, Maps, generators and other iterables (it returned [] for all of them).
+        if (typeof source !== 'object' || (source as JSObject).type !== 'array') {
+          const vals = typeof source === 'object' || typeof source === 'string' ? [...iterateJS(source)] : [];
+          return createArray(typeof mapFn === 'object' && mapFn !== null && mapFn.type === 'closure' ? vals.map((v, i) => callJSFunction(mapFn, undefined, [v, i])) : vals);
+        }
         const srcObj = source as JSObject;
         if (srcObj.type === 'array') {
           const len = Number(srcObj.properties.get('length')?.value ?? 0);
@@ -1714,7 +1824,7 @@ export function createGlobalEnv(
       writable: true, enumerable: false, configurable: true,
     });
   }
-  arrayProto.properties.set(Symbol.for('iterator') as unknown as string, {
+  arrayProto.properties.set(ITERATOR_KEY, {
     value: createNativeFunction('[Symbol.iterator]', (_this) => {
       if (typeof _this !== 'object' || _this === null) return undefined;
       const obj = _this as JSObject;
@@ -1840,6 +1950,8 @@ export function createGlobalEnv(
     }),
     writable: true, enumerable: true, configurable: true,
   });
+  // sendBeacon: nothing is queued (no background sender), which the API reports as false.
+  navObj.properties.set('sendBeacon', { value: createNativeFunction('sendBeacon', () => false), writable: true, enumerable: true, configurable: true });
   env.setLocal('navigator', navObj);
 
   // DOM binding
@@ -1885,6 +1997,237 @@ export function createGlobalEnv(
   // globalThis and self all name it (they were an empty object / undefined).
   env.linkGlobalObject(windowObj);
   for (const alias of ['this', 'globalThis', 'self', 'top', 'parent', 'frames']) env.setLocal(alias, windowObj);
+
+  // Viewport and the window methods pages call on load. They were missing: innerWidth was undefined
+  // (responsive code got NaN) and calls like scrollTo()/matchMedia() now throw when absent.
+  {
+    const getter = (name: string, fn: () => JSValue) =>
+      windowObj.properties.set(name, { value: undefined, writable: true, enumerable: true, configurable: true, getter: createNativeFunction(`get ${name}`, fn) });
+    const wmethod = (name: string, fn: NativeFunction) =>
+      windowObj.properties.set(name, { value: createNativeFunction(name, fn), writable: true, enumerable: true, configurable: true });
+    getter('innerWidth', () => viewport().width);
+    getter('innerHeight', () => viewport().height);
+    getter('outerWidth', () => viewport().width);
+    getter('outerHeight', () => viewport().height);
+    getter('devicePixelRatio', () => viewport().dpr);
+    for (const name of ['scrollX', 'scrollY', 'pageXOffset', 'pageYOffset', 'screenX', 'screenY', 'screenLeft', 'screenTop']) getter(name, () => 0);
+    const screenObj = createObject(null);
+    for (const [k, fn] of [['width', () => viewport().width], ['height', () => viewport().height], ['availWidth', () => viewport().width], ['availHeight', () => viewport().height], ['colorDepth', () => 24], ['pixelDepth', () => 24]] as const) {
+      screenObj.properties.set(k, { value: undefined, writable: false, enumerable: true, configurable: true, getter: createNativeFunction(`get ${k}`, fn) });
+    }
+    if (!windowObj.properties.has('screen')) windowObj.properties.set('screen', { value: screenObj, writable: true, enumerable: true, configurable: true });
+
+    for (const name of ['scrollTo', 'scrollBy', 'scroll', 'focus', 'blur', 'print', 'stop', 'moveTo', 'resizeTo']) wmethod(name, () => undefined);
+    // No dialogs in an embedded engine: alert is a no-op, confirm says no, prompt cancels.
+    wmethod('alert', () => undefined);
+    wmethod('confirm', () => false);
+    wmethod('prompt', () => null);
+    wmethod('open', () => null);
+
+    wmethod('getComputedStyle', (_t, a) => {
+      const node = (a[0] as { __domNode?: { computedStyle?: Map<string, string> } } | undefined)?.__domNode;
+      const computed = node?.computedStyle ?? new Map<string, string>();
+      const out = createObject(null);
+      for (const [k, v] of computed) {
+        const d = { value: v, writable: false, enumerable: true, configurable: true };
+        out.properties.set(k, d);
+        out.properties.set(k.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase()), d);
+      }
+      out.properties.set('getPropertyValue', { value: createNativeFunction('getPropertyValue', (_tt, aa) => computed.get(toString(aa[0])) ?? ''), writable: true, enumerable: false, configurable: true });
+      return out;
+    });
+
+    // matchMedia: width/height/orientation/resolution features against the viewport; user
+    // preferences (dark scheme, reduced motion, hover) are answered for a plain touch phone.
+    const evalMedia = (q: string): boolean => {
+      const { width, height, dpr } = viewport();
+      return q.split(',').some((alt) => {
+        let s = alt.trim().toLowerCase();
+        let negate = false;
+        if (s.startsWith('not ')) { negate = true; s = s.slice(4); }
+        s = s.replace(/^only\s+/, '');
+        const ok = s.split(/\s+and\s+/).every((part) => {
+          if (part === 'all' || part === 'screen') return true;
+          if (part === 'print' || part === 'speech') return false;
+          const m = /^\(\s*([a-z-]+)\s*(?::\s*([^)]+?))?\s*\)$/.exec(part);
+          if (!m) return false;
+          const [, feature, raw = ''] = m;
+          const px = (v: string) => (v.endsWith('em') || v.endsWith('rem') ? parseFloat(v) * 16 : parseFloat(v));
+          switch (feature) {
+            case 'min-width': return width >= px(raw);
+            case 'max-width': return width <= px(raw);
+            case 'min-height': return height >= px(raw);
+            case 'max-height': return height <= px(raw);
+            case 'orientation': return raw === (height >= width ? 'portrait' : 'landscape');
+            case 'min-resolution': return dpr * 96 >= (raw.endsWith('dppx') ? parseFloat(raw) * 96 : parseFloat(raw));
+            case '-webkit-min-device-pixel-ratio': case 'min-device-pixel-ratio': return dpr >= parseFloat(raw);
+            case 'prefers-color-scheme': return raw === 'light';
+            case 'prefers-reduced-motion': case 'prefers-contrast': case 'forced-colors': return raw === 'no-preference' || raw === 'none';
+            case 'hover': case 'any-hover': return raw === 'none';
+            case 'pointer': case 'any-pointer': return raw === 'coarse';
+            default: return false;
+          }
+        });
+        return negate ? !ok : ok;
+      });
+    };
+    wmethod('matchMedia', (_t, a) => {
+      const media = toString(a[0]);
+      const mql = createObject(null);
+      mql.properties.set('media', { value: media, writable: false, enumerable: true, configurable: true });
+      mql.properties.set('matches', { value: undefined, writable: false, enumerable: true, configurable: true, getter: createNativeFunction('get matches', () => evalMedia(media)) });
+      mql.properties.set('onchange', { value: null, writable: true, enumerable: true, configurable: true });
+      // ponytail: listeners never fire (the viewport does not change while a page is shown).
+      for (const name of ['addListener', 'removeListener', 'addEventListener', 'removeEventListener']) {
+        mql.properties.set(name, { value: createNativeFunction(name, () => undefined), writable: true, enumerable: false, configurable: true });
+      }
+      mql.properties.set('dispatchEvent', { value: createNativeFunction('dispatchEvent', () => true), writable: true, enumerable: false, configurable: true });
+      return mql;
+    });
+
+    // postMessage to this window: a 'message' event after the current task (the setImmediate idiom).
+    wmethod('postMessage', (_t, a) => {
+      const data = a[0];
+      const setTimeoutFn = env.get('setTimeout') as JSFunction | undefined;
+      const deliver = createNativeFunction('deliver', () => {
+        const evt = createEventObject('message', windowObj);
+        evt.properties.set('data', { value: data, writable: false, enumerable: true, configurable: true });
+        evt.properties.set('origin', { value: pageOrigin ?? '', writable: false, enumerable: true, configurable: true });
+        evt.properties.set('source', { value: windowObj, writable: false, enumerable: true, configurable: true });
+        const dispatch = windowObj.properties.get('dispatchEvent')?.value as JSFunction | undefined;
+        if (dispatch) callJSFunction(dispatch, windowObj, [evt]);
+        const onmessage = windowObj.properties.get('onmessage')?.value;
+        if (onmessage && typeof onmessage === 'object' && 'closure' in onmessage) callJSFunction(onmessage as JSFunction, windowObj, [evt]);
+        return undefined;
+      });
+      if (setTimeoutFn) callJSFunction(setTimeoutFn, undefined, [deliver, 0]);
+      return undefined;
+    });
+
+    // requestIdleCallback on a timer, with an idle deadline.
+    wmethod('requestIdleCallback', (_t, a) => {
+      const cb = a[0] as JSFunction;
+      const setTimeoutFn = env.get('setTimeout') as JSFunction | undefined;
+      const deadline = createObject(null);
+      deadline.properties.set('didTimeout', { value: false, writable: false, enumerable: true, configurable: true });
+      deadline.properties.set('timeRemaining', { value: createNativeFunction('timeRemaining', () => 50), writable: false, enumerable: true, configurable: true });
+      const run = createNativeFunction('idle', () => callJSFunction(cb, undefined, [deadline]));
+      return setTimeoutFn ? callJSFunction(setTimeoutFn, undefined, [run, 1]) : 0;
+    });
+    // DOM interfaces: constructors for instanceof and prototype polyfills (not constructible).
+    for (const name of DOM_INTERFACE_NAMES) {
+      const proto = interfacePrototype(name);
+      const ctor = createNativeFunction(name, () => { throw new TypeError('Illegal constructor'); });
+      (ctor as unknown as JSObject).properties = new Map([['prototype', { value: proto, writable: false, enumerable: false, configurable: false }]]);
+      proto.properties.set('constructor', { value: ctor, writable: true, enumerable: false, configurable: true });
+      env.setLocal(name, ctor);
+    }
+    {
+      const nodeTypes: Record<string, number> = { ELEMENT_NODE: 1, ATTRIBUTE_NODE: 2, TEXT_NODE: 3, COMMENT_NODE: 8, DOCUMENT_NODE: 9, DOCUMENT_FRAGMENT_NODE: 11 };
+      const nodeCtor = env.get('Node') as unknown as JSObject;
+      for (const [k, v] of Object.entries(nodeTypes)) {
+        nodeCtor.properties.set(k, { value: v, writable: false, enumerable: true, configurable: false });
+        interfacePrototype('Node').properties.set(k, { value: v, writable: false, enumerable: true, configurable: false });
+      }
+    }
+
+    // Event / CustomEvent constructors (new Event("x") was `undefined is not a constructor`).
+    const eventInit = (init: JSValue) => {
+      const o = init && typeof init === 'object' ? init as JSObject : null;
+      const flag = (k: string) => toBoolean(o?.properties?.get(k)?.value);
+      return { bubbles: flag('bubbles'), cancelable: flag('cancelable'), composed: flag('composed'), detail: o?.properties?.get('detail')?.value ?? null };
+    };
+    env.setLocal('Event', createNativeFunction('Event', (_t, a) => createEventObject(toString(a[0]), null, eventInit(a[1]))));
+    env.setLocal('CustomEvent', createNativeFunction('CustomEvent', (_t, a) => {
+      const init = eventInit(a[1]);
+      const evt = createEventObject(toString(a[0]), null, init);
+      evt.properties.set('detail', { value: init.detail, writable: false, enumerable: true, configurable: true });
+      return evt;
+    }));
+
+    // URL / URLSearchParams over the host implementations.
+    const accessor = (o: JSObject, name: string, get: () => JSValue, set?: (v: JSValue) => void) =>
+      o.properties.set(name, {
+        value: undefined, writable: !!set, enumerable: true, configurable: true,
+        getter: createNativeFunction(`get ${name}`, get),
+        setter: set ? createNativeFunction(`set ${name}`, (_tt, aa) => { set(aa[0]); return undefined; }) : undefined,
+      });
+    const hidden = (o: JSObject, name: string, fn: NativeFunction) =>
+      o.properties.set(name, { value: createNativeFunction(name, fn), writable: true, enumerable: false, configurable: true });
+    const wrapSearchParams = (sp: URLSearchParams): JSObject => {
+      const o = createObject(null);
+      hidden(o, 'get', (_t, a) => sp.get(toString(a[0])));
+      hidden(o, 'getAll', (_t, a) => createArray(sp.getAll(toString(a[0]))));
+      hidden(o, 'has', (_t, a) => sp.has(toString(a[0])));
+      hidden(o, 'set', (_t, a) => { sp.set(toString(a[0]), toString(a[1])); return undefined; });
+      hidden(o, 'append', (_t, a) => { sp.append(toString(a[0]), toString(a[1])); return undefined; });
+      hidden(o, 'delete', (_t, a) => { sp.delete(toString(a[0])); return undefined; });
+      hidden(o, 'sort', () => { sp.sort(); return undefined; });
+      hidden(o, 'toString', () => sp.toString());
+      hidden(o, 'forEach', (_t, a) => { for (const [k, v] of [...sp]) callJSFunction(a[0] as JSFunction, a[1], [v, k, o]); return undefined; });
+      hidden(o, 'keys', () => createIteratorArray([...sp.keys()]));
+      hidden(o, 'values', () => createIteratorArray([...sp.values()]));
+      hidden(o, 'entries', () => createIteratorArray([...sp].map(([k, v]) => createArray([k, v]))));
+      hidden(o, ITERATOR_KEY, () => createIteratorArray([...sp].map(([k, v]) => createArray([k, v]))));
+      accessor(o, 'size', () => [...sp].length);
+      (o as unknown as { __searchParams: URLSearchParams }).__searchParams = sp;
+      return o;
+    };
+    env.setLocal('URLSearchParams', createNativeFunction('URLSearchParams', (_t, a) => {
+      const init = a[0];
+      let sp: URLSearchParams;
+      if (init === undefined || init === null) sp = new URLSearchParams();
+      else if (typeof init === 'string') sp = new URLSearchParams(init);
+      else if (typeof init === 'object' && (init as unknown as { __searchParams?: URLSearchParams }).__searchParams) sp = new URLSearchParams((init as unknown as { __searchParams: URLSearchParams }).__searchParams);
+      else if (typeof init === 'object' && (init as JSObject).type === 'array') sp = new URLSearchParams([...iterateJS(init)].map((pair) => [...iterateJS(pair)].map(toString) as [string, string]));
+      else if (typeof init === 'object') sp = new URLSearchParams([...(init as JSObject).properties].filter(([, d]) => d.enumerable !== false).map(([k, d]) => [k, toString(d.value)] as [string, string]));
+      else sp = new URLSearchParams(toString(init));
+      return wrapSearchParams(sp);
+    }));
+    const urlCtor = createNativeFunction('URL', (_t, a) => {
+      let u: URL;
+      try { u = a[1] === undefined ? new URL(toString(a[0])) : new URL(toString(a[0]), toString(a[1])); }
+      catch { throw new TypeError(`Failed to construct 'URL': Invalid URL`); }
+      const o = createObject(null);
+      for (const f of ['href', 'protocol', 'username', 'password', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'] as const) {
+        accessor(o, f, () => u[f], (v) => { u[f] = toString(v); });
+      }
+      accessor(o, 'origin', () => u.origin);
+      const sp = wrapSearchParams(u.searchParams);
+      accessor(o, 'searchParams', () => sp);
+      hidden(o, 'toString', () => u.href);
+      hidden(o, 'toJSON', () => u.href);
+      return o;
+    });
+    (urlCtor as unknown as JSObject).properties = new Map();
+    (urlCtor as unknown as JSObject).properties.set('canParse', { value: createNativeFunction('canParse', (_t, a) => { try { void new URL(toString(a[0]), a[1] === undefined ? undefined : toString(a[1])); return true; } catch { return false; } }), writable: true, enumerable: false, configurable: true });
+    env.setLocal('URL', urlCtor);
+
+    // new Image(w, h) is an <img>.
+    env.setLocal('Image', createNativeFunction('Image', (_t, a) => {
+      const docB = env.get('document') as JSObject;
+      const img = callJSFunction(docB.properties.get('createElement')!.value as JSFunction, docB, ['img']) as JSObject;
+      const setAttr = img.properties.get('setAttribute')!.value as JSFunction;
+      if (a[0] !== undefined) callJSFunction(setAttr, img, ['width', toString(a[0])]);
+      if (a[1] !== undefined) callJSFunction(setAttr, img, ['height', toString(a[1])]);
+      return img;
+    }));
+
+    // ponytail: MutationObserver never reports (no DOM mutation records yet); observe/disconnect
+    // exist so frameworks that set one up keep running. Record mutations in dom-tree if a site needs it.
+    env.setLocal('MutationObserver', createNativeFunction('MutationObserver', () => {
+      const o = createObject(null);
+      hidden(o, 'observe', () => undefined);
+      hidden(o, 'disconnect', () => undefined);
+      hidden(o, 'takeRecords', () => createArray([]));
+      return o;
+    }));
+
+    wmethod('cancelIdleCallback', (_t, a) => {
+      const clearTimeoutFn = env.get('clearTimeout') as JSFunction | undefined;
+      return clearTimeoutFn ? callJSFunction(clearTimeoutFn, undefined, [a[0]]) : undefined;
+    });
+  }
   windowObj.properties.set('isSecureContext', {
     value: isSecureContext, writable: false, enumerable: true, configurable: false,
   });

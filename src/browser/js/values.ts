@@ -204,11 +204,15 @@ export class Environment {
    * Initialize a let/const binding (clears TDZ).
    * Called when the declaration statement is actually executed.
    */
-  initialize(name: string, value: JSValue): void {
+  initialize(name: string, value: JSValue, kind: 'let' | 'const' = 'let'): void {
     const binding = this.bindings.get(name);
     if (binding && binding.__tdz) {
       binding.value = value;
       binding.__tdz = false;
+    } else if (!binding) {
+      // Names inside a destructuring pattern (`const [a, b] = …`) are not pre-declared; their
+      // values used to be dropped.
+      this.bindings.set(name, { value, kind });
     }
   }
 
@@ -331,7 +335,35 @@ export function toNumber(val: JSValue): number {
     return n;
   }
   if (typeof val === 'bigint') return Number(val);
+  if (typeof val === 'object' && val !== null) {
+    const prim = toPrimitive(val, 'number');
+    if (prim === null || typeof prim !== 'object') return toNumber(prim);
+  }
   return NaN;
+}
+
+/**
+ * ToPrimitive (§7.1.1): the object's own/inherited valueOf and toString, in hint order. Objects used
+ * to become "[object Object]" / NaN even with a toString or valueOf (errors, dates, user classes).
+ * Returns the object itself when neither gives a primitive.
+ */
+export function toPrimitive(val: JSValue, hint: 'string' | 'number' | 'default'): JSValue {
+  if (!val || typeof val !== 'object') return val;
+  const obj = val as JSObject;
+  const find = (key: string): JSValue => {
+    for (let p: JSObject | null = obj, d = 0; p && d < 64; p = p.prototype, d++) {
+      const desc = p.properties?.get(key);
+      if (desc) return desc.getter ? callJSFunction(desc.getter, obj, []) : desc.value;
+    }
+    return undefined;
+  };
+  for (const key of hint === 'string' ? ['toString', 'valueOf'] : ['valueOf', 'toString']) {
+    const fn = find(key);
+    if (!fn || typeof fn !== 'object' || !('closure' in fn)) continue;
+    const r = callJSFunction(fn as JSFunction, obj, []);
+    if (r === null || typeof r !== 'object') return r;
+  }
+  return val;
 }
 
 export function toString(val: JSValue): string {
@@ -362,6 +394,9 @@ export function toString(val: JSValue): string {
     if (override === 'weakref') return '[object WeakRef]';
     if (override === 'finalizationregistry') return '[object FinalizationRegistry]';
     if (typeof override === 'string' && override.endsWith('Array')) return `[object ${override}]`;
+    if ('closure' in obj) return `function ${(obj as unknown as JSFunction).name ?? ''}() { [native code] }`;
+    const prim = toPrimitive(val, 'string');
+    if (prim === null || typeof prim !== 'object') return toString(prim);
   }
   return '[object Object]';
 }
@@ -768,6 +803,64 @@ const arrayNativeMethods: Record<string, NativeFunction> = {
   },
 };
 
+/** Property key of Symbol.iterator: computed keys go through toString, giving "Symbol(iterator)". */
+export const ITERATOR_KEY = 'Symbol(iterator)';
+
+function getProp(o: JSObject, key: string): JSValue {
+  for (let p: JSObject | null = o, d = 0; p && d < 64; p = p.prototype, d++) {
+    const desc = p.properties?.get(key);
+    if (desc) return desc.getter ? callJSFunction(desc.getter, o, []) : desc.value;
+  }
+  return undefined;
+}
+
+/**
+ * The iteration protocol (§7.4) for for-of, spread, destructuring and Array.from: strings by code
+ * point, arrays by index, anything else via [Symbol.iterator]() and next(). Lazy, so `break` out of
+ * an endless iterator works. Only array-likes used to iterate (Map, Set, custom iterables gave nothing).
+ */
+export function* iterateJS(value: JSValue): Generator<JSValue, void, undefined> {
+  if (typeof value === 'string') { yield* value; return; }
+  if (!value || typeof value !== 'object') throw new TypeError(`${toString(value)} is not iterable`);
+  const obj = value as JSObject;
+  const indexed = function* (a: JSObject) {
+    for (let i = 0; i < Number(a.properties.get('length')?.value ?? 0); i++) yield a.properties.get(String(i))?.value;
+  };
+  if (obj.type === 'array') { yield* indexed(obj); return; }
+  const method = getProp(obj, ITERATOR_KEY);
+  if (!method || typeof method !== 'object' || !('closure' in method)) {
+    if (obj.properties?.has('length')) { yield* indexed(obj); return; } // array-likes (NodeList, arguments)
+    throw new TypeError('object is not iterable');
+  }
+  const it = callJSFunction(method as JSFunction, obj, []);
+  if (it && typeof it === 'object' && (it as JSObject).type === 'array') { yield* indexed(it as JSObject); return; }
+  if (!it || typeof it !== 'object') throw new TypeError('Result of the Symbol.iterator method is not an object');
+  const next = getProp(it as JSObject, 'next');
+  if (!next || typeof next !== 'object' || !('closure' in next)) throw new TypeError('iterator.next is not a function');
+  for (;;) {
+    const r = callJSFunction(next as JSFunction, it, []);
+    if (!r || typeof r !== 'object') throw new TypeError(`Iterator result ${toString(r)} is not an object`);
+    if (toBoolean(getProp(r as JSObject, 'done'))) return;
+    yield getProp(r as JSObject, 'value');
+  }
+}
+
+/** An array that is also its own iterator (`.next()`, `[Symbol.iterator]()`), for Map/Set entries() etc. */
+export function createIteratorArray(values: JSValue[]): JSObject {
+  const arr = createArray(values);
+  let i = 0;
+  const hidden = (value: JSValue) => ({ value, writable: true, enumerable: false, configurable: true });
+  arr.properties.set('next', hidden(createNativeFunction('next', () => {
+    const r = createObject(null);
+    const done = i >= values.length;
+    r.properties.set('value', { value: done ? undefined : values[i++], writable: true, enumerable: true, configurable: true });
+    r.properties.set('done', { value: done, writable: true, enumerable: true, configurable: true });
+    return r;
+  })));
+  arr.properties.set(ITERATOR_KEY, hidden(createNativeFunction('[Symbol.iterator]', () => arr)));
+  return arr;
+}
+
 /** Array.prototype: every array links to it, so `Array.prototype.slice.call(x)`, `[] instanceof Array`
  *  and polyfills (`Array.prototype.foo = …`) work. Arrays also keep their own method copies. */
 export const ARRAY_PROTOTYPE: JSObject = createObject(null);
@@ -869,8 +962,10 @@ export function callJSFunction(fn: JSFunction, thisArg: JSValue, args: JSValue[]
     try {
       return fn.nativeFn(thisArg, args) as JSValue;
     } catch (err) {
-      if (err instanceof JSError) throw err;
-      throw new JSError(err instanceof Error ? err.message : String(err));
+      // Host Errors pass through unchanged: a page catch turns them into a TypeError/RangeError of its
+      // own (Interpreter.hostErrorToJS). Wrapping them made `e` the bare message string.
+      if (err instanceof JSError || err instanceof Error) throw err;
+      throw new JSError(String(err));
     }
   }
   // Non-native: delegate to the interpreter
