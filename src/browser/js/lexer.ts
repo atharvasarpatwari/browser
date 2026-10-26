@@ -93,6 +93,13 @@ export class Lexer {
     }
 
     // Identifiers and keywords
+    // Private names (`#count`) lex as identifiers spelled with the '#': stored as ordinary
+    // properties, which is enough for `this.#x` reads and writes (the '#' used to vanish).
+    if (ch === '#' && this.isIdentifierStart(this.source[this.pos + 1] ?? '')) {
+      this.advance();
+      const tok = this.readIdentifier(startLine, startCol);
+      return this.makeToken(TokenType.Identifier, '#' + tok.value, startLine, startCol);
+    }
     if (this.isIdentifierStart(ch)) {
       return this.readIdentifier(startLine, startCol);
     }
@@ -599,7 +606,8 @@ export class Lexer {
   }
 
   private isIdentifierStart(ch: string): boolean {
-    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_' || ch === '$';
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_' || ch === '$'
+      || (ch > '\x7f' && /\p{ID_Start}/u.test(ch)); // non-ASCII names (π, ü, 名前)
   }
 
   private isIdentifierPart(ch: string): boolean {

@@ -1,5 +1,5 @@
 import type { JSFunction, JSValue, JSFunctionCaller } from './values';
-import { createNativeFunction, Environment, createObject, createArray, toNumber, toString, callJSFunction, setGlobalCaller } from './values';
+import { createNativeFunction, Environment, createObject, createArray, toNumber, toString, callJSFunction, setGlobalCaller, getGlobalCaller } from './values';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,8 +39,12 @@ export class EventLoop {
     this._interpreter = interpreter;
   }
 
+  /** Called when a timer or microtask is queued, so the host knows there is work to pump. */
+  onWake: (() => void) | null = null;
+
   schedule(fn: () => void, delay: number, recurring: boolean = false): number {
     const id = this.nextTaskId++;
+    this.onWake?.();
 
     // WHATWG HTML § 8.6 — Timer clamping: after 5 nested timer firings,
     // the minimum delay is clamped to 4ms.
@@ -84,6 +88,7 @@ export class EventLoop {
 
   enqueueMicrotask(fn: () => void): void {
     this.microtaskQueue.push(fn);
+    this.onWake?.();
   }
 
   /** Enqueue a priority microtask (process.nextTick) — runs before regular microtasks */
@@ -98,13 +103,14 @@ export class EventLoop {
    */
   runWithInterpreter<T>(fn: () => T): T {
     const caller = this._interpreter;
+    const prev = getGlobalCaller();
     if (caller) setGlobalCaller(caller);
     try {
       const result = fn();
       this.drainMicrotasks();
       return result;
     } finally {
-      if (caller) setGlobalCaller(null);
+      if (caller) setGlobalCaller(prev);
     }
   }
 
@@ -112,6 +118,9 @@ export class EventLoop {
   drainMicrotasks(): number {
     let count = 0;
     const hadCaller = this._interpreter;
+    // Restore whatever caller was active before (it was cleared, which broke a timer task run
+    // right after a drain: its JS callback found no interpreter and failed silently).
+    const prevCaller = getGlobalCaller();
     if (hadCaller) setGlobalCaller(hadCaller);
     try {
       // Priority microtasks (nextTick) first
@@ -135,7 +144,7 @@ export class EventLoop {
         count++;
       }
     } finally {
-      if (hadCaller) setGlobalCaller(null);
+      if (hadCaller) setGlobalCaller(prevCaller);
     }
     return count;
   }

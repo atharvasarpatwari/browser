@@ -121,7 +121,7 @@ export function rejectPromise(promise: JSObject, reason: JSValue): void {
 
 // ── Thenable resolution ─────────────────────────────────────────────────────
 
-function resolvePromise(promise: JSObject, x: JSValue, eventLoop: EventLoop): void {
+export function resolvePromise(promise: JSObject, x: JSValue, eventLoop: EventLoop): void {
   if (x === promise) {
     rejectPromise(promise, 'TypeError: Promise resolved with itself');
     return;

@@ -593,6 +593,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     const eventLoop = new JsEventLoop();
     this.pageEventLoop = eventLoop;
+    eventLoop.onWake = () => this.schedulePagePump();
     // One global environment per page: what one script defines (e.g. a library)
     // must be visible to the scripts after it, as in a browser.
     const env = createGlobalEnv(
@@ -998,6 +999,44 @@ class PageRenderer implements IPageRenderer, IDisposable {
     return this.reflowController;
   }
 
+  private pumpTimer: ReturnType<typeof setTimeout> | null = null;
+  private pumpAt = Infinity;
+
+  /**
+   * Arrange for the page's queued work (timers, settled fetches/promises) to run. Nothing ran the
+   * page's event loop after load, so setTimeout/setInterval callbacks never fired and promise
+   * callbacks from fetch responses waited forever.
+   */
+  private schedulePagePump(): void {
+    const loop = this.pageEventLoop;
+    if (!loop || this.disposed) return;
+    const wait = loop.microtaskCount + loop.nextTickCount > 0 ? 0 : loop.timeUntilNext();
+    if (!Number.isFinite(wait)) return;
+    const at = Date.now() + wait;
+    if (this.pumpTimer && at >= this.pumpAt) return;
+    if (this.pumpTimer) clearTimeout(this.pumpTimer);
+    this.pumpAt = at;
+    this.pumpTimer = setTimeout(() => this.pumpPage(loop), Math.min(wait, 0x7fffffff));
+    (this.pumpTimer as { unref?: () => void }).unref?.(); // Node: page timers must not keep the process alive
+  }
+
+  /** Run what is due on the page's event loop, then repaint if the scripts changed the DOM. */
+  private pumpPage(loop: JsEventLoop): void {
+    this.pumpTimer = null;
+    this.pumpAt = Infinity;
+    if (loop !== this.pageEventLoop || this.disposed) return;
+    const before = this.deps.domTree.getMutations().length;
+    loop.runWithInterpreter(() => {
+      // Due timers, a bounded number per pump so a tight setInterval cannot starve the UI.
+      for (let i = 0; i < 50; i++) {
+        loop.runOnce(Date.now());
+        if (loop.pendingCount === 0 || loop.timeUntilNext() > 0) break;
+      }
+    });
+    if (this.deps.domTree.getMutations().length !== before) this.requestReflow();
+    this.schedulePagePump();
+  }
+
   /** Fires a UI event (e.g. a tap's click) into the page's scripts, then repaints what they changed. */
   dispatchPageEvent(el: DomElement, type: string): boolean {
     const fire = (): boolean => dispatchDomEvent(el, type, this.deps.domTree);
@@ -1023,6 +1062,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.pumpTimer) clearTimeout(this.pumpTimer);
+    this.pumpTimer = null;
     setAnimationRuntime(null);
     this.transitionEngine?.dispose();
     this.transitionEngine = null;

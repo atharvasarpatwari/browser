@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-26
 **Session:** "keep improving the nova app…". Found during the 1.30 Round C work.
-**Status:** Planned
+**Status:** Rounds 1–2 done in 1.31 (async functions, generators); round 3 (async generators, for await) planned
 
 ---
 

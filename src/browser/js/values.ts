@@ -131,6 +131,8 @@ export interface JSFunction {
   upvalues?: UpvalueRef[];
   /** If true, the function runs in strict mode */
   isStrict?: boolean;
+  /** Parameter AST patterns when any is not a plain name (defaults, destructuring, rest). */
+  paramPatterns?: unknown[];
 }
 
 /** Shared mutable reference for closure-captured variables */
@@ -951,6 +953,10 @@ export interface JSFunctionCaller {
 }
 
 let _globalCaller: JSFunctionCaller | null = null;
+
+export function getGlobalCaller(): JSFunctionCaller | null {
+  return _globalCaller;
+}
 
 export function setGlobalCaller(caller: JSFunctionCaller | null): void {
   _globalCaller = caller;

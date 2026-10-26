@@ -2,14 +2,14 @@ import type * as AST from './ast';
 import {
   Environment,
   type JSValue, type JSObject, type JSFunction, type NativeFunction,
-  toBoolean, toNumber, toString, toPrimitive, iterateJS, getType, instanceofCheck,
+  toBoolean, toNumber, toString, toPrimitive, iterateJS, ITERATOR_KEY, getType, instanceofCheck,
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
   setGlobalCaller, callJSFunction, JSError, functionPrototypeObject, objectPrototypeMember, constructorPrototype,
 } from './values';
 import { GarbageCollector, getGC } from './gc';
-import { createPromiseConstructor, wrapAsyncResult, isPromiseObject, isPromiseFulfilled, isPromiseRejected, isPromisePending, getPromiseResult, createPromiseObj, fulfillPromise, rejectPromise } from './promise';
+import { createPromiseConstructor, wrapAsyncResult, isPromiseObject, isPromiseFulfilled, isPromiseRejected, isPromisePending, getPromiseResult, createPromiseObj, fulfillPromise, rejectPromise, resolvePromise } from './promise';
 import type { EventLoop } from './event-loop';
 import { bindQueueMicrotask, bindTimers } from './event-loop';
 import { Lexer } from './lexer';
@@ -99,6 +99,118 @@ function compare(left: JSValue, right: JSValue, op: (a: number | string, b: numb
   if (typeof l === 'string' && typeof r === 'string') return op(l, r);
   return op(toNumber(l), toNumber(r));
 }
+
+type ClassField = { key: string; init: AST.Expression | null };
+type ClassWithFields = JSObject & { __fields?: ClassField[]; __fieldEnv?: Environment };
+
+/** createFunction with the parameter patterns kept when they are more than plain names. */
+function makeFunction(name: string, params: AST.FunctionExpression['params'], body: unknown, env: Environment, async: boolean, isArrow: boolean, generator: boolean, strict?: boolean): JSFunction {
+  const simple = params.every((p) => p.type === 'Identifier');
+  // Placeholder names keep params.length and strict-mode duplicate checks meaningful.
+  const names = params.map((p, i) => (p.type === 'Identifier' ? p.name : `\u0000param${i}`));
+  const fn = createFunction(name, names, body, env, async, isArrow, generator, false, undefined, strict);
+  if (!simple) fn.paramPatterns = params;
+  return fn;
+}
+
+function forInKeys(obj: JSValue): string[] {
+  const keys: string[] = [];
+  if (typeof obj === 'string') for (let i = 0; i < obj.length; i++) keys.push(String(i));
+  const seen = new Set<string>();
+  for (let p: JSObject | null = typeof obj === 'object' ? obj as JSObject : null, d = 0; p && d < 64; p = p.prototype, d++) {
+    for (const [k, desc] of p.properties ?? []) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (desc.enumerable !== false && typeof k === 'string' && !k.startsWith('Symbol(')) keys.push(k);
+    }
+  }
+  return keys;
+}
+
+// ── Resumable execution (async functions and generators) ───────────────────
+
+/** What a suspended body hands its driver: a value to await, or a value to yield. */
+type Suspend = { kind: 'await' | 'yield'; value: JSValue };
+type Completion = JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal;
+type Resumable<T> = Generator<Suspend, T, JSValue>;
+
+const OPAQUE_NODES = new Set(['FunctionExpression', 'FunctionDeclaration', 'ArrowFunctionExpression', 'ClassDeclaration', 'ClassExpression', '__NovaValue']);
+const suspendCache = new WeakMap<object, boolean>();
+
+/** Does this node contain an await/yield of the current function (nested functions don't count)? */
+function hasSuspend(node: unknown): boolean {
+  if (!node || typeof node !== 'object') return false;
+  const cached = suspendCache.get(node as object);
+  if (cached !== undefined) return cached;
+  const n = node as Record<string, unknown>;
+  let found = n.type === 'AwaitExpression' || n.type === 'YieldExpression';
+  if (!found && !OPAQUE_NODES.has(n.type as string)) {
+    for (const k in n) {
+      if (k === 'loc' || k === '__labels') continue;
+      const v = n[k];
+      found = Array.isArray(v) ? v.some(hasSuspend) : (!!v && typeof v === 'object' && hasSuspend(v));
+      if (found) break;
+    }
+  }
+  suspendCache.set(node as object, found);
+  return found;
+}
+
+type Slot = { node: AST.Node; set: (v: AST.Node) => void };
+/**
+ * A shallow copy of `expr` (copying containers along the way) with its operand slots, in
+ * evaluation order, so operands can be evaluated one by one and substituted with their values.
+ */
+function cloneWithSlots(expr: AST.Expression): { clone: AST.Expression; slots: Slot[] } {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const c: any = { ...expr };
+  const slots: Slot[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const slot = (holder: any, key: string | number) => { if (holder[key]) slots.push({ node: holder[key], set: (v) => { holder[key] = v; } }); };
+  const listSlots = (key: string) => {
+    c[key] = [...c[key]];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    c[key].forEach((el: any, i: number) => {
+      if (!el) return;
+      if (el.type === 'SpreadElement') { c[key][i] = { ...el }; slot(c[key][i], 'argument'); } else slot(c[key], i);
+    });
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const memberSlots = (holder: any, key: string) => {
+    holder[key] = { ...holder[key] };
+    if (holder[key].object.type !== 'SuperExpression') slot(holder[key], 'object');
+    if (holder[key].computed) slot(holder[key], 'property');
+  };
+  switch (c.type) {
+    case 'BinaryExpression': slot(c, 'left'); slot(c, 'right'); break;
+    case 'AssignmentExpression': if (c.left.type === 'MemberExpression') memberSlots(c, 'left'); slot(c, 'right'); break;
+    case 'UnaryExpression': if (c.operator !== 'delete') slot(c, 'argument'); break;
+    case 'UpdateExpression': if (c.argument.type === 'MemberExpression') memberSlots(c, 'argument'); break;
+    case 'MemberExpression': slot(c, 'object'); if (c.computed) slot(c, 'property'); break;
+    case 'CallExpression':
+    case 'NewExpression':
+      if (c.type === 'CallExpression' && c.callee.type === 'MemberExpression') memberSlots(c, 'callee');
+      else if (c.callee.type !== 'Identifier' && c.callee.type !== 'SuperExpression') slot(c, 'callee');
+      listSlots('arguments');
+      break;
+    case 'ArrayExpression': listSlots('elements'); break;
+    case 'TemplateLiteral': listSlots('expressions'); break;
+    case 'TaggedTemplateExpression': c.quasi = { ...c.quasi }; c.quasi.expressions = [...c.quasi.expressions]; c.quasi.expressions.forEach((_e: unknown, i: number) => slot(c.quasi.expressions, i)); break;
+    case 'SpreadElement': slot(c, 'argument'); break;
+    case 'ObjectExpression':
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      c.properties = c.properties.map((p: any) => ({ ...p }));
+      for (const p of c.properties) {
+        if (p.type === 'SpreadElement') { slot(p, 'argument'); continue; }
+        if (p.computed) slot(p, 'key');
+        if ((!p.kind || p.kind === 'init') && !p.method) slot(p, 'value');
+      }
+      break;
+  }
+  return { clone: c, slots };
+}
+
+const valueNode = (value: JSValue): AST.Node => ({ type: '__NovaValue', value } as unknown as AST.Node);
 
 /** `continue label` is for this loop when unlabeled or naming one of the loop's labels. */
 function continuesHere(stmt: AST.Statement, sig: ContinueSignal): boolean {
@@ -268,79 +380,36 @@ export class Interpreter {
       if (fn.async && this.eventLoop) return wrapAsyncResult(result.value, this.eventLoop);
       return result.value;
     }
+    return this.invokeClosure(fn, thisArg, args);
+  }
+
+  /**
+   * Call a JS (non-native) function: one place for both call paths. Sets `this` (lexical for
+   * arrows) before the parameters, so defaults can use it; async and generator functions go to
+   * their resumable drivers.
+   */
+  private invokeClosure(fn: JSFunction, thisArg: JSValue, args: JSValue[]): JSValue {
     const callEnv = new Environment(fn.closure);
     callEnv.markFunctionScope();
     callEnv.setLocal('arguments', createArray(args));
-    fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
-    if (thisArg === undefined && !fn.isStrict) {
+    if (fn.isArrow) {
+      callEnv.setLocal('this', fn.closure.get('this') ?? createObject(null));
+    } else if (thisArg === undefined && !fn.isStrict) {
       callEnv.setLocal('this', this.globalEnv.get('this') ?? createObject(null));
     } else {
       callEnv.setLocal('this', thisArg);
     }
+    this.bindParams(fn, callEnv, args);
+    if (fn.generator) return this.makeGenerator(fn, callEnv);
+    if (fn.async && this.eventLoop) return this.runAsyncFunction(fn, callEnv);
     const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
-    let result: JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal;
-    try {
-      if (bodyNode.type === 'BlockStatement') {
-        result = this.execBlock(bodyNode.body as AST.Statement[], callEnv);
-      } else {
-        result = this.evalExpr(bodyNode as AST.Expression, callEnv);
-      }
-    } catch (err) {
-      if (fn.async && this.eventLoop && isAwaitSignal(err)) {
-        return this.handleAsyncAwait(err as AwaitSignal, fn, thisArg, args);
-      }
-      throw err;
-    }
-    if (fn.async && this.eventLoop && isAwaitSignal(result)) {
-      return this.handleAsyncAwait(result as AwaitSignal, fn, thisArg, args);
-    }
-    if (isReturnSignal(result)) {
-      if (fn.async && this.eventLoop) return wrapAsyncResult(result.value, this.eventLoop);
-      return result.value;
-    }
+    const result = bodyNode.type === 'BlockStatement'
+      ? this.execBlock(bodyNode.body as AST.Statement[], callEnv)
+      : this.evalExpr(bodyNode as AST.Expression, callEnv);
+    if (isReturnSignal(result)) return result.value;
     if (isThrowSignal(result)) throw new JSError(result.value);
     if (fn.async && this.eventLoop) return wrapAsyncResult(result as JSValue, this.eventLoop);
-    return result as JSValue;
-  }
-
-  /** Handle async function awaiting a pending Promise — set up microtask resumption */
-  private handleAsyncAwait(signal: AwaitSignal, fn: JSFunction, thisArg: JSValue, args: JSValue[]): JSValue {
-    if (!this.eventLoop) return signal.promise;
-    const continuationPromise = createPromiseObj(this.eventLoop);
-    this.eventLoop.enqueueMicrotask(() => {
-      const thenFn = (signal.promise as JSObject).properties.get('then')?.value as JSFunction;
-      if (thenFn && typeof thenFn === 'object' && (thenFn as JSFunction).type === 'closure') {
-        const onFulfilled = createNativeFunction('onFulfilled', (_th, fArgs) => {
-          const resolvedValue = fArgs[0];
-          try {
-            // Resume execution from the continuation
-            const callEnv = new Environment(fn.closure);
-            callEnv.markFunctionScope();
-            callEnv.setLocal('arguments', createArray(args));
-            fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
-            callEnv.setLocal('this', thisArg);
-            // We need to re-execute with the resolved value... but we can't easily do that.
-            // Instead, resolve the continuation promise with the resolved value.
-            fulfillPromise(continuationPromise, resolvedValue);
-          } catch (err) {
-            rejectPromise(continuationPromise, err instanceof Error ? err.message : String(err));
-          }
-          return undefined;
-        });
-        const onRejected = createNativeFunction('onRejected', (_th, rArgs) => {
-          rejectPromise(continuationPromise, rArgs[0]);
-          return undefined;
-        });
-        try {
-          callJSFunction(thenFn, signal.promise, [onFulfilled, onRejected]);
-        } catch (err) {
-          rejectPromise(continuationPromise, err instanceof Error ? err.message : String(err));
-        }
-      } else {
-        fulfillPromise(continuationPromise, signal.promise);
-      }
-    });
-    return continuationPromise;
+    return bodyNode.type === 'BlockStatement' ? undefined : result as JSValue;
   }
 
   getOutput(): string[] {
@@ -453,6 +522,23 @@ export class Interpreter {
     }
   }
 
+  /**
+   * Bind call arguments to parameters: plain names, defaults (evaluated in the call scope, so they
+   * can use earlier params), destructuring and rest. Only plain names used to work.
+   */
+  private bindParams(fn: JSFunction, callEnv: Environment, args: JSValue[]): void {
+    const patterns = fn.paramPatterns as AST.FunctionExpression['params'] | undefined;
+    if (!patterns) {
+      fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+      return;
+    }
+    patterns.forEach((p, i) => {
+      if (p.type === 'Identifier') callEnv.setLocal(p.name, args[i]);
+      else if (p.type === 'RestElement') this.destructPattern(p.argument as AST.Identifier, createArray(args.slice(i)), callEnv, 'let');
+      else this.destructPattern(p, args[i], callEnv, 'let');
+    });
+  }
+
   private destructPattern(pattern: AST.Identifier | AST.RestElement | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern, value: JSValue, env: Environment, kind: 'var' | 'let' | 'const'): void {
     if (pattern.type === 'Identifier') {
       const name = pattern.name;
@@ -463,7 +549,7 @@ export class Interpreter {
         env.declare(name, value, 'var');
       }
     } else if (pattern.type === 'AssignmentPattern') {
-      const val = value === undefined || value === null ? this.evalExpr(pattern.right, env) : value;
+      const val = value === undefined ? this.evalExpr(pattern.right, env) : value; // only undefined takes the default, not null
       this.destructPattern(pattern.left, val, env, kind);
     } else if (pattern.type === 'ArrayPattern') {
       // Any iterable destructures (`const [a, b] = "xy"`, `[k, v]` of a Map entry iterator).
@@ -512,7 +598,7 @@ export class Interpreter {
   }
 
   private execFuncDecl(stmt: AST.FunctionDeclaration, env: Environment): void {
-    const fn = createFunction(stmt.id.name, stmt.params.map(p => (p as AST.Identifier).name), stmt.body, env, stmt.async, false, stmt.generator, false, undefined, stmt.strictMode);
+    const fn = makeFunction(stmt.id.name, stmt.params, stmt.body, env, stmt.async, false, stmt.generator, stmt.strictMode);
     env.declare(stmt.id.name, fn, 'var');
   }
 
@@ -545,32 +631,51 @@ export class Interpreter {
       }
     }
 
-    // Store methods from body
+    // The class's own scope: `super` for its methods. It was set on the enclosing scope, so two
+    // classes declared side by side overwrote each other's parent.
+    const classEnv = new Environment(env);
+    const superVal = classObj.properties.get('super')?.value;
+    if (superVal && typeof superVal === 'object') {
+      classEnv.setLocal('super', constructorPrototype(superVal) ?? superVal);
+      classEnv.setLocal('__superCtor', superVal);
+    }
+
+    // Members: methods, getters/setters (they became plain methods named after the key, plus a
+    // member called "get"), static members, computed keys, and instance/static fields (ignored).
     let hasConstructor = false;
+    const fields: ClassField[] = [];
+    const staticFields: ClassField[] = [];
     if (stmt.body.type === 'ClassBody') {
-      for (const method of stmt.body.body) {
-        if (method.type === 'MethodDefinition') {
-          const key = method.key.type === 'Identifier' ? method.key.name : String(method.key);
-          const fn = createFunction(key, method.value.params.map(p => (p as AST.Identifier).name), method.value.body, env, false, false, false, false, undefined, true);
-          // Set 'super' in the method's closure so super.method() works
-          const superVal = classObj.properties.get('super')?.value;
-          if (superVal && typeof superVal === 'object' && superVal !== null) {
-            const superProto = constructorPrototype(superVal) ?? superVal;
-            fn.closure.setLocal('super', superProto);
-            fn.closure.setLocal('__superCtor', superVal);
-          }
-          if (key === 'constructor') {
+      for (const member of stmt.body.body) {
+        const key = member.computed || member.key.type !== 'Identifier'
+          ? toString(this.evalExpr(member.key, classEnv))
+          : member.key.name;
+        if (member.type === 'MethodDefinition') {
+          const fn = makeFunction(key, member.value.params, member.value.body, classEnv, !!member.value.async, false, !!member.value.generator, true);
+          if (member.kind === 'constructor') {
             hasConstructor = true;
             classObj.properties.set('constructor', { value: fn, writable: true, enumerable: true, configurable: true });
             classProto.properties.set('constructor', { value: fn, writable: true, enumerable: false, configurable: true });
-          } else if (method.static) {
-            classObj.properties.set(key, { value: fn, writable: true, enumerable: true, configurable: true });
-          } else {
-            classProto.properties.set(key, { value: fn, writable: true, enumerable: true, configurable: true });
+            continue;
           }
+          const target = member.static ? classObj : classProto;
+          if (member.kind === 'get' || member.kind === 'set') {
+            const existing = target.properties.get(key);
+            target.properties.set(key, {
+              value: undefined, writable: true, enumerable: false, configurable: true,
+              getter: member.kind === 'get' ? fn : existing?.getter,
+              setter: member.kind === 'set' ? fn : existing?.setter,
+            });
+          } else {
+            target.properties.set(key, { value: fn, writable: true, enumerable: false, configurable: true });
+          }
+        } else if (member.type === 'PropertyDefinition') {
+          ((member as { static?: boolean }).static ? staticFields : fields).push({ key, init: member.value as AST.Expression | null });
         }
       }
     }
+    (classObj as ClassWithFields).__fields = fields;
+    (classObj as ClassWithFields).__fieldEnv = classEnv;
 
     // Generate default constructor for derived classes without one
     if (!hasConstructor && stmt.superClass) {
@@ -585,7 +690,7 @@ export class Interpreter {
             optional: false,
           },
         }],
-      } as unknown as AST.BlockStatement, env, false, false, false, false, undefined, true);
+      } as unknown as AST.BlockStatement, classEnv, false, false, false, false, undefined, true);
       classObj.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: true, configurable: true });
       classProto.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: false, configurable: true });
     }
@@ -596,6 +701,20 @@ export class Interpreter {
     classObj.properties.set('prototype', { value: classProto, writable: false, enumerable: false, configurable: false });
 
     env.declare(className, classObj, 'var');
+    // Static fields run once, with `this` = the class, after the class exists (`static x = A.y`).
+    this.initFields({ __fields: staticFields, __fieldEnv: classEnv } as unknown as JSValue, classObj);
+  }
+
+  /** Initialize a class's instance fields on `instance` (`this` inside initializers is the instance). */
+  private initFields(cls: JSValue, instance: JSValue): void {
+    const c = cls as ClassWithFields | undefined;
+    if (!c?.__fields?.length || !instance || typeof instance !== 'object') return;
+    const fieldEnv = new Environment(c.__fieldEnv);
+    fieldEnv.markFunctionScope();
+    fieldEnv.setLocal('this', instance);
+    for (const f of c.__fields) {
+      (instance as JSObject).properties.set(f.key, { value: f.init ? this.evalExpr(f.init, fieldEnv) : undefined, writable: true, enumerable: true, configurable: true });
+    }
   }
 
   private execReturn(stmt: AST.ReturnStatement, env: Environment): ReturnSignal {
@@ -688,17 +807,7 @@ export class Interpreter {
     if (obj === null || obj === undefined) return undefined;
     // Enumerable string keys, own then inherited. It listed every key, so `for (k in arr)` gave
     // "length", "push", "pop"…
-    const keys: string[] = [];
-    if (typeof obj === 'string') for (let i = 0; i < obj.length; i++) keys.push(String(i));
-    const seen = new Set<string>();
-    for (let p: JSObject | null = typeof obj === 'object' ? obj as JSObject : null, d = 0; p && d < 64; p = p.prototype, d++) {
-      for (const [k, desc] of p.properties ?? []) {
-        if (seen.has(k)) continue;
-        seen.add(k);
-        if (desc.enumerable !== false && typeof k === 'string' && !k.startsWith('Symbol(')) keys.push(k);
-      }
-    }
-    for (const key of keys) {
+    for (const key of forInKeys(obj)) {
       const iterEnv = this.bindLoopTarget(stmt.left, key, env);
       const result = this.exec(stmt.body, iterEnv);
       if (isBreakSignal(result) && !result.label) return undefined;
@@ -743,6 +852,293 @@ export class Interpreter {
       }
     }
     return undefined;
+  }
+
+  // ── Resumable executor ────────────────────────────────────────────────────
+  // Async and generator bodies run as host generators so `await` / `yield` can suspend. Any node
+  // without an await/yield goes straight to the normal exec/evalExpr; only the path to a suspension
+  // point is walked here. (`await` used to unwind the stack and drop the rest of the function.)
+
+  private *evalR(expr: AST.Expression, env: Environment): Resumable<JSValue> {
+    if (!hasSuspend(expr)) return this.evalExpr(expr, env);
+    switch (expr.type) {
+      case 'AwaitExpression': {
+        const v = yield* this.evalR(expr.argument, env);
+        return yield { kind: 'await', value: v };
+      }
+      case 'YieldExpression': {
+        const v = expr.argument ? yield* this.evalR(expr.argument, env) : undefined;
+        if (expr.delegate) {
+          // ponytail: yield* forwards values only (not next(v)/throw/return); fine for spreading/iterating.
+          for (const item of iterateJS(v)) yield { kind: 'yield', value: item };
+          return undefined;
+        }
+        return yield { kind: 'yield', value: v };
+      }
+      case 'LogicalExpression': {
+        const l = yield* this.evalR(expr.left, env);
+        if (expr.operator === '&&' ? !toBoolean(l) : expr.operator === '||' ? toBoolean(l) : (l !== null && l !== undefined)) return l;
+        return yield* this.evalR(expr.right, env);
+      }
+      case 'ConditionalExpression':
+        return toBoolean(yield* this.evalR(expr.test, env)) ? yield* this.evalR(expr.consequent, env) : yield* this.evalR(expr.alternate, env);
+      case 'SequenceExpression': {
+        let last: JSValue;
+        for (const e of expr.expressions) last = yield* this.evalR(e, env);
+        return last;
+      }
+      default: {
+        // Evaluate operands in order up to the last one that suspends, then let the normal evaluator
+        // finish the expression with those operands replaced by their values.
+        const { clone, slots } = cloneWithSlots(expr);
+        let lastSuspending = -1;
+        slots.forEach((s, i) => { if (hasSuspend(s.node)) lastSuspending = i; });
+        for (let i = 0; i <= lastSuspending; i++) {
+          const s = slots[i]!;
+          const v = hasSuspend(s.node) ? yield* this.evalR(s.node as AST.Expression, env) : this.evalExpr(s.node as AST.Expression, env);
+          s.set(valueNode(v));
+        }
+        return this.evalExpr(clone, env);
+      }
+    }
+  }
+
+  private *execBlockR(body: AST.Statement[], env: Environment): Resumable<Completion> {
+    for (const stmt of body) if (stmt.type === 'FunctionDeclaration') this.execFuncDecl(stmt, env);
+    this.hoistLetConst(body, env);
+    let last: Completion = undefined;
+    for (const stmt of body) {
+      if (stmt.type === 'FunctionDeclaration') continue;
+      last = yield* this.execR(stmt, env);
+      if (last !== undefined && (isBreakSignal(last) || isContinueSignal(last) || isReturnSignal(last) || isThrowSignal(last))) return last;
+    }
+    return last;
+  }
+
+  private *execVarDeclR(stmt: AST.VariableDeclaration, env: Environment): Resumable<void> {
+    for (const decl of stmt.declarations) {
+      if ((stmt.kind === 'let' || stmt.kind === 'const') && decl.id.type === 'Identifier') env.declareTDZ(decl.id.name, stmt.kind);
+      const value = decl.init ? yield* this.evalR(decl.init, env) : undefined;
+      this.destructPattern(decl.id, value, env, stmt.kind);
+    }
+  }
+
+  /** One loop iteration's signal handling, shared by the resumable loops: 'break' | 'next' | a signal to return. */
+  private loopSignal(stmt: AST.Statement, result: Completion): 'exit' | 'next' | Completion {
+    if (isBreakSignal(result)) return result.label ? result : 'exit';
+    if (isContinueSignal(result)) return continuesHere(stmt, result) ? 'next' : result;
+    if (isReturnSignal(result) || isThrowSignal(result)) return result;
+    return 'next';
+  }
+
+  private *execR(stmt: AST.Statement, env: Environment): Resumable<Completion> {
+    if (!hasSuspend(stmt)) return this.exec(stmt, env);
+    this.checkTimeout();
+    switch (stmt.type) {
+      case 'BlockStatement': return yield* this.execBlockR(stmt.body, env);
+      case 'ExpressionStatement': return yield* this.evalR(stmt.expression, env);
+      case 'VariableDeclaration': yield* this.execVarDeclR(stmt, env); return undefined;
+      case 'ReturnStatement': return { type: 'return', value: stmt.argument ? yield* this.evalR(stmt.argument, env) : undefined } as ReturnSignal;
+      case 'ThrowStatement': return { type: 'throw', value: yield* this.evalR(stmt.argument, env) } as ThrowSignal;
+      case 'IfStatement':
+        if (toBoolean(yield* this.evalR(stmt.test, env))) return yield* this.execR(stmt.consequent, env);
+        return stmt.alternate ? yield* this.execR(stmt.alternate, env) : undefined;
+      case 'LabeledStatement': {
+        const body = stmt.body as AST.Statement & { __labels?: string[] };
+        body.__labels = [...((stmt as { __labels?: string[] }).__labels ?? []), stmt.label.name];
+        const result = yield* this.execR(stmt.body, env);
+        return isBreakSignal(result) && result.label === stmt.label.name ? undefined : result;
+      }
+      case 'WhileStatement':
+        while (toBoolean(yield* this.evalR(stmt.test, env))) {
+          const sig = this.loopSignal(stmt, yield* this.execR(stmt.body, env));
+          if (sig === 'exit') return undefined;
+          if (sig !== 'next') return sig;
+        }
+        return undefined;
+      case 'DoWhileStatement':
+        do {
+          const sig = this.loopSignal(stmt, yield* this.execR(stmt.body, env));
+          if (sig === 'exit') return undefined;
+          if (sig !== 'next') return sig;
+        } while (toBoolean(yield* this.evalR(stmt.test, env)));
+        return undefined;
+      case 'ForStatement': {
+        const loopEnv = new Environment(env);
+        if (stmt.init) {
+          if (stmt.init.type === 'VariableDeclaration') yield* this.execVarDeclR(stmt.init, loopEnv);
+          else yield* this.evalR(stmt.init, loopEnv);
+        }
+        const perIteration = stmt.init?.type === 'VariableDeclaration' && stmt.init.kind !== 'var'
+          ? stmt.init.declarations.flatMap((d) => (d.id.type === 'Identifier' ? [d.id.name] : []))
+          : [];
+        let iterEnv = loopEnv;
+        const nextIterEnv = () => {
+          const e = new Environment(env);
+          for (const n of perIteration) e.setLocal(n, iterEnv.get(n), (stmt.init as AST.VariableDeclaration).kind as 'let' | 'const');
+          return e;
+        };
+        if (perIteration.length) iterEnv = nextIterEnv();
+        while (true) {
+          if (stmt.test && !toBoolean(yield* this.evalR(stmt.test, iterEnv))) break;
+          const sig = this.loopSignal(stmt, yield* this.execR(stmt.body, iterEnv));
+          if (sig === 'exit') return undefined;
+          if (sig !== 'next') return sig;
+          if (perIteration.length) iterEnv = nextIterEnv();
+          if (stmt.update) yield* this.evalR(stmt.update, iterEnv);
+        }
+        return undefined;
+      }
+      case 'ForOfStatement':
+      case 'ForInStatement': {
+        const right = yield* this.evalR(stmt.right, env);
+        const values = stmt.type === 'ForOfStatement' ? iterateJS(right) : forInKeys(right);
+        for (const v of values) {
+          const iterEnv = this.bindLoopTarget(stmt.left, v, env);
+          const sig = this.loopSignal(stmt, yield* this.execR(stmt.body, iterEnv));
+          if (sig === 'exit') return undefined;
+          if (sig !== 'next') return sig;
+        }
+        return undefined;
+      }
+      case 'SwitchStatement': {
+        const disc = yield* this.evalR(stmt.discriminant, env);
+        let matched = false;
+        for (const c of stmt.cases) {
+          if (!matched && c.test) {
+            const caseVal = yield* this.evalR(c.test, env);
+            if (disc === caseVal || (typeof disc === 'number' && typeof caseVal === 'number' && Object.is(disc, caseVal))) matched = true;
+          }
+          if (matched || !c.test) {
+            if (c.test) matched = true;
+            for (const s of c.consequent) {
+              const result = yield* this.execR(s, env);
+              if (isBreakSignal(result) && !result.label) return undefined;
+              if (isBreakSignal(result) || isContinueSignal(result) || isReturnSignal(result) || isThrowSignal(result)) return result;
+            }
+          }
+        }
+        return undefined;
+      }
+      case 'TryStatement': return yield* this.execTryR(stmt, env);
+      default: return this.exec(stmt, env);
+    }
+  }
+
+  /** execTry, resumable: an await inside try/catch/finally; a rejected await lands in the catch. */
+  private *execTryR(stmt: AST.TryStatement, env: Environment): Resumable<Completion> {
+    let pending: Completion = undefined;
+    let rethrow: { error: unknown } | undefined;
+    const runCatch = function* (this: Interpreter, value: JSValue): Resumable<void> {
+      const catchEnv = new Environment(env);
+      if (stmt.handler!.param) catchEnv.setLocal(stmt.handler!.param.name, value);
+      try {
+        pending = yield* this.execBlockR(stmt.handler!.body.body, catchEnv);
+      } catch (fromCatch) {
+        rethrow = { error: fromCatch };
+      }
+    }.bind(this);
+    try {
+      const result = yield* this.execBlockR(stmt.block.body, env);
+      if (isThrowSignal(result) && stmt.handler) yield* runCatch(result.value);
+      else pending = result;
+    } catch (caught) {
+      const e = caught instanceof Error && !(caught instanceof JSError) && stmt.handler ? new JSError(this.hostErrorToJS(caught, env)) : caught;
+      if (e instanceof JSError && stmt.handler) yield* runCatch(e.value);
+      else rethrow = { error: e };
+    }
+    if (stmt.finalizer) {
+      const fin = yield* this.execBlockR(stmt.finalizer.body, env);
+      if (isReturnSignal(fin) || isBreakSignal(fin) || isContinueSignal(fin) || isThrowSignal(fin)) { rethrow = undefined; pending = fin; }
+    }
+    if (rethrow) throw rethrow.error;
+    return isReturnSignal(pending) || isThrowSignal(pending) || isBreakSignal(pending) || isContinueSignal(pending) ? pending : undefined;
+  }
+
+  /** The whole body of an async/generator function as a resumable run; returns its result value. */
+  private *runBodyR(fn: JSFunction, callEnv: Environment): Resumable<JSValue> {
+    const body = fn.body as AST.BlockStatement | AST.Expression;
+    if (body.type !== 'BlockStatement') return yield* this.evalR(body as AST.Expression, callEnv);
+    const result = yield* this.execBlockR(body.body as AST.Statement[], callEnv);
+    if (isReturnSignal(result)) return result.value;
+    if (isThrowSignal(result)) throw new JSError(result.value);
+    return undefined;
+  }
+
+  /** Call an async function: run until an await, resume when it settles; resolves with the return value. */
+  private runAsyncFunction(fn: JSFunction, callEnv: Environment): JSValue {
+    const loop = this.eventLoop!;
+    const promise = createPromiseObj(loop);
+    const gen = this.runBodyR(fn, callEnv);
+    const step = (input: JSValue, isThrow: boolean, resumed: boolean): void => {
+      // A resumption runs later, from the event loop: give it a fresh time budget.
+      if (resumed) { this.executionStartTime = Date.now(); this.opCount = 0; }
+      let r: IteratorResult<Suspend, JSValue>;
+      try {
+        r = isThrow ? gen.throw(new JSError(input)) : gen.next(input);
+      } catch (err) {
+        rejectPromise(promise, err instanceof JSError ? err.value : err instanceof Error ? this.hostErrorToJS(err, callEnv) : err as JSValue);
+        return;
+      }
+      if (r.done) { resolvePromise(promise, r.value, loop); return; }
+      this.awaitValue(r.value.value, (v) => step(v, false, true), (e) => step(e, true, true));
+    };
+    step(undefined, false, false);
+    return promise;
+  }
+
+  /** Wait for a value as `await` does: promises and thenables settle, anything else on the next microtask. */
+  private awaitValue(value: JSValue, onFulfilled: (v: JSValue) => void, onRejected: (e: JSValue) => void): void {
+    const loop = this.eventLoop!;
+    if (isPromiseObject(value) && !isPromisePending(value)) {
+      const result = getPromiseResult(value);
+      const rejected = isPromiseRejected(value);
+      loop.enqueueMicrotask(() => (rejected ? onRejected(result) : onFulfilled(result)));
+      return;
+    }
+    const then = value && typeof value === 'object' ? (value as JSObject).properties?.get('then')?.value : undefined;
+    if (then && typeof then === 'object' && 'closure' in then) {
+      try {
+        callJSFunction(then as JSFunction, value, [
+          createNativeFunction('resume', (_t, a) => { onFulfilled(a[0]); return undefined; }),
+          createNativeFunction('fail', (_t, a) => { onRejected(a[0]); return undefined; }),
+        ]);
+      } catch (err) {
+        loop.enqueueMicrotask(() => onRejected(err instanceof JSError ? err.value : String(err)));
+      }
+      return;
+    }
+    loop.enqueueMicrotask(() => onFulfilled(value));
+  }
+
+  /** Call a generator function: a generator object whose next() runs the body to the next yield. */
+  private makeGenerator(fn: JSFunction, callEnv: Environment): JSValue {
+    const gen = this.runBodyR(fn, callEnv);
+    let finished = false;
+    const result = (value: JSValue, done: boolean): JSObject => {
+      const r = createObject(null);
+      r.properties.set('value', { value, writable: true, enumerable: true, configurable: true });
+      r.properties.set('done', { value: done, writable: true, enumerable: true, configurable: true });
+      return r;
+    };
+    const resume = (action: () => IteratorResult<Suspend, JSValue>): JSObject => {
+      if (finished) return result(undefined, true);
+      let r: IteratorResult<Suspend, JSValue>;
+      try { r = action(); } catch (err) { finished = true; throw err; }
+      if (r.done) { finished = true; return result(r.value, true); }
+      // ponytail: an `await` inside a generator (async generators) is treated as a yield.
+      return result(r.value.value, false);
+    };
+    const genObj = createObject(null);
+    const hidden = (name: string, nfn: NativeFunction) =>
+      genObj.properties.set(name, { value: createNativeFunction(name, nfn), writable: true, enumerable: false, configurable: true });
+    hidden('next', (_t, a) => resume(() => gen.next(a[0])));
+    // ponytail: return() ends the generator without running its pending finally blocks.
+    hidden('return', (_t, a) => { finished = true; gen.return(a[0]); return result(a[0], true); });
+    hidden('throw', (_t, a) => resume(() => gen.throw(new JSError(a[0]))));
+    hidden(ITERATOR_KEY, () => genObj);
+    hidden('toString', () => '[object Generator]');
+    return genObj;
   }
 
   /** A host Error as the page sees it: built with the page's own constructor of that name when there is one. */
@@ -871,6 +1267,7 @@ export class Interpreter {
       case 'MemberExpression': return this.evalMember(expr, env);
       case 'ArrayExpression': return this.evalArray(expr, env);
       case 'ObjectExpression': return this.evalObject(expr, env);
+      case '__NovaValue' as AST.Expression['type']: return (expr as unknown as { value: JSValue }).value;
       case 'FunctionExpression': return this.evalFunctionExpr(expr, env);
       case 'ArrowFunctionExpression': return this.evalArrowFunction(expr, env);
       case 'SequenceExpression': return this.evalSequence(expr, env);
@@ -1069,8 +1466,27 @@ export class Interpreter {
         : (expr.left.property as AST.Identifier).name;
       if (expr.operator === '=') {
         const existingDesc = obj.properties.get(key);
-        if (existingDesc?.setter) {
-          callJSFunction(existingDesc.setter, obj, [right]);
+        // A setter may be inherited (class `set x(v)`, defineProperty on a prototype); it used to
+        // be skipped and shadowed by a new own property.
+        let inheritedSetter: JSFunction | undefined;
+        if (!existingDesc) {
+          for (let p = obj.prototype, d = 0; p && d < 64; p = p.prototype, d++) {
+            const pd = p.properties?.get(key);
+            if (pd) { if (pd.setter) inheritedSetter = pd.setter; break; }
+          }
+        }
+        if (existingDesc?.setter || inheritedSetter) {
+          callJSFunction((existingDesc?.setter ?? inheritedSetter)!, obj, [right]);
+        } else if (existingDesc?.getter) {
+          // getter without a setter: the assignment is ignored (sloppy mode)
+        } else if (existingDesc && existingDesc.writable === false) {
+          // read-only property: ignored (sloppy mode)
+        } else if (obj.type === 'array' && key === 'length') {
+          // arr.length = n truncates (it only changed the number; `arr.length = 0` left the items)
+          const n = toNumber(right);
+          const old = Number(existingDesc?.value ?? 0);
+          for (let i = n; i < old; i++) obj.properties.delete(String(i));
+          obj.properties.set('length', { ...existingDesc!, value: n });
         } else {
           // TypedArray: delegate indexed write to __nativeView
           const typeOverride = (obj as any).__type_override;
@@ -1086,7 +1502,8 @@ export class Interpreter {
               }
             }
           }
-          obj.properties.set(key, { value: right, writable: true, enumerable: true, configurable: true });
+          // Keep an existing property's attributes (non-enumerable stays non-enumerable).
+          obj.properties.set(key, existingDesc ? { ...existingDesc, value: right } : { value: right, writable: true, enumerable: true, configurable: true });
         }
         return right;
       }
@@ -1169,12 +1586,17 @@ export class Interpreter {
           pEnv.markFunctionScope();
           pEnv.setLocal('this', thisObj ?? createObject(null));
           pEnv.setLocal('arguments', createArray(args));
-          pfn.params.forEach((p, i) => pEnv.setLocal(p, args[i]));
+          pEnv.setLocal('__thisClass', parentCtor);
+          this.bindParams(pfn, pEnv, args);
+          if (!parentCtor.properties.get('super')) this.initFields(parentCtor, thisObj);
           const pResult = this.execBlock((pfn.body as AST.BlockStatement).body as AST.Statement[], pEnv);
           if (isReturnSignal(pResult) && typeof pResult.value === 'object' && pResult.value !== null) {
             return pResult.value;
           }
-        } else if (parentCtor.type !== 'class' && thisObj && typeof thisObj === 'object') {
+        } else if (parentCtor.type === 'class') {
+          // A base class without a constructor still has fields.
+          if (!parentCtor.properties.get('super')) this.initFields(parentCtor, thisObj);
+        } else if (thisObj && typeof thisObj === 'object') {
           // A built-in or ES5-function parent (class X extends Error / Map / EventTarget / F).
           // super() used to do nothing for these: `message`, a Map's storage etc. never reached
           // `this`. Run the parent, then let `this` adopt what it built (own properties and the
@@ -1195,6 +1617,8 @@ export class Interpreter {
             }
           }
         }
+        // This class's own fields are initialized when super() returns.
+        this.initFields(env.get('__thisClass'), thisObj);
         return thisObj ?? createObject(null);
       }
       throw new TypeError('super() called outside of a derived class constructor');
@@ -1248,43 +1672,7 @@ export class Interpreter {
           throw new JSError(String(err));
         }
       }
-      if (fn.type === 'closure' && !fn.isNative) {
-        const callEnv = new Environment(fn.closure);
-        callEnv.markFunctionScope();
-        callEnv.setLocal('arguments', createArray(args));
-        fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
-        if (fn.isArrow) {
-          callEnv.setLocal('this', fn.closure.get('this') ?? createObject(null));
-        } else if (thisObj === undefined && !fn.isStrict) {
-          callEnv.setLocal('this', this.globalEnv.get('this') ?? createObject(null));
-        } else {
-          callEnv.setLocal('this', thisObj);
-        }
-        const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
-        let result: JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal;
-        try {
-          if (bodyNode.type === 'BlockStatement') {
-            result = this.execBlock(bodyNode.body as AST.Statement[], callEnv);
-          } else {
-            result = this.evalExpr(bodyNode as AST.Expression, callEnv);
-          }
-        } catch (err) {
-          if (fn.async && this.eventLoop && isAwaitSignal(err)) {
-            return this.handleAsyncAwait(err as AwaitSignal, fn, thisObj, args);
-          }
-          throw err;
-        }
-        if (fn.async && this.eventLoop && isAwaitSignal(result)) {
-          return this.handleAsyncAwait(result as AwaitSignal, fn, thisObj, args);
-        }
-        if (isReturnSignal(result)) {
-          if (fn.async && this.eventLoop) return wrapAsyncResult(result.value, this.eventLoop);
-          return result.value;
-        }
-        if (isThrowSignal(result)) throw new JSError(result.value);
-        if (fn.async && this.eventLoop) return wrapAsyncResult(result as JSValue, this.eventLoop);
-        return result as JSValue;
-      }
+      if (fn.type === 'closure' && !fn.isNative) return this.invokeClosure(fn, thisObj, args);
       // Object-as-function
       const callFn = (fn as unknown as JSObject).properties.get('call')?.value;
       if (typeof callFn === 'object' && callFn !== null && (callFn as JSFunction).type === 'closure') {
@@ -1322,6 +1710,7 @@ export class Interpreter {
 
       const superClass = classObj.properties?.get('super')?.value;
       const initFn = classObj.properties?.get('constructor');
+      if (!superClass) this.initFields(classObj, instance);
 
       if (initFn?.value && typeof initFn.value === 'object' && 'type' in initFn.value && (initFn.value as JSFunction).type === 'closure') {
         const fn = initFn.value as JSFunction;
@@ -1329,6 +1718,7 @@ export class Interpreter {
         callEnv.markFunctionScope();
         callEnv.setLocal('this', instance);
         callEnv.setLocal('arguments', createArray(args));
+        callEnv.setLocal('__thisClass', classObj);
 
         if (superClass && typeof superClass === 'object' && superClass !== null) {
           // Set super to the parent prototype for super.x / super[expr] member access
@@ -1339,7 +1729,7 @@ export class Interpreter {
           callEnv.setLocal('__superCtor', superClass);
         }
 
-        fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+        this.bindParams(fn, callEnv, args);
         const result = this.execBlock((fn.body as AST.BlockStatement).body as AST.Statement[], callEnv);
         if (isReturnSignal(result) && typeof result.value === 'object' && result.value !== null) {
           return result.value;
@@ -1375,7 +1765,7 @@ export class Interpreter {
       callEnv.markFunctionScope();
       callEnv.setLocal('this', instance);
       callEnv.setLocal('arguments', createArray(args));
-      fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));
+      this.bindParams(fn, callEnv, args);
       const bodyNode = fn.body as AST.BlockStatement | AST.Expression;
       if (bodyNode.type === 'BlockStatement') {
         const result = this.execBlock(bodyNode.body as AST.Statement[], callEnv);
@@ -1601,12 +1991,12 @@ export class Interpreter {
   }
 
   private evalFunctionExpr(expr: AST.FunctionExpression, env: Environment): JSValue {
-    return createFunction(expr.id?.name ?? 'anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, false, expr.generator, false, undefined, expr.strictMode);
+    return makeFunction(expr.id?.name ?? 'anonymous', expr.params, expr.body, env, expr.async, false, expr.generator, expr.strictMode);
   }
 
   private evalArrowFunction(expr: AST.ArrowFunctionExpression, env: Environment): JSValue {
     const strict = expr.body.type === 'BlockStatement' ? this.hasStrictDirective(expr.body) : false;
-    return createFunction('anonymous', expr.params.map(p => (p as AST.Identifier).name), expr.body, env, expr.async, true, false, false, undefined, strict);
+    return makeFunction('anonymous', expr.params, expr.body, env, expr.async, true, false, strict);
   }
 
   private evalSequence(expr: AST.SequenceExpression, env: Environment): JSValue {

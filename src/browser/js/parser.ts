@@ -37,14 +37,10 @@ export class Parser {
     if (this.is(TokenType.Async) && this.peek(1).type !== TokenType.Function) {
       const tok = this.peek();
       this.advance(); // consume 'async'
-      const params: AST.Identifier[] = [];
+      const params: AST.ArrowFunctionExpression['params'] = [];
       if (this.is(TokenType.LParen)) {
         this.advance();
-        while (!this.is(TokenType.RParen) && !this.is(TokenType.EOF)) {
-          if (this.is(TokenType.Comma)) { this.advance(); continue; }
-          params.push({ type: 'Identifier', name: this.peek().value });
-          this.advance();
-        }
+        params.push(...this.parseParams()); // patterns and defaults, as for any function
         this.expect(TokenType.RParen);
       } else if (this.is(TokenType.Identifier)) {
         params.push({ type: 'Identifier', name: this.peek().value });
@@ -89,6 +85,21 @@ export class Parser {
     if (left.type === 'Identifier') return true;
     if (left.type === 'SequenceExpression') return left.expressions.every(e => e.type === 'Identifier');
     return false;
+  }
+
+  /** `=> body` after an already-parsed parameter list. */
+  private parseArrowBody(params: AST.ArrowFunctionExpression['params'], tok: Token, async = false): AST.ArrowFunctionExpression {
+    this.expect(TokenType.Arrow);
+    let body: AST.BlockStatement | AST.Expression;
+    if (this.is(TokenType.LBrace)) {
+      const strict = this.lookaheadStrictDirective();
+      this.strictStack.push(strict);
+      body = this.parseBlock();
+      this.strictStack.pop();
+    } else {
+      body = this.parseAssignExpr();
+    }
+    return { type: 'ArrowFunctionExpression', params, body, async, expression: !(body.type === 'BlockStatement'), loc: { line: tok.line, column: tok.column } };
   }
 
   private parseArrowFunctionFromParams(left: AST.Expression): AST.ArrowFunctionExpression {
@@ -174,6 +185,12 @@ export class Parser {
 
       case TokenType.Function:
         return this.parseFunctionExpression();
+
+      // `async function` in expression position (`(async function(){ … })()`): it failed to parse.
+      case TokenType.Async:
+        if (this.peek(1).type === TokenType.Function) return this.parseFunctionExpression();
+        this.advance();
+        return { type: 'Identifier', name: tok.value, loc: { line: tok.line, column: tok.column } };
 
       case TokenType.LParen:
         return this.parseParenExpression();
@@ -489,8 +506,13 @@ export class Parser {
     // used to fail with "Expected LBrace").
     const next = this.peek(1)?.type;
     const accessorFollows = next !== TokenType.Colon && next !== TokenType.LParen && next !== TokenType.Comma && next !== TokenType.RBrace;
-    if (this.is(TokenType.Get) && accessorFollows) { this.advance(); kind = 'get'; }
-    else if (this.is(TokenType.Set) && accessorFollows) { this.advance(); kind = 'set'; }
+    // `async m() {}` / `*g() {}` / `async *g() {}` methods (read as properties named "async" / "*").
+    let isAsync = false;
+    let isGenerator = false;
+    if (this.is(TokenType.Async) && accessorFollows) { this.advance(); isAsync = true; }
+    if (this.is(TokenType.Star)) { this.advance(); isGenerator = true; }
+    if (!isAsync && !isGenerator && this.is(TokenType.Get) && accessorFollows) { this.advance(); kind = 'get'; }
+    else if (!isAsync && !isGenerator && this.is(TokenType.Set) && accessorFollows) { this.advance(); kind = 'set'; }
 
     const key = this.parsePropertyKey();
     const computed = this.peek(-1)?.type === TokenType.RBracket;
@@ -505,7 +527,7 @@ export class Parser {
       const body = this.parseBlock();
       return {
         type: 'PropertyDefinition', key, value: {
-          type: 'FunctionExpression', id: null, params, body, async: false, generator: false,
+          type: 'FunctionExpression', id: null, params, body, async: isAsync, generator: isGenerator,
         },
         kind, computed, shorthand: false, method: isMethod,
       };
@@ -564,8 +586,42 @@ export class Parser {
     return { type: 'FunctionExpression', id, params, body, async, generator, strictMode: strict, loc: { line: tok.line, column: tok.column } };
   }
 
+  /**
+   * Is the `(` at the current token the start of an arrow parameter list, `( … ) =>`? One scan
+   * to the matching `)`, recording the matches of the parens nested inside, so nested parens are
+   * not rescanned. Stops at a template with substitutions (the parser lexes those itself).
+   */
+  private parenMatch = new Map<number, number>();
+  private isArrowParamsAhead(): boolean {
+    const start = this.pos;
+    let close = this.parenMatch.get(start);
+    if (close === undefined) {
+      const stack: number[] = [];
+      for (let i = 0; ; i++) {
+        const t = this.peek(i).type;
+        if (t === TokenType.EOF || t === TokenType.TemplateHead) return false;
+        if (t === TokenType.LParen || t === TokenType.LBracket || t === TokenType.LBrace) stack.push(start + i);
+        else if (t === TokenType.RParen || t === TokenType.RBracket || t === TokenType.RBrace) {
+          const open = stack.pop();
+          if (open === undefined) return false;
+          this.parenMatch.set(open, start + i);
+          if (stack.length === 0) { close = start + i; break; }
+        }
+      }
+    }
+    return this.peek(close - start + 1).type === TokenType.Arrow;
+  }
+
   private parseParenExpression(): AST.Expression {
     const openTok = this.peek();
+    // Arrow params with patterns, defaults or rest (`([a, b]) =>`, `(x = 1) =>`, `(...xs) =>`): parse them
+    // as parameters. Re-reading a parenthesised expression as params only handled plain names.
+    if (this.isArrowParamsAhead()) {
+      this.advance(); // (
+      const params = this.parseParams();
+      this.expect(TokenType.RParen);
+      return this.parseArrowBody(params, openTok);
+    }
     this.advance(); // (
     // Handle () => ... (empty arrow params)
     if (this.is(TokenType.RParen) && this.peek(1).type === TokenType.Arrow) {
@@ -729,9 +785,15 @@ export class Parser {
         continue;
       }
       if (this.is(TokenType.LBracket)) {
-        const key = this.parseExpression();
+        this.advance(); // [ — the key expression, not an array literal
+        const key = this.parseAssignExpr();
+        this.expect(TokenType.RBracket);
         this.expect(TokenType.Colon);
-        const value = this.parseBindingName();
+        let value: AST.Identifier | AST.AssignmentPattern | AST.ArrayPattern | AST.ObjectPattern | AST.RestElement = this.parseBindingName();
+        if (this.is(TokenType.Equal)) {
+          this.advance();
+          value = { type: 'AssignmentPattern', left: value as AST.Identifier, right: this.parseExpression(2) };
+        }
         properties.push({ type: 'Property', key, value: value as any, shorthand: false, computed: true, loc: { line: tok.line, column: tok.column } });
         if (this.is(TokenType.Comma)) this.advance();
         continue;
@@ -768,19 +830,18 @@ export class Parser {
 
   /** Parse a pattern — identifier with optional default value, or rest element. Used for function params where '=' is a default value. */
   private parsePattern(): AST.Identifier | AST.AssignmentPattern | AST.RestElement {
+    // Destructured params (`function f({ a }, [b])`) and defaults. It read one token as a name, and a
+    // default swallowed the commas after it (`f(a = 1, b)` lost b).
     if (this.is(TokenType.Ellipsis)) {
       this.advance();
-      return { type: 'RestElement', argument: this.parsePattern() as AST.Identifier };
+      return { type: 'RestElement', argument: this.parseBindingName() as AST.Identifier };
     }
-    const tok = this.peek();
-    this.advance();
-    const id: AST.Identifier = { type: 'Identifier', name: tok.value };
+    const target = this.parseBindingName();
     if (this.is(TokenType.Equal)) {
       this.advance();
-      const right = this.parseExpression();
-      return { type: 'AssignmentPattern', left: id, right };
+      return { type: 'AssignmentPattern', left: target as AST.Identifier, right: this.parseAssignExpr() };
     }
-    return id;
+    return target as AST.Identifier;
   }
 
   private parseFunctionDeclaration(isAsync = false): AST.FunctionDeclaration {
@@ -819,45 +880,56 @@ export class Parser {
     return { type: 'ClassDeclaration', id, superClass, body, loc: { line: tok.line, column: tok.column } };
   }
 
+  /** Does a member name follow at `offset` (so the token before it is a modifier, not the name)? */
+  private memberNameFollows(offset = 1): boolean {
+    const t = this.peek(offset).type;
+    return t !== TokenType.LParen && t !== TokenType.Equal && t !== TokenType.Semicolon && t !== TokenType.RBrace
+      && t !== TokenType.Comma && t !== TokenType.Colon && t !== TokenType.EOF;
+  }
+
+  /** `async` / `*` / `get` / `set` before a method name. They were read as members named "async", "get"… */
+  private parseMethodModifiers(): { async: boolean; generator: boolean; kind: 'method' | 'get' | 'set' } {
+    let async = false;
+    let generator = false;
+    let kind: 'method' | 'get' | 'set' = 'method';
+    if (this.is(TokenType.Async) && this.memberNameFollows()) { this.advance(); async = true; }
+    if (this.is(TokenType.Star)) { this.advance(); generator = true; }
+    if (!async && !generator && (this.is(TokenType.Get) || this.is(TokenType.Set)) && this.memberNameFollows()) {
+      kind = this.is(TokenType.Get) ? 'get' : 'set';
+      this.advance();
+    }
+    return { async, generator, kind };
+  }
+
   private parseClassBody(): AST.ClassBody {
     this.expect(TokenType.LBrace);
     const body: (AST.PropertyDefinition | AST.MethodDefinition)[] = [];
     while (!this.is(TokenType.RBrace) && !this.is(TokenType.EOF)) {
-      if (this.is(TokenType.Static)) {
+      if (this.is(TokenType.Semicolon)) { this.advance(); continue; }
+      let isStatic = false;
+      if (this.is(TokenType.Static) && this.memberNameFollows()) { this.advance(); isStatic = true; }
+      const mods = this.parseMethodModifiers();
+      const computed = this.is(TokenType.LBracket);
+      const key = this.parsePropertyKey();
+      if (this.is(TokenType.LParen)) {
         this.advance();
-        const key = this.parsePropertyKey();
-        this.expect(TokenType.LParen);
         const params = this.parseParams();
         this.expect(TokenType.RParen);
         this.strictStack.push(true);
         const funcBody = this.parseBlock();
         this.strictStack.pop();
+        const isCtor = !isStatic && !computed && key.type === 'Identifier' && key.name === 'constructor';
         body.push({
           type: 'MethodDefinition', key,
-          value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
-          kind: 'method', computed: false, static: true,
-        });
+          value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: mods.async, generator: mods.generator, strictMode: true },
+          kind: isCtor ? 'constructor' : mods.kind, computed, static: isStatic,
+        } as AST.MethodDefinition);
       } else {
-        const key = this.parsePropertyKey();
-        if (this.is(TokenType.LParen)) {
-          this.advance();
-          const params = this.parseParams();
-          this.expect(TokenType.RParen);
-          this.strictStack.push(true);
-          const funcBody = this.parseBlock();
-          this.strictStack.pop();
-          const kind = key.type === 'Identifier' && key.name === 'constructor' ? 'constructor' : 'method';
-          body.push({
-            type: 'MethodDefinition', key,
-            value: { type: 'FunctionExpression', id: null, params, body: funcBody, async: false, generator: false, strictMode: true },
-            kind, computed: false, static: false,
-          });
-        } else {
-          let init: AST.Expression | null = null;
-          if (this.is(TokenType.Equal)) { this.advance(); init = this.parseExpression(); }
-          if (this.is(TokenType.Semicolon)) this.advance();
-          body.push({ type: 'PropertyDefinition', key, value: init, kind: 'init', computed: false, shorthand: false, method: false });
-        }
+        // Class field (`x = 1;`, `static y;`); the initializer runs per instance (or once, static).
+        let init: AST.Expression | null = null;
+        if (this.is(TokenType.Equal)) { this.advance(); init = this.parseAssignExpr(); }
+        if (this.is(TokenType.Semicolon)) this.advance();
+        body.push({ type: 'PropertyDefinition', key, value: init, kind: 'init', computed, shorthand: false, method: false, static: isStatic } as AST.PropertyDefinition);
       }
     }
     this.expect(TokenType.RBrace);
