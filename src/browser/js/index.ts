@@ -3,13 +3,13 @@ import type { IDomTree, DomElement } from '../rendering/dom-tree';
 import type { INavigationController } from '../navigation/navigation-controller';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
-import { Interpreter } from './interpreter';
+import { Interpreter, stringMethods, functionMethod } from './interpreter';
 import { createDocumentBinding, wrapElement } from './dom-bindings';
 import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta } from './values';
+import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, functionPrototypeObject, OBJECT_PROTOTYPE, ARRAY_PROTOTYPE } from './values';
 import type { JSValue, JSObject, JSObjectWithMeta } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
 import {
@@ -462,18 +462,91 @@ export function createGlobalEnv(
     }),
     writable: true, enumerable: false, configurable: true,
   });
+  // Object statics libraries feature-test for; they were missing, so `Object.getPrototypeOf(x)` was
+  // `undefined(x)`, i.e. silently undefined.
+  {
+    const method = (name: string, fn: NativeFunction) =>
+      objectCtorObj.properties.set(name, { value: createNativeFunction(name, fn), writable: true, enumerable: false, configurable: true });
+    const asObj = (v: JSValue): JSObject | null => (v && typeof v === 'object' ? v as JSObject : null);
+    method('getPrototypeOf', (_t, a) => {
+      const o = asObj(a[0]);
+      if (!o || o === OBJECT_PROTOTYPE) return null;
+      return o.prototype ?? OBJECT_PROTOTYPE;
+    });
+    method('setPrototypeOf', (_t, a) => {
+      const o = asObj(a[0]);
+      if (o) o.prototype = asObj(a[1]) === OBJECT_PROTOTYPE ? null : asObj(a[1]);
+      return a[0];
+    });
+    method('getOwnPropertyNames', (_t, a) => {
+      const o = asObj(a[0]);
+      return createArray(o?.properties ? [...o.properties.keys()].map((k) => k as JSValue) : []);
+    });
+    method('getOwnPropertySymbols', () => createArray([]));
+    method('hasOwn', (_t, a) => !!asObj(a[0])?.properties?.has(toString(a[1])));
+    method('is', (_t, a) => Object.is(a[0], a[1]));
+    method('isExtensible', (_t, a) => !!asObj(a[0]) && !(a[0] as JSObject & { __frozen?: boolean }).__frozen);
+    method('isFrozen', (_t, a) => !asObj(a[0]) || !!(a[0] as JSObject & { __frozen?: boolean }).__frozen);
+    method('isSealed', (_t, a) => !asObj(a[0]) || !!(a[0] as JSObject & { __frozen?: boolean }).__frozen);
+    method('preventExtensions', (_t, a) => a[0]);
+    method('fromEntries', (_t, a) => {
+      const out = createObject(null);
+      const list = asObj(a[0]);
+      const len = Number(list?.properties?.get('length')?.value ?? 0);
+      for (let i = 0; i < len; i++) {
+        const pair = asObj(list!.properties.get(String(i))?.value);
+        if (!pair) continue;
+        out.properties.set(toString(pair.properties.get('0')?.value), { value: pair.properties.get('1')?.value, writable: true, enumerable: true, configurable: true });
+      }
+      return out;
+    });
+    const defineProperty = objectCtorObj.properties.get('defineProperty')?.value as JSFunction | undefined;
+    method('defineProperties', (_t, a) => {
+      const props = asObj(a[1]);
+      if (defineProperty && props) {
+        for (const [k, d] of props.properties) if (d.enumerable) callJSFunction(defineProperty, undefined, [a[0], k, d.value]);
+      }
+      return a[0];
+    });
+  }
+  objectCtorObj.properties.set('prototype', { value: OBJECT_PROTOTYPE, writable: false, enumerable: false, configurable: false });
+  OBJECT_PROTOTYPE.properties.set('constructor', { value: objectCtorObj, writable: true, enumerable: false, configurable: true });
   env.setLocal('Object', objectCtorObj);
 
-  // Error constructors
-  for (const name of ['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError']) {
-    env.setLocal(name, createNativeFunction(name, (_this, args) => {
-      const msg = args.length > 0 ? toString(args[0]) : '';
-      const err = createObject(null);
-      err.properties.set('message', { value: msg, writable: true, enumerable: true, configurable: true });
-      err.properties.set('name', { value: name, writable: true, enumerable: true, configurable: true });
-      err.properties.set('stack', { value: '', writable: true, enumerable: true, configurable: true });
+  // Error constructors. Errors are now linked to Error.prototype (TypeError.prototype → Error.prototype),
+  // so `e instanceof Error` holds and String(e) / e.toString() give "Name: message"; they used to be
+  // bare objects.
+  const hidden = (value: JSValue) => ({ value, writable: true, enumerable: false, configurable: true });
+  let errorProto: JSObject | null = null;
+  for (const name of ['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'EvalError', 'URIError']) {
+    const ctor: JSFunction = createNativeFunction(name, (_this, args) => {
+      const msg = args.length > 0 && args[0] !== undefined ? toString(args[0]) : '';
+      const err = createObject(functionPrototypeObject(ctor));
+      err.properties.set('message', hidden(msg));
+      err.properties.set('stack', hidden(`${name}: ${msg}`));
+      const opts = args[1];
+      if (opts && typeof opts === 'object') {
+        const cause = (opts as JSObject).properties?.get('cause');
+        if (cause) err.properties.set('cause', hidden(cause.value));
+      }
       return err;
-    }));
+    });
+    const proto = functionPrototypeObject(ctor);
+    proto.properties.set('name', hidden(name));
+    proto.properties.set('message', hidden(''));
+    if (name === 'Error') {
+      errorProto = proto;
+      proto.properties.set('toString', hidden(createNativeFunction('toString', (t) => {
+        const o = t as JSObject;
+        const read = (k: string): JSValue => { for (let p: JSObject | null = o, d = 0; p && d < 32; p = p.prototype, d++) { const v = p.properties?.get(k); if (v) return v.value; } return undefined; };
+        const n = read('name'); const m = read('message');
+        const ns = n === undefined ? 'Error' : toString(n); const ms = m === undefined ? '' : toString(m);
+        return ns && ms ? `${ns}: ${ms}` : ns || ms;
+      })));
+    } else if (errorProto) {
+      proto.prototype = errorProto;
+    }
+    env.setLocal(name, ctor);
   }
 
   // Promise
@@ -1253,7 +1326,16 @@ export function createGlobalEnv(
     const arrCtorObj = createObject(null);
     arrCtorObj.type = 'function';
     arrCtorObj.callable = true;
-    arrCtorObj.nativeFn = (_this: unknown, args: unknown[]) => createArray(args as JSValue[]);
+    // Array(n) with one number is an empty array of length n, not [n]; Google pads generated
+    // scripts with `Array(k).join("\n")`, which came out as the number k and broke the script.
+    arrCtorObj.nativeFn = (_this: unknown, args: unknown[]) => {
+      if (args.length !== 1 || typeof args[0] !== 'number') return createArray(args as JSValue[]);
+      const n = args[0];
+      if (!Number.isInteger(n) || n < 0 || n > 0xffffffff) throw new RangeError('Invalid array length');
+      const arr = createArray([]);
+      arr.properties.set('length', { value: n, writable: true, enumerable: false, configurable: false });
+      return arr;
+    };
     arrCtorObj.properties.set('isArray', {
       value: createNativeFunction('isArray', (_this, args) => {
         return typeof args[0] === 'object' && args[0] !== null && (args[0] as JSObject).type === 'array';
@@ -1610,14 +1692,28 @@ export function createGlobalEnv(
       return '';
     },
   };
-  const arrayProto = createObject(null);
+  // Array.prototype is the shared ARRAY_PROTOTYPE every array links to; it was a detached object the
+  // Array constructor never exposed (`Array.prototype` was undefined). These fill the gaps (shift…).
+  const arrayProto = ARRAY_PROTOTYPE;
   for (const [name, fn] of Object.entries(arrProtoMethods)) {
+    if (arrayProto.properties.has(name)) continue;
     arrayProto.properties.set(name, {
-      value: createNativeFunction(name, fn as NativeFunction),
+      value: createNativeFunction(name, (t, a) => fn(t, ...a)),
       writable: true, enumerable: false, configurable: true,
     });
   }
-  arrayProto.properties.set('length', { value: 0, writable: true, enumerable: false, configurable: true });
+  const arrayCtor = env.get('Array') as JSObject;
+  arrayCtor.properties.set('prototype', { value: arrayProto, writable: false, enumerable: false, configurable: false });
+  arrayProto.properties.set('constructor', { value: arrayCtor, writable: true, enumerable: false, configurable: true });
+
+  // String.prototype: the string methods as functions of `this`, for `String.prototype.trim.call(x)`.
+  const stringProto = functionPrototypeObject(env.get('String') as JSFunction);
+  for (const name of Object.keys(stringMethods(''))) {
+    stringProto.properties.set(name, {
+      value: createNativeFunction(name, (t, a) => stringMethods(toString(t))[name](t, a)),
+      writable: true, enumerable: false, configurable: true,
+    });
+  }
   arrayProto.properties.set(Symbol.for('iterator') as unknown as string, {
     value: createNativeFunction('[Symbol.iterator]', (_this) => {
       if (typeof _this !== 'object' || _this === null) return undefined;
@@ -1672,6 +1768,18 @@ export function createGlobalEnv(
   funcCtorObj.properties.set('name', { value: 'Function', writable: false, enumerable: false, configurable: true });
   const funcProtoObj = createObject(null);
   funcProtoObj.properties.set('constructor', { value: funcCtorObj, writable: true, enumerable: false, configurable: true });
+  // Function.prototype.call/apply/bind with `this` as the target, for `Function.prototype.call.bind(fn)`
+  // and similar; they were missing.
+  for (const name of ['call', 'apply', 'bind']) {
+    funcProtoObj.properties.set(name, {
+      value: createNativeFunction(name, (t, a) => {
+        const m = t && typeof t === 'object' && 'closure' in t ? functionMethod(t as JSFunction, name) : null;
+        if (!m) throw new TypeError(`Function.prototype.${name} called on a non-function`);
+        return m.nativeFn!(undefined, a);
+      }),
+      writable: true, enumerable: false, configurable: true,
+    });
+  }
   funcCtorObj.properties.set('prototype', { value: funcProtoObj, writable: false, enumerable: false, configurable: false });
   env.setLocal('Function', funcCtorObj);
 
@@ -1773,6 +1881,10 @@ export function createGlobalEnv(
   // window — the global scope object (like browser window)
   const windowObj = createObject(null);
   env.setLocal('window', windowObj);
+  // window is the global object: its properties are globals and vice versa, and top-level `this`,
+  // globalThis and self all name it (they were an empty object / undefined).
+  env.linkGlobalObject(windowObj);
+  for (const alias of ['this', 'globalThis', 'self', 'top', 'parent', 'frames']) env.setLocal(alias, windowObj);
   windowObj.properties.set('isSecureContext', {
     value: isSecureContext, writable: false, enumerable: true, configurable: false,
   });

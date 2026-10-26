@@ -1798,7 +1798,10 @@ class Html5Tokenizer {
       this.rawTextTag = 'script';
       this.state = S.SCRIPT_DATA;
     } else if (tagName === 'style' || tagName === 'xmp' || tagName === 'iframe' ||
-               tagName === 'noembed' || tagName === 'noframes') {
+               tagName === 'noembed' || tagName === 'noframes' ||
+               // Nova runs scripts, so noscript is raw text (§13.2.6.4.7, scripting flag on); its markup
+               // used to be parsed, spilling fallback content and <meta refresh> into the page.
+               tagName === 'noscript') {
       this.rawTextTag = tagName;
       this.state = S.RAWTEXT;
     } else if (tagName === 'textarea' || tagName === 'title') {

@@ -294,7 +294,9 @@ export class Parser {
       case TokenType.GreaterGreaterGreaterAssign:
       case TokenType.QuestionQuestionAssign:
         this.advance();
-        const assignRight = this.parseExpression(prec - 1);
+        // Right-associative (a = b = c) but stops at commas: `prec - 1` let the comma operator in,
+        // so minified `a=1,b=2` parsed as a=(1,b=2) and `for(i=0,j=5;…)` set i to 5.
+        const assignRight = this.parseExpression(prec);
         return { type: 'AssignmentExpression', operator: tok.value, left, right: assignRight, loc: { line: tok.line, column: tok.column } };
 
       // Update operators
@@ -349,7 +351,8 @@ export class Parser {
         this.advance();
         const consequent = this.parseExpression();
         this.expect(TokenType.Colon);
-        const alternate = this.parseExpression(prec);
+        // The alternate is an AssignmentExpression: `c ? a : Z = x` assigns Z (it parsed as (c ? a : Z) = x).
+        const alternate = this.parseAssignExpr();
         return { type: 'ConditionalExpression', test: left, consequent, alternate, loc: { line: tok.line, column: tok.column } };
 
       // Comma (sequence)

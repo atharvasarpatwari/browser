@@ -6,7 +6,7 @@ import {
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
-  setGlobalCaller, callJSFunction, JSError,
+  setGlobalCaller, callJSFunction, JSError, functionPrototypeObject, objectPrototypeMember, constructorPrototype,
 } from './values';
 import { GarbageCollector, getGC } from './gc';
 import { createPromiseConstructor, wrapAsyncResult, isPromiseObject, isPromiseFulfilled, isPromiseRejected, isPromisePending, getPromiseResult, createPromiseObj, fulfillPromise, rejectPromise } from './promise';
@@ -49,6 +49,64 @@ function stringReplace(str: string, pattern: JSValue, replacement: JSValue): str
     });
   }
   return str.replace(pat as string, toString(replacement ?? ''));
+}
+
+/** String.prototype methods bound to one string value (shared by member reads and String.prototype). */
+export function stringMethods(obj: string): Record<string, NativeFunction> {
+  return {
+    toUpperCase: (_t, _a) => (obj as string).toUpperCase(),
+    toLowerCase: (_t, _a) => (obj as string).toLowerCase(),
+    charAt: (_t, a) => (obj as string).charAt(toNumber(a[0])),
+    charCodeAt: (_t, a) => (obj as string).charCodeAt(toNumber(a[0])),
+    indexOf: (_t, a) => (obj as string).indexOf(toString(a[0])),
+    lastIndexOf: (_t, a) => (obj as string).lastIndexOf(toString(a[0])),
+    slice: (_t, a) => (obj as string).slice(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
+    substring: (_t, a) => (obj as string).substring(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
+    substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
+    split: (_t, a) => {
+      const sep = a[0] !== undefined ? patternArg(a[0]) : undefined;
+      const parts = sep !== undefined ? (obj as string).split(sep as string) : [obj as string];
+      return createArray(parts.map(p => p as unknown as JSValue));
+    },
+    replace: (_t, a) => stringReplace(obj as string, a[0], a[1]),
+    trim: (_t, _a) => (obj as string).trim(),
+    trimStart: (_t, _a) => (obj as string).trimStart(),
+    trimEnd: (_t, _a) => (obj as string).trimEnd(),
+    includes: (_t, a) => (obj as string).includes(toString(a[0])),
+    startsWith: (_t, a) => (obj as string).startsWith(toString(a[0])),
+    endsWith: (_t, a) => (obj as string).endsWith(toString(a[0])),
+    repeat: (_t, a) => (obj as string).repeat(toNumber(a[0])),
+    concat: (_t, a) => (obj as string).concat(a.map(toString).join('')),
+    padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
+    padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
+    match: (_t, a) => {
+      const m = (obj as string).match(regexArg(a[0]));
+      return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
+    },
+    search: (_t, a) => (obj as string).search(regexArg(a[0])),
+    valueOf: (_t: JSValue, _a: JSValue[]) => obj,
+    toString: (_t: JSValue, _a: JSValue[]) => obj,
+  };
+}
+
+/** Function.prototype.call/apply/bind for a value read off a function (they were undefined). */
+export function functionMethod(fn: JSFunction, key: string): JSFunction | null {
+  const own = (fn as unknown as JSObject).properties?.get(key);
+  if (own) return null; // an own property wins
+  if (key === 'call') return createNativeFunction('call', (_t, a) => callJSFunction(fn, a[0], a.slice(1)));
+  if (key === 'apply') return createNativeFunction('apply', (_t, a) => {
+    const list = a[1] && typeof a[1] === 'object' ? a[1] as JSObject : null;
+    const len = Number(list?.properties?.get('length')?.value ?? 0);
+    const args: JSValue[] = [];
+    for (let i = 0; i < len; i++) args.push(list!.properties.get(String(i))?.value);
+    return callJSFunction(fn, a[0], args);
+  });
+  if (key === 'bind') return createNativeFunction('bind', (_t, a) => {
+    const boundThis = a[0];
+    const bound = a.slice(1);
+    return createNativeFunction(`bound ${fn.name}`, (_t2, rest) => callJSFunction(fn, boundThis, [...bound, ...rest]));
+  });
+  return null;
 }
 
 export class Interpreter {
@@ -446,7 +504,9 @@ export class Interpreter {
     if (stmt.superClass) {
       const superClass = this.evalExpr(stmt.superClass, env);
       if (typeof superClass === 'object' && superClass !== null) {
-        const superProto = (superClass as JSObject).prototype;
+        // The parent's prototype object, whatever kind of constructor it is. This used the parent's
+        // internal [[Prototype]], right for a class but nothing for Error/Map or an ES5 function.
+        const superProto = constructorPrototype(superClass);
         if (superProto) classProto.prototype = superProto;
         classObj.properties.set('super', { value: superClass, writable: false, enumerable: false, configurable: false });
       }
@@ -462,7 +522,7 @@ export class Interpreter {
           // Set 'super' in the method's closure so super.method() works
           const superVal = classObj.properties.get('super')?.value;
           if (superVal && typeof superVal === 'object' && superVal !== null) {
-            const superProto = (superVal as JSObject).prototype ?? superVal;
+            const superProto = constructorPrototype(superVal) ?? superVal;
             fn.closure.setLocal('super', superProto);
             fn.closure.setLocal('__superCtor', superVal);
           }
@@ -496,6 +556,11 @@ export class Interpreter {
       classObj.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: true, configurable: true });
       classProto.properties.set('constructor', { value: defaultCtor, writable: true, enumerable: false, configurable: true });
     }
+
+    // An instance's `.constructor` is the class itself (it was the inner constructor function).
+    classProto.properties.set('constructor', { value: classObj, writable: true, enumerable: false, configurable: true });
+    // `A.prototype` (read by Object.getPrototypeOf comparisons, mixins, `A.prototype.method = …`).
+    classObj.properties.set('prototype', { value: classProto, writable: false, enumerable: false, configurable: false });
 
     env.declare(className, classObj, 'var');
   }
@@ -917,6 +982,10 @@ export class Interpreter {
     if (expr.left.type === 'MemberExpression') {
       const obj = this.evalExpr(expr.left.object, env) as JSObject;
       if (typeof obj !== 'object' || obj === null) return right;
+      // Functions carry no property map until they need one. Assigning to one (`f.x = 1`,
+      // jQuery's `$.fn`, `NS.util = …`) used to crash with "Cannot read properties of undefined
+      // (reading 'get')", killing the script; Google's search page died exactly there.
+      if (!obj.properties) (obj as { properties: Map<string, unknown> }).properties = new Map();
       const key = expr.left.computed
         ? String(this.evalExpr(expr.left.property, env))
         : (expr.left.property as AST.Identifier).name;
@@ -997,13 +1066,8 @@ export class Interpreter {
         const parentCtor = superCtor as JSObject;
         const parentInit = parentCtor.properties?.get('constructor');
         const thisObj = env.get('this');
-        if (parentInit?.value && typeof parentInit.value === 'object' && 'type' in parentInit.value && (parentInit.value as JSFunction).type === 'closure') {
-          const pfn = parentInit.value as JSFunction;
-          const pEnv = new Environment(pfn.closure);
-          pEnv.markFunctionScope();
-          pEnv.setLocal('this', thisObj ?? createObject(null));
-          const args: JSValue[] = [];
-          for (const a of expr.arguments) {
+        const args: JSValue[] = [];
+        for (const a of expr.arguments) {
             if (a.type === 'SpreadElement') {
               const spreadVal = this.evalExpr(a.argument, env);
               if (typeof spreadVal === 'object' && spreadVal !== null && 'type' in spreadVal && (spreadVal as any).type === 'array') {
@@ -1020,12 +1084,37 @@ export class Interpreter {
             } else {
               args.push(this.evalExpr(a, env));
             }
-          }
+        }
+        if (parentCtor.type === 'class' && parentInit?.value && typeof parentInit.value === 'object' && 'type' in parentInit.value && (parentInit.value as JSFunction).type === 'closure') {
+          const pfn = parentInit.value as JSFunction;
+          const pEnv = new Environment(pfn.closure);
+          pEnv.markFunctionScope();
+          pEnv.setLocal('this', thisObj ?? createObject(null));
           pEnv.setLocal('arguments', createArray(args));
           pfn.params.forEach((p, i) => pEnv.setLocal(p, args[i]));
           const pResult = this.execBlock((pfn.body as AST.BlockStatement).body as AST.Statement[], pEnv);
           if (isReturnSignal(pResult) && typeof pResult.value === 'object' && pResult.value !== null) {
             return pResult.value;
+          }
+        } else if (parentCtor.type !== 'class' && thisObj && typeof thisObj === 'object') {
+          // A built-in or ES5-function parent (class X extends Error / Map / EventTarget / F).
+          // super() used to do nothing for these: `message`, a Map's storage etc. never reached
+          // `this`. Run the parent, then let `this` adopt what it built (own properties and the
+          // internal __slots), keeping the subclass's prototype chain.
+          const parentFn = parentCtor as unknown as JSFunction & { nativeFn?: NativeFunction };
+          const made = 'closure' in parentFn && !parentFn.isNative
+            ? callJSFunction(parentFn, thisObj, args)
+            : parentFn.nativeFn
+              ? parentFn.nativeFn(thisObj, args)
+              : undefined;
+          if (made && typeof made === 'object' && made !== thisObj) {
+            const target = thisObj as JSObject;
+            for (const [k, d] of (made as JSObject).properties ?? []) {
+              if (!target.properties.has(k)) target.properties.set(k, d);
+            }
+            for (const k of Object.keys(made as object)) {
+              if (k.startsWith('__')) (target as unknown as Record<string, unknown>)[k] = (made as unknown as Record<string, unknown>)[k];
+            }
           }
         }
         return thisObj ?? createObject(null);
@@ -1170,7 +1259,7 @@ export class Interpreter {
 
         if (superClass && typeof superClass === 'object' && superClass !== null) {
           // Set super to the parent prototype for super.x / super[expr] member access
-          const superProto = (superClass as JSObject).prototype ?? superClass;
+          const superProto = constructorPrototype(superClass) ?? superClass;
           callEnv.setLocal('super', superProto);
 
           // Also store the parent constructor for super() calls
@@ -1206,7 +1295,9 @@ export class Interpreter {
     // Function constructor (JSFunction closure)
     if (typeof ctor === 'object' && ctor !== null && 'type' in ctor && (ctor as JSFunction).type === 'closure') {
       const fn = ctor as JSFunction;
-      const instance = createObject(null);
+      // Linked to F.prototype: it used to start empty, so methods put on F.prototype (all pre-class
+      // code: jQuery plugins, closure library) were missing from `new F()`.
+      const instance = createObject(functionPrototypeObject(fn));
       const callEnv = new Environment(fn.closure);
       callEnv.markFunctionScope();
       callEnv.setLocal('this', instance);
@@ -1237,41 +1328,8 @@ export class Interpreter {
       if (key === 'length') return (obj as string).length;
       const idx = parseInt(key, 10);
       if (!isNaN(idx)) return (obj as string)[idx] ?? undefined;
-      const strMethods: Record<string, NativeFunction> = {
-        toUpperCase: (_t, _a) => (obj as string).toUpperCase(),
-        toLowerCase: (_t, _a) => (obj as string).toLowerCase(),
-        charAt: (_t, a) => (obj as string).charAt(toNumber(a[0])),
-        charCodeAt: (_t, a) => (obj as string).charCodeAt(toNumber(a[0])),
-        indexOf: (_t, a) => (obj as string).indexOf(toString(a[0])),
-        lastIndexOf: (_t, a) => (obj as string).lastIndexOf(toString(a[0])),
-        slice: (_t, a) => (obj as string).slice(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
-        substring: (_t, a) => (obj as string).substring(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
-        substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
-        split: (_t, a) => {
-          const sep = a[0] !== undefined ? patternArg(a[0]) : undefined;
-          const parts = sep !== undefined ? (obj as string).split(sep as string) : [obj as string];
-          return createArray(parts.map(p => p as unknown as JSValue));
-        },
-        replace: (_t, a) => stringReplace(obj as string, a[0], a[1]),
-        trim: (_t, _a) => (obj as string).trim(),
-        trimStart: (_t, _a) => (obj as string).trimStart(),
-        trimEnd: (_t, _a) => (obj as string).trimEnd(),
-        includes: (_t, a) => (obj as string).includes(toString(a[0])),
-        startsWith: (_t, a) => (obj as string).startsWith(toString(a[0])),
-        endsWith: (_t, a) => (obj as string).endsWith(toString(a[0])),
-        repeat: (_t, a) => (obj as string).repeat(toNumber(a[0])),
-        concat: (_t, a) => (obj as string).concat(a.map(toString).join('')),
-        padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
-        padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
-        match: (_t, a) => {
-          const m = (obj as string).match(regexArg(a[0]));
-          return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
-        },
-        search: (_t, a) => (obj as string).search(regexArg(a[0])),
-        valueOf: (_t: JSValue, _a: JSValue[]) => obj,
-        toString: (_t: JSValue, _a: JSValue[]) => obj,
-      };
-      if (key in strMethods) {
+      const strMethods = stringMethods(obj as string);
+      if (Object.prototype.hasOwnProperty.call(strMethods, key)) {
         return createNativeFunction(key, strMethods[key]);
       }
       return undefined;
@@ -1288,15 +1346,11 @@ export class Interpreter {
       if (key === 'name') return fn.name ?? '';
       if (key === 'arguments') return undefined;
       if (key === 'caller') return undefined;
-      if (key === 'prototype' && !fn.isArrow) {
-        let protoObj = (nativeObj as any).__proto_obj;
-        if (!protoObj) {
-          protoObj = createObject(null);
-          protoObj.properties.set('constructor', { value: nativeObj, writable: true, enumerable: false, configurable: true });
-          (nativeObj as any).__proto_obj = protoObj;
-        }
-        return protoObj;
-      }
+      if (key === 'prototype' && !fn.isArrow) return functionPrototypeObject(fn);
+      // call/apply/bind as values (`typeof fn.bind`, `var call = fn.call`); invoking them through
+      // a member call is handled in evalCall, this covers everything else.
+      const fnMethod = functionMethod(fn, key);
+      if (fnMethod) return fnMethod;
       // For other properties, fall through to the general path
     }
 
@@ -1326,50 +1380,16 @@ export class Interpreter {
         proto = proto.prototype;
       }
     }
-    return undefined;
+    return objectPrototypeMember(key);
   }
 
   private getPropertyValue(obj: JSValue, key: string): JSValue {
     if (typeof obj === 'string') {
-      const strMethods: Record<string, NativeFunction> = {
-        length: (_t, _a) => (obj as string).length,
-        toUpperCase: (_t, _a) => (obj as string).toUpperCase(),
-        toLowerCase: (_t, _a) => (obj as string).toLowerCase(),
-        charAt: (_t, a) => (obj as string).charAt(toNumber(a[0])),
-        charCodeAt: (_t, a) => (obj as string).charCodeAt(toNumber(a[0])),
-        indexOf: (_t, a) => (obj as string).indexOf(toString(a[0])),
-        lastIndexOf: (_t, a) => (obj as string).lastIndexOf(toString(a[0])),
-        slice: (_t, a) => (obj as string).slice(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
-        substring: (_t, a) => (obj as string).substring(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
-        substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
-        split: (_t, a) => {
-          const sep = a[0] !== undefined ? patternArg(a[0]) : undefined;
-          const parts = sep !== undefined ? (obj as string).split(sep as string) : [obj as string];
-          return createArray(parts.map(p => p as unknown as JSValue));
-        },
-        replace: (_t, a) => stringReplace(obj as string, a[0], a[1]),
-        trim: (_t, _a) => (obj as string).trim(),
-        trimStart: (_t, _a) => (obj as string).trimStart(),
-        trimEnd: (_t, _a) => (obj as string).trimEnd(),
-        includes: (_t, a) => (obj as string).includes(toString(a[0])),
-        startsWith: (_t, a) => (obj as string).startsWith(toString(a[0])),
-        endsWith: (_t, a) => (obj as string).endsWith(toString(a[0])),
-        repeat: (_t, a) => (obj as string).repeat(toNumber(a[0])),
-        concat: (_t, a) => (obj as string).concat(a.map(toString).join('')),
-        padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
-        padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
-        match: (_t, a) => {
-          const m = (obj as string).match(regexArg(a[0]));
-          return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
-        },
-        search: (_t, a) => (obj as string).search(regexArg(a[0])),
-        valueOf: (_t: JSValue, _a: JSValue[]) => obj,
-        toString: (_t: JSValue, _a: JSValue[]) => obj,
-      };
+      const strMethods = stringMethods(obj as string);
       if (key === 'length') return (obj as string).length;
       const idx = parseInt(key, 10);
       if (!isNaN(idx)) return (obj as string)[idx] ?? undefined;
-      if (key in strMethods) return createNativeFunction(key, strMethods[key]);
+      if (Object.prototype.hasOwnProperty.call(strMethods, key)) return createNativeFunction(key, strMethods[key]);
       return undefined;
     }
     if (typeof obj === 'number') {
@@ -1400,6 +1420,8 @@ export class Interpreter {
         if (key === 'name') return fn.name ?? '';
         if (key === 'arguments') return undefined;
         if (key === 'caller') return undefined;
+        const fnMethod = functionMethod(fn, key);
+        if (fnMethod) return fnMethod;
         if (key === 'prototype' && !fn.isArrow) {
           const existing = o.properties?.get('prototype');
           if (existing) return existing.value;
@@ -1424,7 +1446,7 @@ export class Interpreter {
         if (key in symMethods) return createNativeFunction(key, symMethods[key]);
         return undefined;
       }
-      const desc = o.properties.get(key);
+      const desc = o.properties?.get(key);
       if (desc) {
         if (desc.getter) return callJSFunction(desc.getter, obj, []);
         return desc.value;
@@ -1450,6 +1472,7 @@ export class Interpreter {
           proto = proto.prototype;
         }
       }
+      return objectPrototypeMember(key);
     }
     return undefined;
   }

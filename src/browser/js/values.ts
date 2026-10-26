@@ -173,6 +173,8 @@ export function isAwaitSignal(v: unknown): v is AwaitSignal { return typeof v ==
 export class Environment {
   private bindings = new Map<string, { value: JSValue; kind: 'var' | 'let' | 'const'; __tdz?: boolean }>();
   readonly parent: Environment | null;
+  /** The root scope's global object (window), whose properties are also global variables. */
+  private globalObject: JSObject | null = null;
 
   constructor(parent: Environment | null = null) {
     this.parent = parent;
@@ -223,7 +225,15 @@ export class Environment {
     if (this.parent) {
       return this.parent.set(name, value);
     }
-    return false;
+    const prop = this.globalObject ? (this.globalObject.properties as GlobalPropertyMap).ownGet(name) : undefined;
+    if (prop) {
+      if (prop.setter) callJSFunction(prop.setter, this.globalObject, [value]);
+      else prop.value = value;
+      return true;
+    }
+    // Sloppy-mode implicit global (`x = 1` with no declaration); it used to be dropped.
+    this.bindings.set(name, { value, kind: 'var' });
+    return true;
   }
 
   /** Set a variable directly (for let/const in current scope) */
@@ -253,6 +263,8 @@ export class Environment {
     if (this.parent) {
       return this.parent.get(name);
     }
+    const prop = this.globalObject ? (this.globalObject.properties as GlobalPropertyMap).ownGet(name) : undefined;
+    if (prop) return prop.getter ? callJSFunction(prop.getter, this.globalObject, []) : prop.value;
     return undefined;
   }
 
@@ -260,7 +272,16 @@ export class Environment {
   has(name: string): boolean {
     if (this.bindings.has(name)) return true;
     if (this.parent) return this.parent.has(name);
-    return false;
+    return !!this.globalObject && (this.globalObject.properties as GlobalPropertyMap).ownHas(name);
+  }
+
+  /**
+   * Make `obj` this root scope's global object (window): `window.x = 1` then `x` works, and
+   * `var x` / built-ins read as `window.x`. They used to be two unrelated namespaces.
+   */
+  linkGlobalObject(obj: JSObject): void {
+    this.globalObject = obj;
+    obj.properties = new GlobalPropertyMap(this.bindings, obj.properties);
   }
 
   private isFunctionScope(): boolean {
@@ -370,20 +391,51 @@ export function instanceofCheck(left: JSValue, right: JSValue): boolean {
   if (typeof left !== 'object' || left === null) return false;
   if (!right || typeof right !== 'object') return false;
   const rightObj = right as JSObject;
-  const isNativeFn = 'closure' in right || (rightObj.type === 'function' && rightObj.callable);
-  if (!isNativeFn) return false;
-  const ctorName = ('closure' in right) ? (right as JSFunction).name : (rightObj.properties?.get('name')?.value as string ?? '');
+  const isClass = rightObj.type === 'class';
+  const isClosure = 'closure' in right;
+  const isNativeFn = isClosure || (rightObj.type === 'function' && rightObj.callable);
+  // Classes used to be rejected here, and closures were looked up in a `prototype` property they
+  // never have: `x instanceof SomeClass` / `new F() instanceof F` were always false.
+  if (!isNativeFn && !isClass) return false;
+  const ctorName = isClosure ? (right as JSFunction).name : (rightObj.properties?.get('name')?.value as string ?? '');
   const leftObj = left as JSObject;
   if (ctorName === 'Array' && leftObj.type === 'array') return true;
-  const ctorProto = rightObj.properties?.get('prototype')?.value;
+  const ctorProto = constructorPrototype(right);
   if (!ctorProto || typeof ctorProto !== 'object' || ctorProto === null) return false;
+  if (ctorProto === OBJECT_PROTOTYPE) return true; // x instanceof Object: every object here
   let proto = leftObj.prototype;
-  while (proto) {
+  for (let depth = 0; proto && depth < 64; depth++) {
     if (proto === ctorProto) return true;
     proto = proto.prototype;
   }
   return false;
 }
+
+/** The `.prototype` object of any constructor: a class, a closure (JS or native) or a callable native object. */
+export function constructorPrototype(ctor: JSValue): JSObject | null {
+  if (!ctor || typeof ctor !== 'object') return null;
+  const o = ctor as JSObject;
+  if (o.type === 'class') return o.prototype ?? null;
+  if ('closure' in o) return functionPrototypeObject(o as unknown as JSFunction);
+  const p = o.properties?.get('prototype')?.value;
+  return p && typeof p === 'object' ? p as JSObject : null;
+}
+
+/**
+ * A function's `.prototype` object: an assigned `F.prototype = {…}` wins, otherwise one is made
+ * on first use (with `constructor` pointing back) and cached, as the member lookups do.
+ */
+export function functionPrototypeObject(fn: JSFunction): JSObject {
+  const own = (fn as unknown as JSObject).properties?.get('prototype')?.value;
+  if (own && typeof own === 'object') return own as JSObject;
+  const cached = (fn as unknown as { __proto_obj?: JSObject }).__proto_obj;
+  if (cached) return cached;
+  const protoObj = createObject(null);
+  protoObj.properties.set('constructor', { value: fn as unknown as JSValue, writable: true, enumerable: false, configurable: true });
+  (fn as unknown as { __proto_obj?: JSObject }).__proto_obj = protoObj;
+  return protoObj;
+}
+
 
 export function createObject(prototype: JSObject | null = null): JSObject {
   return {
@@ -391,6 +443,41 @@ export function createObject(prototype: JSObject | null = null): JSObject {
     properties: new Map(),
     prototype,
   };
+}
+
+/**
+ * A global object's property map: its own properties, then the root scope's variables as data
+ * properties. Writing a data property that is also a variable updates the variable, so the two
+ * never disagree.
+ */
+class GlobalPropertyMap extends Map<string, PropertyDescriptor> {
+  constructor(
+    private readonly vars: Map<string, { value: JSValue; kind: 'var' | 'let' | 'const'; __tdz?: boolean }>,
+    initial: Map<string, PropertyDescriptor>,
+  ) {
+    super(); // not super(initial): Map's constructor would call the override before `vars` is set
+    for (const [k, d] of initial) super.set(k, d);
+  }
+  ownGet(key: string): PropertyDescriptor | undefined { return super.get(key); }
+  ownHas(key: string): boolean { return super.has(key); }
+  override get(key: string): PropertyDescriptor | undefined {
+    const own = super.get(key);
+    if (own) return own;
+    const v = this.vars.get(key);
+    if (!v || v.__tdz || key === 'this') return undefined;
+    return { value: v.value, writable: v.kind !== 'const', enumerable: true, configurable: false };
+  }
+  override has(key: string): boolean {
+    return super.has(key) || (this.vars.has(key) && key !== 'this');
+  }
+  override set(key: string, desc: PropertyDescriptor): this {
+    const v = this.vars.get(key);
+    if (v && v.kind !== 'const' && !desc.getter && !desc.setter && !super.has(key)) {
+      v.value = desc.value;
+      return this;
+    }
+    return super.set(key, desc);
+  }
 }
 
 // ── Array prototype ─────────────────────────────────────────────────────────
@@ -681,6 +768,13 @@ const arrayNativeMethods: Record<string, NativeFunction> = {
   },
 };
 
+/** Array.prototype: every array links to it, so `Array.prototype.slice.call(x)`, `[] instanceof Array`
+ *  and polyfills (`Array.prototype.foo = …`) work. Arrays also keep their own method copies. */
+export const ARRAY_PROTOTYPE: JSObject = createObject(null);
+for (const [name, fn] of Object.entries(arrayNativeMethods)) {
+  ARRAY_PROTOTYPE.properties.set(name, { value: createNativeFunction(name, fn), writable: true, enumerable: false, configurable: true });
+}
+
 function attachArrayMethods(arr: JSObject): void {
   for (const [name, fn] of Object.entries(arrayNativeMethods)) {
     arr.properties.set(name, {
@@ -691,7 +785,7 @@ function attachArrayMethods(arr: JSObject): void {
 }
 
 export function createArray(elements: JSValue[] = []): JSObject {
-  const arr = createObject(null);
+  const arr = createObject(ARRAY_PROTOTYPE);
   arr.type = 'array';
   for (let i = 0; i < elements.length; i++) {
     arr.properties.set(String(i), { value: elements[i], writable: true, enumerable: true, configurable: true });
@@ -818,4 +912,39 @@ function describeThrown(value: JSValue): string {
     }
   }
   return toString(value);
+}
+
+/**
+ * Object.prototype. Objects here are created without it, so its methods are a lookup fallback
+ * (see objectPrototypeMember) rather than a real link; for-in, Object.keys and JSON keep seeing
+ * own properties only. Before this, `obj.hasOwnProperty(k)` was undefined on every object.
+ */
+export const OBJECT_PROTOTYPE: JSObject = createObject(null);
+{
+  const data = (value: JSValue) => ({ value, writable: true, enumerable: false, configurable: true });
+  const own = (o: JSValue, key: JSValue): PropertyDescriptor | undefined =>
+    o && typeof o === 'object' ? (o as JSObject).properties?.get(toString(key)) : undefined;
+  OBJECT_PROTOTYPE.properties.set('hasOwnProperty', data(createNativeFunction('hasOwnProperty', (t, a) => own(t, a[0]) !== undefined)));
+  OBJECT_PROTOTYPE.properties.set('propertyIsEnumerable', data(createNativeFunction('propertyIsEnumerable', (t, a) => own(t, a[0])?.enumerable === true)));
+  OBJECT_PROTOTYPE.properties.set('isPrototypeOf', data(createNativeFunction('isPrototypeOf', (t, a) => {
+    let p = a[0] && typeof a[0] === 'object' ? (a[0] as JSObject).prototype : null;
+    for (let depth = 0; p && depth < 64; depth++) { if (p === t) return true; p = p.prototype; }
+    return false;
+  })));
+  OBJECT_PROTOTYPE.properties.set('toString', data(createNativeFunction('toString', (t) => {
+    if (t === undefined) return '[object Undefined]';
+    if (t === null) return '[object Null]';
+    if (typeof t !== 'object') return `[object ${typeof t === 'number' ? 'Number' : typeof t === 'string' ? 'String' : typeof t === 'boolean' ? 'Boolean' : 'Object'}]`;
+    const o = t as JSObject;
+    if (o.type === 'array') return '[object Array]';
+    if ('closure' in o || o.type === 'class' || o.type === 'function') return '[object Function]';
+    return '[object Object]';
+  })));
+  OBJECT_PROTOTYPE.properties.set('toLocaleString', data(createNativeFunction('toLocaleString', (t) => toString(t))));
+  OBJECT_PROTOTYPE.properties.set('valueOf', data(createNativeFunction('valueOf', (t) => t)));
+}
+
+/** Object.prototype member for a lookup that found nothing on the object or its chain. */
+export function objectPrototypeMember(key: string): JSValue {
+  return OBJECT_PROTOTYPE.properties.get(key)?.value;
 }

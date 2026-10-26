@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-25
 **Session:** "keep improving the nova app…". Found while fixing RC-19 ("[object Object]" script errors) from the end-user test report.
-**Status:** Planned (awaiting approval)
+**Status:** Rounds A + B done in 1.29 (see 2026-10-26-nova-android-1.29-js-object-model-google-scripts.md); Round C planned
 
 ---
 

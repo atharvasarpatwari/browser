@@ -105,14 +105,16 @@ export class Lexer {
       if (this.peek(1) === '*') {
         return this.readBlockComment(startLine, startCol);
       }
+      // Context-aware: after expression-ending tokens, `/` is division.
+      // After operators/keywords/punctuation, `/` starts a regex literal. Checked before `/=`:
+      // a regex may begin with `=` (`s.replace(/=/g, "")`), which used to lex as the `/=`
+      // operator and broke the whole script (Google's search page).
+      if (this.isRegexContext()) {
+        return this.readRegex(startLine, startCol);
+      }
       if (this.peek(1) === '=') {
         this.advance(2);
         return this.makeToken(TokenType.SlashAssign, '/=', startLine, startCol);
-      }
-      // Context-aware: after expression-ending tokens, `/` is division.
-      // After operators/keywords/punctuation, `/` starts a regex literal.
-      if (this.isRegexContext()) {
-        return this.readRegex(startLine, startCol);
       }
       this.advance();
       return this.makeToken(TokenType.Slash, '/', startLine, startCol);
