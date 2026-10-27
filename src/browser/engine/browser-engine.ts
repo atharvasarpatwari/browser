@@ -324,6 +324,8 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   private _session:         PageLoadSession | null = null;
   private sessionSeq        = 0;
+  /** Responses to form POSTs by history entry id (the last 5), so back/forward never resubmit. */
+  private readonly postResults = new Map<string, PageLoadResult>();
   private _initialized      = false;
 
   /** Bound reference kept so we can unsubscribe in shutdown(). */
@@ -526,7 +528,19 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
     let raw: PageLoadResult | null = null;
     if (isEngineRendered(routeResult.type)) {
       this.throwIfAborted(signal, session);
-      raw = await this.loader.load(session.entry.url, signal, { bypassCache: session.entry.type === 'reload' });
+      const post = session.entry.postData;
+      if (post) {
+        // A form result: sent once. Back/forward to it reuse the response instead of resubmitting
+        // the form (which could repeat an order or a payment).
+        const kept = this.postResults.get(session.entry.id);
+        raw = kept ?? await this.loader.load(session.entry.url, signal, { postData: post });
+        if (!kept) {
+          this.postResults.set(session.entry.id, raw);
+          if (this.postResults.size > 5) this.postResults.delete(this.postResults.keys().next().value!);
+        }
+      } else {
+        raw = await this.loader.load(session.entry.url, signal, { bypassCache: session.entry.type === 'reload' });
+      }
       this.bus.emit({ kind: 'pageLoadFetched', session, raw });
 
       // A 3xx redirect changed the committed URL — surface the final URL so

@@ -129,6 +129,8 @@ interface NavigationEntry {
    * null when no state has been associated with this entry.
    */
   readonly state: unknown;
+  /** Present when this entry was loaded by a form POST. */
+  readonly postData?: PostData;
 }
 
 /**
@@ -149,6 +151,14 @@ interface NavigationRequest {
    * When provided, it is stored on the resulting NavigationEntry.
    */
   readonly state?: unknown;
+  /** A form POST: the request body and its content type. Absent for ordinary GET navigations. */
+  readonly postData?: PostData;
+}
+
+/** The body of a form POST navigation. */
+interface PostData {
+  readonly body: string;
+  readonly contentType: string;
 }
 
 /** The outcome of a navigation call. */
@@ -653,6 +663,7 @@ class NavigationController implements INavigationController {
       scrollY:   0,
       parsedUrl,
       state:     request.state ?? null,
+      ...(request.postData ? { postData: request.postData } : {}),
     };
 
     if (request.type === NavigationType.Replace ||
@@ -1204,6 +1215,7 @@ export {
 export type {
   INavigationController,
   INavigationGuard,
+  PostData,
   NavigationEntry,
   NavigationRequest,
   NavigationResult,

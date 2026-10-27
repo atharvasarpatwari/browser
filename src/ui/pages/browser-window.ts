@@ -18,7 +18,7 @@ import {
   controlKind, controlValue, setControlValue, isTextEditable, isSubmitButton, isDisabled, toggleControl,
   formOf, formDataEntries, firstMissingRequired,
 } from '../../browser/rendering/form-controls';
-import type { INavigationController } from '../../browser/navigation/navigation-controller';
+import type { INavigationController, PostData } from '../../browser/navigation/navigation-controller';
 import type { IPaintEngine } from '../../browser/rendering/paint-engine';
 import type { IDownloadManager } from '../../browser/downloads/download-manager';
 import type { IBookmarkService } from '../../browser/bookmarks/bookmark-services';
@@ -751,9 +751,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this._mounted = false;
   }
 
-  async navigate(url: string): Promise<void> {
+  async navigate(url: string, postData?: PostData): Promise<void> {
     if (this.navigationBridge) {
-      await this.navigationBridge.navigate(url);
+      await this.navigationBridge.navigate(url, postData);
       // Built-in pages were already drawn when the navigation committed (onNavigationCommitted).
       const currentUrl = this.navigationBridge.currentUrl;
       if (currentUrl && !this.drawnOnCommit(this.parseOrNull(currentUrl))) {
@@ -1888,10 +1888,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
       return;
     }
     const method = (submitter?.attributes.get('formmethod') ?? form.attributes.get('method') ?? 'get').toLowerCase();
-    if (method !== 'get') {
-      console.warn('[Forms] POST submission is not supported yet:', form.attributes.get('action') ?? '');
-      return;
-    }
+    if (method === 'dialog') return; // closes a <dialog>; nothing to send
     const action = submitter?.attributes.get('formaction') ?? form.attributes.get('action') ?? '';
     let url: URL;
     try {
@@ -1899,7 +1896,14 @@ class BrowserWindowPage implements IBrowserWindowPage {
     } catch {
       return;
     }
-    url.search = new URLSearchParams(formDataEntries(form, submitter)).toString();
+    const entries = formDataEntries(form, submitter);
+    if (method === 'post') {
+      // POST forms (logins, comments, checkouts) used to do nothing (RC-12).
+      const enctype = (submitter?.attributes.get('formenctype') ?? form.attributes.get('enctype') ?? '').toLowerCase();
+      void this.navigate(url.href, encodeFormBody(entries, enctype));
+      return;
+    }
+    url.search = new URLSearchParams(entries).toString(); // GET (and any unknown method, as browsers do)
     void this.navigate(url.href);
   }
 
@@ -2237,3 +2241,21 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
 export { BrowserWindowPage, DEFAULT_PAGE_CONFIG };
 export type { IBrowserWindowPage, BrowserWindowPageConfig };
+
+/**
+ * A form's request body for its enctype: application/x-www-form-urlencoded (the default),
+ * multipart/form-data or text/plain. ponytail: file inputs are not sent (formDataEntries skips
+ * them); add file parts when uploads are wired to the native picker.
+ */
+export function encodeFormBody(entries: [string, string][], enctype: string): PostData {
+  if (enctype === 'multipart/form-data') {
+    const boundary = '----NovaFormBoundary' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const quote = (s: string) => s.replace(/"/g, '%22').replace(/\r?\n|\r/g, ' ');
+    const body = entries.map(([k, v]) => `--${boundary}\r\nContent-Disposition: form-data; name="${quote(k)}"\r\n\r\n${v}\r\n`).join('') + `--${boundary}--\r\n`;
+    return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+  }
+  if (enctype === 'text/plain') {
+    return { body: entries.map(([k, v]) => `${k}=${v}\r\n`).join(''), contentType: 'text/plain' };
+  }
+  return { body: new URLSearchParams(entries).toString(), contentType: 'application/x-www-form-urlencoded' };
+}

@@ -19,8 +19,8 @@ interface PageLoadResult {
  * Implemented by networking/request-manager.ts.
  */
 interface IPageLoader {
-  /** `bypassCache`: a user reload, which must go back to the network. */
-  load(url: string, signal: AbortSignal, options?: { readonly bypassCache?: boolean }): Promise<PageLoadResult>;
+  /** `bypassCache`: a user reload, which must go back to the network. `postData`: a form POST. */
+  load(url: string, signal: AbortSignal, options?: { readonly bypassCache?: boolean; readonly postData?: { readonly body: string; readonly contentType: string } }): Promise<PageLoadResult>;
 }
 
 export type { IPageLoader, PageLoadResult };

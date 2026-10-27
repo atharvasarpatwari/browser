@@ -32,7 +32,8 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
-import type { INavigationController, NavigationEvent } from '../../browser/navigation/navigation-controller';
+import type { INavigationController, NavigationEvent, PostData } from '../../browser/navigation/navigation-controller';
+import { NavigationType } from '../../browser/navigation/navigation-controller';
 import type { ITabManager } from '../../browser/tabs/tab-manager';
 import type { ITabSession } from '../../browser/tabs/tab-session';
 import type { IAddressBar, AddressBarEventUnion } from './address-bar/address-bar';
@@ -161,7 +162,7 @@ interface INavigationBridge extends IDisposable {
   readonly canGoForward: boolean;
 
   /** Navigate to a URL. Handles search query detection, normalization, and validation. */
-  navigate(url: string): Promise<void>;
+  navigate(url: string, postData?: PostData): Promise<void>;
   /** Go back in history. */
   goBack(): void;
   /** Go forward in history. */
@@ -333,14 +334,14 @@ class NavigationBridge implements INavigationBridge {
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
-  async navigate(url: string): Promise<void> {
+  async navigate(url: string, postData?: PostData): Promise<void> {
     const trimmed = url.trim();
     if (trimmed.length === 0) return;
     if (this._navigating) return; // re-entrancy guard
     this._navigating = true;
 
     // Search query detection: if the input is not a valid URL, treat as search.
-    const isSearch = this._isSearchQuery(trimmed);
+    const isSearch = !postData && this._isSearchQuery(trimmed);
 
     if (isSearch) {
       this._searchMode = true;
@@ -409,7 +410,10 @@ class NavigationBridge implements INavigationBridge {
     this.toolbar.setLoading(true);
     this._setLoading(true);
 
-    const result = await this.nav.navigate(trimmed);
+    // A form POST carries its body on the navigation request (submitForm in browser-window.ts).
+    const result = postData
+      ? await this.nav.navigateTo({ url: trimmed, type: NavigationType.Push, userInitiated: true, postData })
+      : await this.nav.navigate(trimmed);
 
     if (result.success && result.entry) {
       this._currentUrl = result.entry.url;

@@ -48,13 +48,16 @@ class PageLoader implements IPageLoader, IDisposable {
    * @param signal AbortSignal for cancellation.
    * @returns      The loaded page content.
    */
-  async load(url: string, signal: AbortSignal, options?: { readonly bypassCache?: boolean }): Promise<PageLoadResult> {
+  async load(url: string, signal: AbortSignal, options?: { readonly bypassCache?: boolean; readonly postData?: { readonly body: string; readonly contentType: string } }): Promise<PageLoadResult> {
     if (this.disposed) {
       throw new Error('PageLoader has been disposed');
     }
 
     try {
-      const result = await this.resourceLoader.loadResource(url, 'document', { signal, bypassCache: options?.bypassCache });
+      const post = options?.postData;
+      const result = await this.resourceLoader.loadResource(url, 'document', post
+        ? { signal, method: 'POST', body: post.body, contentType: post.contentType }
+        : { signal, bypassCache: options?.bypassCache });
       // The loader reports network failures (DNS, refused, timeout, blocked) as a result with
       // status 0 and an error instead of throwing. They used to render as an empty page: a blank
       // screen with a green lock and no pageLoadError, so the native error page never showed.

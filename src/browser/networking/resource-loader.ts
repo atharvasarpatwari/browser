@@ -42,6 +42,10 @@ interface ResourceLoadOptions {
   readonly signal?: AbortSignal;
   /** Skip the cached copy and fetch from the network (a user reload); the fresh response is still cached. */
   readonly bypassCache?: boolean;
+  /** A form POST (never read from or stored in the cache). Default GET. */
+  readonly method?: 'GET' | 'POST';
+  readonly body?: string;
+  readonly contentType?: string;
 }
 
 interface IResourceLoader extends IDisposable {
@@ -112,7 +116,8 @@ class ResourceLoader implements IResourceLoader {
   async loadResource(url: string, _kind: DiscoveredResourceKind, options?: ResourceLoadOptions): Promise<ResourceLoadResult> {
     // ── Cache check ─────────────────────────────────────────────────────────
     let stale: CacheEntry | null = null;
-    if (this.cache && !options?.bypassCache) {
+    const isPost = options?.method === 'POST';
+    if (this.cache && !options?.bypassCache && !isPost) {
       const cached = await this.cache.get(url);
       if (cached) return fromCacheEntry(cached, _kind, 0);
       stale = (await this.cache.getStale?.(url)) ?? null;
@@ -150,6 +155,7 @@ class ResourceLoader implements IResourceLoader {
       const headers = new Map<string, string>([['accept', _kind === 'document'
         ? 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
         : '*/*']]);
+      if (isPost) headers.set('content-type', options?.contentType ?? 'application/x-www-form-urlencoded');
       const signal = options?.signal ?? new AbortController().signal;
 
       // ── CORS pre-request check ──────────────────────────────────────────
@@ -215,9 +221,10 @@ class ResourceLoader implements IResourceLoader {
       if (stale?.etag) requestHeaders.set('if-none-match', stale.etag);
       if (stale?.lastModified) requestHeaders.set('if-modified-since', stale.lastModified);
 
-      const specBase: Omit<HttpRequestSpec, 'url'> = {
-        method: 'GET',
+      let specBase: Omit<HttpRequestSpec, 'url'> = {
+        method: isPost ? 'POST' : 'GET',
         headers: requestHeaders,
+        ...(isPost ? { body: options?.body ?? '' } : {}),
         timeoutMs: options?.timeoutMs ?? 15_000,
       };
 
@@ -251,6 +258,13 @@ class ResourceLoader implements IResourceLoader {
           }
 
           currentUrl = new URL(location, currentUrl).toString();
+          // After a form POST, 303 (and 301/302, as browsers do) continue as a GET without the body;
+          // 307/308 repeat the POST.
+          if (specBase.method === 'POST' && (res.statusCode === 303 || res.statusCode === 301 || res.statusCode === 302)) {
+            const getHeaders = new Map(specBase.headers);
+            getHeaders.delete('content-type');
+            specBase = { method: 'GET', headers: getHeaders, timeoutMs: specBase.timeoutMs };
+          }
         }
       } catch (err) {
         if (signal.aborted) {
@@ -365,7 +379,7 @@ class ResourceLoader implements IResourceLoader {
       const etag = res.headers.get('etag') ?? null;
       const lastModified = res.headers.get('last-modified') ?? null;
       const storable = !/no-store/.test(cacheControl) && (!mustRevalidate || etag !== null || lastModified !== null);
-      if (this.cache && storable && res.statusCode >= 200 && res.statusCode < 400) {
+      if (this.cache && storable && !isPost && res.statusCode >= 200 && res.statusCode < 400) {
         const immutable = cacheControl.includes('immutable');
 
         await this.cache.set(url, {
