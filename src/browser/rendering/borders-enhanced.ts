@@ -89,6 +89,21 @@ export function parseBorderRadius(val: string, width: number, height: number): B
   };
 }
 
+/** border-*-radius longhands ("10px" or "10px 5px", px or %) into a BorderRadius. */
+function cornerRadii(gw: (name: string) => string, width: number, height: number): BorderRadius {
+  const corner = (name: string) => {
+    const [a = '0', b = a] = gw(name).trim().split(/\s+/);
+    const len = (v: string, ref: number) => (v.endsWith('%') ? (parseFloat(v) / 100) * ref : parseFloat(v) || 0);
+    return { w: Math.max(0, len(a, width)), h: Math.max(0, len(b, height)) };
+  };
+  return {
+    topLeft: corner('border-top-left-radius'),
+    topRight: corner('border-top-right-radius'),
+    bottomRight: corner('border-bottom-right-radius'),
+    bottomLeft: corner('border-bottom-left-radius'),
+  };
+}
+
 export function parseBorders(
   style: ReadonlyMap<string, string> | undefined,
   elWidth: number,
@@ -108,7 +123,11 @@ export function parseBorders(
   const rightS = parseBorderStyle(gw('border-right-style'));
   const bottomS = parseBorderStyle(gw('border-bottom-style'));
   const leftS = parseBorderStyle(gw('border-left-style'));
-  const radius = parseBorderRadius(gw('border-radius'), elWidth, elHeight);
+  // The cascade expands `border-radius` into its four longhands, so the shorthand is usually
+  // absent; reading only the shorthand lost every page's rounded corners.
+  const radius = gw('border-radius')
+    ? parseBorderRadius(gw('border-radius'), elWidth, elHeight)
+    : cornerRadii(gw, elWidth, elHeight);
   return {
     top: { width: topW, style: topS, color: topC },
     right: { width: rightW, style: rightS, color: rightC },

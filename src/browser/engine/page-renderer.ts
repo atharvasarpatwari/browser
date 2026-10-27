@@ -1037,6 +1037,12 @@ class PageRenderer implements IPageRenderer, IDisposable {
     this.schedulePagePump();
   }
 
+  /** Redraw one element whose look changed outside layout (a form control's checked state). */
+  repaintElement(el: DomElement): void {
+    this.reflowController?.invalidatePaint(el);
+    this.requestReflow();
+  }
+
   /** Fires a UI event (e.g. a tap's click) into the page's scripts, then repaints what they changed. */
   dispatchPageEvent(el: DomElement, type: string): boolean {
     const fire = (): boolean => dispatchDomEvent(el, type, this.deps.domTree);

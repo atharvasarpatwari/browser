@@ -90,22 +90,30 @@ export function controlChecked(el: DomElement): boolean {
   return el.formChecked ?? el.attributes.has('checked');
 }
 
-/** Ticks a checkbox, or picks a radio (unticking the others in its name group within the form). */
-export function toggleControl(el: DomElement): boolean {
+/**
+ * Ticks a checkbox, or picks a radio (unticking the others in its name group within the form).
+ * Returns every control whose state changed, so the caller repaints them all: the radio it
+ * unticked used to keep looking selected because only the tapped one was redrawn.
+ */
+export function toggleControl(el: DomElement): DomElement[] {
   const kind = controlKind(el);
-  if (kind === 'checkbox') { el.formChecked = !controlChecked(el); return true; }
+  if (kind === 'checkbox') { el.formChecked = !controlChecked(el); return [el]; }
   if (kind === 'radio') {
+    const changed: DomElement[] = [el];
     const name = el.attributes.get('name');
     if (name) {
       const scope = formOf(el) ?? rootOf(el);
       for (const other of descendants(scope)) {
-        if (other !== el && controlKind(other) === 'radio' && other.attributes.get('name') === name) other.formChecked = false;
+        if (other !== el && controlKind(other) === 'radio' && other.attributes.get('name') === name && controlChecked(other)) {
+          other.formChecked = false;
+          changed.push(other);
+        }
       }
     }
     el.formChecked = true;
-    return true;
+    return changed;
   }
-  return false;
+  return [];
 }
 
 const rootOf = (el: DomElement): DomElement => {
@@ -253,8 +261,12 @@ export function paintControlContent(el: DomElement, box: LayoutBox, style: Reado
     const ink = isDisabled(el) ? '#8a8a8a' : '#1a73e8';
     cmds.push({ type: 'setFillStyle', params: [ink] });
     if (kind === 'radio') {
+      // A round dot (it was a small square).
       const d = Math.max(2, Math.round(Math.min(w, h) / 2));
-      cmds.push({ type: 'fillRect', params: [x + (w - d) / 2, y + (h - d) / 2, d, d] });
+      const dx = x + (w - d) / 2, dy = y + (h - d) / 2, rr = { w: d / 2, h: d / 2 };
+      cmds.push({ type: 'setBorderRadius', params: [{ topLeft: rr, topRight: rr, bottomRight: rr, bottomLeft: rr }, dx, dy, d, d] });
+      cmds.push({ type: 'fillRect', params: [dx, dy, d, d] });
+      cmds.push({ type: 'setBorderRadius', params: [null, 0, 0, 0, 0] });
     } else {
       cmds.push({ type: 'fillRect', params: [x, y, w, h] });
       cmds.push({ type: 'setFillStyle', params: ['#ffffff'] });

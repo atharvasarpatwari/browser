@@ -1758,7 +1758,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
       const kind = controlKind(control);
       if (isTextEditable(control) || kind === 'select') { this.openFieldEditor(control); return 'field'; }
       if (kind === 'checkbox' || kind === 'radio') {
-        toggleControl(control);
+        for (const changed of toggleControl(control)) this.browserEngine?.repaintElement?.(changed);
         this.browserEngine?.dispatchPageEvent(control, 'input');
         this.browserEngine?.dispatchPageEvent(control, 'change');
         return 'field';

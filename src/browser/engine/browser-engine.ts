@@ -132,6 +132,8 @@ interface IPageRenderer {
   getLayoutEngine(): ILayoutEngine | null;
   /** Fires a UI event at a page element; false when a script cancelled it. */
   dispatchPageEvent?(el: DomElement, type: string): boolean;
+  /** Redraw one element whose look changed outside layout (a form control's checked state). */
+  repaintElement?(el: DomElement): void;
   /** The rendered document's <title> text (whitespace collapsed), or '' when it has none. */
   getDocumentTitle?(): string;
 }
@@ -206,6 +208,7 @@ interface IBrowserEngine extends ISharedService {
   getPageLayoutEngine(): ILayoutEngine | null;
   /** Fires a UI event (a tap's click) at a page element; false when a page script cancelled it. */
   dispatchPageEvent(el: DomElement, type: string): boolean;
+  repaintElement?(el: DomElement): void;
   /** Add a middleware that runs after routing, before fetching. */
   addMiddleware(mw: EngineMiddleware): void;
 
@@ -428,6 +431,10 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
 
   getPageLayoutEngine(): ILayoutEngine | null {
     return this.renderer.getLayoutEngine();
+  }
+
+  repaintElement(el: DomElement): void {
+    this.renderer.repaintElement?.(el);
   }
 
   dispatchPageEvent(el: DomElement, type: string): boolean {

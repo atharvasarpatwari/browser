@@ -487,6 +487,16 @@ class PaintEngine implements IPaintEngine {
       const bw = layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight;
       const bh = layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom;
 
+      // Rounded corners (border-radius) clip this element's background and borders. The radius was
+      // only sent when the element had a border, never cleared, and the rasterizer ignored it, so
+      // every rounded button, card and radio button painted square.
+      const borderInfo = parseBorders(style, layoutBox.width, layoutBox.height);
+      const hasRadius = borderInfo.radius.topLeft.w > 0 || borderInfo.radius.topRight.w > 0 ||
+        borderInfo.radius.bottomLeft.w > 0 || borderInfo.radius.bottomRight.w > 0;
+      if (hasRadius) {
+        commands.push({ type: 'setBorderRadius', params: [borderInfo.radius, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
+      }
+
       // ── Background (enhanced with gradients + multi-layer) ────────────
       // The computed-style pipeline always resolves `background-color` (default
       // `transparent`) alongside the `background` shorthand. Fall back to the
@@ -549,7 +559,6 @@ class PaintEngine implements IPaintEngine {
       }
 
       // ── Borders (enhanced with radius, per-side colors, dashed/dotted) ─
-      const borderInfo = parseBorders(style, layoutBox.width, layoutBox.height);
       const hasAnyBorder = borderInfo.top.width > 0 || borderInfo.right.width > 0 ||
         borderInfo.bottom.width > 0 || borderInfo.left.width > 0;
       if (hasAnyBorder) {
@@ -559,11 +568,6 @@ class PaintEngine implements IPaintEngine {
           { w: borderInfo.left.width, x: layoutBox.x, y: layoutBox.y + borderInfo.top.width, rw: borderInfo.left.width, rh: layoutBox.height - borderInfo.top.width - borderInfo.bottom.width, color: colorToString(borderInfo.left.color), style: borderInfo.left.style },
           { w: borderInfo.right.width, x: layoutBox.x + layoutBox.width - borderInfo.right.width, y: layoutBox.y + borderInfo.top.width, rw: borderInfo.right.width, rh: layoutBox.height - borderInfo.top.width - borderInfo.bottom.width, color: colorToString(borderInfo.right.color), style: borderInfo.right.style },
         ];
-        const hasRadius = borderInfo.radius.topLeft.w > 0 || borderInfo.radius.topRight.w > 0 ||
-          borderInfo.radius.bottomLeft.w > 0 || borderInfo.radius.bottomRight.w > 0;
-        if (hasRadius) {
-          commands.push({ type: 'setBorderRadius', params: [borderInfo.radius, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
-        }
         for (const s of borderSides) {
           if (s.w <= 0) continue;
           if (s.style === 'dashed' || s.style === 'dotted') {
@@ -585,6 +589,8 @@ class PaintEngine implements IPaintEngine {
           }
         }
       }
+
+      if (hasRadius) commands.push({ type: 'setBorderRadius', params: [null, 0, 0, 0, 0] });
 
       // ── Own content (image, control, text) is clipped by the element's own overflow ──
       const ownClip = overflowClipRect(node);

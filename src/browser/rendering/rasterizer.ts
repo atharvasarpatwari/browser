@@ -795,6 +795,18 @@ export class Rasterizer {
     }
     if (x0 >= x1 || y0 >= y1) return;
 
+    const radius = this.state.borderRadius;
+    const box = this.state.borderBox;
+    if (radius && box) {
+      for (let row = y0; row < y1; row++) {
+        for (let col = x0; col < x1; col++) {
+          const cover = roundedCoverage(col + 0.5, row + 0.5, box, radius);
+          if (cover > 0) this.setPixelRaw(col, row, r, g, b, a * cover);
+        }
+      }
+      return;
+    }
+
     if (a >= 1) {
       for (let row = y0; row < y1; row++) {
         const base = row * this.width * 4;
@@ -1086,6 +1098,33 @@ export class Rasterizer {
       }
     }
   }
+}
+
+/**
+ * How much of the pixel centred at (px, py) lies inside the rounded box: 1 inside, 0 outside,
+ * anti-aliased across the curved corners (elliptical, as border-radius w/h allow).
+ */
+function roundedCoverage(px: number, py: number, box: { x: number; y: number; w: number; h: number }, radius: BorderRadius): number {
+  if (px < box.x || py < box.y || px > box.x + box.w || py > box.y + box.h) return 0;
+  // Corner radii are scaled down together when they would overlap (CSS Backgrounds §5.5).
+  const f = Math.min(1,
+    box.w / Math.max(1e-6, radius.topLeft.w + radius.topRight.w), box.w / Math.max(1e-6, radius.bottomLeft.w + radius.bottomRight.w),
+    box.h / Math.max(1e-6, radius.topLeft.h + radius.bottomLeft.h), box.h / Math.max(1e-6, radius.topRight.h + radius.bottomRight.h));
+  const corner = (rw: number, rh: number, cx: number, cy: number, inX: boolean, inY: boolean): number => {
+    rw *= f; rh *= f;
+    if (rw <= 0 || rh <= 0 || !inX || !inY) return 1;
+    const dx = (px - cx) / rw, dy = (py - cy) / rh;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    return Math.max(0, Math.min(1, 0.5 - (d - 1) * Math.min(rw, rh)));
+  };
+  const l = box.x, t = box.y, rgt = box.x + box.w, btm = box.y + box.h;
+  const tl = radius.topLeft, tr = radius.topRight, br = radius.bottomRight, bl = radius.bottomLeft;
+  return Math.min(
+    corner(tl.w, tl.h, l + tl.w * f, t + tl.h * f, px < l + tl.w * f, py < t + tl.h * f),
+    corner(tr.w, tr.h, rgt - tr.w * f, t + tr.h * f, px > rgt - tr.w * f, py < t + tr.h * f),
+    corner(br.w, br.h, rgt - br.w * f, btm - br.h * f, px > rgt - br.w * f, py > btm - br.h * f),
+    corner(bl.w, bl.h, l + bl.w * f, btm - bl.h * f, px < l + bl.w * f, py > btm - bl.h * f),
+  );
 }
 
 type Pixels = { data: Uint8ClampedArray; width: number; height: number };
