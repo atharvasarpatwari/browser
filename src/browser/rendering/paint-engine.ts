@@ -36,7 +36,7 @@ type PaintCommandType =
   | 'save' | 'restore' | 'clip' | 'setGlobalAlpha'
   | 'setFillGradient' | 'setBlendMode'
   | 'applyBoxShadow' | 'applyTextShadow'
-  | 'applyFilterList' | 'applyClipShape' | 'setBorderRadius'
+  | 'applyFilterList' | 'applyClipShape' | 'setBorderRadius' | 'fillRoundedRing'
   | 'applyMask'
   | 'translate';
 
@@ -487,6 +487,18 @@ class PaintEngine implements IPaintEngine {
       const bw = layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight;
       const bh = layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom;
 
+      // ── Box shadow: behind the element (before its background), around its border box ──
+      // It was painted after the background and over the whole padding box, so the shadow colour
+      // veiled the element itself.
+      const boxShadowVal = style.get('box-shadow');
+      if (boxShadowVal && boxShadowVal !== 'none') {
+        for (const shadow of parseBoxShadow(boxShadowVal)) {
+          if (!shadow.inset) {
+            commands.push({ type: 'applyBoxShadow', params: [shadow, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
+          }
+        }
+      }
+
       // Rounded corners (border-radius) clip this element's background and borders. The radius was
       // only sent when the element had a border, never cleared, and the rasterizer ignored it, so
       // every rounded button, card and radio button painted square.
@@ -547,17 +559,6 @@ class PaintEngine implements IPaintEngine {
       }
 
 
-      // ── Box shadow (rendered before borders, behind element) ──────────
-      const boxShadowVal = style.get('box-shadow');
-      if (boxShadowVal && boxShadowVal !== 'none') {
-        const shadows = parseBoxShadow(boxShadowVal);
-        for (const shadow of shadows) {
-          if (!shadow.inset) {
-            commands.push({ type: 'applyBoxShadow', params: [shadow, bx, by, bw, bh] });
-          }
-        }
-      }
-
       // ── Borders (enhanced with radius, per-side colors, dashed/dotted) ─
       const hasAnyBorder = borderInfo.top.width > 0 || borderInfo.right.width > 0 ||
         borderInfo.bottom.width > 0 || borderInfo.left.width > 0;
@@ -568,7 +569,17 @@ class PaintEngine implements IPaintEngine {
           { w: borderInfo.left.width, x: layoutBox.x, y: layoutBox.y + borderInfo.top.width, rw: borderInfo.left.width, rh: layoutBox.height - borderInfo.top.width - borderInfo.bottom.width, color: colorToString(borderInfo.left.color), style: borderInfo.left.style },
           { w: borderInfo.right.width, x: layoutBox.x + layoutBox.width - borderInfo.right.width, y: layoutBox.y + borderInfo.top.width, rw: borderInfo.right.width, rh: layoutBox.height - borderInfo.top.width - borderInfo.bottom.width, color: colorToString(borderInfo.right.color), style: borderInfo.right.style },
         ];
-        for (const s of borderSides) {
+        // A rounded border in one colour and style is drawn as a ring (outer rounded box minus the
+        // inner one). Four straight strips clipped to the rounded box left only stubs: radio
+        // buttons became four dashes.
+        const t = borderInfo.top, rt = borderInfo.right, b = borderInfo.bottom, lf = borderInfo.left;
+        const uniform = hasRadius && [rt, b, lf].every((sd) => colorToString(sd.color) === colorToString(t.color) && sd.style === t.style)
+          && t.style !== 'dashed' && t.style !== 'dotted';
+        if (uniform) {
+          commands.push({ type: 'setFillStyle', params: [colorToString(t.color)] });
+          commands.push({ type: 'fillRoundedRing', params: [borderInfo.radius, layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height, t.width, rt.width, b.width, lf.width] });
+        }
+        for (const s of uniform ? [] : borderSides) {
           if (s.w <= 0) continue;
           if (s.style === 'dashed' || s.style === 'dotted') {
             commands.push({ type: 'setFillStyle', params: [s.color] });

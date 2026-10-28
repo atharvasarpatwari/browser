@@ -20,8 +20,8 @@ android {
         applicationId "com.nova.browser"
         minSdk 26
         targetSdk 34
-        versionCode 36
-        versionName "1.35"
+        versionCode 38
+        versionName "1.37"
         resourceConfigurations += ['en']
     }
 

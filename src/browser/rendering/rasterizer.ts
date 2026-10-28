@@ -720,6 +720,11 @@ export class Rasterizer {
         applyMaskToPixels(this.pixels, this.width, this.height, maskInfo, mx, my, mw, mh);
         break;
       }
+      case 'fillRoundedRing': {
+        const [radius, rx, ry, rw, rh, bt, br, bb, bl] = cmd.params as [BorderRadius, number, number, number, number, number, number, number, number];
+        this.fillRoundedRing(radius, { x: rx, y: ry, w: rw, h: rh }, bt, br, bb, bl);
+        break;
+      }
       case 'clip': {
         const [cx, cy, cw, ch] = cmd.params as [number, number, number, number];
         if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(cw) || !Number.isFinite(ch)) break;
@@ -798,10 +803,27 @@ export class Rasterizer {
     const radius = this.state.borderRadius;
     const box = this.state.borderBox;
     if (radius && box) {
+      // Only pixels in the corner zones need coverage; rows between the corners and the middle of
+      // every row are plain fills. Computing coverage for every pixel of big rounded cards made the
+      // first frame of a page take 33 s on the phone.
+      const rr = scaledRadii(box, radius);
+      const top = box.y + Math.max(rr.tl.h, rr.tr.h), bottom = box.y + box.h - Math.max(rr.bl.h, rr.br.h);
       for (let row = y0; row < y1; row++) {
+        const py = row + 0.5;
+        if (py < box.y - 0.5 || py > box.y + box.h + 0.5) continue;
+        const inBand = py >= top && py <= bottom;
+        const left = inBand ? -Infinity : box.x + Math.max(rr.tl.w, rr.bl.w);
+        const right = inBand ? Infinity : box.x + box.w - Math.max(rr.tr.w, rr.br.w);
         for (let col = x0; col < x1; col++) {
-          const cover = roundedCoverage(col + 0.5, row + 0.5, box, radius);
-          if (cover > 0) this.setPixelRaw(col, row, r, g, b, a * cover);
+          const px = col + 0.5;
+          if (px < box.x - 0.5 || px > box.x + box.w + 0.5) continue;
+          const cover = px >= left && px <= right ? 1 : roundedCoverage(px, py, box, rr);
+          if (cover >= 1 && a >= 1) {
+            const idx = (row * this.width + col) * 4;
+            this.pixels[idx] = r; this.pixels[idx + 1] = g; this.pixels[idx + 2] = b; this.pixels[idx + 3] = 255;
+          } else if (cover > 0) {
+            this.setPixelRaw(col, row, r, g, b, a * cover);
+          }
         }
       }
       return;
@@ -868,6 +890,48 @@ export class Rasterizer {
         this.pixels[idx + 1] = 0;
         this.pixels[idx + 2] = 0;
         this.pixels[idx + 3] = 0;
+      }
+    }
+  }
+
+  /** A rounded border: the outer rounded box minus the inner (padding) one, anti-aliased. */
+  private fillRoundedRing(radius: BorderRadius, box: { x: number; y: number; w: number; h: number }, bt: number, br: number, bb: number, bl: number): void {
+    const c = this.state.fillStyle;
+    const a = c.a * this.state.globalAlpha;
+    if (a <= 0) return;
+    const inner = { x: box.x + bl, y: box.y + bt, w: box.w - bl - br, h: box.h - bt - bb };
+    const shrink = (r: { w: number; h: number }, dw: number, dh: number) => ({ w: Math.max(0, r.w - dw), h: Math.max(0, r.h - dh) });
+    const innerRadius: BorderRadius = {
+      topLeft: shrink(radius.topLeft, bl, bt), topRight: shrink(radius.topRight, br, bt),
+      bottomRight: shrink(radius.bottomRight, br, bb), bottomLeft: shrink(radius.bottomLeft, bl, bb),
+    };
+    let x0 = Math.max(0, Math.floor(box.x)), y0 = Math.max(0, Math.floor(box.y));
+    let x1 = Math.min(this.width, Math.ceil(box.x + box.w)), y1 = Math.min(this.height, Math.ceil(box.y + box.h));
+    if (this.state.clipRect) {
+      const cr = this.state.clipRect;
+      x0 = Math.max(x0, cr.x | 0); y0 = Math.max(y0, cr.y | 0);
+      x1 = Math.min(x1, (cr.x + cr.w) | 0); y1 = Math.min(y1, (cr.y + cr.h) | 0);
+    }
+    const outerR = scaledRadii(box, radius);
+    const hasHole = inner.w > 0 && inner.h > 0;
+    const innerR = hasHole ? scaledRadii(inner, innerRadius) : null;
+    // Columns strictly inside the hole on rows clear of the inner corners: skipped (it used to
+    // compute both coverages for every pixel of the box).
+    const holeTop = inner.y + Math.max(innerR?.tl.h ?? 0, innerR?.tr.h ?? 0);
+    const holeBottom = inner.y + inner.h - Math.max(innerR?.bl.h ?? 0, innerR?.br.h ?? 0);
+    for (let row = y0; row < y1; row++) {
+      const py = row + 0.5;
+      const skipFrom = hasHole && py > holeTop && py < holeBottom ? Math.ceil(inner.x + 0.5) : Infinity;
+      const skipTo = hasHole && py > holeTop && py < holeBottom ? Math.floor(inner.x + inner.w - 0.5) : -Infinity;
+      for (let col = x0; col < x1; col++) {
+        if (col >= skipFrom && col < skipTo) { col = skipTo - 1; continue; }
+        // The ring is exact: no edge slack (that is only for straight fills snapped to whole pixels).
+        const outer = roundedCoverage(col + 0.5, py, box, outerR, 0);
+        if (outer <= 0) continue;
+        // No slack for the hole: it would swallow a 1px outline.
+        const hole = innerR ? roundedCoverage(col + 0.5, py, inner, innerR, 0) : 0;
+        const cover = Math.max(0, outer - hole);
+        if (cover > 0) this.setPixelRaw(col, row, c.r, c.g, c.b, a * cover);
       }
     }
   }
@@ -1104,27 +1168,41 @@ export class Rasterizer {
  * How much of the pixel centred at (px, py) lies inside the rounded box: 1 inside, 0 outside,
  * anti-aliased across the curved corners (elliptical, as border-radius w/h allow).
  */
-function roundedCoverage(px: number, py: number, box: { x: number; y: number; w: number; h: number }, radius: BorderRadius): number {
-  if (px < box.x || py < box.y || px > box.x + box.w || py > box.y + box.h) return 0;
-  // Corner radii are scaled down together when they would overlap (CSS Backgrounds §5.5).
+type Corner = { w: number; h: number };
+type Radii = { tl: Corner; tr: Corner; br: Corner; bl: Corner };
+
+/** Corner radii scaled down together when they would overlap (CSS Backgrounds §5.5). Once per fill. */
+function scaledRadii(box: { w: number; h: number }, r: BorderRadius): Radii {
   const f = Math.min(1,
-    box.w / Math.max(1e-6, radius.topLeft.w + radius.topRight.w), box.w / Math.max(1e-6, radius.bottomLeft.w + radius.bottomRight.w),
-    box.h / Math.max(1e-6, radius.topLeft.h + radius.bottomLeft.h), box.h / Math.max(1e-6, radius.topRight.h + radius.bottomRight.h));
-  const corner = (rw: number, rh: number, cx: number, cy: number, inX: boolean, inY: boolean): number => {
-    rw *= f; rh *= f;
-    if (rw <= 0 || rh <= 0 || !inX || !inY) return 1;
-    const dx = (px - cx) / rw, dy = (py - cy) / rh;
-    const d = Math.sqrt(dx * dx + dy * dy);
-    return Math.max(0, Math.min(1, 0.5 - (d - 1) * Math.min(rw, rh)));
-  };
+    box.w / Math.max(1e-6, r.topLeft.w + r.topRight.w), box.w / Math.max(1e-6, r.bottomLeft.w + r.bottomRight.w),
+    box.h / Math.max(1e-6, r.topLeft.h + r.bottomLeft.h), box.h / Math.max(1e-6, r.topRight.h + r.bottomRight.h));
+  const s = (c: Corner): Corner => ({ w: c.w * f, h: c.h * f });
+  return { tl: s(r.topLeft), tr: s(r.topRight), br: s(r.bottomRight), bl: s(r.bottomLeft) };
+}
+
+/** Coverage of one corner ellipse centred at (cx, cy); 1 when the corner is square. */
+function cornerCoverage(px: number, py: number, rw: number, rh: number, cx: number, cy: number): number {
+  if (rw <= 0 || rh <= 0) return 1;
+  const dx = (px - cx) / rw, dy = (py - cy) / rh;
+  const d = Math.sqrt(dx * dx + dy * dy);
+  const c = 0.5 - (d - 1) * Math.min(rw, rh);
+  return c <= 0 ? 0 : c >= 1 ? 1 : c;
+}
+
+/**
+ * How much of the pixel centred at (px, py) lies inside the rounded box: 1 inside, 0 outside,
+ * anti-aliased across the curved corners (elliptical, as border-radius w/h allow).
+ */
+function roundedCoverage(px: number, py: number, box: { x: number; y: number; w: number; h: number }, r: Radii, slack = 0.5): number {
+  // Half a pixel of slack: a 1px border at a fractional x (160.9) has its pixel centre (160.5)
+  // just outside the box, which erased whole border sides on the phone.
+  if (px < box.x - slack || py < box.y - slack || px > box.x + box.w + slack || py > box.y + box.h + slack) return 0;
   const l = box.x, t = box.y, rgt = box.x + box.w, btm = box.y + box.h;
-  const tl = radius.topLeft, tr = radius.topRight, br = radius.bottomRight, bl = radius.bottomLeft;
-  return Math.min(
-    corner(tl.w, tl.h, l + tl.w * f, t + tl.h * f, px < l + tl.w * f, py < t + tl.h * f),
-    corner(tr.w, tr.h, rgt - tr.w * f, t + tr.h * f, px > rgt - tr.w * f, py < t + tr.h * f),
-    corner(br.w, br.h, rgt - br.w * f, btm - br.h * f, px > rgt - br.w * f, py > btm - br.h * f),
-    corner(bl.w, bl.h, l + bl.w * f, btm - bl.h * f, px < l + bl.w * f, py > btm - bl.h * f),
-  );
+  if (px < l + r.tl.w && py < t + r.tl.h) return cornerCoverage(px, py, r.tl.w, r.tl.h, l + r.tl.w, t + r.tl.h);
+  if (px > rgt - r.tr.w && py < t + r.tr.h) return cornerCoverage(px, py, r.tr.w, r.tr.h, rgt - r.tr.w, t + r.tr.h);
+  if (px > rgt - r.br.w && py > btm - r.br.h) return cornerCoverage(px, py, r.br.w, r.br.h, rgt - r.br.w, btm - r.br.h);
+  if (px < l + r.bl.w && py > btm - r.bl.h) return cornerCoverage(px, py, r.bl.w, r.bl.h, l + r.bl.w, btm - r.bl.h);
+  return 1;
 }
 
 type Pixels = { data: Uint8ClampedArray; width: number; height: number };
@@ -1177,13 +1255,67 @@ function resampled(src: Pixels, tw: number, th: number): Pixels {
 
 // ?????? Adapter functions for new rendering modules ??????????????????????????????????????????????????????????????????????????????
 
+/**
+ * An outer box-shadow, drawn straight into the page pixels: an alpha mask of the (spread) box,
+ * blurred with three separable running-sum box blurs (≈ the Gaussian CSS specifies, σ = blur/2),
+ * composited outside the element's own border box (outer shadows never show under the element).
+ * It used to copy the whole page buffer twice per shadow, blur with an O(w·h·r²) kernel (a 20px
+ * shadow on a big card took seconds; httpforever.com's first frame took 33 s on the phone) and
+ * paint over the element itself, greying every card.
+ */
 function applyBoxShadowToPixels(
   pixels: Uint8ClampedArray, pw: number, ph: number,
   shadow: BoxShadow, x: number, y: number, w: number, h: number,
 ): void {
-  const buffer = new ImageData(new Uint8ClampedArray(pixels), pw, ph);
-  renderBoxShadowOnImageData(buffer, shadow, x, y, w, h);
-  for (let i = 0; i < pixels.length; i++) pixels[i] = buffer.data[i];
+  if (w <= 0 || h <= 0 || shadow.color.a <= 0) return;
+  const sigma = Math.max(0, shadow.blur) / 2;
+  const r = Math.round(sigma); // each of the three box passes
+  const pad = 3 * r + 1;
+  const ox = Math.round(x + shadow.offsetX - shadow.spread) - pad;
+  const oy = Math.round(y + shadow.offsetY - shadow.spread) - pad;
+  const sw = Math.max(1, Math.round(w + shadow.spread * 2));
+  const sh = Math.max(1, Math.round(h + shadow.spread * 2));
+  const mw = sw + pad * 2, mh = sh + pad * 2;
+  const mask = new Float32Array(mw * mh);
+  for (let yy = pad; yy < pad + sh; yy++) mask.fill(1, yy * mw + pad, yy * mw + pad + sw);
+  if (r > 0) {
+    const tmp = new Float32Array(Math.max(mw, mh));
+    const pass = (len: number, lines: number, at: (line: number, i: number) => number) => {
+      for (let line = 0; line < lines; line++) {
+        for (let i = 0; i < len; i++) tmp[i] = mask[at(line, i)]!;
+        let sum = 0;
+        for (let i = -r; i <= r; i++) if (i >= 0 && i < len) sum += tmp[i]!;
+        for (let i = 0; i < len; i++) {
+          mask[at(line, i)] = sum / (2 * r + 1);
+          const add = i + r + 1, drop = i - r;
+          if (add < len) sum += tmp[add]!;
+          if (drop >= 0) sum -= tmp[drop]!;
+        }
+      }
+    };
+    for (let k = 0; k < 3; k++) {
+      pass(mw, mh, (line, i) => line * mw + i);
+      pass(mh, mw, (line, i) => i * mw + line);
+    }
+  }
+  const { r: cr, g: cg, b: cb, a: ca } = shadow.color;
+  const bx0 = x, by0 = y, bx1 = x + w, by1 = y + h;
+  for (let my = 0; my < mh; my++) {
+    const py = oy + my;
+    if (py < 0 || py >= ph) continue;
+    for (let mx = 0; mx < mw; mx++) {
+      const px = ox + mx;
+      if (px < 0 || px >= pw) continue;
+      if (px + 0.5 > bx0 && px + 0.5 < bx1 && py + 0.5 > by0 && py + 0.5 < by1) continue; // under the element
+      const alpha = mask[my * mw + mx]! * ca;
+      if (alpha <= 0.002) continue;
+      const di = (py * pw + px) * 4;
+      pixels[di] = pixels[di]! * (1 - alpha) + cr * alpha;
+      pixels[di + 1] = pixels[di + 1]! * (1 - alpha) + cg * alpha;
+      pixels[di + 2] = pixels[di + 2]! * (1 - alpha) + cb * alpha;
+      pixels[di + 3] = Math.max(pixels[di + 3]!, alpha * 255);
+    }
+  }
 }
 
 function applyTextShadowToPixels(
@@ -1311,14 +1443,27 @@ function applyBoxBlurRaw(buffer: ImageData, radius: number): ImageData {
   return result;
 }
 
+/**
+ * A CSS `filter` on one element: applied to that element's rectangle only. It was applied to the
+ * whole page buffer, so a logo's `filter: drop-shadow(…)` shadowed and greyed the entire page and
+ * took 7 s per frame (httpforever.com).
+ * ponytail: drop-shadow is skipped (it needs the element's own pixels as a separate layer;
+ * drawn over the rectangle it would cast a box-shaped shadow).
+ */
 function applyFiltersToBuffer(
   pixels: Uint8ClampedArray, pw: number, ph: number,
   filters: FilterList, fx: number, fy: number, fw: number, fh: number,
 ): void {
-  if (filters.length === 0) return;
-  const buffer = new ImageData(new Uint8ClampedArray(pixels), pw, ph);
-  const filtered = applyFilters(buffer, filters);
-  for (let i = 0; i < pixels.length; i++) pixels[i] = filtered.data[i];
+  const list = filters.filter((f) => (f as { name?: string }).name !== 'drop-shadow') as FilterList;
+  if (list.length === 0) return;
+  const x0 = Math.max(0, Math.floor(fx)), y0 = Math.max(0, Math.floor(fy));
+  const x1 = Math.min(pw, Math.ceil(fx + fw)), y1 = Math.min(ph, Math.ceil(fy + fh));
+  const rw = x1 - x0, rh = y1 - y0;
+  if (rw <= 0 || rh <= 0) return;
+  const region = new Uint8ClampedArray(rw * rh * 4);
+  for (let y = 0; y < rh; y++) region.set(pixels.subarray(((y0 + y) * pw + x0) * 4, ((y0 + y) * pw + x1) * 4), y * rw * 4);
+  const filtered = applyFilters(new ImageData(region, rw, rh), list).data;
+  for (let y = 0; y < rh; y++) pixels.set(filtered.subarray(y * rw * 4, (y + 1) * rw * 4), ((y0 + y) * pw + x0) * 4);
 }
 
 function applyClipShapeToPixels(

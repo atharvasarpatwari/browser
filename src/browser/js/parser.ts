@@ -34,7 +34,9 @@ export class Parser {
 
   private parseExpression(minPrec = 0): AST.Expression {
     // Handle async arrow: async (x) => expr or async x => expr
-    if (this.is(TokenType.Async) && this.peek(1).type !== TokenType.Function) {
+    // `async` starts an async arrow only when an arrow follows (`async x =>`, `async (…) =>`);
+    // otherwise it is an ordinary name (`async + 1`, a call to a function called async).
+    if (this.is(TokenType.Async) && this.peek(1).type !== TokenType.Function && this.asyncArrowAhead()) {
       const tok = this.peek();
       this.advance(); // consume 'async'
       const params: AST.ArrowFunctionExpression['params'] = [];
@@ -189,6 +191,18 @@ export class Parser {
       // `async function` in expression position (`(async function(){ … })()`): it failed to parse.
       case TokenType.Async:
         if (this.peek(1).type === TokenType.Function) return this.parseFunctionExpression();
+        this.advance();
+        return { type: 'Identifier', name: tok.value, loc: { line: tok.line, column: tok.column } };
+
+      // Contextual keywords are ordinary names outside their special positions: `get(k)`, `set`,
+      // `of`, `from`, `as`, `static` as variables or functions. They were parsed as something
+      // else, so a call like `get('mode')` was "not a function" (httpforever.com's theme script).
+      case TokenType.Get:
+      case TokenType.Set:
+      case TokenType.Of:
+      case TokenType.From:
+      case TokenType.As:
+      case TokenType.Static:
         this.advance();
         return { type: 'Identifier', name: tok.value, loc: { line: tok.line, column: tok.column } };
 
@@ -591,6 +605,15 @@ export class Parser {
    * to the matching `)`, recording the matches of the parens nested inside, so nested parens are
    * not rescanned. Stops at a template with substitutions (the parser lexes those itself).
    */
+  /** At `async`: is this an async arrow (`async x =>` or `async ( … ) =>`)? */
+  private asyncArrowAhead(): boolean {
+    const next = this.peek(1).type;
+    if (next === TokenType.Identifier) return this.peek(2).type === TokenType.Arrow;
+    if (next !== TokenType.LParen) return false;
+    this.pos++;
+    try { return this.isArrowParamsAhead(); } finally { this.pos--; }
+  }
+
   private parenMatch = new Map<number, number>();
   private isArrowParamsAhead(): boolean {
     const start = this.pos;

@@ -16,6 +16,8 @@ export interface GradientInfo {
   position: { cx: number; cy: number };
   stops: ColorStop[];
   repetitions: boolean;
+  /** Explicit radial size (`120% 140%`, `40px`), as fractions of the box (rx of width, ry of height). */
+  radii?: { rx: number; ry: number; px?: { rx: number; ry: number } };
 }
 
 export function isGradientValue(val: string): boolean {
@@ -51,15 +53,16 @@ function parseStops(args: string): ColorStop[] {
   for (const part of parts) {
     const trimmed = part.trim();
     if (!trimmed) continue;
-    const match = trimmed.match(/^([^0-9%]+?)\s+(\d+(?:\.\d+)?%?)$/);
+    // A colour, then one or two positions (`#2f8f4e 45%`, `rgba(0,0,0,.5) 10%`, `#fff 0 40%`).
+    // The colour part used to be required to contain no digits, so every hex or rgb() stop with a
+    // position failed to parse and painted black.
+    const match = trimmed.match(/^(.*?)\s+(-?\d*\.?\d+(?:%|px)?)(?:\s+(-?\d*\.?\d+(?:%|px)?))?$/);
     if (match) {
       const color = parseColor(match[1].trim());
-      const offsetStr = match[2];
-      if (offsetStr.endsWith('%')) {
-        stops.push({ color, offset: (parseFloat(offsetStr) || 0) / 100 });
-      } else {
-        stops.push({ color, offset: parseFloat(offsetStr) || 0 });
-      }
+      // ponytail: px positions need the gradient length; they become automatic positions.
+      const offsetOf = (t: string) => (t.endsWith('%') ? (parseFloat(t) || 0) / 100 : t.endsWith('px') ? -1 : parseFloat(t) || 0);
+      stops.push({ color, offset: offsetOf(match[2]) });
+      if (match[3]) stops.push({ color, offset: offsetOf(match[3]) });
     } else {
       stops.push({ color: parseColor(trimmed), offset: -1 });
     }
@@ -119,6 +122,7 @@ export function parseGradient(value: string): GradientInfo | null {
   let shape: 'circle' | 'ellipse' = 'ellipse';
   let size = 'farthest-corner';
   let cx = 0.5, cy = 0.5;
+  let radii: GradientInfo['radii'];
 
   let remainder = inner;
   if (gtype === 'linear' || gtype === 'repeating-linear') {
@@ -128,20 +132,38 @@ export function parseGradient(value: string): GradientInfo | null {
       remainder = inner.substring(angleMatch[0].length);
     }
   } else {
-    const radialMatch = remainder.match(/^\s*(circle|ellipse)(?:\s+|,)/);
+    // The prelude (shape, size, `at` position) is the first argument when it isn't a colour stop;
+    // it used to be parsed as a stop, which painted the whole gradient black.
+    const parts = splitGradientStops(inner);
+    const first = (parts[0] ?? '').trim();
+    const isPrelude = /\bat\b|^(circle|ellipse|closest-|farthest-)|^-?\d/.test(first);
+    const prelude = isPrelude ? first : '';
+    if (isPrelude) remainder = parts.slice(1).join(',');
+    const radialMatch = prelude.match(/\b(circle|ellipse)\b/);
     if (radialMatch) shape = radialMatch[1] as 'circle' | 'ellipse';
-    const posMatch = remainder.match(/at\s+(\d+(?:\.\d+)?%?)\s+(\d+(?:\.\d+)?%?)/);
+    const keyword = (v: string, axis: 'x' | 'y') => ({ left: 0, top: 0, center: 0.5, right: 1, bottom: 1 } as Record<string, number>)[v] ?? (axis === 'x' ? 0.5 : 0.5);
+    const posMatch = prelude.match(/\bat\s+(\S+)(?:\s+(\S+))?/);
     if (posMatch) {
-      cx = posMatch[1].endsWith('%') ? (parseFloat(posMatch[1]) / 100) : (parseFloat(posMatch[1]) || 0.5);
-      cy = posMatch[2].endsWith('%') ? (parseFloat(posMatch[2]) / 100) : (parseFloat(posMatch[2]) || 0.5);
+      const p = (v: string | undefined, axis: 'x' | 'y') => (!v ? 0.5 : v.endsWith('%') ? parseFloat(v) / 100 : /^[a-z]/.test(v) ? keyword(v, axis) : 0.5);
+      cx = p(posMatch[1], 'x');
+      cy = p(posMatch[2], 'y');
     }
-    const kwMatch = remainder.match(/(closest-side|farthest-side|closest-corner|farthest-corner)/);
+    const kwMatch = prelude.match(/(closest-side|farthest-side|closest-corner|farthest-corner)/);
     if (kwMatch) size = kwMatch[1];
+    // Explicit size before `at`: one value (circle radius) or two (ellipse radii), % or px.
+    const sizePart = prelude.split(/\bat\b/)[0]!.replace(/\b(circle|ellipse)\b/, '').trim();
+    const nums = sizePart ? sizePart.split(/\s+/).filter((t) => /^-?\d/.test(t)) : [];
+    if (nums.length) {
+      const frac = (t: string) => (t.endsWith('%') ? parseFloat(t) / 100 : NaN);
+      const pxv = (t: string) => (t.endsWith('%') ? NaN : parseFloat(t));
+      const a = nums[0]!, b = nums[1] ?? nums[0]!;
+      radii = { rx: frac(a), ry: frac(b), px: { rx: pxv(a), ry: pxv(b) } };
+    }
   }
 
   const stops = parseStops(remainder);
 
-  return { type: gtype, angle, shape, size, position: { cx, cy }, stops, repetitions: repeating };
+  return { type: gtype, angle, shape, size, position: { cx, cy }, stops, repetitions: repeating, ...(radii ? { radii } : {}) };
 }
 
 export function evaluateGradient(grad: GradientInfo, x: number, y: number, w: number, h: number): RGBA {
@@ -155,6 +177,13 @@ export function evaluateGradient(grad: GradientInfo, x: number, y: number, w: nu
     const nx = Math.sin(rad);
     const ny = -Math.cos(rad);
     t = ((x / w - 0.5) * nx + (y / h - 0.5) * ny) * 2 + 0.5;
+  } else if (grad.radii) {
+    // Explicit radii: distance in units of the ellipse's own radii.
+    const rx = Number.isFinite(grad.radii.rx) ? grad.radii.rx * w : grad.radii.px!.rx;
+    const ry = Number.isFinite(grad.radii.ry) ? grad.radii.ry * h : grad.radii.px!.ry;
+    const dx = (x - position.cx * w) / Math.max(1e-6, rx);
+    const dy = (y - position.cy * h) / Math.max(1e-6, ry);
+    t = Math.sqrt(dx * dx + dy * dy);
   } else {
     const dx = x / w - position.cx;
     const dy = y / h - position.cy;

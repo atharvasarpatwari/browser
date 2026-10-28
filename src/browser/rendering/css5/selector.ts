@@ -12,7 +12,7 @@
  *   - Class selectors (.class)
  *   - Attribute selectors ([attr], [attr=val], [attr~=val], [attr|=val], [attr^=val], [attr$=val], [attr*=val])
  *   - Pseudo-classes (:hover, :focus, :active, :visited, :first-child, :last-child, :nth-child(), etc.)
- *   - Pseudo-elements (::before, ::after, etc.) — detected but not matched (always false)
+ *   - Pseudo-elements (::before, ::after, etc.) — detected; never match the element itself
  *   - Combinators: descendant ( ), child (>), adjacent sibling (+), general sibling (~)
  *   - :not(), :is(), :has() functional pseudo-classes
  *   - Selector lists (comma-separated)
@@ -89,8 +89,11 @@ function matchesCompound(element: SelectableElement, sel: CssCompoundSelector): 
     if (!matchesPseudoClass(element, pc)) return false;
   }
 
-  // Pseudo-elements — can't match in this context (they refer to generated content)
-  // We just ignore them for matching purposes (return true if only pseudo-element differs)
+  // Pseudo-elements (::before, ::after, ::placeholder…) style generated boxes, never the element.
+  // They were ignored here, so `.hero::before { position: absolute; inset: 0 }` made the hero
+  // itself absolutely positioned (httpforever.com lost its header). Generated content isn't
+  // rendered yet, so these rules simply don't apply.
+  if ((sel as { pseudoElement?: string | null }).pseudoElement) return false;
 
   return true;
 }

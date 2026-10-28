@@ -38,6 +38,37 @@ describe('border-radius in the rasterizer', () => {
   });
 });
 
+describe('rounded borders (found on the phone, 1.35)', () => {
+  const rad = (r: number) => ({ topLeft: { w: r, h: r }, topRight: { w: r, h: r }, bottomRight: { w: r, h: r }, bottomLeft: { w: r, h: r } });
+
+  it('a 1px border at a fractional x keeps its left side (pixel centre just outside the box)', () => {
+    const r = new Rasterizer({ width: 40, height: 20, backgroundColor: 'white' });
+    const img = r.rasterize([
+      cmd('setBorderRadius', rad(2), 10.9, 2, 20, 12),
+      cmd('setFillStyle', '#000000'),
+      cmd('fillRect', 10.9, 3, 1, 10),
+    ]);
+    const red = (x: number, y: number) => img.data[(y * 40 + x) * 4]!;
+    expect(red(10, 8)).toBeLessThan(128);
+  });
+
+  it('a uniform rounded border is a ring: outline drawn, middle empty', () => {
+    const r = new Rasterizer({ width: 13, height: 13, backgroundColor: 'white' });
+    const img = r.rasterize([cmd('setFillStyle', '#000000'), cmd('fillRoundedRing', rad(6.5), 0, 0, 13, 13, 1, 1, 1, 1)]);
+    const dark = (x: number, y: number) => img.data[(y * 13 + x) * 4]! < 128;
+    expect(dark(6, 0)).toBe(true);   // top of the circle
+    expect(dark(0, 6)).toBe(true);   // left
+    expect(dark(6, 6)).toBe(false);  // hole
+    expect(dark(0, 0)).toBe(false);  // outside the circle
+  });
+
+  it('a ring at a fractional y has no stray pixel below it', () => {
+    const r = new Rasterizer({ width: 13, height: 15, backgroundColor: 'white' });
+    const img = r.rasterize([cmd('setFillStyle', '#000000'), cmd('fillRoundedRing', rad(6.5), 0, 0.13, 13, 13, 1, 1, 1, 1)]);
+    expect(img.data[(13 * 13 + 6) * 4]!).toBeGreaterThan(200); // row 13 (centre 13.5) is below the box (ends at 13.13)
+  });
+});
+
 describe('border-radius on a page', () => {
   it('a rounded div paints with transparent corners', async () => {
     const paint = new PaintEngine();
