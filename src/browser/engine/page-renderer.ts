@@ -1025,7 +1025,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
     this.pumpTimer = null;
     this.pumpAt = Infinity;
     if (loop !== this.pageEventLoop || this.disposed) return;
-    const before = this.deps.domTree.getMutations().length;
+    const mutations = () => this.deps.domTree.mutationCount ?? this.deps.domTree.getMutations().length;
+    const before = mutations();
     loop.runWithInterpreter(() => {
       // Due timers, a bounded number per pump so a tight setInterval cannot starve the UI.
       for (let i = 0; i < 50; i++) {
@@ -1033,7 +1034,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
         if (loop.pendingCount === 0 || loop.timeUntilNext() > 0) break;
       }
     });
-    if (this.deps.domTree.getMutations().length !== before) this.requestReflow();
+    if (mutations() !== before) this.requestReflow();
     this.schedulePagePump();
   }
 

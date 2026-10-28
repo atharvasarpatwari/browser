@@ -227,7 +227,7 @@ export function createDocumentBinding(
   });
   docObj.properties.set('createComment', {
     // ponytail: a comment is an empty text node (nothing renders either way).
-    value: createNativeFunction('createComment', () => wrapTextNode(makeTextNode('', null))),
+    value: createNativeFunction('createComment', () => wrapTextNode(makeTextNode('', null), domTree)),
     writable: true, enumerable: true, configurable: true,
   });
   docObj.properties.set('createElementNS', {
@@ -247,7 +247,7 @@ export function createDocumentBinding(
     value: createNativeFunction('createTextNode', (_this, args) => {
       const text = toString(args[0]);
       const node = makeTextNode(text, null);
-      return wrapTextNode(node);
+      return wrapTextNode(node, domTree);
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -1594,9 +1594,9 @@ function wrapCanvasContext(ctx: CanvasRenderingContext2D): JSObject {
 // TREE APIS: live navigation getters, selectors, HTML insertion, ChildNode/ParentNode
 // ─────────────────────────────────────────────────────────────────────────────
 
-function wrapNode(node: DomNode | null | undefined, domTree: IDomTree): JSValue {
+export function wrapNode(node: DomNode | null | undefined, domTree: IDomTree): JSValue {
   if (!node) return null;
-  return node.nodeType === 'element' ? wrapElement(node as DomElement, domTree) : wrapTextNode(node);
+  return node.nodeType === 'element' ? wrapElement(node as DomElement, domTree) : wrapTextNode(node, domTree);
 }
 
 function isDescendantOf(node: DomNode, ancestor: DomElement): boolean {
@@ -1630,6 +1630,18 @@ function argsToNodes(args: JSValue[]): DomNode[] {
 }
 
 const FRAGMENT_TAG = '#document-fragment';
+
+/** Default actions the browser performs for script-initiated activation (set by the browser window). */
+export interface ActivationHandler {
+  /** What a click that was not cancelled does: follow a link, tick a box, submit a form… */
+  activate(el: DomElement): void;
+  /** Submit a form; `fireSubmitEvent` false for `form.submit()`. */
+  submit(form: DomElement, submitter: DomElement | null, fireSubmitEvent: boolean): void;
+}
+let activationHandler: ActivationHandler | null = null;
+export function setActivationHandler(handler: ActivationHandler | null): void {
+  activationHandler = handler;
+}
 
 /** A DocumentFragment inserts its children, and is left empty. */
 function expandFragment(node: DomNode): DomNode[] {
@@ -1768,13 +1780,34 @@ function defineElementExtras(obj: JSObject, el: DomElement, domTree: IDomTree): 
   dataset.properties = new DatasetMap(el, domTree);
   obj.properties.set('dataset', { value: dataset, writable: false, enumerable: true, configurable: true });
 
-  const fire = (type: string, bubbles: boolean): void => {
+  const fire = (type: string, bubbles: boolean): boolean => {
     const evt = createEventObject(type, obj, { bubbles, cancelable: true });
     const dispatch = obj.properties.get('dispatchEvent')?.value;
-    if (dispatch && typeof dispatch === 'object') callJSFunction(dispatch as JSFunction, obj, [evt]);
+    if (dispatch && typeof dispatch === 'object') return callJSFunction(dispatch as JSFunction, obj, [evt]) !== false;
+    return true;
   };
   method('contains', (a) => { for (let n = nodeOf(a[0]); n; n = n.parent as DomNode | null) if (n === el) return true; return false; });
-  method('click', () => { fire('click', true); return undefined; });
+  // el.click(): the event, then (unless a listener cancelled it) the default action — a scripted
+  // click on a link or a submit button used to do nothing.
+  method('click', () => { if (fire('click', true)) activationHandler?.activate(el); return undefined; });
+  if (el.tagName.toLowerCase() === 'form') {
+    method('submit', () => { activationHandler?.submit(el, null, false); return undefined; });
+    method('requestSubmit', (a) => { activationHandler?.submit(el, nodeOf(a[0]) as DomElement | null, true); return undefined; });
+    method('reset', () => {
+      // Back to the markup's values (formValue/formChecked hold what the user changed).
+      const walk = (n: DomNode): void => {
+        for (const c of (n as DomElement).children ?? []) {
+          if (c.nodeType !== 'element') continue;
+          delete (c as DomElement).formValue;
+          delete (c as DomElement).formChecked;
+          walk(c);
+        }
+      };
+      walk(el);
+      fire('reset', true);
+      return undefined;
+    });
+  }
   method('focus', () => { fire('focus', false); fire('focusin', true); return undefined; });
   method('blur', () => { fire('blur', false); fire('focusout', true); return undefined; });
   for (const name of ['scrollIntoView', 'scrollTo', 'scrollBy', 'scroll', 'setPointerCapture', 'releasePointerCapture', 'normalize']) method(name, () => undefined);
@@ -1955,12 +1988,35 @@ function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void 
   });
 }
 
-function wrapTextNode(node: DomNode): JSObject {
+const textNodeCache = new WeakMap<DomNode, JSObject>();
+
+/**
+ * A text node's wrapper. textContent/data/nodeValue are live: writes go through the DOM tree, so
+ * they show on screen and reach MutationObservers. It was a snapshot (writes did nothing) and a
+ * new object on every access (`p.firstChild === p.firstChild` was false).
+ */
+function wrapTextNode(node: DomNode, domTree: IDomTree): JSObject {
+  const cached = textNodeCache.get(node);
+  if (cached) return cached;
   const obj = createObject(interfacePrototype('Text'));
+  textNodeCache.set(node, obj);
   obj.properties.set('nodeType', { value: 3, writable: false, enumerable: true, configurable: false });
-  obj.properties.set('textContent', {
-    value: (node as DomNode & { text?: string }).text ?? '',
-    writable: true, enumerable: true, configurable: true,
+  obj.properties.set('nodeName', { value: '#text', writable: false, enumerable: true, configurable: false });
+  const text = () => (node as DomNode & { text?: string }).text ?? '';
+  for (const name of ['textContent', 'data', 'nodeValue', 'wholeText']) {
+    obj.properties.set(name, {
+      value: undefined, writable: name !== 'wholeText', enumerable: true, configurable: true,
+      getter: createNativeFunction(`get ${name}`, text),
+      setter: name === 'wholeText' ? undefined : createNativeFunction(`set ${name}`, (_t, a) => { domTree.setTextContent(node as DomTextNode, toString(a[0] ?? '')); return undefined; }),
+    });
+  }
+  obj.properties.set('length', { value: 0, writable: false, enumerable: true, configurable: true, getter: createNativeFunction('get length', () => text().length) });
+  const parent = () => wrapNode(node.parent && node.parent.nodeType === 'element' ? node.parent as DomElement : null, domTree);
+  obj.properties.set('parentNode', { value: null, writable: false, enumerable: true, configurable: true, getter: createNativeFunction('get parentNode', parent) });
+  obj.properties.set('parentElement', { value: null, writable: false, enumerable: true, configurable: true, getter: createNativeFunction('get parentElement', parent) });
+  obj.properties.set('remove', {
+    value: createNativeFunction('remove', () => { if (node.parent && node.parent.nodeType === 'element') domTree.removeChild(node.parent as DomElement, node); return undefined; }),
+    writable: true, enumerable: false, configurable: true,
   });
   (obj as JSObject & { __domNode: DomNode }).__domNode = node;
   return obj;

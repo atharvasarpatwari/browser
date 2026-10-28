@@ -19,6 +19,7 @@ import {
   formOf, formDataEntries, firstMissingRequired,
 } from '../../browser/rendering/form-controls';
 import type { INavigationController, PostData } from '../../browser/navigation/navigation-controller';
+import { setActivationHandler } from '../../browser/js/dom-bindings';
 import type { IPaintEngine } from '../../browser/rendering/paint-engine';
 import type { IDownloadManager } from '../../browser/downloads/download-manager';
 import type { IBookmarkService } from '../../browser/bookmarks/bookmark-services';
@@ -414,6 +415,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
       : (this.layout as IDesktopLayout).areas) as DesktopLayoutAreas & MobileLayoutAreas;
 
     this.tabManager = new TabManager();
+    // Page scripts' el.click() / form.submit() / form.requestSubmit() reach the same default
+    // actions as a tap.
+    setActivationHandler({
+      activate: (el) => { this.activateElement(el); },
+      submit: (form, submitter, fireSubmitEvent) => { this.submitForm(form, submitter, fireSubmitEvent); },
+    });
     this.contextManager = new TabContextManager();
     this.tabSessionBridge = new TabSessionBridge(this.tabManager, this.contextManager);
     // Open tabs survive a restart (RC-9): saved to localStorage, never while incognito. The store
@@ -1748,7 +1755,15 @@ class BrowserWindowPage implements IBrowserWindowPage {
     if (!hit) return 'none';
     const notCanceled = this.browserEngine?.dispatchPageEvent(hit, 'click') ?? true;
     if (!notCanceled) return 'scripted';
+    return this.activateElement(hit);
+  }
 
+  /**
+   * The default action of a click that was not cancelled: type into a field, tick a box, submit a
+   * form, or follow the nearest link. Shared by taps and by page scripts calling `el.click()`
+   * (which used to fire the event and then do nothing).
+   */
+  activateElement(hit: DomElement): 'link' | 'field' | 'submit' | 'none' {
     // Form controls: type into fields, tick boxes, pick options, submit.
     let control: DomElement | null = null;
     for (let n: DomElement | null = hit, guard = 0; n && guard < 16; n = n.parent as DomElement | null, guard++) {
@@ -1879,14 +1894,24 @@ class BrowserWindowPage implements IBrowserWindowPage {
    * `required` checked, then GET navigates to action?query. ponytail: POST forms are not sent yet
    * (logged); they need a request body on navigation.
    */
-  private submitForm(form: DomElement | null, submitter: DomElement | null): void {
+  /**
+   * Submit a form. `fireSubmitEvent` is false for script `form.submit()`, which by spec skips the
+   * submit event (and validation); taps and `requestSubmit()` fire it.
+   */
+  private submitForm(form: DomElement | null, submitter: DomElement | null, fireSubmitEvent = true): void {
     if (!form) return;
-    if (!(this.browserEngine?.dispatchPageEvent(form, 'submit') ?? true)) return;
+    if (fireSubmitEvent && !(this.browserEngine?.dispatchPageEvent(form, 'submit') ?? true)) return;
+    if (!fireSubmitEvent) { this.sendForm(form, submitter); return; }
     const missing = firstMissingRequired(form);
     if (missing) {
       if (isTextEditable(missing)) this.openFieldEditor(missing);
       return;
     }
+    this.sendForm(form, submitter);
+  }
+
+  /** Build the request for a form (GET query or POST body) and navigate to it. */
+  private sendForm(form: DomElement, submitter: DomElement | null): void {
     const method = (submitter?.attributes.get('formmethod') ?? form.attributes.get('method') ?? 'get').toLowerCase();
     if (method === 'dialog') return; // closes a <dialog>; nothing to send
     const action = submitter?.attributes.get('formaction') ?? form.attributes.get('action') ?? '';

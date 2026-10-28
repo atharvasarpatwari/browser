@@ -1,10 +1,10 @@
 import type { DomDocument } from '../rendering/dom-tree';
-import type { IDomTree, DomElement } from '../rendering/dom-tree';
+import type { IDomTree, DomElement, DomNode } from '../rendering/dom-tree';
 import type { INavigationController } from '../navigation/navigation-controller';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter, stringMethods, functionMethod } from './interpreter';
-import { createDocumentBinding, wrapElement, createEventObject, interfacePrototype, DOM_INTERFACE_NAMES } from './dom-bindings';
+import { createDocumentBinding, wrapElement, wrapNode, createEventObject, interfacePrototype, DOM_INTERFACE_NAMES } from './dom-bindings';
 import { getPreferredColorScheme } from '../rendering/color-scheme';
 import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
@@ -2214,13 +2214,75 @@ export function createGlobalEnv(
       return img;
     }));
 
-    // ponytail: MutationObserver never reports (no DOM mutation records yet); observe/disconnect
-    // exist so frameworks that set one up keep running. Record mutations in dom-tree if a site needs it.
-    env.setLocal('MutationObserver', createNativeFunction('MutationObserver', () => {
+    // MutationObserver: records from the DOM tree's change hook, delivered once per microtask.
+    // It was a stub that never reported, so frameworks and lazy-loaders waiting for DOM changes stalled.
+    type ObsTarget = { node: DomNode; childList: boolean; attributes: boolean; characterData: boolean; subtree: boolean; filter: string[] | null; oldAttr: boolean; oldData: boolean };
+    type Obs = { self: JSObject; cb: JSFunction; targets: ObsTarget[]; queue: JSObject[] };
+    const observers = new Set<Obs>();
+    let deliveryQueued = false;
+    const isInclusiveAncestor = (a: DomNode, n: DomNode | null): boolean => {
+      for (let p: DomNode | null = n, d = 0; p && d < 512; p = p.parent as DomNode | null, d++) if (p === a) return true;
+      return false;
+    };
+    const deliver = () => {
+      deliveryQueued = false;
+      for (const o of [...observers]) {
+        if (!o.queue.length) continue;
+        const records = createArray(o.queue.splice(0));
+        try { callJSFunction(o.cb, o.self, [records, o.self]); } catch (err) { console.error('[MutationObserver] callback failed:', err instanceof Error ? err.message : err); }
+      }
+    };
+    domTree.onMutation?.((change) => {
+      for (const o of observers) {
+        const t = o.targets.find((tt) => (tt.subtree ? isInclusiveAncestor(tt.node, change.target) : tt.node === change.target)
+          && (change.type === 'childList' ? tt.childList
+            : change.type === 'attributes' ? tt.attributes && (!tt.filter || tt.filter.includes(change.attributeName ?? ''))
+            : tt.characterData));
+        if (!t) continue;
+        const rec = createObject(null);
+        const set = (k: string, v: JSValue) => rec.properties.set(k, { value: v, writable: false, enumerable: true, configurable: true });
+        set('type', change.type);
+        set('target', wrapNode(change.target, domTree));
+        set('addedNodes', createArray(change.added ? [wrapNode(change.added, domTree)] : []));
+        set('removedNodes', createArray(change.removed ? [wrapNode(change.removed, domTree)] : []));
+        set('previousSibling', null);
+        set('nextSibling', null);
+        set('attributeName', change.attributeName ?? null);
+        set('attributeNamespace', null);
+        set('oldValue', (change.type === 'attributes' ? t.oldAttr : change.type === 'characterData' ? t.oldData : false) ? change.oldValue ?? null : null);
+        o.queue.push(rec);
+        if (!deliveryQueued) { deliveryQueued = true; eventLoop.enqueueMicrotask(deliver); }
+      }
+    });
+    env.setLocal('MutationObserver', createNativeFunction('MutationObserver', (_t, a) => {
       const o = createObject(null);
-      hidden(o, 'observe', () => undefined);
-      hidden(o, 'disconnect', () => undefined);
-      hidden(o, 'takeRecords', () => createArray([]));
+      const state: Obs = { self: o, cb: a[0] as JSFunction, targets: [], queue: [] };
+      if (!state.cb || typeof state.cb !== 'object' || !('closure' in state.cb)) throw new TypeError("Failed to construct 'MutationObserver': parameter 1 is not of type 'MutationCallback'.");
+      hidden(o, 'observe', (_tt, args) => {
+        const target = args[0] as (JSObject & { __domNode?: DomNode }) | undefined;
+        const node = target?.__domNode ?? (target === env.get('document') ? doc as unknown as DomNode : undefined);
+        if (!node) throw new TypeError("Failed to execute 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'.");
+        const opt = (k: string) => (args[1] as JSObject | undefined)?.properties?.get(k)?.value;
+        const filter = opt('attributeFilter') ? [...iterateJS(opt('attributeFilter'))].map(toString) : null;
+        const entry: ObsTarget = {
+          node,
+          childList: toBoolean(opt('childList')),
+          attributes: toBoolean(opt('attributes')) || !!filter || toBoolean(opt('attributeOldValue')),
+          characterData: toBoolean(opt('characterData')) || toBoolean(opt('characterDataOldValue')),
+          subtree: toBoolean(opt('subtree')),
+          filter,
+          oldAttr: toBoolean(opt('attributeOldValue')),
+          oldData: toBoolean(opt('characterDataOldValue')),
+        };
+        if (!entry.childList && !entry.attributes && !entry.characterData) {
+          throw new TypeError("Failed to execute 'observe' on 'MutationObserver': The options object must set at least one of 'attributes', 'characterData', or 'childList' to true.");
+        }
+        state.targets = state.targets.filter((tt) => tt.node !== node).concat(entry);
+        observers.add(state);
+        return undefined;
+      });
+      hidden(o, 'disconnect', () => { observers.delete(state); state.targets = []; state.queue = []; return undefined; });
+      hidden(o, 'takeRecords', () => createArray(state.queue.splice(0)));
       return o;
     }));
 

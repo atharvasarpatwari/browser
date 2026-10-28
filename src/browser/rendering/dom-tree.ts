@@ -144,6 +144,16 @@ type DomMutationType =
   | 'nodeInserted' | 'nodeRemoved' | 'attributeChanged'
   | 'textChanged' | 'styleChanged';
 
+/** A DOM change as MutationObserver reports it. */
+interface DomChange {
+  readonly type: 'childList' | 'attributes' | 'characterData';
+  readonly target: DomNode;
+  readonly added?: DomNode;
+  readonly removed?: DomNode;
+  readonly attributeName?: string;
+  readonly oldValue?: string | null;
+}
+
 interface DomMutation {
   readonly type: DomMutationType;
   readonly targetDomId: string;
@@ -170,6 +180,10 @@ interface IDomTree extends IDisposable {
   setUsedStyle(element: DomElement, used: UsedStyle): void;
   setLayoutBox(element: DomElement, box: LayoutBox): void;
   getMutations(): readonly DomMutation[];
+  /** Number of mutations recorded so far (cheap; getMutations copies the list). */
+  readonly mutationCount?: number;
+  /** Listen to DOM changes with the nodes themselves (MutationObserver). Returns an unsubscribe. */
+  onMutation?(listener: (change: DomChange) => void): () => void;
   clearMutations(): void;
   processMutations(): void;
   markDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void;
@@ -249,6 +263,21 @@ class DomTree implements IDomTree {
   private document: DomDocument | null = null;
   private readonly nodeIndex = new Map<string, DomNode>();
   private readonly mutations: DomMutation[] = [];
+  private readonly changeListeners = new Set<(change: DomChange) => void>();
+  private _mutationCount = 0;
+
+  get mutationCount(): number { return this._mutationCount; }
+
+  onMutation(listener: (change: DomChange) => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
+
+  private record(m: DomMutation, change: DomChange | null): void {
+    this.mutations.push(m);
+    this._mutationCount++;
+    if (change) for (const l of this.changeListeners) l(change);
+  }
   private readonly idIndex = new Map<string, DomElement>();
   private selectableCache = new WeakMap<DomElement, SelectableDomNode>();
 
@@ -347,7 +376,7 @@ class DomTree implements IDomTree {
     parent.children.splice(idx, 0, newChild);
     (newChild as { parent: DomNode | null }).parent = parent;
     this.indexNode(newChild);
-    this.mutations.push({ type: 'nodeInserted', targetDomId: parent.domId, data: { childId: newChild.domId, index: idx } });
+    this.record({ type: 'nodeInserted', targetDomId: parent.domId, data: { childId: newChild.domId, index: idx } }, { type: 'childList', target: parent, added: newChild });
   }
 
   appendChild(parent: DomElement, child: DomNode): void {
@@ -355,7 +384,7 @@ class DomTree implements IDomTree {
     parent.children.push(child);
     (child as { parent: DomNode | null }).parent = parent;
     this.indexNode(child);
-    this.mutations.push({ type: 'nodeInserted', targetDomId: parent.domId, data: { childId: child.domId } });
+    this.record({ type: 'nodeInserted', targetDomId: parent.domId, data: { childId: child.domId } }, { type: 'childList', target: parent, added: child });
   }
 
   removeChild(parent: DomElement, child: DomNode): void {
@@ -369,17 +398,18 @@ class DomTree implements IDomTree {
         this.idIndex.delete(id);
       }
     }
-    this.mutations.push({ type: 'nodeRemoved', targetDomId: parent.domId, data: { childId: child.domId } });
+    this.record({ type: 'nodeRemoved', targetDomId: parent.domId, data: { childId: child.domId } }, { type: 'childList', target: parent, removed: child });
   }
 
   setAttribute(element: DomElement, name: string, value: string): void {
+    const oldValue = element.attributes.get(name) ?? null;
     const attrs = new Map(element.attributes);
     attrs.set(name, value);
     (element as { attributes: ReadonlyMap<string, string> }).attributes = attrs;
     if (name === 'id') {
       this.idIndex.set(value, element);
     }
-    this.mutations.push({ type: 'attributeChanged', targetDomId: element.domId, data: { name, value } });
+    this.record({ type: 'attributeChanged', targetDomId: element.domId, data: { name, value } }, { type: 'attributes', target: element, attributeName: name, oldValue });
   }
 
   removeAttribute(element: DomElement, name: string): void {
@@ -390,19 +420,22 @@ class DomTree implements IDomTree {
     if (name === 'id' && oldValue !== undefined) {
       this.idIndex.delete(oldValue);
     }
-    this.mutations.push({ type: 'attributeChanged', targetDomId: element.domId, data: { name, value: null } });
+    this.record({ type: 'attributeChanged', targetDomId: element.domId, data: { name, value: null } }, { type: 'attributes', target: element, attributeName: name, oldValue: oldValue ?? null });
   }
 
   setTextContent(node: DomElement | DomTextNode, text: string): void {
+    const oldValue = node.nodeType === 'text' ? (node as DomTextNode).text : null;
     if (node.nodeType === 'text') {
       (node as { text: string }).text = text;
     }
-    this.mutations.push({ type: 'textChanged', targetDomId: node.domId, data: { text } });
+    // A text node's data changed (characterData); an element's textContent replaced its children (childList).
+    this.record({ type: 'textChanged', targetDomId: node.domId, data: { text } },
+      { type: node.nodeType === 'text' ? 'characterData' : 'childList', target: node, oldValue });
   }
 
   setComputedStyle(element: DomElement, style: ReadonlyMap<string, string>): void {
     element.computedStyle = new Map(style);
-    this.mutations.push({ type: 'styleChanged', targetDomId: element.domId, data: {} });
+    this.record({ type: 'styleChanged', targetDomId: element.domId, data: {} }, null);
   }
 
   setUsedStyle(element: DomElement, used: UsedStyle): void {
@@ -670,4 +703,4 @@ class DomTree implements IDomTree {
 }
 
 export { DomTree };
-export type { IDomTree, DomDocument, DomNode, DomElement, DomTextNode, DomMutation, DomMutationType, LayoutBox, UsedStyle, TextRun };
+export type { IDomTree, DomDocument, DomNode, DomElement, DomTextNode, DomMutation, DomMutationType, DomChange, LayoutBox, UsedStyle, TextRun };
