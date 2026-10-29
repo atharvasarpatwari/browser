@@ -314,8 +314,10 @@ function compoundToString(sel: CssCompoundSelector): string {
 
   for (const attr of sel.attributes) {
     if (attr.operator) {
-      const val = attr.value !== null ? `="${attr.value}"` : '';
-      result += `[${attr.name}${attr.operator}${val}]`;
+      // The operator already ends in "=": this wrote [data-theme=="dark"], which never matched,
+      // so every [attr="value"] rule on every page was dropped (httpforever's dark theme).
+      const val = `"${(attr.value ?? '').replace(/[\\"]/g, '\\$&')}"`;
+      result += `[${attr.name}${attr.operator}${val}${attr.caseInsensitive ? ' i' : ''}]`;
     } else {
       result += `[${attr.name}]`;
     }

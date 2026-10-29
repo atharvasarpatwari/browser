@@ -80,3 +80,28 @@ describe('position: fixed stays on screen while the page scrolls (found on the p
     renderer.dispose();
   });
 });
+
+describe('attribute selectors with a value (found on the phone, 1.41: httpforever stayed light in dark mode)', () => {
+  it('[attr="v"], [attr^=v], [attr~=v] and the i flag survive the stylesheet round trip', async () => {
+    const t = await render('<html data-theme="dark"><head><style>html[data-theme="dark"] #a{width:11px} [lang|=en] #b{width:12px} a[href^="https"]{display:block;width:13px} p[class~=x i]{width:14px} [title="say \\"hi\\""]{width:15px}</style></head><body lang="en-GB"><div id="a"></div><div id="b"></div><a id="c" href="https://x.test/">c</a><p id="d" class="y X">d</p><div id="e" title="say &quot;hi&quot;"></div></body></html>');
+    expect([boxOf(t, 'a').width, boxOf(t, 'b').width, boxOf(t, 'c').width, boxOf(t, 'd').width, boxOf(t, 'e').width]).toEqual([11, 12, 13, 14, 15]);
+  });
+
+  it('httpforever in dark mode: dark cards, light text', async () => {
+    const { setPreferredColorScheme } = await import('../src/browser/rendering/color-scheme');
+    const { readFileSync } = await import('node:fs');
+    const F = 'tests/fixtures/httpforever-2026/';
+    try {
+      setPreferredColorScheme('dark');
+      const t = await render(readFileSync(F + 'index.html', 'utf8'), readFileSync(F + 'style.css', 'utf8'), readFileSync(F + 'theme.js', 'utf8'));
+      const style = (tag: string) => (t.getElementsByTagName(tag)[0] as unknown as { computedStyle: Map<string, string> }).computedStyle;
+      expect(style('section').get('background-color')).toBe('#191d1a');
+      type El = { tagName?: string; children: El[]; computedStyle: Map<string, string> };
+      const section = t.getElementsByTagName('section')[0] as unknown as El;
+      const para = (function find(n: El): El | null { for (const c of n.children ?? []) { if (c.tagName === 'p' && !(c as unknown as { attributes: Map<string, string> }).attributes.has('class')) return c; const f = find(c); if (f) return f; } return null; })(section)!;
+      expect(para.computedStyle.get('color')).toBe('#e9efea');
+    } finally {
+      setPreferredColorScheme('light');
+    }
+  });
+});
