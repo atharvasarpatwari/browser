@@ -49,7 +49,8 @@ interface ILayoutEngine extends IDisposable {
   layout(document: DomDocument, domTree?: IDomTree, config?: Partial<LayoutConfig>): void;
   layoutIncremental(document: DomDocument, domTree: IDomTree, config?: Partial<LayoutConfig>): DamageTracker;
   getLayoutBox(domId: string): LayoutBox | null;
-  getElementAtPoint(x: number, y: number): DomElement | null;
+  /** `y` is a page coordinate; `scrollY` lets boxes in a fixed box be hit where they are drawn. */
+  getElementAtPoint(x: number, y: number, scrollY?: number): DomElement | null;
   getConfig(): LayoutConfig;
   updateConfig(config: Partial<LayoutConfig>): void;
 }
@@ -133,6 +134,17 @@ function preservesWhitespace(el: DomElement): boolean {
   return ws.startsWith('pre') || ws === 'break-spaces';
 }
 
+/** Is `el` a `position: fixed` box or inside one? */
+function inFixedBox(el: DomElement): boolean {
+  for (let n: DomNode | null = el; n && n.nodeType === 'element'; n = n.parent) {
+    if ((n as DomElement).computedStyle?.get('position') === 'fixed') return true;
+  }
+  return false;
+}
+
+/** Block-level displays whose auto width fills the containing block. */
+const FILLS_LINE = new Set(['block', 'list-item', 'flex', 'grid', 'table', 'flow-root']);
+
 /** A `left`/`right`/`top`/`bottom` inset that isn't auto. */
 function isInsetSet(style: ReadonlyMap<string, string>, prop: string): boolean {
   const v = style.get(prop);
@@ -156,6 +168,9 @@ class LayoutEngine implements ILayoutEngine {
     fontSize: number;
     availableWidth: number;
     domTree?: IDomTree;
+    /** Where the box would have started in flow (its static position, CSS 2.2 §10.3.7). */
+    staticX: number;
+    staticY: number;
   }> = [];
 
   /** Current float context for the active block formatting context. */
@@ -249,7 +264,7 @@ class LayoutEngine implements ILayoutEngine {
     return this.layoutBoxes.get(domId) ?? null;
   }
 
-  getElementAtPoint(x: number, y: number): DomElement | null {
+  getElementAtPoint(x: number, y: number, scrollY = 0): DomElement | null {
     // Topmost in paint order: boxes in a positioned layer (higher z-index first) sit above in-flow
     // ones; within a layer the last laid out wins. Taking the last laid-out box regardless sent a
     // tap on Wikipedia's positioned Search button to the in-flow footer laid out after it.
@@ -257,10 +272,12 @@ class LayoutEngine implements ILayoutEngine {
     let bestLayer = -Infinity;
     for (let i = this.elementPositions.length - 1; i >= 0; i--) {
       const { element, box } = this.elementPositions[i]!;
+      // Fixed boxes are drawn over the scrolled page at their viewport position (paint-engine).
+      const py = scrollY !== 0 && inFixedBox(element) ? y - scrollY : y;
       if (
         x >= box.x && x <= box.x + box.width &&
-        y >= box.y && y <= box.y + box.height &&
-        this.isHitTestable(element, x, y)
+        py >= box.y && py <= box.y + box.height &&
+        this.isHitTestable(element, x, py)
       ) {
         const layer = paintLayerOf(element);
         if (layer > bestLayer) { best = element; bestLayer = layer; }
@@ -326,7 +343,7 @@ class LayoutEngine implements ILayoutEngine {
         ? null // viewport
         : findContainingBlockForScheme(node, position as 'absolute' | 'fixed' | 'sticky');
       const fontSize = this.resolveFontSize(style, parentFontSize);
-      this.positionedQueue.push({ element: node, containingBlock, fontSize, availableWidth, domTree });
+      this.positionedQueue.push({ element: node, containingBlock, fontSize, availableWidth, domTree, staticX: x, staticY: y });
       return y; // doesn't take space in flow
     }
 
@@ -702,7 +719,7 @@ class LayoutEngine implements ILayoutEngine {
           flushInlineRun();
           const childFontSize = this.resolveFontSize(childStyle, parentFontSize);
           const cb = childPos === 'fixed' ? null : findContainingBlockForScheme(childEl, childPos as 'absolute' | 'fixed' | 'sticky');
-          this.positionedQueue.push({ element: childEl, containingBlock: cb, fontSize: childFontSize, availableWidth, domTree });
+          this.positionedQueue.push({ element: childEl, containingBlock: cb, fontSize: childFontSize, availableWidth, domTree, staticX: contentX, staticY: childY });
           continue;
         }
 
@@ -928,7 +945,7 @@ class LayoutEngine implements ILayoutEngine {
       if (elPosition === 'absolute' || elPosition === 'fixed') {
         const containingBlock = elPosition === 'fixed' ? null : findContainingBlockForScheme(el, elPosition as 'absolute' | 'fixed' | 'sticky');
         const elFontSize = this.resolveFontSize(elStyle, parentFontSize);
-        this.positionedQueue.push({ element: el, containingBlock, fontSize: elFontSize, availableWidth, domTree });
+        this.positionedQueue.push({ element: el, containingBlock, fontSize: elFontSize, availableWidth, domTree, staticX: contentX, staticY: startY });
         continue;
       }
 
@@ -1117,7 +1134,7 @@ class LayoutEngine implements ILayoutEngine {
         // Queue for positioned layout after flex flow
         const containingBlock = childPos === 'fixed' ? null : findContainingBlockForScheme(childEl, childPos as 'absolute' | 'fixed' | 'sticky');
         const childFontSize = this.resolveFontSize(childStyle, fontSize);
-        this.positionedQueue.push({ element: childEl, containingBlock, fontSize: childFontSize, availableWidth, domTree });
+        this.positionedQueue.push({ element: childEl, containingBlock, fontSize: childFontSize, availableWidth, domTree, staticX: contentX, staticY: contentY });
         continue;
       }
 
@@ -1392,7 +1409,7 @@ class LayoutEngine implements ILayoutEngine {
         // Queue for positioned layout after grid flow
         const containingBlock = childPos === 'fixed' ? null : findContainingBlockForScheme(childEl, childPos as 'absolute' | 'fixed' | 'sticky');
         const childFontSize = this.resolveFontSize(childStyle, fontSize);
-        this.positionedQueue.push({ element: childEl, containingBlock, fontSize: childFontSize, availableWidth, domTree });
+        this.positionedQueue.push({ element: childEl, containingBlock, fontSize: childFontSize, availableWidth, domTree, staticX: contentX, staticY: contentY });
         continue;
       }
 
@@ -1629,7 +1646,7 @@ class LayoutEngine implements ILayoutEngine {
       if (elPosition === 'absolute' || elPosition === 'fixed') {
         const containingBlock = elPosition === 'fixed' ? null : findContainingBlockForScheme(el, elPosition as 'absolute' | 'fixed' | 'sticky');
         const elFontSize = this.resolveFontSize(elStyle, parentFontSize);
-        this.positionedQueue.push({ element: el, containingBlock, fontSize: elFontSize, availableWidth, domTree });
+        this.positionedQueue.push({ element: el, containingBlock, fontSize: elFontSize, availableWidth, domTree, staticX: contentX, staticY: contentY });
         continue;
       }
 
@@ -1769,7 +1786,7 @@ class LayoutEngine implements ILayoutEngine {
       const innerClassified = classifyDisplay(innerStyle.get('display') ?? 'inline');
       if (innerPosition === 'absolute' || innerPosition === 'fixed') {
         const containingBlock = innerPosition === 'fixed' ? null : findContainingBlockForScheme(inner, innerPosition as 'absolute' | 'fixed' | 'sticky');
-        this.positionedQueue.push({ element: inner, containingBlock, fontSize: this.resolveFontSize(innerStyle, fontSize), availableWidth, domTree });
+        this.positionedQueue.push({ element: inner, containingBlock, fontSize: this.resolveFontSize(innerStyle, fontSize), availableWidth, domTree, staticX: contentX, staticY: contentY });
       } else if (isAtomicInline(innerClassified)) {
         this.layoutInlineBlockElement(inner, ifc, contentX, contentY, availableWidth, fontSize, domTree);
       } else if (innerClassified === 'block') {
@@ -2015,15 +2032,22 @@ class LayoutEngine implements ILayoutEngine {
 
   /** Right-most edge of an element's laid-out content (descendant boxes and text runs), local coordinates. */
   private contentExtent(el: DomElement): number {
-    let right = 0;
-    const visit = (node: DomElement): void => {
+    // An auto-width block fills whatever width it was given, so it counts by its content plus its
+    // right padding and border. Counting its box made every block measure as the full width, so
+    // shrink-to-fit boxes holding a <ul> or <div> never shrank.
+    const visit = (node: DomElement): number => {
       const b = this.layoutBoxes.get(node.domId);
-      if (b && node !== el) right = Math.max(right, b.x + b.width);
+      let right = 0;
       for (const run of b?.textRuns ?? []) right = Math.max(right, run.x + (run.width ?? 0));
-      for (const c of node.children) if (c.nodeType === 'element') visit(c as DomElement);
+      for (const c of node.children) if (c.nodeType === 'element') right = Math.max(right, visit(c as DomElement));
+      if (!b || node === el) return right;
+      const style = node.computedStyle;
+      const width = style?.get('width');
+      const fills = (width === undefined || width === 'auto') && FILLS_LINE.has(style?.get('display') ?? 'inline');
+      if (!fills) return Math.max(right, b.x + b.width);
+      return right > 0 ? right + b.paddingRight + b.borderRight : b.x + b.paddingLeft + b.borderLeft + b.paddingRight + b.borderRight;
     };
-    visit(el);
-    return right;
+    return visit(el);
   }
 
   /**
@@ -2255,7 +2279,7 @@ class LayoutEngine implements ILayoutEngine {
    */
   private layoutPositionedElements(): void {
     for (const entry of this.positionedQueue) {
-      this.layoutSinglePositioned(entry.element, entry.containingBlock, entry.fontSize, entry.availableWidth, entry.domTree);
+      this.layoutSinglePositioned(entry.element, entry.containingBlock, entry.fontSize, entry.availableWidth, entry.domTree, entry.staticX, entry.staticY);
     }
     this.positionedQueue.length = 0;
   }
@@ -2266,6 +2290,8 @@ class LayoutEngine implements ILayoutEngine {
     fontSize: number,
     availableWidth: number,
     domTree?: IDomTree,
+    staticX = 0,
+    staticY = 0,
   ): void {
     const style = node.computedStyle ?? new Map();
     const display = style.get('display') ?? 'inline';
@@ -2303,7 +2329,7 @@ class LayoutEngine implements ILayoutEngine {
       } else {
         borderWidthBox = specified + paddingLeft + paddingRight + borderLeft + borderRight;
       }
-    } else if (isInsetSet(style, 'left') !== isInsetSet(style, 'right')) {
+    } else if (!(isInsetSet(style, 'left') && isInsetSet(style, 'right'))) {
       // Shrink-to-fit (CSS 2.2 §10.3.7). Laid out full width, a `right: 1rem` box was pinned to the
       // left edge (httpforever's fixed theme switcher sat top-left instead of top-right).
       const frame = paddingLeft + paddingRight + borderLeft + borderRight;
@@ -2341,6 +2367,10 @@ class LayoutEngine implements ILayoutEngine {
       this.config.viewportHeight,
       fontSize,
     );
+    // No inset on an axis: the box stays where it would have been in flow. It used to be centred
+    // in its containing block, so a dropdown with only `top: 100%` landed mid-page.
+    if (!isInsetSet(style, 'left') && !isInsetSet(style, 'right')) box.x = staticX + marginLeft;
+    if (!isInsetSet(style, 'top') && !isInsetSet(style, 'bottom')) box.y = staticY + marginTop;
 
     // ── Layout children ────────────────────────────────────────────────
     const contentWidth = box.width - paddingLeft - paddingRight - borderLeft - borderRight;
@@ -2389,24 +2419,6 @@ class LayoutEngine implements ILayoutEngine {
         const dy = -box.height;
         box.y += dy;
         this.translateContent(node, 0, dy);
-      }
-    }
-
-    // ── Handle auto margins for vertical centering ──────────────────────
-    if (!specHeight || specHeight === 'auto') {
-      const autoTop = style.get('top') === undefined || style.get('top') === 'auto';
-      const autoBottom = style.get('bottom') === undefined || style.get('bottom') === 'auto';
-      if (autoTop && autoBottom) {
-        const cbHeight = cbBox
-          ? cbBox.height - cbBox.borderTop - cbBox.borderBottom - cbBox.paddingTop - cbBox.paddingBottom
-          : this.config.viewportHeight;
-        const remaining = cbHeight - box.height - marginLeft - marginRight
-          - borderLeft - borderRight - paddingLeft - paddingRight;
-        const halfMargin = Math.max(0, remaining / 2);
-        const cbY = cbBox
-          ? cbBox.y + cbBox.borderTop + cbBox.paddingTop
-          : 0;
-        box.y = cbY + halfMargin + marginTop;
       }
     }
 

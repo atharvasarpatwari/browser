@@ -141,7 +141,7 @@ describe('inline elements flow inside the line', () => {
   it('keeps a sentence with a link and <b> on one line, words in order', async () => {
     const { texts } = await renderAtPhoneWidth(PARA);
     const words = texts.filter((t) => t[0].trim()).sort((a, b) => a[1] - b[1]);
-    expect(words.map((t) => t[0])).toEqual(['Read', 'more', 'here', 'and', 'bold', 'too.'].flatMap((w) => w === 'too.' ? ['too', '.'] : [w]));
+    expect(words.map((t) => t[0])).toEqual(['Read', 'more', 'here', 'and', 'bold', 'too.']); // "too." is one word since 1.40
     expect(new Set(words.map((t) => Math.round(t[2]))).size).toBe(1);
   });
 

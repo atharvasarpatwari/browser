@@ -1,5 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
-import type { DomDocument, DomElement, LayoutBox, TextRun } from './dom-tree';
+import type { DomDocument, DomElement, DomNode, LayoutBox, TextRun } from './dom-tree';
 import { DamageTracker } from './damage-tracker';
 import {
   buildStackingContextTree,
@@ -152,6 +152,28 @@ function isTransparent(color: string): boolean {
   return c === '' || c === 'none' || c === 'transparent' || /^rgba\(\d+,\d+,\d+,0(\.0*)?\)$/.test(c);
 }
 
+/** Is `el` a `position: fixed` box or inside one? */
+function isInFixedBox(el: DomElement): boolean {
+  for (let n: DomNode | null = el; n && n.nodeType === 'element'; n = n.parent) {
+    if ((n as DomElement).computedStyle?.get('position') === 'fixed') return true;
+  }
+  return false;
+}
+
+/** Straight-alpha source-over of `src` onto `dst` (same size). */
+function blendOver(dst: Uint8ClampedArray, src: Uint8ClampedArray): void {
+  for (let i = 0; i < dst.length; i += 4) {
+    const a = src[i + 3]!;
+    if (a === 0) continue;
+    if (a === 255) { dst[i] = src[i]!; dst[i + 1] = src[i + 1]!; dst[i + 2] = src[i + 2]!; dst[i + 3] = 255; continue; }
+    const k = a / 255, j = 1 - k;
+    dst[i] = src[i]! * k + dst[i]! * j;
+    dst[i + 1] = src[i + 1]! * k + dst[i + 1]! * j;
+    dst[i + 2] = src[i + 2]! * k + dst[i + 2]! * j;
+    dst[i + 3] = Math.max(dst[i + 3]!, a);
+  }
+}
+
 class PaintEngine implements IPaintEngine {
   private config: PaintConfig;
   private readonly layers: PaintLayer[] = [];
@@ -168,6 +190,13 @@ class PaintEngine implements IPaintEngine {
   private tall: { readonly rasterizer: Rasterizer | GpuRasterizer; readonly height: number } | null = null;
   private fullFrame: ImageData | null = null;
   private fullFrameStale = true;
+  /**
+   * Elements in a `position: fixed` box. On a tall page they are left out of the page bitmap and
+   * drawn over each scrolled crop from `fixedOverlay` (laid out in viewport coordinates already),
+   * so they stay put. They used to scroll away with the page (httpforever's theme switcher).
+   */
+  private fixedElements = new Set<DomElement>();
+  private fixedOverlay: ImageData | null = null;
 
   // Compositing layer system
   private layerCompositor: LayerCompositor | null = null;
@@ -292,6 +321,7 @@ class PaintEngine implements IPaintEngine {
 
     const allElements: DomElement[] = [];
     this.collectElements(root, allElements);
+    this.fixedElements = new Set(allElements.filter(isInFixedBox));
 
     for (const el of allElements) {
       this.paintElement(el);
@@ -319,9 +349,10 @@ class PaintEngine implements IPaintEngine {
     return this.layers.find(l => l.id === id) ?? null;
   }
 
-  compositeFrame(): PaintCommand[] {
+  /** `part`: 'page' leaves out fixed boxes, 'fixed' draws only them (no background). */
+  compositeFrame(part: 'all' | 'page' | 'fixed' = 'all'): PaintCommand[] {
     const height = this.rasterHeight();
-    const allCommands: PaintCommand[] = [
+    const allCommands: PaintCommand[] = part === 'fixed' ? [] : [
       { type: 'clearRect', params: [0, 0, this.config.width, height] },
       { type: 'setFillStyle', params: [this.canvasBackground ?? this.config.backgroundColor] },
       { type: 'fillRect', params: [0, 0, this.config.width, height] },
@@ -330,6 +361,7 @@ class PaintEngine implements IPaintEngine {
     if (this.stackingTree) {
       // Render using the stacking context tree (spec-compliant paint order)
       const ctxCommands = renderStackingContext(this.stackingTree, (el) => {
+        if (part !== 'all' && this.fixedElements.has(el) !== (part === 'fixed')) return [];
         return this.getElementPaintCommands(el);
       });
       allCommands.push(...(ctxCommands as PaintCommand[]));
@@ -373,12 +405,19 @@ class PaintEngine implements IPaintEngine {
 
     if (this.fullFrameStale || !this.fullFrame || this.fullFrame.height !== height) {
       if (this.tall?.height !== height) this.tall = { rasterizer: this.createRasterizer(height), height };
-      this.fullFrame = this.tall!.rasterizer.rasterize(this.compositeFrame());
+      const split = this.fixedElements.size > 0;
+      this.fullFrame = this.tall!.rasterizer.rasterize(this.compositeFrame(split ? 'page' : 'all'));
+      this.fixedOverlay = split
+        ? new Rasterizer({ width: this.config.width, height: this.config.height, devicePixelRatio: this.config.devicePixelRatio, backgroundColor: 'transparent' })
+          .rasterize(this.compositeFrame('fixed'))
+        : null;
       this.fullFrameStale = false;
     }
     const { width } = this.fullFrame;
     const from = this.getScroll().y * width * 4;
-    return new ImageData(this.fullFrame.data.slice(from, from + this.config.height * width * 4), width, this.config.height);
+    const frame = new ImageData(this.fullFrame.data.slice(from, from + this.config.height * width * 4), width, this.config.height);
+    if (this.fixedOverlay) blendOver(frame.data, this.fixedOverlay.data);
+    return frame;
   }
 
   /** Rows rasterised: the document's height, at least the viewport and at most MAX_PAGE_HEIGHT. */

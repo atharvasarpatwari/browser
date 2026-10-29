@@ -35,9 +35,10 @@ describe('findBreakOpportunities', () => {
 
   it('finds mandatory break after \\r\\n', () => {
     const opps = findBreakOpportunities('a\r\nb');
-    const crlfBreak = opps.find(o => o.index === 2);
+    const crlfBreak = opps.find(o => o.index === 3); // once, after the LF (UAX #14 LB5)
     expect(crlfBreak).toBeDefined();
     expect(crlfBreak!.mandatory).toBe(true);
+    expect(opps.find(o => o.index === 2)).toBeUndefined();
   });
 
   it('finds break after hyphen', () => {
@@ -53,10 +54,10 @@ describe('findBreakOpportunities', () => {
     expect(indices).toContain(3);
   });
 
-  it('finds break at word boundary between letters and punctuation', () => {
+  it('no break before trailing punctuation (UAX #14 LB13; "exist?" wrapped its "?")', () => {
     const opps = findBreakOpportunities('hello!');
     const indices = opps.map(o => o.index);
-    expect(indices).toContain(5); // after 'hello'
+    expect(indices).not.toContain(5); // "hello!" stays one word
   });
 
   it('finds break after closing parenthesis', () => {
@@ -81,8 +82,8 @@ describe('findBreakOpportunities', () => {
   it('handles consecutive spaces', () => {
     const opps = findBreakOpportunities('a  b');
     const indices = opps.map(o => o.index);
-    // breaks after each space: index 2, 3
-    expect(indices).toContain(2);
+    // one break, after the last space (UAX #14 LB7, LB18)
+    expect(indices).not.toContain(2);
     expect(indices).toContain(3);
   });
 

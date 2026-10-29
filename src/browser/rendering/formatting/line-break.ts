@@ -148,6 +148,23 @@ function classify(code: number): LB {
 // LINE BREAK OPPORTUNITIES
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Never start a line, even after a space: closing punctuation (UAX #14 LB13). */
+const NEVER_AFTER_SPACE = new Set([LB.CP, LB.EX, LB.IS, LB.SY]);
+/** Don't start a line unless a space precedes: quotes, postfixes, non-starters, hyphens (LB16–LB21). */
+const NO_BREAK_BEFORE = new Set([LB.QU, LB.PO, LB.NS, LB.CM, LB.GL, LB.WJ, LB.BA]);
+
+/** May a line break between a character of class `prev` and one of class `cur`? */
+function canBreakBetween(prev: LB, cur: LB, beforeSpaces: LB): boolean {
+  if (cur === LB.SP || cur === LB.BK || cur === LB.CR || cur === LB.LF || cur === LB.ZW) return false; // LB6, LB7
+  if (prev === LB.ZW) return true;                                     // LB8
+  if (NEVER_AFTER_SPACE.has(cur)) return false;                        // LB13
+  if (prev === LB.SP) return beforeSpaces !== LB.OP;                   // LB18 (LB14: "( x")
+  if (NO_BREAK_BEFORE.has(cur)) return false;
+  if (prev === LB.OP || prev === LB.QU || prev === LB.GL || prev === LB.WJ || prev === LB.PR) return false;
+  if (prev === LB.BA || prev === LB.B2) return cur !== LB.NU;          // LB21, LB25 ("-5")
+  return prev === LB.ID || cur === LB.ID;                               // LB31 between ideographs; letters and digits stay one word
+}
+
 /**
  * Represents a break opportunity in a text run.
  */
@@ -179,88 +196,23 @@ export function findBreakOpportunities(text: string): BreakOpportunity[] {
   // Always allow a break at position 0 (empty line start)
   breaks.push({ index: 0, mandatory: false });
 
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
-    const cls = classify(code);
-
-    switch (cls) {
-      // Mandatory breaks
-      case LB.BK:
-      case LB.LF:
-      case LB.CR:
-        breaks.push({ index: i + 1, mandatory: true });
-        break;
-
-      // Spaces — break opportunity AFTER the space
-      case LB.SP:
-        breaks.push({ index: i + 1, mandatory: false });
-        break;
-
-      // Zero-width space — break opportunity at this exact position
-      case LB.ZW:
-        breaks.push({ index: i, mandatory: false });
-        break;
-
-      // Break after: hyphens, soft hyphens
-      case LB.BA:
-        breaks.push({ index: i + 1, mandatory: false });
-        break;
-
-      // Break both: em dash
-      case LB.B2:
-        breaks.push({ index: i + 1, mandatory: false });
-        break;
-
-      // Ideographic — break BEFORE ideographic characters (opportunity at i)
-      case LB.ID:
-        if (i > 0) {
-          breaks.push({ index: i, mandatory: false });
-        }
-        break;
-
-      // Close punctuation — break opportunity AFTER
-      case LB.CP:
-      case LB.EX:
-        breaks.push({ index: i + 1, mandatory: false });
-        break;
-
-      // Open punctuation — break opportunity BEFORE
-      case LB.OP:
-        if (i > 0) {
-          breaks.push({ index: i, mandatory: false });
-        }
-        break;
-
-      // Numeric sequences — break at word boundaries
-      case LB.NU:
-        // Check if next char is different class (word boundary)
-        if (i + 1 < text.length) {
-          const nextCls = classify(text.charCodeAt(i + 1));
-          if (nextCls !== LB.NU && nextCls !== LB.IS && nextCls !== LB.PR && nextCls !== LB.PO) {
-            breaks.push({ index: i + 1, mandatory: false });
-          }
-        }
-        break;
-
-      case LB.AL:
-        // Alphabetic — break at word boundary
-        if (i + 1 < text.length) {
-          const nextCls = classify(text.charCodeAt(i + 1));
-          if (nextCls !== LB.AL && nextCls !== LB.CM && nextCls !== LB.NU) {
-            breaks.push({ index: i + 1, mandatory: false });
-          }
-        }
-        break;
-
-      // Glue (non-breaking) — no break opportunity
-      case LB.GL:
-      case LB.WJ:
-        break;
-
-      default:
-        break;
+  // Pair rules between the characters before and after each position (UAX #14 LB4–LB31,
+  // simplified). This used to break after any letter followed by a non-letter, so "exist?" and
+  // "screen." wrapped their punctuation onto a line of its own (seen on httpforever.com).
+  let prev = classify(text.charCodeAt(0));
+  let beforeSpaces = prev; // the class before a run of spaces (LB14: no break in "( x")
+  for (let i = 1; i < text.length; i++) {
+    const cur = classify(text.charCodeAt(i));
+    if (prev === LB.BK || prev === LB.LF || (prev === LB.CR && cur !== LB.LF)) {
+      breaks.push({ index: i, mandatory: true });
+    } else if (canBreakBetween(prev, cur, beforeSpaces)) {
+      breaks.push({ index: i, mandatory: false });
     }
+    if (cur !== LB.SP) beforeSpaces = cur;
+    prev = cur;
   }
+  const lastCls = prev;
+  if (lastCls === LB.BK || lastCls === LB.LF || lastCls === LB.CR) breaks.push({ index: text.length, mandatory: true });
 
   // Sort by index and deduplicate
   breaks.sort((a, b) => a.index - b.index);
@@ -318,6 +270,14 @@ export function segmentText(text: string): TextSegment[] {
     const end = opportunities[i + 1]!.index;
     if (start === end) continue; // skip empty
 
+    // Trailing spaces are their own segment so a line can drop them where it wraps.
+    let wordEnd = end;
+    while (wordEnd > start && text.charCodeAt(wordEnd - 1) === 0x20) wordEnd--;
+    if (wordEnd > start && wordEnd < end) {
+      segments.push({ text: text.slice(start, wordEnd), start, end: wordEnd, mandatoryBreak: false, breakOpportunity: true });
+      segments.push({ text: text.slice(wordEnd, end), start: wordEnd, end, mandatoryBreak: opportunities[i + 1]!.mandatory, breakOpportunity: true });
+      continue;
+    }
     segments.push({
       text: text.slice(start, end),
       start,

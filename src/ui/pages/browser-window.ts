@@ -1752,7 +1752,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     const layout: ILayoutEngine | null = this.browserEngine?.getPageLayoutEngine?.() ?? null;
     const point = this.clientToPage(clientX, clientY);
     if (!layout || !point) return 'none';
-    const hit = layout.getElementAtPoint(point.x, point.y);
+    const hit = layout.getElementAtPoint(point.x, point.y, this.paintEngine?.getScroll().y ?? 0);
     if (!hit) return 'none';
     const notCanceled = this.browserEngine?.dispatchPageEvent(hit, 'click') ?? true;
     if (!notCanceled) return 'scripted';
@@ -1938,7 +1938,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   resolveContextTarget(x: number, y: number): ContextTarget | null {
     const layout: ILayoutEngine | null = this.browserEngine?.getPageLayoutEngine?.() ?? null;
     if (!layout) return null;
-    const hit = layout.getElementAtPoint(x, y);
+    const hit = layout.getElementAtPoint(x, y, this.paintEngine?.getScroll().y ?? 0);
     if (!hit) return null;
 
     let link: DomElement | null = null;
