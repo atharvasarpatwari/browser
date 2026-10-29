@@ -555,8 +555,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
     // history service and CSP guards); otherwise fall back to a local controller.
     // The pipeline is re-synced when DI setters deliver services after mount().
     this.syncNavigationPipeline();
-    // Load the restored active tab's page (activation alone happened before the pipeline existed).
-    if (savedTabs && savedTabs.tabs.length > 0) this.navigationBridge?.syncFromActiveTab();
+    // The restored active tab's page loads once the real pipeline exists (loadRestoredTabWhenReady).
+    this.restoredTabPending = !!(savedTabs && savedTabs.tabs.length > 0);
+    this.loadRestoredTabWhenReady();
 
     // Wire toolbar events through the bridge (shield + bookmark remain local).
     this.toolbar.on('shieldToggle', (e) => {
@@ -2043,6 +2044,21 @@ class BrowserWindowPage implements IBrowserWindowPage {
    * dispose the stale pipeline and rebuild it so navigation events actually
    * reach the engine.
    */
+  /** A tab restored at mount still has to load its page. */
+  private restoredTabPending = false;
+
+  /**
+   * Load the restored active tab's page once the pipeline is complete: the injected navigation
+   * controller plus the engine fetcher. At mount the pipeline runs on a local controller wired to
+   * nothing, so loading there showed the start page under the restored tab's address (seen on the
+   * phone after a restart).
+   */
+  private loadRestoredTabWhenReady(): void {
+    if (!this.restoredTabPending || !this.navController || !this.navigationBridge || !this.navigationFetcher) return;
+    this.restoredTabPending = false;
+    this.navigationBridge.syncFromActiveTab();
+  }
+
   private syncNavigationPipeline(): void {
     const controller = this.navController ?? (this.localController ??= new NavigationController(this.parser));
     const hasBridge = !!this.navigationBridge;
@@ -2059,6 +2075,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
         );
         this.navigationFetcher.start();
       }
+      this.loadRestoredTabWhenReady();
       return;
     }
 
@@ -2103,6 +2120,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
       );
       this.navigationFetcher.start();
     }
+    this.loadRestoredTabWhenReady();
   }
 
   setDownloadManager(manager: IDownloadManager): void {

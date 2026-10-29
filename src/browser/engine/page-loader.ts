@@ -33,6 +33,24 @@ import type { IPageLoader, PageLoadResult } from './browser-engine';
 // CONCRETE IMPLEMENTATION
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Plain words for the network failures the Android fetch bridge reports as Java exceptions. The
+ * error page showed text like "java.net.SocketTimeoutException: failed to connect to … after 30000ms".
+ */
+const NETWORK_ERRORS: ReadonlyArray<[RegExp, string]> = [
+  [/UnknownHost|Unable to resolve host|ENOTFOUND|getaddrinfo/i, "Couldn't find this site. Check the address and your internet connection."],
+  [/SocketTimeout|timed? ?out|ETIMEDOUT/i, 'The site took too long to respond.'],
+  [/NoRouteToHost|Network is unreachable|ENETUNREACH/i, 'No internet connection.'],
+  [/SSLHandshake|SSLPeerUnverified|CertPathValidator|SSLException|certificate/i, "A secure connection to this site couldn't be made."],
+  [/ConnectException|Failed to connect|Connection refused|ECONNREFUSED/i, "Couldn't connect to the site."],
+  [/unexpected end of stream|EOFException|Connection reset|ECONNRESET|Socket closed/i, 'The connection closed before the page loaded.'],
+];
+
+export function friendlyNetworkError(message: string): string | null {
+  for (const [re, text] of NETWORK_ERRORS) if (re.test(message)) return text;
+  return null;
+}
+
 class PageLoader implements IPageLoader, IDisposable {
   private readonly resourceLoader: IResourceLoader;
   private disposed = false;
@@ -73,7 +91,7 @@ class PageLoader implements IPageLoader, IDisposable {
 
       // Wrap other errors with context.
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to load page from ${url}: ${message}`);
+      throw new Error(friendlyNetworkError(message) ?? `Failed to load page from ${url}: ${message}`);
     }
   }
 

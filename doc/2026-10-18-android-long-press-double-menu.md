@@ -158,6 +158,46 @@ Nothing was deleted and nothing was committed on `main` — both need your say-s
 | Sign the R8 release APK, smoke-test it | No `android/keystore.properties` and no `.jks`, so `assembleRelease` yields `app-release-unsigned.apk` (1,510,972 B). The signing identity is yours to create; `android:smoke-test` needs the phone regardless. |
 | The three on-device checks (×2 listed twice) | `adb devices` still empty. |
 
+## Third pass — merged the branch into `main` (`E:\nova_1`)
+
+Asked for after the second pass ("update the new code to the fil…"). The swipe-to-close lives in `TabSwitcher.kt`, which `main` did not have: its `android/` was still v1.0 while the branch is v1.9.
+
+**It was a fast-forward, not the 12-conflict merge expected.** `main` (`0ffa69d`, "New commit39") is **33 commits behind `claude/ecstatic-fermi-f08bd5` and 0 ahead** — every commit reachable from `main` is already in the branch. The 12 conflicts seen earlier came from merging into `612d9ca` (the PR-merge line, which `main` does not contain: `ac6c172`, `612d9ca` and `3930751` are all *not* ancestors of `main`).
+
+So `main` is now at `b71d14c`, and `E:\nova_1` has the 1.9 Android UI, swipe-to-close, the viewport/scroll/find engine work and both of today's fixes.
+
+### Keeping the uncommitted work that was already there
+The fast-forward rewrites 260 files, and `E:\nova_1` had 19 modified and 29 untracked paths from other sessions. Each collision was classified before anything moved (content compared with CRLF normalised):
+
+| Collision | Count | Handling |
+|-----------|-------|----------|
+| Modified, local content == branch content | 3 (the PNG shims) | free — branch version taken |
+| Modified, superseded by the branch | 4 (`android-native-bridge.ts`, its test, `.last-run.json`, and `page-renderer.ts`'s lazy-loader hunk) | branch version taken; it carries the same fix plus 33 commits |
+| Modified, local-only work | 6 | saved as per-file patches, re-applied with `git apply --3way` after the merge |
+| Untracked, identical to the branch copy | 3 docs | deleted, then restored by the merge |
+| Untracked, only looked like a collision | 11 (`src/browser/search/*`, `.claude/launch.json`) | different filenames under the same directory — never touched |
+
+Three of the six re-applied patches conflicted:
+
+- **`src/browser/navigation/router.ts`** — union. Local adds `nova://offline`, `nova://research`, `nova://dashboard`; the branch has none of them (checked outside the conflict region, so no duplicates).
+- **`src/browser/omnibox/search-engine.ts`** — union. Local adds Amazon, eBay, Yahoo and Yandex next to the branch's Reddit entry.
+- **`src/browser/engine/page-renderer.ts`** — branch version. Both sides wire `LazyLoader.onAnyLoad` to paint invalidation; the branch also calls `setViewport(this.viewport.width, this.viewport.height)` where the local copy hardcodes `1920, 1080`, and keeps the `onDocumentReady` hook the local copy displaced. Placement differs (step 7 vs 11) but `this.reflowController?.` is resolved at event time, not at init, so the earlier position is safe.
+
+The two doc indexes went the other way: the branch's copies are richer (295 vs 262 dashboard entries, 285 vs 252 README rows), so those were taken and the **5 entries and 5 rows that existed only in `E:\nova_1`** were merged back in — 300 entries, 290 rows now.
+
+A full backup of the pre-merge state sits in `%TEMP%\claude\nova1-backup-1018\` (`tracked-modifications.patch`, the at-risk untracked files, and the six re-apply patches).
+
+### Verification
+```
+E:\nova_1> npx tsc --noEmit -> 19 errors, every one in the untracked src/browser/service-worker/
+                               (someone's in-progress work; it was 22 before the merge, none are new)
+E:\nova_1> npx vitest run    -> 267 files / 10423 tests passed, exit 0 (same counts as the branch, so the
+                                re-applied local work and the three conflict resolutions broke nothing)
+```
+
+### Unchanged by the merge
+`src/browser/networking/crypto-utils.ts` and `{socket-owner,preload}.cjs` are **still untracked** — the branch never had them either, so a fresh clone of `main` still cannot build. Nothing was committed in `E:\nova_1`: six files are staged (the re-applied work), six remain unstaged, 26 untracked.
+
 ## Verification steps taken
 1. Read the four `2026-10-18-*` entries in `doc/analytics-todos.js` and the three docs they cite.
 2. Traced both long-press paths (`wireContextMenuDetection`, `PageContextMenuController.onContextMenu`) before editing, to find why the double menu was possible at all.

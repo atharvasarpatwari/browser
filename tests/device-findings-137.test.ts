@@ -78,6 +78,31 @@ describe('the httpforever.com page', () => {
   }, 30_000);
 });
 
+describe('dark mode default text colour (found on the phone, 1.37)', () => {
+  it('a page with color-scheme: light dark gets white text in dark mode, black in light', async () => {
+    const { setPreferredColorScheme } = await import('../src/browser/rendering/color-scheme');
+    const html = '<html><head><style>html{color-scheme:light dark;background:light-dark(#eee,#222)}</style></head><body><p id="p">text</p></body></html>';
+    const colourOf = async () => {
+      const domTree = new DomTree();
+      const renderer = new PageRenderer({ htmlParser: new HtmlParser(), domTree, cssParser: new CssParser(), layoutEngine: new LayoutEngine(), paintEngine: new PaintEngine(),
+        resourceLoader: { loadResource: vi.fn(), loadBatch: vi.fn(), loadStylesheet: vi.fn().mockResolvedValue(''), loadScript: vi.fn().mockResolvedValue(''), loadImage: vi.fn(), getPriority: vi.fn(), setMaxConcurrent: vi.fn(), on: vi.fn(), off: vi.fn(), dispose: vi.fn() },
+        prioritizer: { submit: vi.fn(), submitBatch: vi.fn(), submitPreload: vi.fn(), submitPrefetch: vi.fn(), submitPreconnect: vi.fn(), clear: vi.fn(), dispose: vi.fn() } } as never);
+      renderer.setViewport(424, 800, 1);
+      await renderer.render({ url: 'https://example.com/', statusCode: 200, contentType: 'text/html', body: html, headers: new Map(), loadedAt: 0 } as never, new AbortController().signal);
+      renderer.dispose();
+      return domTree.getElementById('p')?.computedStyle?.get('color');
+    };
+    try {
+      setPreferredColorScheme('dark');
+      expect(await colourOf()).toMatch(/#ffffff|255, ?255, ?255/i);
+      setPreferredColorScheme('light');
+      expect(await colourOf()).toMatch(/#000000|^black$|0, ?0, ?0/i);
+    } finally {
+      setPreferredColorScheme('light');
+    }
+  });
+});
+
 describe('gradients', () => {
   it('hex and rgb stops with positions keep their colours (they parsed as black)', () => {
     const g = parseGradient('linear-gradient(90deg, #2f8f4e 0%, rgb(32, 107, 57) 100%)')!;

@@ -18,7 +18,7 @@ const loaderReturning = (result: Record<string, unknown>) => new PageLoader({
 describe('RC-3: a failed load is an error, not an empty page', () => {
   it('throws for network failures (status 0 / error), so pageLoadError and the error page fire', async () => {
     await expect(loaderReturning({ statusCode: 0, body: '', error: 'Unable to resolve host "nonexistent.invalid"' })
-      .load('https://nonexistent.invalid/', new AbortController().signal)).rejects.toThrow(/resolve host/);
+      .load('https://nonexistent.invalid/', new AbortController().signal)).rejects.toThrow(/Couldn't find this site/); // plain words since 1.39
     await expect(loaderReturning({ statusCode: 0, body: '', error: null })
       .load('https://x.test/', new AbortController().signal)).rejects.toThrow(/did not respond/);
   });

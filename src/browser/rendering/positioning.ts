@@ -270,34 +270,26 @@ export function resolveOutOfFlow(
   if (left.isAuto && right.isAuto && !hasWidth) {
     // Both auto: stays at flow-computed width (already set)
   } else if (!left.isAuto && !right.isAuto && !hasWidth) {
-    // Stretch between left and right
-    const available = cbWidth - left.value - right.value
-      - box.marginLeft - box.marginRight
-      - box.borderLeft - box.borderRight
-      - box.paddingLeft - box.paddingRight;
-    box.width = Math.max(0, available);
+    // Stretch between left and right (box.width is the border box)
+    box.width = Math.max(0, cbWidth - left.value - right.value - box.marginLeft - box.marginRight);
   } else if (!left.isAuto) {
     // left is set; width may be set or auto
     // position is determined by left, width stays as-is
   } else if (!right.isAuto) {
     // right is set, left is auto — shift x
-    box.x = cbX + cbWidth - right.value - box.width - box.marginRight - box.borderRight - box.paddingRight;
+    box.x = cbX + cbWidth - right.value - box.width - box.marginRight;
   }
 
   // ── Resolve height ─────────────────────────────────────────────────
   if (top.isAuto && bottom.isAuto && !hasHeight) {
     // Both auto: stays at flow-computed height (already set)
   } else if (!top.isAuto && !bottom.isAuto && !hasHeight) {
-    const available = cbHeight - top.value - bottom.value
-      - box.marginTop - box.marginBottom
-      - box.borderTop - box.borderBottom
-      - box.paddingTop - box.paddingBottom;
-    box.height = Math.max(0, available);
+    box.height = Math.max(0, cbHeight - top.value - bottom.value - box.marginTop - box.marginBottom);
   } else if (!top.isAuto) {
     // top is set
   } else if (!bottom.isAuto) {
     // bottom is set, top is auto — shift y
-    box.y = cbY + cbHeight - bottom.value - box.height - box.marginBottom - box.borderBottom - box.paddingBottom;
+    box.y = cbY + cbHeight - bottom.value - box.height - box.marginBottom;
   }
 
   // ── Final position ─────────────────────────────────────────────────
@@ -318,8 +310,6 @@ export function resolveOutOfFlow(
       const remaining = cbWidth - marginSpace;
       const halfMargin = Math.max(0, remaining / 2);
       box.x = cbX + halfMargin + box.marginLeft;
-    } else if (autoLeft) {
-      box.x = cbX + cbWidth - box.width - box.marginRight - box.borderRight - box.paddingRight;
     }
   }
 
@@ -332,8 +322,6 @@ export function resolveOutOfFlow(
       const remaining = cbHeight - marginSpace;
       const halfMargin = Math.max(0, remaining / 2);
       box.y = cbY + halfMargin + box.marginTop;
-    } else if (autoTop) {
-      box.y = cbY + cbHeight - box.height - box.marginBottom - box.borderBottom - box.paddingBottom;
     }
   }
 }

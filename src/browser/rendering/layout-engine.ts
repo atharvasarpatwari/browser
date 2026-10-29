@@ -133,6 +133,12 @@ function preservesWhitespace(el: DomElement): boolean {
   return ws.startsWith('pre') || ws === 'break-spaces';
 }
 
+/** A `left`/`right`/`top`/`bottom` inset that isn't auto. */
+function isInsetSet(style: ReadonlyMap<string, string>, prop: string): boolean {
+  const v = style.get(prop);
+  return v !== undefined && v !== 'auto';
+}
+
 class LayoutEngine implements ILayoutEngine {
   private config: LayoutConfig;
   private readonly layoutBoxes = new Map<string, LayoutBox>();
@@ -1971,7 +1977,7 @@ class LayoutEngine implements ILayoutEngine {
    * Width an element's content wants when laid out in `availableWidth` (its max-content width,
    * capped there), by a throwaway layout at a local origin that is then rolled back.
    */
-  private measureContentWidth(el: DomElement, availableWidth: number, fontSize: number, domTree?: IDomTree): number {
+  private measureContentWidth(el: DomElement, availableWidth: number, fontSize: number, domTree?: IDomTree, flex = false): number {
     if (skipsChildLayout(el)) return 0;
     const prevBox = this.layoutBoxes.get(el.domId);
     this.layoutBoxes.set(el.domId, {
@@ -1980,7 +1986,9 @@ class LayoutEngine implements ILayoutEngine {
       paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0,
       borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
     });
-    const width = this.measureLayout(el, () => this.layoutBlockChildren(el, 0, 0, availableWidth, fontSize, domTree));
+    const width = this.measureLayout(el, () => flex
+      ? this.layoutFlexContainer(el, 0, 0, availableWidth, fontSize, domTree)
+      : this.layoutBlockChildren(el, 0, 0, availableWidth, fontSize, domTree));
     if (prevBox) this.layoutBoxes.set(el.domId, prevBox);
     else this.layoutBoxes.delete(el.domId);
     return Math.min(availableWidth, width);
@@ -2295,8 +2303,15 @@ class LayoutEngine implements ILayoutEngine {
       } else {
         borderWidthBox = specified + paddingLeft + paddingRight + borderLeft + borderRight;
       }
+    } else if (isInsetSet(style, 'left') !== isInsetSet(style, 'right')) {
+      // Shrink-to-fit (CSS 2.2 §10.3.7). Laid out full width, a `right: 1rem` box was pinned to the
+      // left edge (httpforever's fixed theme switcher sat top-left instead of top-right).
+      const frame = paddingLeft + paddingRight + borderLeft + borderRight;
+      const room = Math.max(0, availableWidth - frame - marginLeft - marginRight);
+      const flex = display === 'flex' || display === 'inline-flex';
+      borderWidthBox = this.measureContentWidth(node, room, fontSize, domTree, flex) + frame;
     } else {
-      // Auto width: will be resolved by resolveOutOfFlow
+      // Auto width: stretched by resolveOutOfFlow when left and right are both set
       borderWidthBox = availableWidth;
     }
 
@@ -2369,6 +2384,12 @@ class LayoutEngine implements ILayoutEngine {
 
       const contentHeight = Math.max(specifiedContentHeight, childY - contentY);
       box.height = contentHeight + paddingTop + paddingBottom + borderTop + borderBottom;
+      if (hasBottom && !hasTop) {
+        // Anchored by its bottom: resolveOutOfFlow placed it before its height was known.
+        const dy = -box.height;
+        box.y += dy;
+        this.translateContent(node, 0, dy);
+      }
     }
 
     // ── Handle auto margins for vertical centering ──────────────────────

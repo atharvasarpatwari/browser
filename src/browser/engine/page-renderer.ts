@@ -53,6 +53,7 @@ import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
 import { runJS, createGlobalEnv } from '../js/index';
+import { getPreferredColorScheme } from '../rendering/color-scheme';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
@@ -105,6 +106,20 @@ interface PageRendererDependencies {
 
 /** Total time all of a page's scripts may take before the rest are skipped. */
 const PAGE_SCRIPT_BUDGET_MS = 3000;
+
+/**
+ * The root's default text colour (the `CanvasText` system colour) resolved for the page's colour
+ * scheme: white when the page opts into dark (`color-scheme: light dark` / `dark`) and the user
+ * prefers dark, black otherwise. The keyword was never resolved (it only came out black because
+ * unknown colours fall back to black), so example.com in dark mode was black text on #222.
+ */
+function applyDarkCanvasText(root: Map<string, string>): void {
+  const color = (root.get('color') ?? '').replace(/\s+/g, '').toLowerCase();
+  if (color !== '' && color !== 'canvastext') return; // the page chose its own colour
+  const scheme = (root.get('color-scheme') ?? '').toLowerCase();
+  const dark = /\bdark\b/.test(scheme) && getPreferredColorScheme() === 'dark';
+  root.set('color', dark ? '#ffffff' : '#000000');
+}
 
 class PageRenderer implements IPageRenderer, IDisposable {
   private readonly deps: PageRendererDependencies;
@@ -847,6 +862,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
         this.viewport,
         parentComputed ?? undefined,
       );
+      if (!parentComputed) applyDarkCanvasText(computed);
       domTree.setComputedStyle(el, computed);
 
       // Build used style for faster layout
