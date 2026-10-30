@@ -1313,20 +1313,17 @@ class LayoutEngine implements ILayoutEngine {
         }
       }
 
-      // Replace LayoutBox with repositioned copy
+      // Replace LayoutBox with repositioned copy. Its content moves with it, and it keeps its own
+      // text runs: the copy dropped them, so an inline flex item (`<div style="display:flex">
+      // <span>Hello</span>`) painted no text at all, and centred items left their content behind.
       const box = item.element.layoutBox;
       if (box) {
+        this.translateContent(item.element, finalX - box.x, finalY - box.y);
         const newBox: LayoutBox = {
+          ...box,
           x: finalX,
           y: finalY,
-          width: box.width,
           height: item.hasDefiniteCrossSize ? box.height : item.crossSize,
-          marginTop: box.marginTop, marginRight: box.marginRight,
-          marginBottom: box.marginBottom, marginLeft: box.marginLeft,
-          paddingTop: box.paddingTop, paddingRight: box.paddingRight,
-          paddingBottom: box.paddingBottom, paddingLeft: box.paddingLeft,
-          borderTop: box.borderTop, borderRight: box.borderRight,
-          borderBottom: box.borderBottom, borderLeft: box.borderLeft,
         };
         this.layoutBoxes.set(item.element.domId, newBox);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

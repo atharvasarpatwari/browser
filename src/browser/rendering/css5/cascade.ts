@@ -1099,6 +1099,12 @@ export function expandShorthands(
       // the longhands (clipping, BFC roots, hit testing) saw it. Keep the shorthand too.
       const [x, y = x] = decl.value.trim().split(/\s+/);
       if (x) expanded = new Map([['overflow', decl.value], ['overflow-x', x], ['overflow-y', y]]);
+    } else if (prop === 'place-items' || prop === 'place-content' || prop === 'place-self') {
+      // `place-items: center` (align, then justify) was never expanded, so grid/flex items that
+      // relied on it sat in the corner (httpforever's theme icon in its button).
+      const kind = prop.slice('place-'.length);
+      const [align, justify = align] = decl.value.trim().split(/\s+/);
+      if (align) expanded = new Map([[`align-${kind}`, align], [`justify-${kind}`, justify!]]);
     }
 
     if (expanded && expanded.size > 0) {
