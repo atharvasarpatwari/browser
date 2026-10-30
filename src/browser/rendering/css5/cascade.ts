@@ -288,8 +288,32 @@ function evaluateSupportsDeclaration(condition: string): boolean {
   if (!(prop in defs)) return false;
   // Basic value check: non-empty and not obviously invalid
   if (!value) return false;
+  // Keyword properties: only values Nova lays out. Any value used to pass, so
+  // `@supports (display: nonsense)` (and `display: contents`) chose the wrong branch.
+  const keywords = SUPPORTED_KEYWORDS[prop];
+  if (keywords) return value.toLowerCase().split(/\s+/).every((v) => keywords.has(v));
   return true;
 }
+
+const kw = (...v: string[]): ReadonlySet<string> => new Set([...v, 'inherit', 'initial', 'unset', 'revert']);
+/** Keyword values Nova actually supports, for @supports. */
+const SUPPORTED_KEYWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  display: kw('none', 'block', 'inline', 'inline-block', 'flex', 'inline-flex', 'grid', 'inline-grid', 'flow-root', 'list-item',
+    'table', 'inline-table', 'table-row', 'table-cell', 'table-row-group', 'table-header-group', 'table-footer-group', 'table-caption',
+    'table-column', 'table-column-group'),
+  position: kw('static', 'relative', 'absolute', 'fixed', 'sticky'),
+  float: kw('none', 'left', 'right'),
+  clear: kw('none', 'left', 'right', 'both'),
+  visibility: kw('visible', 'hidden', 'collapse'),
+  'box-sizing': kw('content-box', 'border-box'),
+  'flex-direction': kw('row', 'row-reverse', 'column', 'column-reverse'),
+  'flex-wrap': kw('nowrap', 'wrap', 'wrap-reverse'),
+  'white-space': kw('normal', 'nowrap', 'pre', 'pre-wrap', 'pre-line', 'break-spaces'),
+  'text-transform': kw('none', 'uppercase', 'lowercase', 'capitalize'),
+  'overflow': kw('visible', 'hidden', 'scroll', 'auto', 'clip'),
+  'overflow-x': kw('visible', 'hidden', 'scroll', 'auto', 'clip'),
+  'overflow-y': kw('visible', 'hidden', 'scroll', 'auto', 'clip'),
+};
 
 /**
  * Evaluate a single @supports condition token (inner content of parentheses).
@@ -1102,6 +1126,11 @@ export function expandShorthands(
       // the longhands (clipping, BFC roots, hit testing) saw it. Keep the shorthand too.
       const [x, y = x] = decl.value.trim().split(/\s+/);
       if (x) expanded = new Map([['overflow', decl.value], ['overflow-x', x], ['overflow-y', y]]);
+    } else if (prop === 'gap' || prop === 'grid-gap') {
+      // gap: <row> [<column>]. Never expanded: column-gap stayed `normal` (0), so flex layouts
+      // that spaced their items with `gap` had them touching.
+      const [row, column = row] = decl.value.trim().split(/\s+/);
+      if (row) expanded = new Map([['gap', decl.value], ['row-gap', row], ['column-gap', column!]]);
     } else if (prop === 'place-items' || prop === 'place-content' || prop === 'place-self') {
       // `place-items: center` (align, then justify) was never expanded, so grid/flex items that
       // relied on it sat in the corner (httpforever's theme icon in its button).

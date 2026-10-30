@@ -1714,6 +1714,22 @@ interface SelectorToken {
   value: string;
 }
 
+/** Splits a selector-list argument at commas outside (), [] and strings. */
+function splitTopLevelCommas(str: string): string[] {
+  const parts: string[] = [];
+  let depth = 0, quote = '', start = 0;
+  for (let i = 0; i < str.length; i++) {
+    const c = str[i]!;
+    if (quote) { if (c === '\\') i++; else if (c === quote) quote = ''; continue; }
+    if (c === '"' || c === "'") quote = c;
+    else if (c === '(' || c === '[') depth++;
+    else if (c === ')' || c === ']') depth--;
+    else if (c === ',' && depth === 0) { parts.push(str.slice(start, i)); start = i + 1; }
+  }
+  parts.push(str.slice(start));
+  return parts.filter((x) => x.trim());
+}
+
 function tokenizeSelector(str: string): SelectorToken[] {
   const tokens: SelectorToken[] = [];
   let i = 0;
@@ -1935,14 +1951,20 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
           if (i < end && tokens[i]!.type === 'ident') { arg = tokens[i]!.value; i++; }
           if (i < end && tokens[i]!.type === 'paren-close') i++; // )
 
-          if (pseudoName === 'not' || pseudoName === 'is' || pseudoName === 'any' || pseudoName === 'where' || pseudoName === 'has') {
-            const innerTokens = tokenizeSelector(arg);
-            const innerSelector = buildSelectorFromTokens(innerTokens, 0, innerTokens.length);
-            if (innerSelector) {
-              if (pseudoName === 'not') pseudoClasses.push({ type: 'negation', selectors: [innerSelector] });
-              else if (pseudoName === 'has') pseudoClasses.push({ type: 'has', selectors: [innerSelector] });
-              else if (pseudoName === 'where') pseudoClasses.push({ type: 'where', selectors: [innerSelector] });
-              else pseudoClasses.push({ type: 'is', selectors: [innerSelector] });
+          if (pseudoName === 'not' || pseudoName === 'is' || pseudoName === 'any' || pseudoName === 'matches' || pseudoName === 'where' || pseudoName === 'has') {
+            // A selector list: `:is(.a, .b)` was read as one selector with the comma dropped,
+            // i.e. `.a .b` (a descendant selector), so it matched almost nothing.
+            const innerSelectors: CssSelector[] = [];
+            for (const part of splitTopLevelCommas(arg)) {
+              const innerTokens = tokenizeSelector(part.trim());
+              const innerSelector = buildSelectorFromTokens(innerTokens, 0, innerTokens.length);
+              if (innerSelector) innerSelectors.push(innerSelector);
+            }
+            if (innerSelectors.length > 0) {
+              if (pseudoName === 'not') pseudoClasses.push({ type: 'negation', selectors: innerSelectors });
+              else if (pseudoName === 'has') pseudoClasses.push({ type: 'has', selectors: innerSelectors });
+              else if (pseudoName === 'where') pseudoClasses.push({ type: 'where', selectors: innerSelectors });
+              else pseudoClasses.push({ type: 'is', selectors: innerSelectors });
             }
           } else {
             pseudoClasses.push({ type: 'structural', name: pseudoName, value: arg });
