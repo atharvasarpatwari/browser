@@ -19,7 +19,13 @@ export interface DecodedImage {
   readonly data: Uint8ClampedArray;
   readonly width: number;
   readonly height: number;
+  /** The image's own size when it was rasterized at another (SVG at its display size). */
+  readonly naturalWidth?: number;
+  readonly naturalHeight?: number;
 }
+
+/** The size to rasterize a vector image at, in device pixels. Raster formats ignore it. */
+export interface DecodeSize { readonly width: number; readonly height: number }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SUPPORTED MIME TYPES
@@ -50,17 +56,18 @@ interface PlatformBitmap { readonly width: number; readonly height: number; clos
 interface PlatformGlobals {
   createImageBitmap?: (src: unknown, opts?: { resizeWidth?: number; resizeHeight?: number; resizeQuality?: string }) => Promise<PlatformBitmap>;
   OffscreenCanvas?: new (w: number, h: number) => {
-    getContext(type: '2d'): { drawImage(img: unknown, x: number, y: number): void; getImageData(x: number, y: number, w: number, h: number): { data: Uint8ClampedArray } } | null;
+    getContext(type: '2d'): { drawImage(img: unknown, x: number, y: number, w?: number, h?: number): void; getImageData(x: number, y: number, w: number, h: number): { data: Uint8ClampedArray } } | null;
   };
 }
 
 /** Decodes through createImageBitmap + OffscreenCanvas, or returns null where they don't exist or fail. */
-async function decodeWithPlatform(bytes: Uint8Array, mime: string): Promise<DecodedImage | null> {
+async function decodeWithPlatform(bytes: Uint8Array, mime: string, size?: DecodeSize): Promise<DecodedImage | null> {
   const g = globalThis as PlatformGlobals;
   if (typeof g.createImageBitmap !== 'function' || typeof g.OffscreenCanvas !== 'function') return null;
   try {
     const blob = new Blob([bytes as BlobPart], mime ? { type: mime } : undefined);
-    let bitmap = mime === 'image/svg+xml' ? await svgToBitmap(blob, g.createImageBitmap) : await g.createImageBitmap(blob);
+    if (mime === 'image/svg+xml') return await decodeSvg(blob, g.OffscreenCanvas, size);
+    let bitmap: PlatformBitmap | null = await g.createImageBitmap(blob);
     if (!bitmap || !bitmap.width || !bitmap.height) return null;
     const scale = Math.min(1, MAX_DECODED_SIDE / Math.max(bitmap.width, bitmap.height));
     if (scale < 1) {
@@ -81,23 +88,34 @@ async function decodeWithPlatform(bytes: Uint8Array, mime: string): Promise<Deco
   }
 }
 
-/** createImageBitmap rejects SVG blobs in Chromium; an <img> decodes them, then becomes a bitmap. */
-async function svgToBitmap(blob: Blob, create: NonNullable<PlatformGlobals['createImageBitmap']>): Promise<PlatformBitmap | null> {
+/**
+ * createImageBitmap rejects SVG blobs in Chromium; an <img> decodes them. It is drawn onto a canvas
+ * at `size` (its display size × DPR) so the vectors are rasterized sharp: decoded at its intrinsic
+ * size and scaled up, Wikipedia's wordmark was a blur.
+ */
+async function decodeSvg(blob: Blob, Canvas: NonNullable<PlatformGlobals['OffscreenCanvas']>, size?: DecodeSize): Promise<DecodedImage | null> {
   if (typeof Image === 'undefined' || typeof URL.createObjectURL !== 'function') return null;
   const url = URL.createObjectURL(blob);
   try {
     const img = new Image();
     img.src = url;
     await img.decode();
-    if (!img.naturalWidth || !img.naturalHeight) { img.width = 300; img.height = 150; } // CSS default object size
-    return await create(img);
+    const naturalWidth = img.naturalWidth || 300, naturalHeight = img.naturalHeight || 150; // CSS default object size
+    // Scaled up to cover `size`, keeping the SVG's own aspect (a box can still be a placeholder).
+    const up = size ? Math.max(1, size.width / naturalWidth, size.height / naturalHeight) : 1;
+    const k = up * Math.min(1, MAX_DECODED_SIDE / (Math.max(naturalWidth, naturalHeight) * up));
+    const width = Math.max(1, Math.round(naturalWidth * k)), height = Math.max(1, Math.round(naturalHeight * k));
+    const ctx = new Canvas(width, height).getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, width, height);
+    return { data: ctx.getImageData(0, 0, width, height).data, width, height, naturalWidth, naturalHeight };
   } finally {
     URL.revokeObjectURL(url);
   }
 }
 
 export interface IImageDecoder {
-  decode(buffer: Uint8Array | ArrayBuffer, mimeType: string): DecodedImage | null | Promise<DecodedImage | null>;
+  decode(buffer: Uint8Array | ArrayBuffer, mimeType: string, size?: DecodeSize): DecodedImage | null | Promise<DecodedImage | null>;
 }
 
 export class ImageDecoder implements IImageDecoder {
@@ -108,14 +126,14 @@ export class ImageDecoder implements IImageDecoder {
    * @param mimeType The content type (e.g. "image/png", "image/jpeg").
    * @returns DecodedImage with RGBA data, or null if decoding fails.
    */
-  async decode(buffer: Uint8Array | ArrayBuffer, mimeType: string): Promise<DecodedImage | null> {
+  async decode(buffer: Uint8Array | ArrayBuffer, mimeType: string, size?: DecodeSize): Promise<DecodedImage | null> {
     const mime = normalizeMime(mimeType);
     const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
 
     // The WebView's own codecs first: every format the platform knows (GIF, AVIF, SVG had no
     // decoder here at all) and far faster than jpeg-js/pngjs on a phone. JS decoders are the
     // fallback where no platform codec exists (Node, tests).
-    const native = await decodeWithPlatform(bytes, mime);
+    const native = await decodeWithPlatform(bytes, mime, size);
     if (native) return native;
 
     if (!SUPPORTED_MIME_TYPES.has(mime)) {

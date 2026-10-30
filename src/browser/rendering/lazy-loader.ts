@@ -274,11 +274,16 @@ export class LazyLoader {
       // Decode the binary data. No MIME pre-filter: the decoder returns null for what it can't
       // read, and with platform codecs it reads GIF, SVG and AVIF too (the filter dropped them).
       {
-        const decoded = await this.decoder!.decode(result.bodyBinary, result.contentType);
+        // An SVG is rasterized at its display size in device pixels (raster formats ignore this).
+        const dpr = (globalThis as { devicePixelRatio?: number }).devicePixelRatio || 1;
+        const box = el.layoutBox;
+        const size = box && box.width > 0 && box.height > 0
+          ? { width: Math.round(box.width * dpr), height: Math.round(box.height * dpr) } : undefined;
+        const decoded = await this.decoder!.decode(result.bodyBinary, result.contentType, size);
         if (decoded) {
           el.imageData = { data: decoded.data as unknown as ImageDataArray, width: decoded.width, height: decoded.height, colorSpace: 'srgb' };
-          el.naturalWidth = decoded.width;
-          el.naturalHeight = decoded.height;
+          el.naturalWidth = decoded.naturalWidth ?? decoded.width;
+          el.naturalHeight = decoded.naturalHeight ?? decoded.height;
           el.loadingState = 'loaded';
           el._dirtyPaint = true;
           this.emit({ type: 'load', target: el });

@@ -1859,7 +1859,7 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     // If the inline element has children, layout them recursively
-    if (el.children.length > 0) {
+    if (el.children.length > 0 && !skipsChildLayout(el)) {
       // layoutInlineChildren returns the bottom y, not a height (this made inline boxes
       // as tall as their distance from the top of the page).
       const childBottom = this.layoutInlineChildren(el, contentX, contentY, contentW, elFontSize, domTree);
@@ -2182,7 +2182,28 @@ class LayoutEngine implements ILayoutEngine {
       return isFinite(n) ? n : null;
     };
 
-    return { width: parseAttr('width'), height: parseAttr('height') };
+    // A CSS length beats the attribute, and a missing side follows the aspect ratio (attributes,
+    // else an SVG viewBox). Only attributes were read, so an icon sized by CSS
+    // (`svg.ic { width: 1.2rem; height: 1.2rem }`) was laid out page-wide and one line tall.
+    // ponytail: percentages still fall back to the attribute; they need the containing width here.
+    const style = node.computedStyle ?? new Map<string, string>();
+    const fontSize = this.resolveFontSize(style, parentSize);
+    const cssLen = (prop: string): number | null => {
+      const v = style.get(prop);
+      if (!v || v === 'auto' || v.includes('%')) return null;
+      const n = this.resolveLength(v, fontSize, 0);
+      return n > 0 ? n : null;
+    };
+    const attrW = parseAttr('width');
+    const attrH = parseAttr('height');
+    const viewBox = tag === 'svg' ? (node.attributes.get('viewbox') ?? '').trim().split(/[\s,]+/).map(Number) : [];
+    const ratio = attrW && attrH ? attrW / attrH
+      : viewBox.length === 4 && viewBox[2]! > 0 && viewBox[3]! > 0 ? viewBox[2]! / viewBox[3]! : null;
+    const cssW = cssLen('width');
+    const cssH = cssLen('height');
+    const width = cssW ?? (cssH != null && ratio ? cssH * ratio : attrW);
+    const height = cssH ?? (cssW != null && ratio ? cssW / ratio : attrH);
+    return { width, height };
   }
 
   /** `rem` is relative to <html>'s font size (the `html { font-size: 62.5% }` pattern); it was always 16px. */

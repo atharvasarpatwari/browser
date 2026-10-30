@@ -62,6 +62,8 @@ import type { ICorsEngine } from '../security/cors';
 import { parseOrigin, OPAQUE_ORIGIN } from '../security/origin-service';
 import type { SecurityLayer } from '../media/security-layer';
 import { ReflowRepaintController } from '../rendering/reflow-repaint-controller';
+import { renderInlineSvgs, type SvgDecode } from '../rendering/inline-svg';
+import { ImageDecoder } from '../image/decoder';
 import type { LayerCompositor } from '../rendering/compositing/layer-compositor';
 import { CssAnimationAnimator } from '../rendering/css-animations';
 import { setAnimationRuntime, dispatchAnimationEventToElement, dispatchDomEvent } from '../js/dom-bindings';
@@ -98,6 +100,8 @@ interface PageRendererDependencies {
   readonly onFrameRendered?: () => void;
   /** Optional callback invoked once per page load, after the document is parsed, scripted, laid out and painted. */
   readonly onDocumentReady?: (url: string, doc: DomDocument) => void;
+  /** Rasterizes standalone SVG markup (inline `<svg>`); default: the platform image decoder. */
+  readonly svgDecode?: SvgDecode;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -309,7 +313,11 @@ class PageRenderer implements IPageRenderer, IDisposable {
     //     rasterized through a fresh sub-pipeline into el.imageData so the
     //     parent paint pass composites the embedded page.
     const iframeCount = await this.renderIframeChildren(doc, result.url);
-    if (iframeCount > 0) {
+    // Inline <svg> (logos, icons) painted nothing: rasterize each through the image decoder.
+    const svgDecode = this.deps.svgDecode
+      ?? ((markup: string) => new ImageDecoder().decode(new TextEncoder().encode(markup), 'image/svg+xml'));
+    const svgCount = await renderInlineSvgs(doc.children, svgDecode, this.dpr);
+    if (iframeCount > 0 || svgCount > 0) {
       // Full repaint so embedded frames appear in the very first rasterized
       // output rather than waiting for an incremental reflow frame.
       paintEngine.paint(doc);

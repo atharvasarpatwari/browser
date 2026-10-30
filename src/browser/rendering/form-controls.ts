@@ -47,7 +47,8 @@ export function isDisabled(el: DomElement): boolean {
 /** textarea/select children (their text, <option>s) are the control's data, not page text. */
 export function skipsChildLayout(el: DomElement): boolean {
   const tag = tagOf(el);
-  return tag === 'textarea' || tag === 'select' || tag === 'input';
+  // An <svg>'s children are its picture (inline-svg.ts), not boxes: laid out, a <path> each made it a line taller.
+  return tag === 'textarea' || tag === 'select' || tag === 'input' || tag === 'svg';
 }
 
 const textOf = (node: DomNode): string =>
