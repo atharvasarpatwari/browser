@@ -210,6 +210,8 @@ export interface GridFormattingContextOptions {
   justifyItems: GridAxisAlign;
   /** align-items for the grid container. */
   alignItems: GridAxisAlign;
+  /** align-content; normal/stretch (the default) grows auto rows to fill a definite height. */
+  alignContent?: string;
 }
 
 export class GridFormattingContext {
@@ -418,6 +420,17 @@ export class GridFormattingContext {
     }
     for (const t of this.rowTracks) {
       t.size = t.baseSize;
+    }
+
+    // align-content: normal/stretch shares a definite height's leftover space among auto rows
+    // (CSS Grid §12.8). Rows stayed content-sized, so `place-items: center` in a fixed-height
+    // button left the icon at the top (httpforever's theme button).
+    const ac = this.options.alignContent ?? 'normal';
+    if (availableHeight != null && (ac === 'normal' || ac === 'stretch')) {
+      const autos = this.rowTracks.filter((t) => t.def.trim() === 'auto');
+      const used = this.rowTracks.reduce((s, t) => s + t.size, 0) + rowGap * Math.max(0, this.rowTracks.length - 1);
+      const extra = availableHeight - used;
+      if (autos.length > 0 && extra > 0) for (const t of autos) t.size += extra / autos.length;
     }
   }
 

@@ -320,6 +320,8 @@ export interface ResolutionContext {
   readonly viewportWidth?: number;
   /** Viewport height in px (default: 1080). */
   readonly viewportHeight?: number;
+  /** The root element's font-size in px, for rem (default: 16). */
+  readonly rootFontSize?: number;
 }
 
 const DEFAULT_CTX: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400 };
@@ -365,7 +367,7 @@ export function resolveComputedValue(
   if (hasMathFunctions(v)) {
     const mathCtx: MathResolutionContext = {
       fontSize: ctx.parentFontSize,
-      rootFontSize: ctx.parentFontSize,
+      rootFontSize: ctx.rootFontSize ?? 16, // rem is the root's size, not the parent's
       viewportWidth: ctx.viewportWidth,
       viewportHeight: ctx.viewportHeight,
     };

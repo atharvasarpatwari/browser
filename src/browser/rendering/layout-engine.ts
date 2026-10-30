@@ -3,6 +3,7 @@ import { controlIntrinsicSize, skipsChildLayout } from './form-controls';
 import type { IDisposable } from '../../app/dependency-container';
 import type { IDomTree, DomDocument, DomElement, DomNode, DomTextNode, LayoutBox, TextRun } from './dom-tree';
 import { boxChildren } from './dom-tree';
+import { resolveMathFunctions } from './css5/math-functions';
 import { DamageTracker } from './damage-tracker';
 import { findContainingBlock as findContainingBlockForScheme, resolveOutOfFlow, applyInFlowOffset } from './positioning';
 import { classifyDisplay, type ClassifiedChild } from './formatting/types';
@@ -142,6 +143,9 @@ function inFixedBox(el: DomElement): boolean {
   }
   return false;
 }
+
+/** A CSS math function in a value. */
+const MATH_FN = /(?:^|[^a-z-])(calc|min|max|clamp)\(/i;
 
 /** Block-level displays whose auto width fills the containing block. */
 const FILLS_LINE = new Set(['block', 'list-item', 'flex', 'grid', 'table', 'flow-root']);
@@ -1394,8 +1398,14 @@ class LayoutEngine implements ILayoutEngine {
     // Container height
     let availableHeight: number | null = null;
     const rawHeight = style.get('height');
-    if (rawHeight && rawHeight !== 'auto') {
+    if (rawHeight && rawHeight !== 'auto' && !rawHeight.includes('%')) {
       availableHeight = resolve('height', '0');
+      if ((style.get('box-sizing') ?? 'content-box') === 'border-box') {
+        // The rows fill the content box: a border-box height includes padding and border.
+        availableHeight -= resolve('padding-top', style.get('padding') ?? '0') + resolve('padding-bottom', style.get('padding') ?? '0')
+          + this.parseBorderWidth(style.get('border-top-width') ?? '0') + this.parseBorderWidth(style.get('border-bottom-width') ?? '0');
+        availableHeight = Math.max(0, availableHeight);
+      }
     }
 
     // ── Collect grid items ───────────────────────────────────────────────
@@ -1518,6 +1528,7 @@ class LayoutEngine implements ILayoutEngine {
       fontSize,
       justifyItems: justifyContent,
       alignItems,
+      alignContent: style.get('align-content'),
     });
 
     for (const item of gridItems) gridCtx.addItem(item);
@@ -2089,6 +2100,17 @@ class LayoutEngine implements ILayoutEngine {
    */
   private resolveLength(value: string, fontSize: number, containingWidth: number): number {
     if (!value || value === 'auto') return 0;
+
+    // calc()/min()/max()/clamp() the cascade had to leave (percentages need the containing
+    // width): parseFloat read them as 0, so `width: calc(100% - 2rem)` boxes had no width.
+    if (MATH_FN.test(value)) {
+      const pct = value.replace(/(-?\d*\.?\d+)%/g, (_m, n: string) => `${(parseFloat(n) / 100) * containingWidth}px`);
+      const out = resolveMathFunctions(pct, {
+        fontSize, rootFontSize: this.rootFontSize,
+        viewportWidth: this.config.viewportWidth, viewportHeight: this.config.viewportHeight,
+      });
+      return MATH_FN.test(out) ? 0 : this.resolveLength(out, fontSize, containingWidth);
+    }
 
     const named = NAMED_FONT_SIZES[value];
     if (named !== undefined) return named;

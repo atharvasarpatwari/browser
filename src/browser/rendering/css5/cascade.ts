@@ -54,6 +54,9 @@ export interface Viewport {
 
 const DEFAULT_VIEWPORT: Viewport = { width: 1920, height: 1080 };
 
+/** The page root's font-size (set when the root is styled, which happens first). ponytail: one per process, not per document. */
+let rootFontSizePx = 16;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // INHERITABLE PROPERTIES — canonical source: property-definitions.ts
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1786,8 +1789,15 @@ export function computeComputedStyles(
   const currentColor = computed.get('color') ?? 'canvastext';
 
   // Second pass: resolve all remaining values with the resolved currentcolor.
-  const resCtx: ResolutionContext = { parentFontSize, parentFontWeight, currentColor, customProperties: customProps };
+  // The real viewport and root font size: without them, math was evaluated for a 1920 px screen
+  // with rem = the parent's size (httpforever's clamp(2.2rem, 6vw, 3rem) logo was 12 px wide).
+  if (!parentComputed) rootFontSizePx = 16; // the root's own rem is the initial font size
+  const resCtx: ResolutionContext = {
+    parentFontSize, parentFontWeight, currentColor, customProperties: customProps,
+    viewportWidth: vp.width, viewportHeight: vp.height, rootFontSize: rootFontSizePx,
+  };
   resolveAllComputedValues(computed, resCtx);
+  if (!parentComputed) rootFontSizePx = parseFloat(computed.get('font-size') ?? '') || 16;
 
   // CSS Backgrounds §3.3: a border-*-width computes to 0 when its style is none or hidden.
   // Layout and paint read these widths directly; leaving the initial `medium` (3px) here

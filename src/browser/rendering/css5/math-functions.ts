@@ -713,21 +713,16 @@ function evaluateFunction(
     if (values.some((v) => v === null)) return null;
 
     const nums = values as Array<{ value: number; unit: string }>;
-    const best = name === 'min'
-      ? nums.reduce((a, b) => {
-          const aPx = resolveToPx(a.value, a.unit, ctx);
-          const bPx = resolveToPx(b.value, b.unit, ctx);
-          if (aPx !== null && bPx !== null) return aPx <= bPx ? a : b;
-          return a;
-        })
-      : nums.reduce((a, b) => {
-          const aPx = resolveToPx(a.value, a.unit, ctx);
-          const bPx = resolveToPx(b.value, b.unit, ctx);
-          if (aPx !== null && bPx !== null) return aPx >= bPx ? a : b;
-          return a;
-        });
-
-    return formatResult(best);
+    // Same unit: compare directly. Mixed: in px, or leave the function to layout when an argument
+    // can't be converted here (`min(100%, 600px)` used to become `100%`).
+    if (nums.every((n) => n.unit === nums[0]!.unit)) {
+      const pick = nums.reduce((a, b) => (name === 'min' ? (a.value <= b.value ? a : b) : (a.value >= b.value ? a : b)));
+      return formatResult(pick);
+    }
+    const px = nums.map((n) => resolveToPx(n.value, n.unit, ctx));
+    if (px.some((v) => v === null)) return null;
+    const best = name === 'min' ? Math.min(...(px as number[])) : Math.max(...(px as number[]));
+    return `${Math.round(best * 10000) / 10000}px`;
   }
 
   if (name === 'clamp') {
@@ -760,7 +755,9 @@ function evaluateFunction(
 
     const clamped = Math.min(Math.max(valPx, minPx), maxPx);
 
-    // Express in the val's unit
+    // Mixed units come out in px: expressed in the middle value's unit (`8.3vw`), a value worked
+    // out for one viewport was re-scaled by the next.
+    if (minV.unit !== valV.unit || maxV.unit !== valV.unit) return `${Math.round(clamped * 10000) / 10000}px`;
     if (valV.unit) {
       const converter = UNIT_TO_PX[valV.unit];
       if (converter) {
