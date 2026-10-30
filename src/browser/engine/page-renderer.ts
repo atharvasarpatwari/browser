@@ -739,6 +739,18 @@ class PageRenderer implements IPageRenderer, IDisposable {
     for (const entry of blockingScripts) { if (signal.aborted) return; run(entry, 'blocking'); }
     for (const entry of deferScripts) { if (signal.aborted) return; run(entry, 'defer'); }
     for (const entry of asyncScripts) { if (signal.aborted) return; run(entry, 'async'); }
+    // 4. DOMContentLoaded, then load. Neither was ever fired, so scripts that wire their UI there
+    //    (httpforever's theme and colour buttons) registered no handlers and taps did nothing.
+    // ponytail: load fires with DOMContentLoaded, before images finish; it should wait for them.
+    if (!signal.aborted && blockingScripts.length + deferScripts.length + asyncScripts.length > 0) {
+      const ready = runJS(
+        "document.dispatchEvent(new Event('DOMContentLoaded', { bubbles: true }));" +
+        "window.dispatchEvent(new Event('load'));" +
+        "if (typeof window.onload === 'function') window.onload(new Event('load'));",
+        { document: doc, domTree, eventLoop, globalEnv: env, htmlParser: this.deps.htmlParser },
+      );
+      if (ready.error) console.error(`[ScriptEngine] Error in a DOMContentLoaded/load listener: ${ready.error.message}`);
+    }
     if (skipped > 0) {
       console.warn(`[ScriptEngine] Page script budget (${PAGE_SCRIPT_BUDGET_MS} ms) used up; skipped ${skipped} script(s) on ${baseUrl}`);
     }

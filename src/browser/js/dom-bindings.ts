@@ -307,9 +307,11 @@ export function createDocumentBinding(
       eventFlags(evt).__stopImmediate = false;
       eventFlags(evt).__defaultPrevented = false;
 
+      // Elements only: the walk used to reach the document node itself and wrap it as an element
+      // (no tagName), so every document.dispatchEvent threw (DOMContentLoaded never reached anyone).
       const ancestors: DomNode[] = [];
       let cur: DomNode | null = doc.bodyElement;
-      while (cur) {
+      while (cur && cur.nodeType === 'element') {
         ancestors.push(cur);
         cur = cur.parent;
       }
