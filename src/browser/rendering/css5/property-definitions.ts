@@ -140,7 +140,7 @@ const PROPERTIES: Record<string, PropertyDef> = {
   'caption-side':       { inherited: true,  initialValue: 'top' },
   'empty-cells':        { inherited: true,  initialValue: 'show' },
   'table-layout':       { inherited: true,  initialValue: 'auto' },
-  'vertical-align':     { inherited: true,  initialValue: 'baseline' },
+  'vertical-align':     { inherited: false, initialValue: 'baseline' }, // not inherited (CSS 2.2 §10.8.1): a <sup>'s children were raised again
 
   // ── Flexbox ────────────────────────────────────────────────────────────
   'flex-direction':     { inherited: false, initialValue: 'row' },

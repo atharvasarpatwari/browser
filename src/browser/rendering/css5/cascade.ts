@@ -1383,6 +1383,13 @@ export function getUserAgentDefaults(
       styles.set('cursor', 'pointer');
       break;
 
+    case 'sup':
+    case 'sub':
+      // vertical-align and a smaller size (they were plain inline text on the baseline)
+      styles.set('vertical-align', tag === 'sup' ? 'super' : 'sub');
+      styles.set('font-size', '0.83em');
+      break;
+
     case 'code':
     case 'kbd':
     case 'samp':

@@ -2,6 +2,7 @@ import type { IDisposable } from '../../app/dependency-container';
 import type { DomDocument, DomElement, DomNode, LayoutBox, TextRun } from './dom-tree';
 import { boxChildren } from './dom-tree';
 import { listMarkerCommands } from './list-markers';
+import { getTextMeasurer } from './formatting/text-measure';
 import { DamageTracker } from './damage-tracker';
 import {
   buildStackingContextTree,
@@ -152,6 +153,30 @@ function propagatedCanvasBackground(document: DomDocument): string | null {
 function isTransparent(color: string): boolean {
   const c = color.replace(/\s+/g, '').toLowerCase();
   return c === '' || c === 'none' || c === 'transparent' || /^rgba\(\d+,\d+,\d+,0(\.0*)?\)$/.test(c);
+}
+
+/**
+ * The x where `text-overflow: ellipsis` cuts a box's own text (its content box's right edge), or null.
+ * ponytail: text owned by inline children (a <span> inside the clipped box) isn't ellipsized.
+ */
+function ellipsisEdge(box: LayoutBox, style: ReadonlyMap<string, string>): number | null {
+  if ((style.get('text-overflow') ?? 'clip') !== 'ellipsis') return null;
+  const ov = style.get('overflow-x') ?? style.get('overflow') ?? 'visible';
+  if (ov === 'visible') return null;
+  return box.x + box.width - box.borderRight - box.paddingRight;
+}
+
+/** `run` shortened to fit `room` px with a trailing "…", or null when not even "…" fits. */
+function fitWithEllipsis(run: TextRun, room: number): TextRun | null {
+  const m = getTextMeasurer();
+  const w = (t: string): number => m.measure(t, run.fontSize, run.fontFamily, run.fontWeight ?? 'normal').width;
+  const chars = [...run.text];
+  for (let n = chars.length; n >= 0; n--) {
+    const text = chars.slice(0, n).join('').trimEnd() + '\u2026';
+    const width = w(text);
+    if (width <= room || n === 0) return width <= room ? { ...run, text, width, letterSpacing: undefined } : null;
+  }
+  return null;
 }
 
 /** Is `el` a `position: fixed` box or inside one? */
@@ -722,8 +747,19 @@ class PaintEngine implements IPaintEngine {
       if (textRuns && textRuns.length > 0) {
         const textShadowVal = style.get('text-shadow');
         const textShadows = textShadowVal ? parseTextShadow(textShadowVal) : [];
+        const ellipsisAt = ellipsisEdge(layoutBox, style);
+        let ellipsizedLine: number | null = null;
         for (let ri = 0; ri < textRuns.length; ri++) {
-          const run = textRuns[ri]!;
+          let run = textRuns[ri]!;
+          // text-overflow: ellipsis: the run crossing the clip edge ends in "…", later ones on
+          // that line are dropped (the text was simply cut off).
+          if (ellipsisAt !== null && run.width !== undefined && run.x + run.width > ellipsisAt + 0.5) {
+            if (ellipsizedLine === run.y || run.x >= ellipsisAt) continue;
+            const fit = fitWithEllipsis(run, ellipsisAt - run.x);
+            ellipsizedLine = run.y;
+            if (!fit) continue;
+            run = fit;
+          }
           const weight = run.fontWeight ?? 'normal';
           if (textShadows.length > 0) {
             for (const ts of textShadows) {
@@ -732,10 +768,21 @@ class PaintEngine implements IPaintEngine {
           }
           commands.push({ type: 'setFillStyle', params: [run.color] });
           commands.push({ type: 'setFont', params: [`${weight} ${run.fontSize}px ${run.fontFamily}`] });
-          commands.push({
-            type: 'fillText',
-            params: run.width !== undefined ? [run.text, run.x, run.y, run.width] : [run.text, run.x, run.y],
-          });
+          if (run.letterSpacing) {
+            // letter-spacing: each character at its own position (it was ignored).
+            let cx = run.x;
+            const m = getTextMeasurer();
+            for (const ch of run.text) {
+              const w = m.measure(ch, run.fontSize, run.fontFamily, weight).width;
+              if (ch.trim()) commands.push({ type: 'fillText', params: [ch, cx, run.y, w] });
+              cx += w + run.letterSpacing;
+            }
+          } else {
+            commands.push({
+              type: 'fillText',
+              params: run.width !== undefined ? [run.text, run.x, run.y, run.width] : [run.text, run.x, run.y],
+            });
+          }
           // text-decoration: was never painted (links had no underline). A whitespace run is
           // decorated only between two decorated runs on its line (the spaces inside one link):
           // skipping every space broke a link's underline into one piece per word.

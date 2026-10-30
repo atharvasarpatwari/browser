@@ -31,7 +31,7 @@ describe('Property Definitions — Inheritance', () => {
     expect(isInheritedProperty('caption-side')).toBe(true);
     expect(isInheritedProperty('empty-cells')).toBe(true);
     expect(isInheritedProperty('table-layout')).toBe(true);
-    expect(isInheritedProperty('vertical-align')).toBe(true);
+    expect(isInheritedProperty('vertical-align')).toBe(false); // not inherited (CSS 2.2 §10.8.1)
     expect(isInheritedProperty('orphans')).toBe(true);
     expect(isInheritedProperty('widows')).toBe(true);
     expect(isInheritedProperty('quotes')).toBe(true);

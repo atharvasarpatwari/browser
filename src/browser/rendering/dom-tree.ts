@@ -152,6 +152,8 @@ interface TextRun {
   readonly width?: number;
   /** text-decoration lines that apply to this run (from its element or a decorating ancestor). */
   readonly decoration?: { readonly underline: boolean; readonly lineThrough: boolean; readonly color: string };
+  /** letter-spacing in px: the painter places each character itself. */
+  readonly letterSpacing?: number;
 }
 
 type DomMutationType =

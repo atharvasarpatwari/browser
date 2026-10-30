@@ -146,6 +146,25 @@ function transformText(text: string, el: DomElement): string {
   }
 }
 
+/**
+ * The baseline shift of text in `owner` from `vertical-align` on it and its inline ancestors up to
+ * the block (`super`, `sub`, lengths): <sup>/<sub> sat on the baseline.
+ * ponytail: the line box isn't grown for raised text, and `top`/`middle` etc. aren't handled here.
+ */
+function baselineShift(owner: DomElement, block: DomElement): number {
+  let shift = 0;
+  for (let n: DomElement | null = owner; n && n !== block; n = n.parent?.nodeType === 'element' ? n.parent as DomElement : null) {
+    const va = n.computedStyle?.get('vertical-align');
+    if (!va || va === 'baseline') continue;
+    const parentSize = parseFloat((n.parent as DomElement | null)?.computedStyle?.get('font-size') ?? '') || 16;
+    if (va === 'super') shift -= parentSize * 0.33;
+    else if (va === 'sub') shift += parentSize * 0.2;
+    else if (/^-?[\d.]+px$/.test(va)) shift -= parseFloat(va);
+    else if (/^-?[\d.]+em$/.test(va)) shift -= parseFloat(va) * (parseFloat(n.computedStyle?.get('font-size') ?? '') || 16);
+  }
+  return shift;
+}
+
 /** white-space values that never wrap at soft opportunities. */
 function noWrap(el: DomElement): boolean {
   const ws = el.computedStyle?.get('white-space') ?? 'normal';
@@ -954,6 +973,7 @@ class LayoutEngine implements ILayoutEngine {
         const textNode = child.node as DomElement & { text?: string };
         const text = textNode.text ?? (child.node as unknown as { text: string }).text ?? '';
         if (text) {
+          ifc.letterSpacing = this.letterSpacingOf(parent, parentFontSize);
           ifc.addTextRun(transformText(text, parent), parentFontSize, parentLineHeight, 'sans-serif', undefined, preservesWhitespace(parent), null, noWrap(parent));
         }
         continue;
@@ -1686,6 +1706,7 @@ class LayoutEngine implements ILayoutEngine {
         const text = (child as DomNode & { text: string }).text ?? '';
         if (text) {
           const lineHeight = this.resolveLineHeight(parent.computedStyle ?? new Map(), parentFontSize);
+          ifc.letterSpacing = this.letterSpacingOf(parent, parentFontSize);
           ifc.addTextRun(transformText(text, parent), parentFontSize, lineHeight, 'sans-serif', undefined, preservesWhitespace(parent), null, noWrap(parent));
         }
         continue;
@@ -1736,6 +1757,13 @@ class LayoutEngine implements ILayoutEngine {
     return contentY + Math.max(totalHeight, this.resolveLineHeight(parent.computedStyle ?? new Map(), parentFontSize));
   }
 
+  /** letter-spacing in px (`normal` is 0); it was ignored. */
+  private letterSpacingOf(el: DomElement, fontSize: number): number {
+    const v = el.computedStyle?.get('letter-spacing');
+    if (!v || v === 'normal') return 0;
+    return this.resolveLength(v, this.resolveFontSize(el.computedStyle ?? new Map(), fontSize), 0);
+  }
+
   /**
    * Populates textRuns on a LayoutBox from an InlineFormattingContext.
    * The paint engine reads these to render actual text content.
@@ -1762,13 +1790,14 @@ class LayoutEngine implements ILayoutEngine {
           const run: TextRun = {
             text: ilBox.textContent,
             x: ilBox.box.x,
-            y: ilBox.box.y + ilBox.baselineOffset,
+            y: ilBox.box.y + ilBox.baselineOffset + baselineShift(owner, el),
             fontSize: ilBox.fontSize ?? fontSize,
             fontFamily: ownerStyle.get('font-family') ?? ilBox.fontFamily ?? 'sans-serif',
             fontWeight: ownerStyle.get('font-weight') ?? ilBox.fontWeight ?? 'normal',
             color: ownerStyle.get('color') ?? '#000000',
             width: ilBox.box.width,
             ...(decoration ? { decoration } : {}),
+            ...(ilBox.letterSpacing ? { letterSpacing: ilBox.letterSpacing } : {}),
           };
           if (owner === el) { runs.push(run); continue; }
           if (!ownerRuns.has(owner)) ownerRuns.set(owner, []);
@@ -1839,6 +1868,7 @@ class LayoutEngine implements ILayoutEngine {
     for (const child of boxChildren(el)) {
       if (child.nodeType === 'text') {
         const text = (child as DomNode & { text: string }).text ?? '';
+        ifc.letterSpacing = this.letterSpacingOf(el, fontSize);
         if (text) ifc.addTextRun(transformText(text, el), fontSize, lineHeight, 'sans-serif', style.get('font-weight'), preservesWhitespace(el), el, noWrap(el));
         continue;
       }

@@ -103,6 +103,8 @@ export interface InlineLevelBox {
   fontWeight?: string;
   /** For text: the inline element (a, b, span…) whose content this is; it paints the run. Null → the IFC's block. */
   owner?: DomElement | null;
+  /** letter-spacing in px, included in the box's width. */
+  letterSpacing?: number;
 }
 
 /** A single line box within an inline formatting context.**

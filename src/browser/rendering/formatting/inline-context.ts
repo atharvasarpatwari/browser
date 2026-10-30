@@ -213,8 +213,10 @@ export class InlineFormattingContext {
       const isWhitespace = /^\s+$/.test(seg.text);
 
       // Measure the text
+      const ls = this.letterSpacing;
+      const spaced = (t: string): number => (ls ? ls * [...t].length : 0); // letter-spacing adds after each character
       const metrics = measurer.measure(seg.text, fontSize, ff, weight);
-      const segWidth = metrics.width;
+      const segWidth = metrics.width + spaced(seg.text);
 
       // Check if we need to wrap
       const availWidth = this.getAvailableWidthAt(this.currentLine.usedWidth);
@@ -236,14 +238,14 @@ export class InlineFormattingContext {
           const after = seg.text.slice(breakIdx);
 
           const beforeMetrics = measurer.measure(before, fontSize, ff, weight);
-          this.pushTextSegment(before, beforeMetrics.width, fontSize, lineHeight, ff);
+          this.pushTextSegment(before, beforeMetrics.width + spaced(before), fontSize, lineHeight, ff);
 
           // Start new line with the remaining text
           this.startNewLine();
 
           if (after.length > 0) {
             const afterMetrics = measurer.measure(after, fontSize, ff, weight);
-            this.pushTextSegment(after, afterMetrics.width, fontSize, lineHeight, ff);
+            this.pushTextSegment(after, afterMetrics.width + spaced(after), fontSize, lineHeight, ff);
           }
         } else {
           // No good break point — start a new line
@@ -322,6 +324,7 @@ export class InlineFormattingContext {
       owner: this.textOwner,
       fontSize,
       fontFamily,
+      ...(this.letterSpacing ? { letterSpacing: this.letterSpacing } : {}),
     };
 
     this.currentLine.boxes.push(box);
@@ -421,6 +424,9 @@ export class InlineFormattingContext {
     if (this.currentLine.boxes.length === 0) this.currentLine.height = Math.max(this.currentLine.height, lineHeight);
     this.startNewLine();
   }
+
+  /** letter-spacing (px) for the text added next; set by layout from the text's element. */
+  letterSpacing = 0;
 
   private startNewLine(): void {
     const lastLineHeight = this.currentLine.height || this.computeStrutHeight();
