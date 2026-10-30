@@ -1242,6 +1242,8 @@ export function getUserAgentDefaults(
   // Display
   if (NON_RENDERED_ELEMENTS.has(tag)) {
     styles.set('display', 'none');
+  } else if (tag === 'li') {
+    styles.set('display', 'list-item'); // it was a plain block: no list had a bullet or number
   } else if (TABLE_DISPLAYS[tag]) {
     // HTML §15.3.8. <table> was a block and its rows and cells inline, so plain HTML tables were
     // never laid out as tables: cells ran together as one line of text.
@@ -1316,6 +1318,8 @@ export function getUserAgentDefaults(
 
     case 'ul':
     case 'ol':
+    case 'menu':
+      styles.set('list-style-type', tag === 'ol' ? 'decimal' : 'disc');
       styles.set('padding-left', '40px');
       styles.set('margin-top', '1em');
       styles.set('margin-bottom', '1em');

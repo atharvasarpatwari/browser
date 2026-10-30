@@ -1,6 +1,7 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { DomDocument, DomElement, DomNode, LayoutBox, TextRun } from './dom-tree';
 import { boxChildren } from './dom-tree';
+import { listMarkerCommands } from './list-markers';
 import { DamageTracker } from './damage-tracker';
 import {
   buildStackingContextTree,
@@ -750,6 +751,9 @@ class PaintEngine implements IPaintEngine {
         }
       }
       commands.push({ type: 'restore', params: [] });
+
+      // ── List marker (outside the item's own clip: it sits left of the content box) ──
+      if (style.get('display') === 'list-item') commands.push(...listMarkerCommands(node, layoutBox, style));
 
       // ── Inset box shadows (after content) ─────────────────────────────
       if (boxShadowVal && boxShadowVal !== 'none') {

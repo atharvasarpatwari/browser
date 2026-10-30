@@ -51,7 +51,7 @@ import { LayoutEngine } from '../rendering/layout-engine';
 import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, computePseudoElementStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
-import { makePseudoElement } from '../rendering/generated-content';
+import { makePseudoElement, applyCounterProperties, type Counters } from '../rendering/generated-content';
 import { buildUsedStyle } from '../rendering/css5/used-style';
 import { runJS, createGlobalEnv } from '../js/index';
 import { getPreferredColorScheme } from '../rendering/color-scheme';
@@ -486,8 +486,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // Pass 1: Build StyleableElement tree mirroring the DOM tree.
     const rootStyleables = this.buildStyleableTree(doc.children, null);
 
-    // Pass 2: Compute and apply styles top-down.
+    // Pass 2: Compute and apply styles top-down (document order, which CSS counters follow).
+    this.counters = new Map();
     this.applyStylesRecursive(doc.children, rootStyleables, stylesheet, null, containerWidth, containerHeight, domTree);
+    this.counters = null;
   }
 
   /**
@@ -866,6 +868,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Recursively computes and applies CSS styles to every element in the DOM tree.
    * Walks top-down so parent computed styles can be passed for inheritance.
    */
+  /** CSS counters during the full style pass (null otherwise: incremental restyles keep their text). */
+  private counters: Counters | null = null;
+
   /** The element's ::before / ::after boxes (generated-content.ts); they were never rendered. */
   private applyPseudoElements(
     el: DomElement,
@@ -875,9 +880,12 @@ class PageRenderer implements IPageRenderer, IDisposable {
     containerWidth: number,
     containerHeight: number,
   ): void {
+    const counters = this.counters ?? undefined;
+    if (counters) applyCounterProperties(computed, counters);
     for (const pseudo of ['before', 'after'] as const) {
       const style = computePseudoElementStyles(styleable, pseudo, stylesheet, this.viewport, computed);
-      const box = style ? makePseudoElement(el, pseudo, style) : null;
+      if (style && counters) applyCounterProperties(style, counters);
+      const box = style ? makePseudoElement(el, pseudo, style, counters) : null;
       if (box) box.usedStyle = buildUsedStyle(style!, containerWidth, containerHeight, 16);
       if (pseudo === 'before') el.pseudoBefore = box;
       else el.pseudoAfter = box;
