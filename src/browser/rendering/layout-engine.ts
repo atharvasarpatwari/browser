@@ -132,6 +132,26 @@ function textDecorationFor(owner: DomElement, block: DomElement): TextRun['decor
 }
 
 /** white-space: pre / pre-wrap / pre-line / break-spaces keep source whitespace (inherited, so the parent's value applies). */
+/**
+ * text-transform (CSS Text §2.1), applied before the text is measured. It was ignored, so
+ * `uppercase` navigation labels and headings showed in their source case.
+ * ponytail: `capitalize` starts at each text node, so a word split across elements is capitalized twice.
+ */
+function transformText(text: string, el: DomElement): string {
+  switch (el.computedStyle?.get('text-transform')) {
+    case 'uppercase': return text.toUpperCase();
+    case 'lowercase': return text.toLowerCase();
+    case 'capitalize': return text.replace(/(^|[\s\u00a0(\[{"'\u201c-])(\p{L})/gu, (_m, pre: string, ch: string) => pre + ch.toUpperCase());
+    default: return text;
+  }
+}
+
+/** white-space values that never wrap at soft opportunities. */
+function noWrap(el: DomElement): boolean {
+  const ws = el.computedStyle?.get('white-space') ?? 'normal';
+  return ws === 'nowrap' || ws === 'pre';
+}
+
 function preservesWhitespace(el: DomElement): boolean {
   const ws = el.computedStyle?.get('white-space') ?? 'normal';
   return ws.startsWith('pre') || ws === 'break-spaces';
@@ -934,7 +954,7 @@ class LayoutEngine implements ILayoutEngine {
         const textNode = child.node as DomElement & { text?: string };
         const text = textNode.text ?? (child.node as unknown as { text: string }).text ?? '';
         if (text) {
-          ifc.addTextRun(text, parentFontSize, parentLineHeight, 'sans-serif', undefined, preservesWhitespace(parent));
+          ifc.addTextRun(transformText(text, parent), parentFontSize, parentLineHeight, 'sans-serif', undefined, preservesWhitespace(parent), null, noWrap(parent));
         }
         continue;
       }
@@ -946,6 +966,12 @@ class LayoutEngine implements ILayoutEngine {
       const elDisplay = elStyle.get('display') ?? 'inline';
       const elPosition = elStyle.get('position') ?? 'static';
       const elClassified = classifyDisplay(elDisplay);
+      // <br> is a forced line break. It was an empty inline as wide as the line: a wrap plus an
+      // extra line, so every <br> left a blank line too.
+      if (el.tagName.toLowerCase() === 'br' && elDisplay !== 'none') {
+        ifc.lineBreak(this.resolveLineHeight(elStyle, this.resolveFontSize(elStyle, parentFontSize)));
+        continue;
+      }
 
       // Absolute/fixed children are removed from flow
       if (elPosition === 'absolute' || elPosition === 'fixed') {
@@ -1660,7 +1686,7 @@ class LayoutEngine implements ILayoutEngine {
         const text = (child as DomNode & { text: string }).text ?? '';
         if (text) {
           const lineHeight = this.resolveLineHeight(parent.computedStyle ?? new Map(), parentFontSize);
-          ifc.addTextRun(text, parentFontSize, lineHeight, 'sans-serif', undefined, preservesWhitespace(parent));
+          ifc.addTextRun(transformText(text, parent), parentFontSize, lineHeight, 'sans-serif', undefined, preservesWhitespace(parent), null, noWrap(parent));
         }
         continue;
       }
@@ -1672,6 +1698,12 @@ class LayoutEngine implements ILayoutEngine {
       const elDisplay = elStyle.get('display') ?? 'inline';
       const elPosition = elStyle.get('position') ?? 'static';
       const elClassified = classifyDisplay(elDisplay);
+      // <br> is a forced line break. It was an empty inline as wide as the line: a wrap plus an
+      // extra line, so every <br> left a blank line too.
+      if (el.tagName.toLowerCase() === 'br' && elDisplay !== 'none') {
+        ifc.lineBreak(this.resolveLineHeight(elStyle, this.resolveFontSize(elStyle, parentFontSize)));
+        continue;
+      }
 
       // Absolute/fixed children are removed from flow
       if (elPosition === 'absolute' || elPosition === 'fixed') {
@@ -1807,7 +1839,7 @@ class LayoutEngine implements ILayoutEngine {
     for (const child of boxChildren(el)) {
       if (child.nodeType === 'text') {
         const text = (child as DomNode & { text: string }).text ?? '';
-        if (text) ifc.addTextRun(text, fontSize, lineHeight, 'sans-serif', style.get('font-weight'), preservesWhitespace(el), el);
+        if (text) ifc.addTextRun(transformText(text, el), fontSize, lineHeight, 'sans-serif', style.get('font-weight'), preservesWhitespace(el), el, noWrap(el));
         continue;
       }
       if (child.nodeType !== 'element') continue;
@@ -1815,6 +1847,10 @@ class LayoutEngine implements ILayoutEngine {
       const innerStyle = inner.computedStyle ?? new Map();
       const innerPosition = innerStyle.get('position') ?? 'static';
       const innerClassified = classifyDisplay(innerStyle.get('display') ?? 'inline');
+      if (inner.tagName.toLowerCase() === 'br' && innerStyle.get('display') !== 'none') {
+        ifc.lineBreak(lineHeight);
+        continue;
+      }
       if (innerPosition === 'absolute' || innerPosition === 'fixed') {
         const containingBlock = innerPosition === 'fixed' ? null : findContainingBlockForScheme(inner, innerPosition as 'absolute' | 'fixed' | 'sticky');
         this.positionedQueue.push({ element: inner, containingBlock, fontSize: this.resolveFontSize(innerStyle, fontSize), availableWidth, domTree, staticX: contentX, staticY: contentY });

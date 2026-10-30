@@ -43,11 +43,16 @@ describe('content values', () => {
 
 describe('::before / ::after boxes', () => {
   it('are laid out and painted with the element: separators, bullets, labels', async () => {
-    const { texts, domTree } = await render('<html><head><style>li::before{content:"\\2022  "} .crumb + .crumb::before{content:"\\203A"} a.ext::after{content:" (" attr(href) ")"} p:after{content:"!"}</style></head><body><ul><li id="l">One</li></ul><span class="crumb">Home</span><span class="crumb" id="c2">Docs</span><a class="ext" href="/x">link</a><p>Hi</p></body></html>');
+    const { texts, domTree } = await render('<html><head><style>ul{list-style:none} li::before{content:"\\2022  "} .crumb + .crumb::before{content:"\\203A"} a.ext::after{content:" (" attr(href) ")"} p:after{content:"!"}</style></head><body><ul><li id="l">One</li></ul><span class="crumb">Home</span><span class="crumb" id="c2">Docs</span><a class="ext" href="/x">link</a><p>Hi</p></body></html>');
     expect(texts).toContain('•');
     expect(texts).toContain('›');
     expect(texts.join(' ')).toContain('(/x)');
-    expect(texts.slice(texts.indexOf('Hi'), texts.indexOf('Hi') + 2)).toEqual(['Hi', '!']); // its own run, right after the content
+    // ::after is its own run on the content's line, just after it (paint order puts inline boxes later)
+    const runs = domTree.getElementsByTagName('p')[0]!;
+    const hi = runs.layoutBox!.textRuns!.find((t) => t.text === 'Hi')!;
+    const bang = runs.pseudoAfter!.layoutBox!.textRuns!.find((t) => t.text === '!')!;
+    expect(bang.y).toBeCloseTo(hi.y, 0);
+    expect(bang.x).toBeGreaterThan(hi.x);
     const before = domTree.getElementById('l')!.pseudoBefore!;
     const li = domTree.getElementById('l')!.layoutBox!;
     expect(before.layoutBox!.x).toBeGreaterThanOrEqual(li.x);

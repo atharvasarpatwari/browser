@@ -1173,6 +1173,13 @@ const BLOCK_ELEMENTS = new Set([
   'legend',
 ]);
 
+/** CSS Display §2.7 blockification of inline-level display types. */
+const BLOCKIFY: Readonly<Record<string, string>> = {
+  'inline': 'block', 'inline-block': 'block', 'run-in': 'block', 'inline-flex': 'flex', 'inline-grid': 'grid',
+  'inline-table': 'table', 'table-row-group': 'block', 'table-header-group': 'block', 'table-footer-group': 'block',
+  'table-row': 'block', 'table-cell': 'block', 'table-caption': 'block', 'table-column': 'block', 'table-column-group': 'block',
+};
+
 /** HTML §15.3.8 table element displays. */
 const TABLE_DISPLAYS: Readonly<Record<string, string>> = {
   table: 'table', caption: 'table-caption', colgroup: 'table-column-group', col: 'table-column',
@@ -1705,10 +1712,23 @@ export function computeComputedStyles(
 
   const computed = new Map<string, string>();
 
-  // Apply user-agent defaults first.
-  const uaDefaults = getUserAgentDefaults(element.tagName, element.attributes.get('type') ?? '');
-  for (const [prop, val] of uaDefaults) {
-    computed.set(prop, val);
+  // Apply user-agent defaults first. A ::before/::after box gets none of its host's (they made
+  // `div::before` a block with the div's margins and `li::before` a second list item).
+  const uaDefaults = pseudo ? new Map<string, string>() : getUserAgentDefaults(element.tagName, element.attributes.get('type') ?? '');
+  if (!pseudo) {
+    for (const [prop, val] of uaDefaults) {
+      computed.set(prop, val);
+    }
+    // HTML §15.3.1 `[hidden] { display: none }` and §15.5.4 a closed <details> shows only its
+    // first <summary>: both were rendered (hidden banners and menus, collapsed answers).
+    if (element.attributes.has('hidden') && (element.attributes.get('hidden') ?? '').toLowerCase() !== 'until-found') {
+      computed.set('display', 'none');
+    }
+    const parent = element.parent;
+    if (parent && parent.tagName.toLowerCase() === 'details' && !parent.attributes.has('open')) {
+      const firstSummary = parent.children.find((c) => c.tagName.toLowerCase() === 'summary');
+      if (element !== firstSummary) computed.set('display', 'none');
+    }
   }
 
   // Apply declarations in cascade order (later wins because ascending sort).
@@ -1802,6 +1822,17 @@ export function computeComputedStyles(
   };
   resolveAllComputedValues(computed, resCtx);
   if (!parentComputed) rootFontSizePx = parseFloat(computed.get('font-size') ?? '') || 16;
+
+  // CSS 2.2 §9.7: an absolutely positioned or floated box is blockified (inline → block,
+  // inline-flex → flex …). Nova kept `inline`, so an empty absolutely positioned ::before with a
+  // height was a line tall.
+  const pos = computed.get('position');
+  const fl = computed.get('float');
+  if (pos === 'absolute' || pos === 'fixed' || (fl !== undefined && fl !== 'none')) {
+    const d = computed.get('display') ?? 'inline';
+    const blockified = BLOCKIFY[d];
+    if (blockified) computed.set('display', blockified);
+  }
 
   // CSS Backgrounds §3.3: a border-*-width computes to 0 when its style is none or hidden.
   // Layout and paint read these widths directly; leaving the initial `medium` (3px) here

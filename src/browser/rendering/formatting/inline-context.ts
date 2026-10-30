@@ -170,6 +170,8 @@ export class InlineFormattingContext {
     fontWeight?: string,
     preserveWhitespace = false,
     owner: DomElement | null = null,
+    /** white-space: nowrap / pre: lines break only at forced breaks (they used to wrap). */
+    noWrap = false,
   ): void {
     if (!text) return;
     this.textOwner = owner;
@@ -197,6 +199,16 @@ export class InlineFormattingContext {
     for (const seg of segments) {
       if (seg.text.length === 0) continue;
 
+      // white-space: pre/pre-wrap/pre-line keep newlines as forced breaks: a <pre> was one line.
+      if (preserveWhitespace && /[\n\r]/.test(seg.text)) {
+        const parts = seg.text.split(/\r\n|[\n\r]/);
+        parts.forEach((part, k) => {
+          if (k > 0) this.lineBreak(lineHeight);
+          if (part) this.addTextRun(part, fontSize, lineHeight, fontFamily, fontWeight, preserveWhitespace, owner, noWrap);
+        });
+        continue;
+      }
+
       // Is this a whitespace segment?
       const isWhitespace = /^\s+$/.test(seg.text);
 
@@ -207,7 +219,7 @@ export class InlineFormattingContext {
       // Check if we need to wrap
       const availWidth = this.getAvailableWidthAt(this.currentLine.usedWidth);
 
-      if (this.currentLine.usedWidth + segWidth > availWidth && this.currentLine.boxes.length > 0) {
+      if (!noWrap && this.currentLine.usedWidth + segWidth > availWidth && this.currentLine.boxes.length > 0) {
         // We need to wrap. Try to find a good break point within this segment.
         if (isWhitespace) {
           // Just drop the whitespace at the end of the line (CSS 2.2 §16.6.1)
@@ -240,8 +252,8 @@ export class InlineFormattingContext {
         }
       } else {
         // Fits on current line
-        // Skip leading whitespace on a new line
-        if (isWhitespace && this.currentLine.boxes.length === 0 && this.currentLine.usedWidth === 0) {
+        // Skip leading whitespace on a new line (kept under pre*: indentation in a <pre>)
+        if (isWhitespace && !preserveWhitespace && this.currentLine.boxes.length === 0 && this.currentLine.usedWidth === 0) {
           continue;
         }
 
@@ -399,6 +411,15 @@ export class InlineFormattingContext {
     };
     this.lineBoxes.push(line);
     return line;
+  }
+
+  /**
+   * A forced line break (<br>, a preserved newline). An empty line still takes a line's height, so
+   * `<br><br>` leaves a blank line.
+   */
+  lineBreak(lineHeight: number): void {
+    if (this.currentLine.boxes.length === 0) this.currentLine.height = Math.max(this.currentLine.height, lineHeight);
+    this.startNewLine();
   }
 
   private startNewLine(): void {
