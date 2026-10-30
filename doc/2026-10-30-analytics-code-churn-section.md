@@ -94,3 +94,40 @@ Two small fixes while refreshing:
 - the section shows a one-line provenance note under the stats — source, when the data was generated, and the command to refresh it — so a stale dataset is visible instead of silent.
 
 Verified again in a browser: no console errors, `generated` 2026-10-30 10:12, 77 days, 77 table rows, today's row present.
+
+---
+
+## Quietest-day stat (2026-10-30 later)
+
+The stat row showed only the high end (`Busiest day`). Added the matching low end so both
+extremes of per-day churn are on the page:
+
+```js
+const changed = (d) => d.added + d.removed;
+const busiest  = data.reduce((a,d) => changed(d) > changed(a) ? d : a, data[0]);
+const quietest = data.reduce((a,d) => changed(d) < changed(a) ? d : a, data[0]);
+```
+
+`doc/analytics.html` only — one extra `stat(...)` tile, no markup or CSS changes.
+
+| Extreme | Day | Lines changed |
+|---------|-----|---------------|
+| Busiest | 2026-07-19 | 52,843 (+50,937 / -1,906 — the engine import) |
+| Quietest | 2026-09-26 | 268 (+214 / -54) |
+
+Other per-column extremes, for reference (not shown on the page — the table already has them):
+most added 2026-07-19 (+50,937), most removed 2026-10-12 (-20,472), most commits 2026-09-12 (22),
+most files 2026-07-28 (964).
+
+### Test Results
+
+```
+served doc/ on localhost, loaded analytics.html:
+  console errors                 -> none
+  #churnStats readout            -> "+459,707 | LINES ADDED | -90,913 | LINES REMOVED |
+                                     368,794 | NET LINES | 77 | ACTIVE DAYS |
+                                     7,151 | AVG CHANGED/DAY |
+                                     2026-07-19 | BUSIEST DAY (52,843) |
+                                     2026-09-26 | QUIETEST DAY (268)"
+  values cross-checked against analytics-churn.js min/max -> match
+```
