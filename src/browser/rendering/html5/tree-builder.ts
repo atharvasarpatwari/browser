@@ -351,9 +351,21 @@ class TreeBuilder implements TreeBuilderContext {
   // REPROCESSING HELPERS
   // ─────────────────────────────────────────────────────────────────────────
 
+  /**
+   * "Process the token using the rules for the in body insertion mode": the rules, not the mode
+   * (as reprocessInHead below). Switching to IN_BODY and staying there meant the first text in a
+   * table cell took the parser out of the table: `</td>` was ignored and every later cell nested
+   * inside the one before (`<tr><td>1</td><td>2</td>` built td(1, td(2))).
+   */
   reprocessInBody(token: Token): void {
+    const saved = this.insertionMode;
     this.insertionMode = Im.IN_BODY;
     this.processToken(token);
+    if (this.insertionMode === Im.IN_BODY) {
+      this.insertionMode = saved;
+    } else if (this.insertionMode === Im.TEXT && this.originalInsertionMode === Im.IN_BODY) {
+      this.originalInsertionMode = saved; // <script>, <textarea>… return to the cell, not to body
+    }
   }
 
   reprocessInTable(token: Token): void {

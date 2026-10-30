@@ -51,10 +51,20 @@ export function generateAnonymousTableBoxes(children: DomNode[]): DomNode[] {
   const result: DomNode[] = [];
   let lastRowGroup: DomElement | null = null;
   let lastRow: DomElement | null = null;
+  let lastAnonCell: DomElement | null = null;
   let i = 0;
+
+  function anonCell(): DomElement {
+    if (lastAnonCell) return lastAnonCell;
+    const cell = createAnonymousElement('table-cell', 'anon-cell-' + i);
+    ensureRow().children.push(cell);
+    lastAnonCell = cell;
+    return cell;
+  }
 
   function ensureRow(): DomElement {
     if (lastRow) return lastRow;
+    lastAnonCell = null;
     const row = createAnonymousElement('table-row', 'anon-row-' + i);
     if (!lastRowGroup) {
       lastRowGroup = createAnonymousElement('table-row-group', 'anon-group-' + i);
@@ -68,6 +78,8 @@ export function generateAnonymousTableBoxes(children: DomNode[]): DomNode[] {
   while (i < children.length) {
     const node = children[i];
     if (node.nodeType === 'text') {
+      // Text directly in a table goes into an anonymous cell; whitespace between boxes doesn't.
+      if (((node as { text?: string }).text ?? '').trim()) anonCell().children.push(node);
       i++;
       continue;
     }
@@ -76,6 +88,7 @@ export function generateAnonymousTableBoxes(children: DomNode[]): DomNode[] {
     const display = el.computedStyle?.get('display') ?? 'inline';
     const role = classifyTableChild(display);
 
+    if (role !== null) lastAnonCell = null;
     if (role === 'caption' || role === 'col-group' || role === 'col') {
       lastRowGroup = null;
       lastRow = null;
@@ -95,8 +108,9 @@ export function generateAnonymousTableBoxes(children: DomNode[]): DomNode[] {
       const row = ensureRow();
       row.children.push(node);
     } else {
-      const row = ensureRow();
-      row.children.push(node);
+      // Anything else (a <figure>'s <a><img>) is wrapped in an anonymous cell (CSS 2.2 §17.2.1).
+      // It went straight into the row, where only cells are laid out, so it vanished.
+      anonCell().children.push(node);
     }
     i++;
   }
@@ -277,22 +291,35 @@ export class TableFormattingContext {
     }
   }
 
+  /**
+   * Lays out captions and cells. `layoutCell` may return the height the content took: rows grow
+   * to their tallest cell and `stretchCell` gives every cell that height. Rows were fixed at 20px
+   * (or the CSS height), so taller content overflowed onto what followed, and captions were laid
+   * out at the columns' width: 0 for a table with none (Wikipedia's <figure>), one word a line.
+   */
   layoutCells(
     contentX: number,
     contentY: number,
-    layoutCell: (cell: DomElement, x: number, y: number, w: number, h: number) => void,
+    layoutCell: (cell: DomElement, x: number, y: number, w: number, h: number) => number | void,
+    stretchCell?: (cell: DomElement, h: number) => void,
   ): void {
     const spacing = this.options.borderCollapse === 'separate' ? this.options.borderSpacing : 0;
+    const captionWidth = this.totalWidth > 0 ? this.totalWidth : this.options.availableWidth;
     let y = contentY;
-    if (this.options.captionSide === 'top') {
+    // caption-side is the caption's own (inherited) property: Wikipedia sets `bottom` on <figcaption>.
+    const sideOf = (cap: DomElement): string => cap.computedStyle?.get('caption-side') ?? this.options.captionSide;
+    const captions = (side: string): void => {
       for (const cap of this.captions) {
-        layoutCell(cap, contentX, y, this.totalWidth, 20);
-        y += 20 + spacing;
+        if (sideOf(cap) !== side) continue;
+        const h = layoutCell(cap, contentX, y, captionWidth, 20);
+        y += (typeof h === 'number' ? h : 20) + spacing;
       }
-    }
+    };
+    captions('top');
     y += spacing;
     for (const row of this.rows) {
       let xOffset = spacing;
+      let rowHeight = row.height;
       for (const cell of row.cells) {
         const cellX = contentX + xOffset;
         const cellY = y;
@@ -301,18 +328,19 @@ export class TableFormattingContext {
           cellW += this.columns[cell.col + s].finalWidth;
         }
         cellW += spacing * (cell.colspan - 1);
-        layoutCell(cell.element, cellX, cellY, Math.max(0, cellW), Math.max(0, cell.contentHeight));
+        const h = layoutCell(cell.element, cellX, cellY, Math.max(0, cellW), Math.max(0, cell.contentHeight));
+        if (typeof h === 'number') rowHeight = Math.max(rowHeight, h);
         xOffset += cellW + spacing;
       }
-      y += row.height + spacing;
+      row.height = rowHeight;
+      if (stretchCell) for (const cell of row.cells) stretchCell(cell.element, rowHeight);
+      y += rowHeight + spacing;
     }
-    if (this.options.captionSide === 'bottom') {
+    if (this.captions.some((cap) => sideOf(cap) === 'bottom')) {
       y += spacing;
-      for (const cap of this.captions) {
-        layoutCell(cap, contentX, y, this.totalWidth, 20);
-        y += 20 + spacing;
-      }
+      captions('bottom');
     }
+    this.totalHeight = y - contentY;
   }
 
   getTotalWidth(): number {

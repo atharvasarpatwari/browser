@@ -1076,6 +1076,11 @@ class LayoutEngine implements ILayoutEngine {
         this.elementPositions.push({ element: cellEl, box: cellBox });
         if (domTree) domTree.setLayoutBox(cellEl, cellBox);
         this.layoutNode(cellEl, x, y, w, fontSize, domTree);
+        return this.layoutBoxes.get(cellEl.domId)?.height;
+      },
+      (cellEl: DomElement, h: number) => {
+        const box = this.layoutBoxes.get(cellEl.domId);
+        if (box && box.height < h) box.height = h;
       },
     );
 

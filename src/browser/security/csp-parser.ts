@@ -178,6 +178,13 @@ const KNOWN_DIRECTIVES: ReadonlySet<string> = new Set([
 ]);
 
 /** Non-fallible directives (their absence means something different than 'none'). */
+/** Fetch directives: the only ones that fall back to default-src. */
+const FETCH_DIRECTIVES: ReadonlySet<string> = new Set([
+  'child-src', 'connect-src', 'font-src', 'frame-src', 'img-src', 'manifest-src', 'media-src',
+  'object-src', 'prefetch-src', 'script-src', 'script-src-elem', 'script-src-attr', 'style-src',
+  'style-src-elem', 'style-src-attr', 'worker-src',
+]);
+
 const NON_FALLIBLE_DIRECTIVES: ReadonlySet<string> = new Set([
   'sandbox', 'report-uri', 'report-to', 'upgrade-insecure-requests',
   'require-trusted-types-for', 'trusted-types',
@@ -578,8 +585,10 @@ function getEffectiveSources(
   const directive = policy.directives.get(directiveName);
   if (directive) return directive.sources;
 
-  // Fall back to default-src (except for non-fallible directives).
-  if (!NON_FALLIBLE_DIRECTIVES.has(directiveName)) {
+  // Only fetch directives fall back to default-src (CSP3 §6.8.3). Navigation and document
+  // directives (form-action, base-uri, frame-ancestors, navigation-to) never do: with them falling
+  // back, `default-src 'none'` (httpforever.com) blocked every link, reload and form submit.
+  if (FETCH_DIRECTIVES.has(directiveName) && !NON_FALLIBLE_DIRECTIVES.has(directiveName)) {
     const fallback = policy.directives.get('default-src');
     if (fallback) return fallback.sources;
   }

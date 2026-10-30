@@ -1170,6 +1170,13 @@ const BLOCK_ELEMENTS = new Set([
   'legend',
 ]);
 
+/** HTML §15.3.8 table element displays. */
+const TABLE_DISPLAYS: Readonly<Record<string, string>> = {
+  table: 'table', caption: 'table-caption', colgroup: 'table-column-group', col: 'table-column',
+  thead: 'table-header-group', tbody: 'table-row-group', tfoot: 'table-footer-group', tr: 'table-row',
+  td: 'table-cell', th: 'table-cell',
+};
+
 const INLINE_ELEMENTS = new Set([
   'span',
   'a',
@@ -1232,6 +1239,17 @@ export function getUserAgentDefaults(
   // Display
   if (NON_RENDERED_ELEMENTS.has(tag)) {
     styles.set('display', 'none');
+  } else if (TABLE_DISPLAYS[tag]) {
+    // HTML §15.3.8. <table> was a block and its rows and cells inline, so plain HTML tables were
+    // never laid out as tables: cells ran together as one line of text.
+    styles.set('display', TABLE_DISPLAYS[tag]!);
+    if (tag === 'table') { styles.set('border-spacing', '2px'); styles.set('box-sizing', 'border-box'); }
+    if (tag === 'td' || tag === 'th') {
+      for (const side of ['top', 'right', 'bottom', 'left']) styles.set(`padding-${side}`, '1px');
+      styles.set('vertical-align', 'inherit');
+    }
+    if (tag === 'th') { styles.set('font-weight', 'bold'); styles.set('text-align', 'center'); }
+    if (tag === 'caption') styles.set('text-align', 'center');
   } else if (BLOCK_ELEMENTS.has(tag)) {
     styles.set('display', 'block');
   } else if (INLINE_ELEMENTS.has(tag)) {

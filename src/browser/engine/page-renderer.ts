@@ -523,6 +523,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
         this.viewport,
         parentComputed,
       );
+      // The root again gets the dark scheme's text colour: restyled here without it, example.com
+      // in dark mode went back to black text on #222 after its first reflow (seen on the phone).
+      if (!parentComputed) applyDarkCanvasText(computed);
       domTree.setComputedStyle(el, computed);
 
       const usedStyle = buildUsedStyle(computed, containerWidth, containerHeight, 16);

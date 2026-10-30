@@ -402,14 +402,13 @@ export function querySelector(root: SelectableElement, selector: string): Select
   const parsed = parseSelectorString(selector);
   if (!parsed) return null;
 
-  // BFS
-  const queue: SelectableElement[] = [root];
-  while (queue.length > 0) {
-    const el = queue.shift()!;
+  // Document order (pre-order depth-first). This was breadth-first, so the shallowest match won:
+  // on Wikipedia `querySelector('section')` returned a footer section, not the article's.
+  const stack: SelectableElement[] = [root];
+  while (stack.length > 0) {
+    const el = stack.pop()!;
     if (matchesSelectorList(el, parsed)) return el;
-    for (const child of el.children) {
-      queue.push(child);
-    }
+    for (let i = el.children.length - 1; i >= 0; i--) stack.push(el.children[i]!);
   }
   return null;
 }
@@ -422,13 +421,11 @@ export function querySelectorAll(root: SelectableElement, selector: string): Sel
   if (!parsed) return [];
 
   const result: SelectableElement[] = [];
-  const queue: SelectableElement[] = [root];
-  while (queue.length > 0) {
-    const el = queue.shift()!;
+  const stack: SelectableElement[] = [root]; // document order, as querySelector
+  while (stack.length > 0) {
+    const el = stack.pop()!;
     if (matchesSelectorList(el, parsed)) result.push(el);
-    for (const child of el.children) {
-      queue.push(child);
-    }
+    for (let i = el.children.length - 1; i >= 0; i--) stack.push(el.children[i]!);
   }
   return result;
 }
