@@ -31,6 +31,7 @@ import {
   generateAnonymousTableBoxes,
   classifyTableChild,
 } from './formatting/table-context';
+import type { TableCell } from './formatting/table-context';
 import {
   MultiColumnFormattingContext,
 } from './formatting/multi-column-context';
@@ -993,6 +994,7 @@ class LayoutEngine implements ILayoutEngine {
     const borderSpacing = bs > 0 ? bs : 0;
     const captionSide = (style.get('caption-side') ?? 'top') as 'top' | 'bottom';
 
+    const specWidth = style.get('width');
     const tblCtx = new TableFormattingContext({
       tableLayout,
       borderCollapse,
@@ -1000,7 +1002,11 @@ class LayoutEngine implements ILayoutEngine {
       captionSide,
       availableWidth,
       fontSize,
+      autoWidth: !specWidth || specWidth === 'auto',
     });
+    // ponytail: content widths are measured with two throwaway layouts per cell; past this many
+    // cells they are skipped (equal shares, as before) to bound the cost on huge tables.
+    let measureBudget = 400;
 
     const anonChildren = generateAnonymousTableBoxes(parent.children);
 
@@ -1030,7 +1036,7 @@ class LayoutEngine implements ILayoutEngine {
         if (!rowEl.computedStyle) rowEl.computedStyle = new Map();
         const rowDisplay = rowEl.computedStyle.get('display') ?? 'inline';
         if (classifyTableChild(rowDisplay) !== 'row') continue;
-        const cells: Array<{ element: DomElement; row: number; col: number; rowspan: number; colspan: number; box: LayoutBox; contentWidth: number; contentHeight: number }> = [];
+        const cells: TableCell[] = [];
         let col = 0;
         for (const cellChild of rowEl.children) {
           if (cellChild.nodeType !== 'element') continue;
@@ -1040,7 +1046,10 @@ class LayoutEngine implements ILayoutEngine {
           if (classifyTableChild(cellDisplay) !== 'cell') continue;
           const colspan = parseInt(cellEl.attributes.get('colspan') ?? '1', 10) || 1;
           const rowspan = parseInt(cellEl.attributes.get('rowspan') ?? '1', 10) || 1;
+          const measured = measureBudget-- > 0 ? this.measureCellWidths(cellEl, availableWidth, fontSize, domTree) : null;
           cells.push({
+            minContent: measured?.min,
+            maxContent: measured?.max,
             element: cellEl,
             row: 0,
             col,
@@ -1088,6 +1097,14 @@ class LayoutEngine implements ILayoutEngine {
       },
     );
 
+    // An auto-width table's box is as wide as its columns (it kept the full line's width, so its
+    // background and border ran past the cells).
+    const tableBox = this.layoutBoxes.get(parent.domId);
+    const used = tblCtx.getTotalWidth();
+    if ((!specWidth || specWidth === 'auto') && tableBox && used > 0) {
+      const frame = tableBox.paddingLeft + tableBox.paddingRight + tableBox.borderLeft + tableBox.borderRight;
+      tableBox.width = Math.min(tableBox.width, used + frame);
+    }
     return contentY + tblCtx.getTotalHeight();
   }
 
@@ -2008,7 +2025,7 @@ class LayoutEngine implements ILayoutEngine {
    * Width an element's content wants when laid out in `availableWidth` (its max-content width,
    * capped there), by a throwaway layout at a local origin that is then rolled back.
    */
-  private measureContentWidth(el: DomElement, availableWidth: number, fontSize: number, domTree?: IDomTree, flex = false): number {
+  private measureContentWidth(el: DomElement, availableWidth: number, fontSize: number, domTree?: IDomTree, flex = false, uncapped = false): number {
     if (skipsChildLayout(el)) return 0;
     const prevBox = this.layoutBoxes.get(el.domId);
     this.layoutBoxes.set(el.domId, {
@@ -2022,7 +2039,22 @@ class LayoutEngine implements ILayoutEngine {
       : this.layoutBlockChildren(el, 0, 0, availableWidth, fontSize, domTree));
     if (prevBox) this.layoutBoxes.set(el.domId, prevBox);
     else this.layoutBoxes.delete(el.domId);
-    return Math.min(availableWidth, width);
+    return uncapped ? width : Math.min(availableWidth, width); // min-content overflows its 1 px
+  }
+
+  /**
+   * A table cell's min-content (its widest unbreakable piece, laid out in 1px) and max-content
+   * (laid out unwrapped) border-box widths.
+   */
+  private measureCellWidths(cell: DomElement, availableWidth: number, fontSize: number, domTree?: IDomTree): { min: number; max: number } {
+    const st = cell.computedStyle ?? new Map<string, string>();
+    const r = (p: string): number => this.resolveLength(st.get(p) ?? st.get('padding') ?? '0', fontSize, availableWidth);
+    const frame = r('padding-left') + r('padding-right')
+      + this.parseBorderWidth(st.get('border-left-width') ?? '0') + this.parseBorderWidth(st.get('border-right-width') ?? '0');
+    const cellFont = this.resolveFontSize(st, fontSize);
+    const min = this.measureContentWidth(cell, 1, cellFont, domTree, false, true);
+    const max = this.measureContentWidth(cell, Math.max(1, availableWidth), cellFont, domTree);
+    return { min: Math.ceil(min) + frame, max: Math.ceil(Math.max(min, max)) + frame };
   }
 
   /** Runs a layout only to measure it: returns the content extent and undoes its side effects. */

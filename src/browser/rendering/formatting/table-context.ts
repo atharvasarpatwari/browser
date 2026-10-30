@@ -9,6 +9,9 @@ export interface TableCell {
   box: LayoutBox;
   contentWidth: number;
   contentHeight: number;
+  /** Measured min-content / max-content border-box widths (auto layout, CSS 2.2 §17.5.2.2). */
+  minContent?: number;
+  maxContent?: number;
 }
 
 export interface TableRow {
@@ -31,6 +34,8 @@ export interface TableFormattingContextOptions {
   captionSide: 'top' | 'bottom';
   availableWidth: number;
   fontSize: number;
+  /** `width: auto`: the table shrinks to its columns' max-content when that fits. */
+  autoWidth?: boolean;
 }
 
 export function classifyTableChild(display: string): 'caption' | 'col-group' | 'col' | 'row-group' | 'row' | 'cell' | null {
@@ -203,8 +208,10 @@ export class TableFormattingContext {
           cellMin = resolveLength(rawW, '0');
           cellMax = cellMin;
         } else {
-          cellMin = 40;
-          cellMax = this.options.availableWidth;
+          // Measured content widths; every auto cell used to be 40 px min / the full width max,
+          // so columns were shared out regardless of what they held.
+          cellMin = cell.minContent ?? 40;
+          cellMax = Math.max(cellMin, cell.maxContent ?? this.options.availableWidth);
         }
         const col = cell.col;
         const span = cell.colspan;
@@ -243,6 +250,12 @@ export class TableFormattingContext {
       if (totalMin >= availForCols) {
         for (const col of this.columns) {
           col.finalWidth = col.minWidth;
+        }
+      } else if (this.options.autoWidth && totalMax <= availForCols) {
+        // An auto-width table whose content fits is as wide as its content (a small table no
+        // longer stretches across the page).
+        for (const col of this.columns) {
+          col.finalWidth = col.maxWidth;
         }
       } else {
         const excess = availForCols - totalMin;

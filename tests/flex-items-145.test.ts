@@ -109,7 +109,7 @@ describe('tables: anonymous cells, real row heights, captions (Wikipedia figure 
     const f = domTree.getElementById('f')!.layoutBox!, c = domTree.getElementById('c')!.layoutBox!, p = domTree.getElementById('p')!.layoutBox!;
     const img = domTree.getElementsByTagName('img')[0]!.layoutBox!;
     expect(img.height).toBe(100);                  // laid out (it was skipped)
-    expect(c.width).toBeGreaterThan(300);          // not 0: one word per line
+    expect(c.width).toBeCloseTo(200, 0);           // the table's (the image's) width, not 0: one word a line
     expect(c.y).toBeGreaterThanOrEqual(img.y + 100 - 1); // caption-side: bottom on the caption
     expect(f.height).toBeGreaterThanOrEqual(120);   // was 0
     expect(p.y).toBeGreaterThanOrEqual(c.y + c.height - 1); // no overlap
