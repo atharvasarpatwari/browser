@@ -25,7 +25,7 @@ import type {
   CssKeyframesRule,
 } from './types';
 
-import { matchesSelectorList } from './selector';
+import { matchesSelectorList, matchesSelectorListForPseudo, selectorPseudoElement } from './selector';
 import { getPreferredColorScheme } from '../color-scheme';
 import { controlUaDefaults } from '../form-controls';
 import { isInheritedProperty, getInitialValue, getInheritedProperties, getAllPropertyDefinitions } from './property-definitions';
@@ -1395,11 +1395,12 @@ export function computeCascade(
   rules: readonly CssStyleRule[],
   layerOrder?: readonly string[],
   layerMap?: ReadonlyMap<CssStyleRule, string>,
+  pseudo?: string,
 ): CascadeEntry[] {
   const entries: CascadeEntry[] = [];
 
   for (const rule of rules) {
-    if (!matchesSelectorList(element, rule.selectors)) continue;
+    if (pseudo ? !matchesSelectorListForPseudo(element, rule.selectors, pseudo) : !matchesSelectorList(element, rule.selectors)) continue;
 
     // Determine layer index: -1 = unlayered (wins over all layers)
     let layerIndex = -1;
@@ -1602,11 +1603,33 @@ function ruleIndexFor(stylesheet: CssStylesheet, vp: Viewport): RuleIndex {
 // COMPUTED STYLES
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The style of `element`'s ::before / ::after box (its parent is the element), or null when no
+ * rule gives it `content` (no box is generated).
+ */
+export function computePseudoElementStyles(
+  element: StyleableElement,
+  pseudo: 'before' | 'after',
+  stylesheet: CssStylesheet,
+  viewport: Viewport | undefined,
+  elementComputed: Map<string, string>,
+): Map<string, string> | null {
+  const index = ruleIndexFor(stylesheet, viewport ?? DEFAULT_VIEWPORT);
+  const rules = index.candidates(element).filter((r) => r.selectors.some((sel) => selectorPseudoElement(sel) === pseudo));
+  if (rules.length === 0) return null;
+  const style = computeComputedStyles(element, stylesheet, viewport, elementComputed, pseudo, rules);
+  const content = (style.get('content') ?? 'normal').trim();
+  if (content === 'none' || content === 'normal' || style.get('display') === 'none') return null;
+  return style;
+}
+
 export function computeComputedStyles(
   element: StyleableElement,
   stylesheet: CssStylesheet,
   viewport?: Viewport,
   parentComputed?: Map<string, string>,
+  pseudo?: 'before' | 'after',
+  pseudoRules?: readonly CssStyleRule[],
 ): Map<string, string> {
   const vp = viewport ?? DEFAULT_VIEWPORT;
 
@@ -1617,7 +1640,7 @@ export function computeComputedStyles(
   const index = ruleIndexFor(stylesheet, vp);
 
   // 2. Sort via computeCascade (specificity + source order + layer order).
-  const cascade = computeCascade(element, index.candidates(element), index.ctx.layerOrder, index.ctx.layerMap);
+  const cascade = computeCascade(element, pseudoRules ?? index.candidates(element), index.ctx.layerOrder, index.ctx.layerMap, pseudo);
 
   // 3. Build custom properties map early (parent + local --* declarations + inline --*)
   //    so we can resolve var() BEFORE shorthand expansion.
@@ -1633,7 +1656,7 @@ export function computeComputedStyles(
     if (e.property.startsWith('--')) earlyCustomProps.set(e.property, e.value);
   }
   // Also include inline style --* declarations (they override cascade).
-  const styleAttr = element.attributes.get('style');
+  const styleAttr = pseudo ? undefined : element.attributes.get('style'); // inline style is the element's own
   const inlineDecls = styleAttr ? parseInlineDeclarations(styleAttr) : [];
   for (const d of inlineDecls) {
     if (d.property.startsWith('--')) earlyCustomProps.set(d.property, d.value);

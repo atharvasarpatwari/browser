@@ -43,6 +43,9 @@ import type {
 // PARSER
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Pseudo-elements CSS 2 wrote with one colon. */
+const LEGACY_PSEUDO_ELEMENTS = new Set(['before', 'after', 'first-line', 'first-letter']);
+
 export class CssParser {
   private tokens: CssToken[];
   private source = '';
@@ -329,6 +332,10 @@ export class CssParser {
             pseudoElement = nameTok.value.toLowerCase();
             this.pos++;
           }
+        } else if (next?.type === CssTokenType.Ident && LEGACY_PSEUDO_ELEMENTS.has(next.value.toLowerCase())) {
+          // `:before` / `:after` (CSS 2 single colon) are pseudo-elements too
+          this.pos += 2;
+          pseudoElement = next.value.toLowerCase();
         } else if (next?.type === CssTokenType.Ident) {
           // Pseudo-class
           this.pos += 2;
@@ -1717,8 +1724,11 @@ function tokenizeSelector(str: string): SelectorToken[] {
     if (isWhitespace(ch)) {
       // Collapse whitespace and treat as descendant combinator
       while (i < str.length && isWhitespace(str[i]!)) i++;
-      // Only add combinator if next token is not a combinator
-      if (i < str.length && str[i] !== '>' && str[i] !== '+' && str[i] !== '~') {
+      // Only add combinator if next token is not a combinator, nor the previous one: the space in
+      // `a + b` after the `+` became a descendant combinator that replaced it, so every `>`, `+`
+      // and `~` with spaces around it matched as a descendant (`ul > li` styled every nested li).
+      const prev = tokens[tokens.length - 1];
+      if (i < str.length && str[i] !== '>' && str[i] !== '+' && str[i] !== '~' && prev && prev.type !== 'combinator') {
         tokens.push({ type: 'combinator', value: ' ' });
       }
       continue;
@@ -1908,6 +1918,9 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
     } else if (tok.type === 'colon') {
       i++;
       if (i < end && tok.value === '::' && tokens[i]!.type === 'pseudo-name') {
+        pseudoElement = tokens[i]!.value.toLowerCase();
+        i++;
+      } else if (i < end && tokens[i]!.type === 'pseudo-name' && LEGACY_PSEUDO_ELEMENTS.has(tokens[i]!.value.toLowerCase())) {
         pseudoElement = tokens[i]!.value.toLowerCase();
         i++;
       } else if (i < end && tokens[i]!.type === 'pseudo-name') {

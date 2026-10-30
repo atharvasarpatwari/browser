@@ -2,6 +2,7 @@ import { EMPTY_CLIP, clipFromAncestors } from './clip';
 import { controlIntrinsicSize, skipsChildLayout } from './form-controls';
 import type { IDisposable } from '../../app/dependency-container';
 import type { IDomTree, DomDocument, DomElement, DomNode, DomTextNode, LayoutBox, TextRun } from './dom-tree';
+import { boxChildren } from './dom-tree';
 import { DamageTracker } from './damage-tracker';
 import { findContainingBlock as findContainingBlockForScheme, resolveOutOfFlow, applyInFlowOffset } from './positioning';
 import { classifyDisplay, type ClassifiedChild } from './formatting/types';
@@ -619,7 +620,7 @@ class LayoutEngine implements ILayoutEngine {
       if (existingBox) {
         const childContentY = existingBox.y + existingBox.borderTop + existingBox.paddingTop;
         let childY = childContentY;
-        for (const child of node.children) {
+        for (const child of boxChildren(node)) {
           if (child.nodeType === 'element') {
             childY = this.layoutNodeIncremental(child as DomElement, x, childY, availableWidth, parentFontSize, domTree, damage);
           }
@@ -697,7 +698,7 @@ class LayoutEngine implements ILayoutEngine {
       inlineRun = [];
     };
 
-    for (const child of parent.children) {
+    for (const child of boxChildren(parent)) {
       if (child.nodeType === 'text') {
         const textNode = child as DomTextNode;
         const text = textNode.text ?? '';
@@ -1123,7 +1124,7 @@ class LayoutEngine implements ILayoutEngine {
     // ── Collect flex items ───────────────────────────────────────────────
     const flexItems: FlexItem[] = [];
 
-    for (const child of parent.children) {
+    for (const child of boxChildren(parent)) {
       if (child.nodeType !== 'element') continue;
       const childEl = child as DomElement;
       const childStyle = childEl.computedStyle ?? new Map();
@@ -1398,7 +1399,7 @@ class LayoutEngine implements ILayoutEngine {
     // ── Collect grid items ───────────────────────────────────────────────
     const gridItems: GridItem[] = [];
 
-    for (const child of parent.children) {
+    for (const child of boxChildren(parent)) {
       if (child.nodeType !== 'element') continue;
       const childEl = child as DomElement;
       const childStyle = childEl.computedStyle ?? new Map();
@@ -1624,7 +1625,7 @@ class LayoutEngine implements ILayoutEngine {
     });
     const inlineBlocksFrom = this.pendingInlineBlocks.length;
 
-    for (const child of parent.children) {
+    for (const child of boxChildren(parent)) {
       if (child.nodeType === 'text') {
         const text = (child as DomNode & { text: string }).text ?? '';
         if (text) {
@@ -1756,7 +1757,7 @@ class LayoutEngine implements ILayoutEngine {
     parentFontSize: number,
     domTree?: IDomTree,
   ): void {
-    if (el.children.length === 0 || this.resolveIntrinsicSize(el).width != null) {
+    if (boxChildren(el).length === 0 || this.resolveIntrinsicSize(el).width != null) {
       this.layoutInlineElement(el, ifc, contentX, contentY, availableWidth, parentFontSize, domTree);
       return;
     }
@@ -1773,7 +1774,7 @@ class LayoutEngine implements ILayoutEngine {
     this.elementPositions.push({ element: el, box });
     domTree?.setLayoutBox(el, box);
 
-    for (const child of el.children) {
+    for (const child of boxChildren(el)) {
       if (child.nodeType === 'text') {
         const text = (child as DomNode & { text: string }).text ?? '';
         if (text) ifc.addTextRun(text, fontSize, lineHeight, 'sans-serif', style.get('font-weight'), preservesWhitespace(el), el);
@@ -1859,7 +1860,7 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     // If the inline element has children, layout them recursively
-    if (el.children.length > 0 && !skipsChildLayout(el)) {
+    if (boxChildren(el).length > 0 && !skipsChildLayout(el)) {
       // layoutInlineChildren returns the bottom y, not a height (this made inline boxes
       // as tall as their distance from the top of the page).
       const childBottom = this.layoutInlineChildren(el, contentX, contentY, contentW, elFontSize, domTree);
@@ -1985,7 +1986,7 @@ class LayoutEngine implements ILayoutEngine {
     const visit = (node: DomElement): void => {
       const b = this.layoutBoxes.get(node.domId);
       if (b) b.textRuns = undefined;
-      for (const c of node.children) if (c.nodeType === 'element') visit(c as DomElement);
+      for (const c of boxChildren(node)) if (c.nodeType === 'element') visit(c as DomElement);
     };
     visit(el);
   }
@@ -2039,7 +2040,7 @@ class LayoutEngine implements ILayoutEngine {
       const b = this.layoutBoxes.get(node.domId);
       let right = 0;
       for (const run of b?.textRuns ?? []) right = Math.max(right, run.x + (run.width ?? 0));
-      for (const c of node.children) if (c.nodeType === 'element') right = Math.max(right, visit(c as DomElement));
+      for (const c of boxChildren(node)) if (c.nodeType === 'element') right = Math.max(right, visit(c as DomElement));
       if (!b || node === el) return right;
       const style = node.computedStyle;
       const width = style?.get('width');
@@ -2071,7 +2072,7 @@ class LayoutEngine implements ILayoutEngine {
         if (node !== el) { b.x += dx; b.y += dy; }
         if (b.textRuns) b.textRuns = b.textRuns.map((r) => ({ ...r, x: r.x + dx, y: r.y + dy }));
       }
-      for (const c of node.children) if (c.nodeType === 'element') visit(c as DomElement);
+      for (const c of boxChildren(node)) if (c.nodeType === 'element') visit(c as DomElement);
     };
     visit(el);
   }

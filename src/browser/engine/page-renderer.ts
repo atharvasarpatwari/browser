@@ -50,7 +50,8 @@ import { DomTree } from '../rendering/dom-tree';
 import { LayoutEngine } from '../rendering/layout-engine';
 import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
-import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
+import { computeComputedStyles, computePseudoElementStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
+import { makePseudoElement } from '../rendering/generated-content';
 import { buildUsedStyle } from '../rendering/css5/used-style';
 import { runJS, createGlobalEnv } from '../js/index';
 import { getPreferredColorScheme } from '../rendering/color-scheme';
@@ -526,6 +527,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
       const usedStyle = buildUsedStyle(computed, containerWidth, containerHeight, 16);
       domTree.setUsedStyle(el, usedStyle);
+      this.applyPseudoElements(el, styleable, stylesheet, computed, containerWidth, containerHeight);
 
       domTree.clearDirty(el, 'style');
     }
@@ -849,6 +851,24 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Recursively computes and applies CSS styles to every element in the DOM tree.
    * Walks top-down so parent computed styles can be passed for inheritance.
    */
+  /** The element's ::before / ::after boxes (generated-content.ts); they were never rendered. */
+  private applyPseudoElements(
+    el: DomElement,
+    styleable: StyleableElement,
+    stylesheet: Css5Stylesheet,
+    computed: Map<string, string>,
+    containerWidth: number,
+    containerHeight: number,
+  ): void {
+    for (const pseudo of ['before', 'after'] as const) {
+      const style = computePseudoElementStyles(styleable, pseudo, stylesheet, this.viewport, computed);
+      const box = style ? makePseudoElement(el, pseudo, style) : null;
+      if (box) box.usedStyle = buildUsedStyle(style!, containerWidth, containerHeight, 16);
+      if (pseudo === 'before') el.pseudoBefore = box;
+      else el.pseudoAfter = box;
+    }
+  }
+
   private applyStylesRecursive(
     domNodes: readonly DomNode[],
     styleables: readonly StyleableElement[],
@@ -876,6 +896,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       // Build used style for faster layout
       const used = buildUsedStyle(computed, containerWidth, containerHeight, 16);
       domTree.setUsedStyle(el, used);
+      this.applyPseudoElements(el, styleable, stylesheet, computed, containerWidth, containerHeight);
 
       // Recurse into children with this element's computed styles as parent.
       this.applyStylesRecursive(

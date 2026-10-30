@@ -1,4 +1,5 @@
 import type { DomElement, DomNode } from '../dom-tree';
+import { boxChildren } from '../dom-tree';
 import { classifyDisplay } from './types';
 import { parseTransform, isPureTranslation4x4 } from '../transform-parser';
 
@@ -260,7 +261,7 @@ function classifyChildrenIntoContext(
   _isRootCtx: boolean,
   options?: StackingBuildOptions,
 ): void {
-  for (const child of el.children) {
+  for (const child of boxChildren(el)) {
     if (!child || child.nodeType !== 'element') continue;
     const childEl = child as DomElement;
     const childStyle = getStyle(childEl);
@@ -369,6 +370,8 @@ function sortChildContexts(ctx: StackingContext): void {
 export function renderStackingContext(
   ctx: StackingContext,
   paintElement: (el: DomElement) => PaintCmd[],
+  /** Paint only these elements: `paintElement` filters the rest, this covers bgCommands too. */
+  include?: (el: DomElement) => boolean,
 ): PaintCmd[] {
   const commands: PaintCmd[] = [];
   // An opacity:0 group (fade-in overlays, closed menus' masks) paints nothing.
@@ -388,12 +391,12 @@ export function renderStackingContext(
 
   // ── Layer 0: Background/borders of the context-forming element ─────
   // (bgCommands are populated externally by the paint engine)
-  commands.push(...(ctx.pseudo ? paintElement(ctx.element) : ctx.bgCommands));
+  if (!include || include(ctx.element)) commands.push(...(ctx.pseudo ? paintElement(ctx.element) : ctx.bgCommands));
 
   // ── Layer 1: Child contexts with negative z-index ──────────────────
   for (const child of ctx.children) {
     if (child.zIndex < 0) {
-      commands.push(...renderStackingContext(child, paintElement));
+      commands.push(...renderStackingContext(child, paintElement, include));
     }
   }
 
@@ -419,14 +422,14 @@ export function renderStackingContext(
   }
   for (const child of ctx.children) {
     if (child.zIndex === 0) {
-      commands.push(...renderStackingContext(child, paintElement));
+      commands.push(...renderStackingContext(child, paintElement, include));
     }
   }
 
   // ── Layer 6: Child contexts with positive z-index ──────────────────
   for (const child of ctx.children) {
     if (child.zIndex > 0) {
-      commands.push(...renderStackingContext(child, paintElement));
+      commands.push(...renderStackingContext(child, paintElement, include));
     }
   }
 

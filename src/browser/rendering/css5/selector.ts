@@ -56,6 +56,25 @@ export function matchesSelectorList(element: SelectableElement, selectors: reado
   return false;
 }
 
+/** The rightmost compound's pseudo-element (`li::before` → 'before'), or null. */
+export function selectorPseudoElement(selector: CssSelector): string | null {
+  const right = selector.type === 'compound' ? selector : selector.right;
+  return (right as { pseudoElement?: string | null }).pseudoElement ?? null;
+}
+
+/** Does any selector style `element`'s `pseudo` (e.g. 'before') box? */
+export function matchesSelectorListForPseudo(element: SelectableElement, selectors: readonly CssSelector[], pseudo: string): boolean {
+  for (const sel of selectors) {
+    if (selectorPseudoElement(sel) !== pseudo) continue;
+    if (sel.type === 'compound') {
+      if (matchesCompound(element, { ...sel, pseudoElement: null })) return true;
+    } else if (matchesComplex(element, { ...sel, right: { ...sel.right, pseudoElement: null } })) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPOUND SELECTOR MATCHING
 // ─────────────────────────────────────────────────────────────────────────────

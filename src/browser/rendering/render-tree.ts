@@ -1,4 +1,5 @@
 import type { DomElement, LayoutBox, TextRun } from './dom-tree';
+import { boxChildren } from './dom-tree';
 import type { PaintCommand, PaintCommandType } from './paint-engine';
 
 export type RenderObjectType = 'block' | 'inline' | 'text' | 'image' | 'replaced' | 'svg';
@@ -60,7 +61,7 @@ export function buildRenderObject(element: DomElement): RenderObject {
 
   const children: RenderObject[] = [];
   if (!displayNone && element.children) {
-    for (const child of element.children) {
+    for (const child of boxChildren(element)) {
       if (child.nodeType === 'element') {
         children.push(buildRenderObject(child as DomElement));
       }

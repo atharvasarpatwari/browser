@@ -1,5 +1,6 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { DomDocument, DomElement, DomNode, LayoutBox, TextRun } from './dom-tree';
+import { boxChildren } from './dom-tree';
 import { DamageTracker } from './damage-tracker';
 import {
   buildStackingContextTree,
@@ -247,7 +248,7 @@ class PaintEngine implements IPaintEngine {
 
   private clearAllPaintDirty(node: DomElement): void {
     node._dirtyPaint = false;
-    for (const child of node.children) {
+    for (const child of boxChildren(node)) {
       if (child.nodeType === 'element') {
         this.clearAllPaintDirty(child as DomElement);
       }
@@ -334,7 +335,7 @@ class PaintEngine implements IPaintEngine {
     if (display === 'none') return;
 
     list.push(node);
-    for (const child of node.children) {
+    for (const child of boxChildren(node)) {
       if (child.nodeType === 'element') {
         this.collectElements(child as DomElement, list);
       }
@@ -360,10 +361,14 @@ class PaintEngine implements IPaintEngine {
 
     if (this.stackingTree) {
       // Render using the stacking context tree (spec-compliant paint order)
+      // A stacking context's own background (bgCommands) bypasses the callback: without `include`
+      // the animated cards on httpforever (opacity makes them contexts) went into the fixed
+      // overlay, opaque, and covered their own text on every frame after the first.
+      const include = part === 'all' ? undefined : (el: DomElement) => this.fixedElements.has(el) === (part === 'fixed');
       const ctxCommands = renderStackingContext(this.stackingTree, (el) => {
-        if (part !== 'all' && this.fixedElements.has(el) !== (part === 'fixed')) return [];
+        if (include && !include(el)) return [];
         return this.getElementPaintCommands(el);
-      });
+      }, include);
       allCommands.push(...(ctxCommands as PaintCommand[]));
     } else {
       // Fallback: flat sort (shouldn't happen but safe)

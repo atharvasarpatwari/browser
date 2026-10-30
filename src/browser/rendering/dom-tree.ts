@@ -36,6 +36,20 @@ interface DomElement extends DomNode {
   formChecked?: boolean;
   /** Cached will-change computed value (populated by CSS cascade). */
   willChange: string | null;
+  /** Generated ::before / ::after boxes. Not DOM children: scripts, textContent and queries never see them. */
+  pseudoBefore?: DomElement | null;
+  pseudoAfter?: DomElement | null;
+}
+
+/** A node's children as boxes for layout and paint: its ::before, its DOM children, its ::after. */
+function boxChildren(node: DomNode): readonly DomNode[] {
+  const el = node as DomElement;
+  if (!el.pseudoBefore && !el.pseudoAfter) return node.children;
+  const out: DomNode[] = [];
+  if (el.pseudoBefore) out.push(el.pseudoBefore);
+  for (const c of node.children) out.push(c);
+  if (el.pseudoAfter) out.push(el.pseudoAfter);
+  return out;
 }
 
 interface DomTextNode extends DomNode {
@@ -702,5 +716,5 @@ class DomTree implements IDomTree {
   }
 }
 
-export { DomTree };
+export { DomTree, boxChildren };
 export type { IDomTree, DomDocument, DomNode, DomElement, DomTextNode, DomMutation, DomMutationType, DomChange, LayoutBox, UsedStyle, TextRun };
