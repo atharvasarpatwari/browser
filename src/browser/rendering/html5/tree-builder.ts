@@ -93,7 +93,16 @@ class TreeBuilder implements TreeBuilderContext {
 
   processToken(token: Token): void {
     if (token.kind === 'selfclose') {
-      token = { ...token, kind: 'open' } as Token;
+      // §13.2.6.5: a self-closing SVG/MathML start tag (`<circle/>`) is popped at once. The flag
+      // was dropped, so `<circle/><path/>` nested the path inside the circle and icons lost it.
+      // ponytail: elements aren't given the SVG/MathML namespace here, so "foreign" is being an
+      // <svg>/<math> or inside one; namespace them if something else needs it.
+      const before = this.openElements.currentNode();
+      dispatchToken(this, { ...token, kind: 'open' } as Token);
+      const inserted = this.openElements.currentNode();
+      const foreign = (el: HtmlElement): boolean => el.tagName === 'svg' || el.tagName === 'math';
+      if (inserted && inserted !== before && this.openElements.array.some(foreign)) this.openElements.pop();
+      return;
     }
     dispatchToken(this, token);
   }

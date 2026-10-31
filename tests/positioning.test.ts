@@ -193,9 +193,9 @@ describe('LayoutEngine — positioning', () => {
       applyStyles(tree, p, { display: 'block', margin: '0', padding: '20px', 'border-top-width': '5px', 'border-right-width': '5px', 'border-bottom-width': '5px', 'border-left-width': '5px', position: 'relative' });
       applyStyles(tree, a, { display: 'block', width: '100px', height: '50px', position: 'absolute', top: '10px', left: '15px' });
       layoutDoc(doc, tree);
-      // containing block padding box starts at x=5+20=25, y=5+20=25
-      expect(a.layoutBox!.x).toBe(25 + 15); // cb padding left + left
-      expect(a.layoutBox!.y).toBe(25 + 10); // cb padding top + top
+      // the padding box starts inside the border (CSS 2.2 §10.1.4): x = 5, y = 5
+      expect(a.layoutBox!.x).toBe(5 + 15); // cb border left + left
+      expect(a.layoutBox!.y).toBe(5 + 10); // cb border top + top
     });
 
     it('right positions from right edge of containing block', () => {
@@ -228,8 +228,8 @@ describe('LayoutEngine — positioning', () => {
       applyStyles(tree, p, { display: 'block', margin: '0', padding: '10px', position: 'relative' });
       applyStyles(tree, a, { display: 'block', height: '50px', position: 'absolute', top: '0px', left: '0px', right: '0px' });
       layoutDoc(doc, tree);
-      // cbWidth = 1000 - 0 - 0 - 10 - 10 = 980; width = 980 - 0 - 0 = 980
-      expect(a.layoutBox!.width).toBe(980);
+      // the padding box is the whole 1000 (padding included); width = 1000
+      expect(a.layoutBox!.width).toBe(1000);
     });
 
     it('auto height stretches when both top and bottom set', () => {
@@ -240,8 +240,8 @@ describe('LayoutEngine — positioning', () => {
       applyStyles(tree, p, { display: 'block', height: '500px', margin: '0', padding: '10px', position: 'relative', 'box-sizing': 'border-box' });
       applyStyles(tree, a, { display: 'block', width: '100px', position: 'absolute', top: '0px', bottom: '0px', left: '0px' });
       layoutDoc(doc, tree);
-      // border-box: p border-box = 500; padding box = 500 - 0 - 0 - 10 - 10 = 480; a height = 480 - 0 - 0 = 480
-      expect(a.layoutBox!.height).toBe(480);
+      // border-box: p border-box = 500, no border, so the padding box is 500 tall
+      expect(a.layoutBox!.height).toBe(500);
     });
 
     it('nested absolute finds nearest positioned ancestor', () => {
@@ -255,9 +255,9 @@ describe('LayoutEngine — positioning', () => {
       applyStyles(tree, inner, { display: 'block', width: '50px', height: '50px', position: 'absolute', top: '0px', left: '0px' });
       layoutDoc(doc, tree);
       // inner's containing block is outer (not mid, which is static)
-      // outer's padding box: x=0+20=20, y=0+20=20
-      expect(inner.layoutBox!.x).toBe(20);
-      expect(inner.layoutBox!.y).toBe(20);
+      // outer's padding box starts at its border edge: (0, 0)
+      expect(inner.layoutBox!.x).toBe(0);
+      expect(inner.layoutBox!.y).toBe(0);
     });
   });
 
@@ -325,9 +325,9 @@ describe('LayoutEngine — positioning', () => {
       applyStyles(tree, c, { display: 'block', width: '50px', height: '50px', position: 'absolute', top: '0', left: '0' });
       layoutDoc(doc, tree);
       // c's containing block is a (b is static)
-      // a's padding box starts at (30, 30)
-      expect(c.layoutBox!.x).toBe(30);
-      expect(c.layoutBox!.y).toBe(30);
+      // a's padding box starts at its border edge (0, 0), padding included
+      expect(c.layoutBox!.x).toBe(0);
+      expect(c.layoutBox!.y).toBe(0);
     });
   });
 
@@ -413,7 +413,7 @@ describe('LayoutEngine — positioning', () => {
   });
 
   describe('position: absolute inside relative with padding and border', () => {
-    it('padding and border of containing block are excluded from offset', () => {
+    it('the border is excluded from the offset, the padding is not (padding box)', () => {
       const { doc, tree } = buildDoc('<html><body><div id="p"><div id="c"></div></div></body></html>');
       applyStyles(tree, doc.bodyElement!, { display: 'block', margin: '0' });
       const p = tree.getElementById('p')!;
@@ -426,9 +426,9 @@ describe('LayoutEngine — positioning', () => {
       });
       applyStyles(tree, c, { display: 'block', width: '50px', height: '50px', position: 'absolute', top: '0', left: '0' });
       layoutDoc(doc, tree);
-      // padding box of p starts at x=5+15=20, y=5+15=20
-      expect(c.layoutBox!.x).toBe(20);
-      expect(c.layoutBox!.y).toBe(20);
+      // padding box of p starts inside its 5px border: (5, 5); the padding is part of it
+      expect(c.layoutBox!.x).toBe(5);
+      expect(c.layoutBox!.y).toBe(5);
     });
   });
 

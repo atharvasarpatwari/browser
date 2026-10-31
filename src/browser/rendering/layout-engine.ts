@@ -1647,18 +1647,12 @@ class LayoutEngine implements ILayoutEngine {
       const box = item.element.layoutBox;
       if (!box) continue;
 
-      const newBox: LayoutBox = {
-        x: contentX + item.colOffset,
-        y: contentY + item.rowOffset,
-        width: box.width,
-        height: box.height,
-        marginTop: box.marginTop, marginRight: box.marginRight,
-        marginBottom: box.marginBottom, marginLeft: box.marginLeft,
-        paddingTop: box.paddingTop, paddingRight: box.paddingRight,
-        paddingBottom: box.paddingBottom, paddingLeft: box.paddingLeft,
-        borderTop: box.borderTop, borderRight: box.borderRight,
-        borderBottom: box.borderBottom, borderLeft: box.borderLeft,
-      };
+      // The item's content moves with it. Only the box moved, without its text runs, so a grid
+      // item's own text vanished (a label <span>) and its children stayed at the grid's origin.
+      const newX = contentX + item.colOffset;
+      const newY = contentY + item.rowOffset;
+      this.translateContent(item.element, newX - box.x, newY - box.y);
+      const newBox: LayoutBox = { ...box, x: newX, y: newY };
       this.layoutBoxes.set(item.element.domId, newBox);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (item.element as any).layoutBox = newBox;
@@ -2148,6 +2142,9 @@ class LayoutEngine implements ILayoutEngine {
     // right padding and border. Counting its box made every block measure as the full width, so
     // shrink-to-fit boxes holding a <ul> or <div> never shrank.
     const visit = (node: DomElement): number => {
+      // A display:none subtree keeps the boxes of its last layout: httpforever's hidden theme icon
+      // kept the right-edge x it had, and its fixed `right: .9rem` switcher measured page-wide.
+      if (node !== el && node.computedStyle?.get('display') === 'none') return 0;
       const b = this.layoutBoxes.get(node.domId);
       let right = 0;
       for (const run of b?.textRuns ?? []) right = Math.max(right, run.x + (run.width ?? 0));

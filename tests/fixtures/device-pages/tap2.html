@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tap check</title>
+<!-- httpforever's switcher structure: a fixed z-index:20 flex div holding grid buttons. The red
+     button turns the header red through el.style (found broken on the tablet: 1.55–1.56). -->
+<style>
+  * { box-sizing: border-box; }
+  body { font: 18px/1.5 system-ui, sans-serif; margin: 0; background: #fff; color: #111; }
+  .switcher { position: fixed; top: .9rem; right: .9rem; z-index: 20; display: flex; gap: .5rem; }
+  .sw-btn { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; padding: 0; border: 1px solid #999; border-radius: 12px; background: #eee; }
+  .sw-color { background: #dc2626; }
+  header { position: relative; padding: 80px 20px; background: #16a34a; color: #fff; }
+  #log { padding: 12px; font-family: monospace; }
+</style>
+</head>
+<body>
+<div class="switcher">
+  <button type="button" id="themeBtn" class="sw-btn"><span>T</span></button>
+  <button type="button" id="colorBtn" class="sw-btn sw-color"></button>
+</div>
+<header><p>Header</p></header>
+<div id="log">no clicks yet</div>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var log = document.getElementById('log');
+    var n = 0;
+    document.getElementById('themeBtn').addEventListener('click', function () { n++; log.textContent = 'click ' + n + ': theme'; });
+    document.getElementById('colorBtn').addEventListener('click', function () { n++; log.textContent = 'click ' + n + ': color'; document.querySelector('header').style.background = '#dc2626'; });
+    document.body.addEventListener('click', function (e) { log.textContent += ' | body sees ' + (e.target && e.target.id || e.target && e.target.tagName); });
+    document.addEventListener('click', function () { log.textContent += ' | document sees it'; });
+  });
+</script>
+</body>
+</html>

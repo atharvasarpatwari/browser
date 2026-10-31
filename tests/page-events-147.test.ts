@@ -47,6 +47,7 @@ describe('page load events', () => {
     const html = domTree.getElementsByTagName('html')[0]!;
     const btn = domTree.getElementById('colorBtn')!;
     expect(btn.attributes.get('aria-label')).toBe('Switch to red colour'); // relabel() ran on DOMContentLoaded
+    (r as unknown as { reflowController: { processFrame(): void } }).reflowController.processFrame(); // a frame first, as on a device
     r.dispatchPageEvent(btn, 'click');
     (r as unknown as { reflowController: { processFrame(): void } }).reflowController.processFrame();
     expect(html.attributes.get('data-color')).toBe('red');

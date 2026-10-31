@@ -29,8 +29,9 @@ describe('content that should not show', () => {
     expect((await render('<p>a</p><p hidden>SECRET</p><div hidden style="display:block">shown</div>')).words).toEqual(['a', 'shown']);
   });
   it('a closed <details> shows only its <summary>; open shows everything', async () => {
-    expect((await render('<details><summary>Sum</summary><p>INNER</p></details>')).words).toEqual(['Sum']);
-    expect((await render('<details open><summary>Sum</summary><p>INNER</p></details>')).words).toEqual(['Sum', 'INNER']);
+    // The summary's disclosure marker (1.58) is drawn too: ▸ closed, ▾ open.
+    expect((await render('<details><summary>Sum</summary><p>INNER</p></details>')).words.sort()).toEqual(['Sum', '▸']);
+    expect((await render('<details open><summary>Sum</summary><p>INNER</p></details>')).words.sort()).toEqual(['INNER', 'Sum', '▾']);
   });
 });
 

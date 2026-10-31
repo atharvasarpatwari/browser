@@ -1765,6 +1765,12 @@ export function computeComputedStyles(
       const firstSummary = parent.children.find((c) => c.tagName.toLowerCase() === 'summary');
       if (element !== firstSummary) computed.set('display', 'none');
     }
+    // HTML §15.5.4: a details' summary is a list item with a ▸ / ▾ marker inside it.
+    if (parent && parent.tagName.toLowerCase() === 'details' && element.tagName.toLowerCase() === 'summary') {
+      computed.set('display', 'list-item');
+      computed.set('list-style-type', parent.attributes.has('open') ? 'disclosure-open' : 'disclosure-closed');
+      computed.set('list-style-position', 'inside');
+    }
   }
 
   // Apply declarations in cascade order (later wins because ascending sort).

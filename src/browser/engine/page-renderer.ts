@@ -51,7 +51,7 @@ import { LayoutEngine } from '../rendering/layout-engine';
 import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, computePseudoElementStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
-import { makePseudoElement, applyCounterProperties, type Counters } from '../rendering/generated-content';
+import { makePseudoElement, applyCounterProperties, insideMarker, type Counters } from '../rendering/generated-content';
 import { buildUsedStyle } from '../rendering/css5/used-style';
 import { runJS, createGlobalEnv } from '../js/index';
 import { getPreferredColorScheme } from '../rendering/color-scheme';
@@ -315,9 +315,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     //     parent paint pass composites the embedded page.
     const iframeCount = await this.renderIframeChildren(doc, result.url);
     // Inline <svg> (logos, icons) painted nothing: rasterize each through the image decoder.
-    const svgDecode = this.deps.svgDecode
-      ?? ((markup: string) => new ImageDecoder().decode(new TextEncoder().encode(markup), 'image/svg+xml'));
-    const svgCount = await renderInlineSvgs(doc.children, svgDecode, this.dpr);
+    const svgCount = await renderInlineSvgs(doc.children, this.svgDecode, this.dpr);
     if (iframeCount > 0 || svgCount > 0) {
       // Full repaint so embedded frames appear in the very first rasterized
       // output rather than waiting for an incremental reflow frame.
@@ -354,7 +352,14 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // Incremental style recalc resolves _dirtyStyle nodes before layout.
     controller.setStyleRecalcCallback(() => this.recalcStylesIncremental());
     // Notify the UI (via the engine) when a reflow frame repaints the page.
-    controller.setFrameCallback(() => this.deps.onFrameRendered?.());
+    controller.setFrameCallback(() => {
+      this.deps.onFrameRendered?.();
+      // Svgs shown, inserted, resized or recoloured since: draw them (one pass at a time).
+      // ponytail: walks the DOM for svgs each frame; index them if that shows in profiles.
+      if (this.svgPass || this.disposed) return;
+      this.svgPass = renderInlineSvgs(doc.children, this.svgDecode, this.dpr)
+        .then((n) => { this.svgPass = null; if (n > 0 && !this.disposed) this.requestReflow(); }, () => { this.svgPass = null; });
+    });
     // Layer-based compositing when a compositor is available.
     const compositor = (paintEngine as { getLayerCompositor?: () => LayerCompositor | null }).getLayerCompositor?.();
     if (compositor) controller.setLayerCompositor(compositor);
@@ -528,6 +533,13 @@ class PageRenderer implements IPageRenderer, IDisposable {
       // The root again gets the dark scheme's text colour: restyled here without it, example.com
       // in dark mode went back to black text on #222 after its first reflow (seen on the phone).
       if (!parentComputed) applyDarkCanvasText(computed);
+      // A changed style needs layout and paint again: the element kept its cached paint commands,
+      // so `el.style.background = …` from a click handler never showed (seen on the tablet).
+      const previous = el.computedStyle;
+      if (!previous || previous.size !== computed.size || [...computed].some(([k, v]) => previous.get(k) !== v)) {
+        domTree.markDirty(el, 'layout'); // and its ancestors, so incremental layout reaches it
+        el._dirtyPaint = true;
+      }
       domTree.setComputedStyle(el, computed);
 
       const usedStyle = buildUsedStyle(computed, containerWidth, containerHeight, 16);
@@ -868,6 +880,11 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Recursively computes and applies CSS styles to every element in the DOM tree.
    * Walks top-down so parent computed styles can be passed for inheritance.
    */
+  private svgPass: Promise<void> | null = null;
+  private readonly svgDecode: SvgDecode = (markup) => this.deps.svgDecode
+    ? this.deps.svgDecode(markup)
+    : new ImageDecoder().decode(new TextEncoder().encode(markup), 'image/svg+xml');
+
   /** CSS counters during the full style pass (null otherwise: incremental restyles keep their text). */
   private counters: Counters | null = null;
 
@@ -885,8 +902,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
     for (const pseudo of ['before', 'after'] as const) {
       const style = computePseudoElementStyles(styleable, pseudo, stylesheet, this.viewport, computed);
       if (style && counters) applyCounterProperties(style, counters);
-      const box = style ? makePseudoElement(el, pseudo, style, counters) : null;
-      if (box) box.usedStyle = buildUsedStyle(style!, containerWidth, containerHeight, 16);
+      const box = style ? makePseudoElement(el, pseudo, style, counters)
+        : pseudo === 'before' ? insideMarker(el, computed) : null;
+      if (box) box.usedStyle = buildUsedStyle(box.computedStyle!, containerWidth, containerHeight, 16);
       if (pseudo === 'before') el.pseudoBefore = box;
       else el.pseudoAfter = box;
     }

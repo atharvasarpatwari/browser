@@ -5,7 +5,7 @@
  * `<svg>` with a box is serialized as a standalone image (case restored, `currentColor` and the
  * inherited fill/stroke resolved), rasterized at its box size × DPR by the same decoder `<img>`
  * uses, and painted as the element's image.
- * ponytail: rendered once after load; scripts that later edit an SVG's children don't redraw it.
+ * ponytail: redrawn when shown, resized or recoloured, but not when a script edits its children.
  */
 import type { DomElement, DomNode } from './dom-tree';
 
@@ -76,13 +76,23 @@ function outermostSvgs(nodes: readonly DomNode[], out: DomElement[] = []): DomEl
 
 export type SvgDecode = (markup: string) => Promise<{ data: Uint8ClampedArray; width: number; height: number } | null>;
 
-/** Rasterizes every laid-out inline `<svg>` into its `imageData`. Returns how many were drawn. */
+/** The size and colour each svg was last rasterized at: it is redrawn when they change. */
+const rasterKeys = new WeakMap<DomElement, string>();
+
+/**
+ * Rasterizes every laid-out inline `<svg>` into its `imageData`. Returns how many were drawn.
+ * Called after load and after each reflow frame: svgs hidden at load (a theme button's other
+ * icons), inserted by scripts, resized or recoloured (currentColor) were never drawn again.
+ */
 export async function renderInlineSvgs(root: readonly DomNode[], decode: SvgDecode, dpr: number): Promise<number> {
   const jobs = outermostSvgs(root).map(async (svg) => {
     const box = svg.layoutBox;
-    if (!box || box.width <= 0 || box.height <= 0) return 0;
+    if (!box || box.width <= 0 || box.height <= 0 || svg.computedStyle?.get('display') === 'none') return 0;
     const w = Math.max(1, Math.round((box.width - box.borderLeft - box.borderRight - box.paddingLeft - box.paddingRight) * dpr));
     const h = Math.max(1, Math.round((box.height - box.borderTop - box.borderBottom - box.paddingTop - box.paddingBottom) * dpr));
+    const key = `${w}x${h} ${svg.computedStyle?.get('color') ?? ''}`;
+    if (rasterKeys.get(svg) === key) return 0;
+    rasterKeys.set(svg, key);
     try {
       const img = await decode(serializeInlineSvg(svg, w, h));
       if (!img) return 0;

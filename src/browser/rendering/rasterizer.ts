@@ -5,7 +5,7 @@ import { renderBoxShadow, renderTextShadow } from './shadows';
 import type { BoxShadow, TextShadow } from './shadows';
 import { applyFilters } from './css-filters';
 import type { FilterList } from './css-filters';
-import { applyClipBuffer } from './clip-mask';
+import { isInsideClip } from './clip-mask';
 import type { ClipShape, MaskInfo } from './clip-mask';
 import { compositeBuffer } from './blend-modes';
 import type { BlendMode } from './blend-modes';
@@ -710,9 +710,19 @@ export class Rasterizer {
         applyFiltersToBuffer(this.pixels, this.width, this.height, filters, fx, fy, fw, fh);
         break;
       }
+      case 'beginClipShape': {
+        const [bx, by, bw, bh] = cmd.params as [number, number, number, number];
+        this.clipSnapshots.push(this.snapshotRegion(bx, by, bw, bh));
+        break;
+      }
       case 'applyClipShape': {
+        // Restores, inside the element's box but outside its shape, what was there before it was
+        // painted. This ran over the whole page buffer from (0,0) with the element's width as the
+        // row stride: it blanked a sheared strip at the top of the page (httpforever's white streaks)
+        // and never shaped the element (its hero wave stayed a rectangle).
         const [shape, cx, cy, cw, ch] = cmd.params as [ClipShape, number, number, number, number];
-        applyClipShapeToPixels(this.pixels, this.width, this.height, shape, cx, cy, cw, ch);
+        const snap = this.clipSnapshots.pop();
+        if (snap) this.restoreOutsideShape(snap, shape, cx, cy, cw, ch);
         break;
       }
       case 'applyMask': {
@@ -761,6 +771,35 @@ export class Rasterizer {
 
   private inBounds(x: number, y: number): boolean {
     return x >= 0 && x < this.width && y >= 0 && y < this.height;
+  }
+
+  /** Pixel copies taken at beginClipShape, consumed by applyClipShape. */
+  private readonly clipSnapshots: { x0: number; y0: number; w: number; h: number; data: Uint8ClampedArray }[] = [];
+
+  private snapshotRegion(x: number, y: number, w: number, h: number): { x0: number; y0: number; w: number; h: number; data: Uint8ClampedArray } {
+    const x0 = Math.max(0, Math.floor(x)), y0 = Math.max(0, Math.floor(y));
+    const x1 = Math.min(this.width, Math.ceil(x + w)), y1 = Math.min(this.height, Math.ceil(y + h));
+    const rw = Math.max(0, x1 - x0), rh = Math.max(0, y1 - y0);
+    const data = new Uint8ClampedArray(rw * rh * 4);
+    for (let row = 0; row < rh; row++) {
+      const from = ((y0 + row) * this.width + x0) * 4;
+      data.set(this.pixels.subarray(from, from + rw * 4), row * rw * 4);
+    }
+    return { x0, y0, w: rw, h: rh, data };
+  }
+
+  private restoreOutsideShape(snap: { x0: number; y0: number; w: number; h: number; data: Uint8ClampedArray }, shape: ClipShape, cx: number, cy: number, cw: number, ch: number): void {
+    if (shape.type === 'none') return;
+    for (let row = 0; row < snap.h; row++) {
+      const py = snap.y0 + row;
+      for (let col = 0; col < snap.w; col++) {
+        const px = snap.x0 + col;
+        if (isInsideClip(px + 0.5 - cx, py + 0.5 - cy, shape, cw, ch)) continue;
+        const d = (py * this.width + px) * 4, s = (row * snap.w + col) * 4;
+        this.pixels[d] = snap.data[s]!; this.pixels[d + 1] = snap.data[s + 1]!;
+        this.pixels[d + 2] = snap.data[s + 2]!; this.pixels[d + 3] = snap.data[s + 3]!;
+      }
+    }
   }
 
   private setPixelRaw(x: number, y: number, r: number, g: number, b: number, a: number): void {
@@ -1464,16 +1503,6 @@ function applyFiltersToBuffer(
   for (let y = 0; y < rh; y++) region.set(pixels.subarray(((y0 + y) * pw + x0) * 4, ((y0 + y) * pw + x1) * 4), y * rw * 4);
   const filtered = applyFilters(new ImageData(region, rw, rh), list).data;
   for (let y = 0; y < rh; y++) pixels.set(filtered.subarray(y * rw * 4, (y + 1) * rw * 4), ((y0 + y) * pw + x0) * 4);
-}
-
-function applyClipShapeToPixels(
-  pixels: Uint8ClampedArray, pw: number, ph: number,
-  shape: ClipShape, cx: number, cy: number, cw: number, ch: number,
-): void {
-  if (shape.type === 'none') return;
-  const buffer = new ImageData(new Uint8ClampedArray(pixels), pw, ph);
-  applyClipBuffer(buffer, shape, cw, ch);
-  for (let i = 0; i < pixels.length; i++) pixels[i] = buffer.data[i];
 }
 
 function applyMaskToPixels(

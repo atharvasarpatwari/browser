@@ -585,8 +585,10 @@ describe('Rasterizer new command types', () => {
 
   it('handles applyClipShape command', () => {
 
+    // Outside the shape, what was under the element comes back (white here); it used to be erased.
     const r = new Rasterizer({ width: 10, height: 10 });
     r.rasterize([
+      { type: 'beginClipShape', params: [0, 0, 10, 10] },
       { type: 'setFillStyle', params: ['red'] },
       { type: 'fillRect', params: [0, 0, 10, 10] },
       {
@@ -595,7 +597,8 @@ describe('Rasterizer new command types', () => {
       },
     ]);
     const img = r.getImageData();
-    expect(img.data[0]).toBe(0);
+    expect(Array.from(img.data.slice(0, 3))).toEqual([255, 255, 255]); // corner: outside the inset
+    expect(img.data[(5 * 10 + 5) * 4 + 1]).toBe(0);                      // centre: red (green channel 0)
   });
 
   it('handles setBlendMode command', () => {

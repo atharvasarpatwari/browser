@@ -2,8 +2,8 @@ import type { RGBA } from './rasterizer';
 
 export type ClipShape =
   | { type: 'inset'; top: number; right: number; bottom: number; left: number; round: [number, number][] }
-  | { type: 'circle'; cx: number; cy: number; r: number }
-  | { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number }
+  | { type: 'circle'; cx: number; cy: number; r: number; rPct?: boolean; cxPx?: boolean; cyPx?: boolean }
+  | { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number; rxPct?: boolean; ryPct?: boolean; cxPx?: boolean; cyPx?: boolean }
   | { type: 'polygon'; points: [number, number][] }
   | { type: 'none' };
 
@@ -30,23 +30,28 @@ export function parseClipPath(value: string): ClipPathInfo {
   const circleMatch = value.match(/circle\s*\(([^)]+)\)/);
   if (circleMatch) {
     const args = circleMatch[1].trim();
-    const r = parseFloat(args) || 50;
-    const posMatch = args.match(/at\s+(\d+(?:\.\d+)?%?)\s+(\d+(?:\.\d+)?%?)/);
+    const rTok = args.split(/\s+/)[0] ?? '';
+    const rNum = parseFloat(rTok);
+    const r = isNaN(rNum) ? 50 : rNum;
+    const rPct = isNaN(rNum) || rTok.endsWith('%');
+    const posMatch = args.match(/at\s+(-?\d+(?:\.\d+)?(?:%|px)?)\s+(-?\d+(?:\.\d+)?(?:%|px)?)/);
     const cx = posMatch ? (posMatch[1].endsWith('%') ? parseFloat(posMatch[1]) / 100 : parseFloat(posMatch[1])) : 0.5;
     const cy = posMatch ? (posMatch[2].endsWith('%') ? parseFloat(posMatch[2]) / 100 : parseFloat(posMatch[2])) : 0.5;
-    return { shape: { type: 'circle', cx, cy, r }, box: 'border-box' };
+    return { shape: { type: 'circle', cx, cy, r, rPct, cxPx: !!posMatch && !posMatch[1].endsWith('%'), cyPx: !!posMatch && !posMatch[2].endsWith('%') }, box: 'border-box' };
   }
 
   const ellipseMatch = value.match(/ellipse\s*\(([^)]+)\)/);
   if (ellipseMatch) {
     const args = ellipseMatch[1].trim();
     const toks = args.split(/\s+/);
-    const rx = parseFloat(toks[0]) || 50;
-    const ry = parseFloat(toks[1]) || rx;
-    const posMatch = args.match(/at\s+(\d+(?:\.\d+)?%?)\s+(\d+(?:\.\d+)?%?)/);
+    // Radii keep their unit: `ellipse(75% 100% at 50% 100%)` was read as 75 px by 100 px.
+    const rxTok = toks[0] && toks[0] !== 'at' ? toks[0] : '50%';
+    const ryTok = toks[1] && toks[1] !== 'at' ? toks[1] : rxTok;
+    const rx = parseFloat(rxTok) || 50, ry = parseFloat(ryTok) || rx;
+    const posMatch = args.match(/at\s+(-?\d+(?:\.\d+)?(?:%|px)?)\s+(-?\d+(?:\.\d+)?(?:%|px)?)/);
     const cx = posMatch ? (posMatch[1].endsWith('%') ? parseFloat(posMatch[1]) / 100 : parseFloat(posMatch[1])) : 0.5;
     const cy = posMatch ? (posMatch[2].endsWith('%') ? parseFloat(posMatch[2]) / 100 : parseFloat(posMatch[2])) : 0.5;
-    return { shape: { type: 'ellipse', cx, cy, rx, ry }, box: 'border-box' };
+    return { shape: { type: 'ellipse', cx, cy, rx, ry, rxPct: rxTok.endsWith('%'), ryPct: ryTok.endsWith('%'), cxPx: !!posMatch && !posMatch[1].endsWith('%'), cyPx: !!posMatch && !posMatch[2].endsWith('%') }, box: 'border-box' };
   }
 
   const polyMatch = value.match(/polygon\s*\(([^)]+)\)/);
@@ -75,18 +80,19 @@ export function isInsideClip(px: number, py: number, shape: ClipShape, w: number
              py >= shape.top && py < h - shape.bottom;
     }
     case 'circle': {
-      const cx = shape.cx * w;
-      const cy = shape.cy * h;
-      const r = shape.r;
+      const cx = shape.cxPx ? shape.cx : shape.cx * w;
+      const cy = shape.cyPx ? shape.cy : shape.cy * h;
+      // A percentage radius is of sqrt((w² + h²) / 2) (CSS Shapes §3.1).
+      const r = shape.rPct ? (shape.r / 100) * Math.sqrt((w * w + h * h) / 2) : shape.r;
       const dx = px - cx;
       const dy = py - cy;
       return dx * dx + dy * dy <= r * r;
     }
     case 'ellipse': {
-      const cx = shape.cx * w;
-      const cy = shape.cy * h;
-      const rx = shape.rx;
-      const ry = shape.ry;
+      const cx = shape.cxPx ? shape.cx : shape.cx * w;
+      const cy = shape.cyPx ? shape.cy : shape.cy * h;
+      const rx = shape.rxPct ? (shape.rx / 100) * w : shape.rx;
+      const ry = shape.ryPct ? (shape.ry / 100) * h : shape.ry;
       if (rx <= 0 || ry <= 0) return false;
       const dx = (px - cx) / rx;
       const dy = (py - cy) / ry;

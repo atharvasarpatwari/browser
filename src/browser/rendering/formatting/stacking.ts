@@ -329,8 +329,11 @@ function classifyElementIntoLayer(
   if (isFloat) {
     // Level 3: floats
     ctx.floatEntries.push(el);
-  } else if (classified === 'block') {
-    // Level 2: blocks
+  } else if (classified === 'block' || classified === 'flex' || classified === 'grid' || (classified === 'table' && display !== 'inline-table')) {
+    // Level 2: block-level boxes. A display:grid button was an "inline" (level 4), so its
+    // blockified children (httpforever's theme icon, a label span) painted under its background.
+    // ponytail: inline-block / inline-flex aren't painted atomically yet, so their block-level
+    // children still paint before their background; give them a pseudo context if it shows up.
     ctx.blockEntries.push(el);
   } else {
     // Level 4: inlines and everything else

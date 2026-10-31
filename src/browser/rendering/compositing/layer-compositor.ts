@@ -595,6 +595,10 @@ export class LayerCompositor {
         const [rad, rx, ry, rw, rh] = cmd.params as [unknown, number, number, number, number];
         return { type: cmd.type, params: [rad, rx + offsetX, ry + offsetY, rw, rh] };
       }
+      if (cmd.type === 'beginClipShape') {
+        const [bx, by, bw, bh] = cmd.params as [number, number, number, number];
+        return { type: cmd.type, params: [bx + offsetX, by + offsetY, bw, bh] };
+      }
       if (cmd.type === 'fillRoundedRing') {
         const [rad, rx, ry, ...rest] = cmd.params as [unknown, number, number, ...number[]];
         return { type: cmd.type, params: [rad, rx + offsetX, ry + offsetY, ...rest] };

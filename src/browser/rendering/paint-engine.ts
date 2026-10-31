@@ -39,7 +39,7 @@ type PaintCommandType =
   | 'save' | 'restore' | 'clip' | 'setGlobalAlpha'
   | 'setFillGradient' | 'setBlendMode'
   | 'applyBoxShadow' | 'applyTextShadow'
-  | 'applyFilterList' | 'applyClipShape' | 'setBorderRadius' | 'fillRoundedRing'
+  | 'applyFilterList' | 'beginClipShape' | 'applyClipShape' | 'setBorderRadius' | 'fillRoundedRing'
   | 'applyMask'
   | 'translate';
 
@@ -164,6 +164,31 @@ function ellipsisEdge(box: LayoutBox, style: ReadonlyMap<string, string>): numbe
   const ov = style.get('overflow-x') ?? style.get('overflow') ?? 'visible';
   if (ov === 'visible') return null;
   return box.x + box.width - box.borderRight - box.paddingRight;
+}
+
+/**
+ * text-overflow: ellipsis over a box's own runs: on each line that crosses `edge`, the nearest
+ * run at or before the crossing that can hold "…" is shortened to end in it, and every later run on
+ * that line is dropped (null). When the crossing run was a space or too close to the edge for "…",
+ * nothing was drawn: the line just ended at the clip (seen on the tablet).
+ */
+function ellipsizeRuns(runs: readonly TextRun[], edge: number): Map<number, TextRun | null> {
+  const out = new Map<number, TextRun | null>();
+  const lines = new Map<number, number[]>();
+  runs.forEach((r, i) => { const l = lines.get(r.y) ?? []; l.push(i); lines.set(r.y, l); });
+  for (const idxs of lines.values()) {
+    const cross = idxs.findIndex((i) => { const r = runs[i]!; return r.width !== undefined && r.x + r.width > edge + 0.5; });
+    if (cross < 0) continue;
+    let placed = false;
+    for (let k = cross; k >= 0 && !placed; k--) {
+      const r = runs[idxs[k]!]!;
+      if (!r.text.trim() || r.x >= edge) { out.set(idxs[k]!, null); continue; }
+      const fit = fitWithEllipsis(r, edge - r.x);
+      if (fit) { out.set(idxs[k]!, fit); placed = true; } else out.set(idxs[k]!, null);
+    }
+    for (let k = cross + 1; k < idxs.length; k++) out.set(idxs[k]!, null);
+  }
+  return out;
 }
 
 /** `run` shortened to fit `room` px with a trailing "…", or null when not even "…" fits. */
@@ -557,6 +582,13 @@ class PaintEngine implements IPaintEngine {
       const bw = layoutBox.width - layoutBox.borderLeft - layoutBox.borderRight;
       const bh = layoutBox.height - layoutBox.borderTop - layoutBox.borderBottom;
 
+      // clip-path: the rasterizer keeps the pixels under the element from here, and applyClipShape
+      // (after the element's content) puts them back outside the shape.
+      const clipPathStart = style.get('clip-path');
+      if (clipPathStart && clipPathStart !== 'none') {
+        commands.push({ type: 'beginClipShape', params: [layoutBox.x, layoutBox.y, layoutBox.width, layoutBox.height] });
+      }
+
       // ── Box shadow: behind the element (before its background), around its border box ──
       // It was painted after the background and over the whole padding box, so the shadow colour
       // veiled the element itself.
@@ -748,17 +780,14 @@ class PaintEngine implements IPaintEngine {
         const textShadowVal = style.get('text-shadow');
         const textShadows = textShadowVal ? parseTextShadow(textShadowVal) : [];
         const ellipsisAt = ellipsisEdge(layoutBox, style);
-        let ellipsizedLine: number | null = null;
+        const ellipsized = ellipsisAt !== null ? ellipsizeRuns(textRuns, ellipsisAt) : null;
         for (let ri = 0; ri < textRuns.length; ri++) {
           let run = textRuns[ri]!;
-          // text-overflow: ellipsis: the run crossing the clip edge ends in "…", later ones on
-          // that line are dropped (the text was simply cut off).
-          if (ellipsisAt !== null && run.width !== undefined && run.x + run.width > ellipsisAt + 0.5) {
-            if (ellipsizedLine === run.y || run.x >= ellipsisAt) continue;
-            const fit = fitWithEllipsis(run, ellipsisAt - run.x);
-            ellipsizedLine = run.y;
-            if (!fit) continue;
-            run = fit;
+          // text-overflow: ellipsis (see ellipsizeRuns): a replaced run, or one dropped past the cut.
+          if (ellipsized) {
+            const r = ellipsized.get(ri);
+            if (r === null) continue;
+            if (r) run = r;
           }
           const weight = run.fontWeight ?? 'normal';
           if (textShadows.length > 0) {
@@ -800,7 +829,7 @@ class PaintEngine implements IPaintEngine {
       commands.push({ type: 'restore', params: [] });
 
       // ── List marker (outside the item's own clip: it sits left of the content box) ──
-      if (style.get('display') === 'list-item') commands.push(...listMarkerCommands(node, layoutBox, style));
+      if (style.get('display') === 'list-item' && style.get('list-style-position') !== 'inside') commands.push(...listMarkerCommands(node, layoutBox, style));
 
       // ── Inset box shadows (after content) ─────────────────────────────
       if (boxShadowVal && boxShadowVal !== 'none') {

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova feature check</title>
+<!-- On-device check page for Nova 1.44–1.57 features. Served to a phone/tablet with
+     `adb reverse tcp:8765 tcp:8765` and `python -m http.server 8765` from this folder. -->
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 12px; color: #111; background: #fff; }
+  h2 { font-size: 15px; margin: 14px 0 4px; color: #555; border-bottom: 1px solid #ddd; }
+  .row { display: flex; gap: 12px; }
+  .row div { width: 60px; height: 24px; background: #3b82f6; }
+  .clip { width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid #ccc; }
+  .spaced { letter-spacing: 6px; text-transform: uppercase; }
+  .crumbs span + span::before { content: " \203A  "; color: #888; }
+  ol.c { list-style: none; counter-reset: n; padding-left: 0; }
+  ol.c li::before { counter-increment: n; content: counter(n, upper-roman) ". "; color: #c00; }
+  :is(.ok, .good) { color: #090; font-weight: 700; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #999; padding: 2px 6px; }
+  .box { width: clamp(80px, 30vw, 160px); height: 20px; background: #f59e0b; }
+  .grid { display: grid; place-items: center; width: 60px; height: 60px; border: 1px solid #333; }
+  .grid i { display: block; width: 16px; height: 16px; background: #10b981; }
+  #js li { font-family: monospace; font-size: 13px; }
+  .pass { color: #090; } .fail { color: #c00; font-weight: 700; }
+  #panel { display: none; padding: 6px; background: #fde68a; }
+  #panel.open { display: block; }
+</style>
+</head>
+<body>
+<h1>Nova feature check</h1>
+
+<h2>Lists (1.50): bullets, numbers from 3, roman counters</h2>
+<ul><li>bullet one</li><li>bullet two</li></ul>
+<ol start="3"><li>three</li><li>four</li></ol>
+<ol class="c"><li>first</li><li>second</li></ol>
+
+<h2>Generated content and :is() (1.44 / 1.53)</h2>
+<div class="crumbs"><span>Home</span><span>Docs</span><span>Page</span></div>
+<p class="good">This line is green and bold</p>
+
+<h2>Text (1.51 / 1.52 / 1.56)</h2>
+<p>x<sup>2</sup> + H<sub>2</sub>O, line one<br>line two after br</p>
+<pre>pre line 1
+  indented pre line 2</pre>
+<div class="clip">This sentence is far too long for its box and should end in an ellipsis</div>
+<p class="spaced">spaced caps</p>
+<p hidden>HIDDEN - you should not see this</p>
+<details><summary>Closed details</summary><p>DETAILS BODY - hidden until opened</p></details>
+
+<h2>Layout (1.48 / 1.49 / 1.53)</h2>
+<div class="row"><div></div><div></div><div></div></div>
+<p>A clamp() box:</p><div class="box"></div>
+<p>A centred square:</p><div class="grid"><i></i></div>
+<table><tr><th>Type</th><td>A long value that should take most of the table width</td></tr><tr><th>Year</th><td>1990</td></tr></table>
+
+<h2>Interaction (1.56 / 1.57): tap the button</h2>
+<button id="toggle" type="button">Toggle panel</button>
+<div id="panel">The panel opened (classList toggle restyled it)</div>
+<p id="deleg">document has seen 0 clicks</p>
+
+<h2>JavaScript (1.47 / 1.54)</h2>
+<ul id="js"></ul>
+<script>
+  var out = document.getElementById('js');
+  function check(name, fn, want) {
+    var li = document.createElement('li');
+    var got;
+    try { got = String(fn()); } catch (e) { got = 'threw ' + e.message; }
+    var ok = got === want;
+    li.className = ok ? 'pass' : 'fail';
+    li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + ': ' + got;
+    out.appendChild(li);
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    check('DOMContentLoaded fired', function () { return 'yes'; }, 'yes');
+    check('Intl currency', function () { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(9.5); }, '$9.50');
+    check('toLocaleString', function () { return (1234.5).toLocaleString('en-US'); }, '1,234.5');
+    check('new ns.C()', function () { var ns = { C: function () { this.v = 7; } }; return new ns.C().v; }, '7');
+    check('defineProperty getter', function () { var o = {}; Object.defineProperty(o, 'g', { get: function () { return 4; } }); return o.g; }, '4');
+    check('array at/findLast', function () { return [1, 2, 3].at(-1) + '/' + [1, 2, 3].findLast(function (x) { return x < 3; }); }, '3/2');
+    check('replaceAll', function () { return 'a-b-c'.replaceAll('-', '+'); }, 'a+b+c');
+    check('match groups', function () { return '2026-10'.match(/(?<y>\d+)-(?<m>\d+)/).groups.m; }, '10');
+    var clicks = 0;
+    document.getElementById('toggle').addEventListener('click', function () { document.getElementById('panel').classList.toggle('open'); });
+    document.addEventListener('click', function () { clicks++; document.getElementById('deleg').textContent = 'document has seen ' + clicks + ' click(s)'; });
+  });
+  window.addEventListener('load', function () { check('load fired', function () { return 'yes'; }, 'yes'); });
+</script>
+</body>
+</html>

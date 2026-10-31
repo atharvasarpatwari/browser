@@ -245,12 +245,13 @@ export function resolveOutOfFlow(
   // ── Containing block dimensions (padding box) ──────────────────────
   let cbX: number, cbY: number, cbWidth: number, cbHeight: number;
   if (containingBlockBox) {
-    cbX = containingBlockBox.x + containingBlockBox.borderLeft + containingBlockBox.paddingLeft;
-    cbY = containingBlockBox.y + containingBlockBox.borderTop + containingBlockBox.paddingTop;
-    cbWidth = containingBlockBox.width - containingBlockBox.borderLeft - containingBlockBox.borderRight
-      - containingBlockBox.paddingLeft - containingBlockBox.paddingRight;
-    cbHeight = containingBlockBox.height - containingBlockBox.borderTop - containingBlockBox.borderBottom
-      - containingBlockBox.paddingTop - containingBlockBox.paddingBottom;
+    // The padding box: inside the border, padding included (CSS 2.2 §10.1.4). The padding was
+    // subtracted too (the content box), so `left: 0; right: 0; bottom: 0` decorations sat inside
+    // the padding: httpforever's hero wave landed mid-hero, over the URL pill.
+    cbX = containingBlockBox.x + containingBlockBox.borderLeft;
+    cbY = containingBlockBox.y + containingBlockBox.borderTop;
+    cbWidth = containingBlockBox.width - containingBlockBox.borderLeft - containingBlockBox.borderRight;
+    cbHeight = containingBlockBox.height - containingBlockBox.borderTop - containingBlockBox.borderBottom;
   } else {
     cbX = 0; cbY = 0;
     cbWidth = viewportWidth;

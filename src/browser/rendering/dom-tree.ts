@@ -425,7 +425,29 @@ class DomTree implements IDomTree {
     if (name === 'id') {
       this.idIndex.set(value, element);
     }
+    if (oldValue !== value) this.markStyleDirtyFrom(element);
     this.record({ type: 'attributeChanged', targetDomId: element.domId, data: { name, value } }, { type: 'attributes', target: element, attributeName: name, oldValue });
+  }
+
+  /**
+   * An attribute change (class, style, data-*, aria-*…) can restyle the element, its descendants
+   * (`.open .menu`) and its later siblings (`+`, `~`). Nothing marked them: after the first frame,
+   * `el.style.x = …`, classList toggles and theme switches never changed what was drawn.
+   */
+  private markStyleDirtyFrom(el: DomElement): void {
+    const mark = (n: DomNode): void => {
+      const stack: DomNode[] = [n];
+      while (stack.length > 0) {
+        const x = stack.pop()!;
+        x._dirtyStyle = true;
+        for (const c of x.children) stack.push(c);
+      }
+    };
+    mark(el);
+    const siblings = el.parent?.children ?? [];
+    for (let i = siblings.indexOf(el) + 1; i > 0 && i < siblings.length; i++) {
+      if (siblings[i]!.nodeType === 'element') mark(siblings[i]!);
+    }
   }
 
   removeAttribute(element: DomElement, name: string): void {
@@ -436,6 +458,7 @@ class DomTree implements IDomTree {
     if (name === 'id' && oldValue !== undefined) {
       this.idIndex.delete(oldValue);
     }
+    if (oldValue !== undefined) this.markStyleDirtyFrom(element);
     this.record({ type: 'attributeChanged', targetDomId: element.domId, data: { name, value: null } }, { type: 'attributes', target: element, attributeName: name, oldValue: oldValue ?? null });
   }
 

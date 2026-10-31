@@ -139,6 +139,19 @@ function makeTextNode(text: string, parent: DomNode | null): DomTextNode {
   };
 }
 
+/** addEventListener's third argument: `true` (capture) or `{ capture, once }`. */
+function listenerOptions(opts: JSValue): { capture: boolean; once: boolean } {
+  if (typeof opts === 'boolean') return { capture: opts, once: false };
+  if (opts && typeof opts === 'object' && 'properties' in opts) {
+    const o = opts as JSObject;
+    return { capture: toBoolean(o.properties.get('capture')?.value ?? false), once: toBoolean(o.properties.get('once')?.value ?? false) };
+  }
+  return { capture: false, once: false };
+}
+
+/** Each document node's JS object, so element events can reach `document` listeners. */
+const documentObjects = new WeakMap<DomNode, JSObject>();
+
 export function createDocumentBinding(
   doc: DomDocument,
   domTree: IDomTree,
@@ -146,6 +159,7 @@ export function createDocumentBinding(
   cookieUrl: () => string = () => '',
 ): JSObject {
   const docObj = createObject(interfacePrototype('Document'));
+  documentObjects.set(doc, docObj);
 
   // document.cookie — through the platform's ScriptCookieProvider (cookie-service.ts).
   // HttpOnly cookies are never visible or writable here.
@@ -287,9 +301,11 @@ export function createDocumentBinding(
     value: createNativeFunction('addEventListener', (_this, args) => {
       const type = toString(args[0]);
       const fn = args[1] as JSFunction;
+      // capture / once were ignored here: capture listeners ran while bubbling, `once` every time.
+      const { capture, once } = listenerOptions(args[2]);
       const entries = getDomListeners(doc);
-      const dup = entries.find(e => e.type === type && e.fn === fn && !e.capture);
-      if (!dup) entries.push({ type, fn, capture: false, once: false, thisArg: _this });
+      const dup = entries.find(e => e.type === type && e.fn === fn && e.capture === capture);
+      if (!dup) entries.push({ type, fn, capture, once, thisArg: _this });
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -794,15 +810,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     value: createNativeFunction('addEventListener', (_this, args) => {
       const type = toString(args[0]);
       const fn = args[1] as JSFunction;
-      const opts = args[2];
-      const capture = typeof opts === 'boolean' ? opts
-        : (opts && typeof opts === 'object' && 'value' in opts) ? false
-        : (opts && typeof opts === 'object' && typeof opts === 'object')
-          ? toBoolean((opts as JSObject).properties?.get('capture')?.value ?? false)
-          : false;
-      const once = (opts && typeof opts === 'object' && typeof opts === 'object' && 'properties' in opts)
-        ? toBoolean((opts as JSObject).properties?.get('once')?.value ?? false)
-        : false;
+      const { capture, once } = listenerOptions(args[2]);
       const entries = getDomListeners(el);
       const dup = entries.find(e => e.type === type && e.fn === fn && e.capture === capture);
       if (!dup) entries.push({ type, fn, capture, once, thisArg: _this });
@@ -844,10 +852,13 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       // When composed=true, cross shadow boundaries to the host element.
       const composed = evt.properties.get('composed')?.value === true;
       const ancestors: DomNode[] = [];
+      let docNode: DomNode | null = null;
       let cur: DomNode | null = el.parent;
       while (cur) {
         if (cur.nodeType === 'element') {
           ancestors.push(cur);
+        } else if (cur.nodeType === 'document') {
+          docNode = cur;
         }
         // Shadow root boundary: a fragment node with a host (e.g. shadow root).
         // When composed=false, stop here; when composed=true, jump to host.
@@ -868,9 +879,17 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
       const wrappedTarget = wrapElement(el, domTree);
       evt.properties.set('target', { value: wrappedTarget, writable: false, enumerable: true, configurable: false });
 
+      // The document is the last stop of bubbling and the first of capture. Element events never
+      // reached it, so `document.addEventListener('click', …)` delegation saw no real click.
+      const docTarget = docNode ? documentObjects.get(docNode) ?? null : null;
+
       // ── CAPTURE PHASE: root → parent-of-target ──
       evt.properties.set('eventPhase', { value: 1, writable: true, enumerable: true, configurable: false });
-      for (let i = ancestors.length - 1; i >= 0; i--) {
+      if (docNode && docTarget) {
+        evt.properties.set('currentTarget', { value: docTarget, writable: true, enumerable: true, configurable: false });
+        invokeDomListeners(docNode, eventType, evt, true);
+      }
+      for (let i = ancestors.length - 1; i >= 0 && !eventFlags(evt).__stopPropagation; i--) {
         const ancestor = ancestors[i];
         const wrapped = wrapElement(ancestor as DomElement, domTree);
         evt.properties.set('currentTarget', { value: wrapped, writable: true, enumerable: true, configurable: false });
@@ -897,12 +916,17 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
           if (invokeDomListeners(ancestor, eventType, evt, false)) break;
           if (eventFlags(evt).__stopPropagation) break;
         }
+        if (docNode && docTarget && !eventFlags(evt).__stopPropagation) {
+          evt.properties.set('currentTarget', { value: docTarget, writable: true, enumerable: true, configurable: false });
+          invokeDomListeners(docNode, eventType, evt, false);
+        }
       }
 
       // Cleanup
       evt.properties.set('currentTarget', { value: null, writable: true, enumerable: true, configurable: false });
       evt.properties.set('eventPhase', { value: 0, writable: true, enumerable: true, configurable: false });
       cleanupDomOnceListeners(el);
+      if (docNode) cleanupDomOnceListeners(docNode);
       for (const ancestor of ancestors) cleanupDomOnceListeners(ancestor);
 
       return !eventFlags(evt).__defaultPrevented;
@@ -1791,7 +1815,7 @@ function defineElementExtras(obj: JSObject, el: DomElement, domTree: IDomTree): 
   method('contains', (a) => { for (let n = nodeOf(a[0]); n; n = n.parent as DomNode | null) if (n === el) return true; return false; });
   // el.click(): the event, then (unless a listener cancelled it) the default action — a scripted
   // click on a link or a submit button used to do nothing.
-  method('click', () => { if (fire('click', true)) activationHandler?.activate(el); return undefined; });
+  method('click', () => { if (fire('click', true)) { toggleDetails(el, domTree); activationHandler?.activate(el); } return undefined; });
   if (el.tagName.toLowerCase() === 'form') {
     method('submit', () => { activationHandler?.submit(el, null, false); return undefined; });
     method('requestSubmit', (a) => { activationHandler?.submit(el, nodeOf(a[0]) as DomElement | null, true); return undefined; });
@@ -2118,7 +2142,26 @@ export function dispatchDomEvent(el: DomElement, type: string, domTree: IDomTree
   const event = createEventObject(type, target, { bubbles: true, cancelable: true });
   const dispatch = target.properties.get('dispatchEvent')?.value;
   if (!dispatch || typeof dispatch !== 'object') return true;
-  return callJSFunction(dispatch as JSFunction, target, [event]) !== false;
+  const notCanceled = callJSFunction(dispatch as JSFunction, target, [event]) !== false;
+  if (notCanceled && type === 'click') toggleDetails(el, domTree);
+  return notCanceled;
+}
+
+/**
+ * HTML §4.11.1: a click on a <details>' summary opens or closes it. Tapping one did nothing.
+ * ponytail: no `toggle` event yet.
+ */
+function toggleDetails(el: DomElement, domTree: IDomTree): void {
+  for (let n: DomNode | null = el; n && n.nodeType === 'element'; n = n.parent) {
+    const tag = (n as DomElement).tagName.toLowerCase();
+    if (tag === 'a' || tag === 'button' || tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'label') return;
+    if (tag !== 'summary') continue;
+    const details = n.parent as DomElement | null;
+    if (details?.tagName.toLowerCase() !== 'details' || details.children.find((c) => c.nodeType === 'element' && (c as DomElement).tagName.toLowerCase() === 'summary') !== n) return;
+    if (details.attributes.has('open')) domTree.removeAttribute(details, 'open');
+    else domTree.setAttribute(details, 'open', '');
+    return;
+  }
 }
 
 export function createEventObject(type: string, target: JSValue, options?: { bubbles?: boolean; cancelable?: boolean; composed?: boolean }): JSObject {

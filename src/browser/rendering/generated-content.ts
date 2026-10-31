@@ -8,7 +8,8 @@
  * gives the innermost value only) and url() images give nothing yet.
  */
 import type { DomElement, DomTextNode } from './dom-tree';
-import { markerText } from './list-markers';
+import { listOrdinal, markerText } from './list-markers';
+import { getInheritedProperties } from './css5/property-definitions';
 
 /** CSS counters by name, updated in document order by counter-reset / counter-increment. */
 export type Counters = Map<string, number>;
@@ -109,6 +110,22 @@ export function makePseudoElement(host: DomElement, pseudo: 'before' | 'after', 
     el.children.push(node);
   }
   return el;
+}
+
+/**
+ * A `list-style-position: inside` marker as an inline box at the start of the item, like a
+ * ::before (CSS Lists 3 §3.1): it flows with the first line (a <summary>'s ▸ before its text).
+ * Inside markers were painted in the margin like outside ones. ponytail: only when the item has
+ * no ::before of its own.
+ */
+export function insideMarker(li: DomElement, computed: ReadonlyMap<string, string>): DomElement | null {
+  if (computed.get('display') !== 'list-item' || computed.get('list-style-position') !== 'inside') return null;
+  const text = markerText(computed.get('list-style-type') ?? 'disc', listOrdinal(li));
+  if (!text) return null;
+  const style = new Map<string, string>();
+  for (const p of getInheritedProperties()) { const v = computed.get(p); if (v !== undefined) style.set(p, v); }
+  style.set('content', JSON.stringify(`${text} `));
+  return makePseudoElement(li, 'before', style);
 }
 
 function textOf(el: DomElement): string {
