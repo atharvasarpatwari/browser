@@ -5,7 +5,7 @@
  * `<svg>` with a box is serialized as a standalone image (case restored, `currentColor` and the
  * inherited fill/stroke resolved), rasterized at its box size × DPR by the same decoder `<img>`
  * uses, and painted as the element's image.
- * ponytail: redrawn when shown, resized or recoloured, but not when a script edits its children.
+ * Redrawn when shown, resized, recoloured or edited by a script.
  */
 import type { DomElement, DomNode } from './dom-tree';
 
@@ -78,6 +78,15 @@ export type SvgDecode = (markup: string) => Promise<{ data: Uint8ClampedArray; w
 
 /** The size and colour each svg was last rasterized at: it is redrawn when they change. */
 const rasterKeys = new WeakMap<DomElement, string>();
+
+/** A script changed `node`: if it is inside an `<svg>`, that svg is redrawn on the next pass. */
+export function invalidateInlineSvgAt(node: DomNode | null): void {
+  let svg: DomElement | null = null;
+  for (let n = node; n; n = n.parent) {
+    if (n.nodeType === 'element' && (n as DomElement).tagName.toLowerCase() === 'svg') svg = n as DomElement;
+  }
+  if (svg) rasterKeys.delete(svg);
+}
 
 /**
  * Rasterizes every laid-out inline `<svg>` into its `imageData`. Returns how many were drawn.

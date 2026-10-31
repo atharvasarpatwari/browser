@@ -63,7 +63,7 @@ import type { ICorsEngine } from '../security/cors';
 import { parseOrigin, OPAQUE_ORIGIN } from '../security/origin-service';
 import type { SecurityLayer } from '../media/security-layer';
 import { ReflowRepaintController } from '../rendering/reflow-repaint-controller';
-import { renderInlineSvgs, type SvgDecode } from '../rendering/inline-svg';
+import { renderInlineSvgs, invalidateInlineSvgAt, type SvgDecode } from '../rendering/inline-svg';
 import { ImageDecoder } from '../image/decoder';
 import type { LayerCompositor } from '../rendering/compositing/layer-compositor';
 import { CssAnimationAnimator } from '../rendering/css-animations';
@@ -352,6 +352,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
     // Incremental style recalc resolves _dirtyStyle nodes before layout.
     controller.setStyleRecalcCallback(() => this.recalcStylesIncremental());
     // Notify the UI (via the engine) when a reflow frame repaints the page.
+    // A script editing an svg's shapes or attributes (charts, progress rings) redraws it.
+    this.svgMutationOff?.();
+    this.svgMutationOff = domTree.onMutation?.((change) => invalidateInlineSvgAt(change.target)) ?? null;
     controller.setFrameCallback(() => {
       this.deps.onFrameRendered?.();
       // Svgs shown, inserted, resized or recoloured since: draw them (one pass at a time).
@@ -881,6 +884,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Walks top-down so parent computed styles can be passed for inheritance.
    */
   private svgPass: Promise<void> | null = null;
+  private svgMutationOff: (() => void) | null = null;
   private readonly svgDecode: SvgDecode = (markup) => this.deps.svgDecode
     ? this.deps.svgDecode(markup)
     : new ImageDecoder().decode(new TextEncoder().encode(markup), 'image/svg+xml');
@@ -1162,6 +1166,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
     this.transitionEngine = null;
     this.reflowController?.dispose();
     this.reflowController = null;
+    this.svgMutationOff?.();
+    this.svgMutationOff = null;
   }
 }
 

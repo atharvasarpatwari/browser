@@ -255,11 +255,15 @@ function createContext(el: DomElement, isRoot: boolean, options?: StackingBuildO
  * - If a child does NOT create a stacking context → classify it into one of the
  *   parent context's sub-layers
  */
+const ATOMIC_INLINE = new Set(['inline-block', 'inline-flex', 'inline-grid', 'inline-table']);
+
 function classifyChildrenIntoContext(
   ctx: StackingContext,
   el: DomElement,
   _isRootCtx: boolean,
   options?: StackingBuildOptions,
+  /** Inside an inline-block: in-flow descendants paint with it, in tree order (level 4). */
+  atomic = false,
 ): void {
   for (const child of boxChildren(el)) {
     if (!child || child.nodeType !== 'element') continue;
@@ -289,10 +293,12 @@ function classifyChildrenIntoContext(
       pseudo.children.splice(0, pseudo.children.length, ...pseudo.children.filter((c) => c.zIndex === 0));
       ctx.children.push(pseudo, ...hoisted);
     } else {
-      // Child participates in parent context — classify into sub-layer
-      classifyElementIntoLayer(ctx, childEl);
-      // Also recurse into this child's descendants
-      classifyChildrenIntoContext(ctx, childEl, false, options);
+      // Child participates in parent context — classify into sub-layer. An inline-block paints
+      // atomically (Appendix E step 7.2.1.4): its block children were level-2 entries painted
+      // before its own level-4 background, which covered them (a <button> with a <div> label).
+      if (atomic) ctx.inlineEntries.push(childEl);
+      else classifyElementIntoLayer(ctx, childEl);
+      classifyChildrenIntoContext(ctx, childEl, false, options, atomic || ATOMIC_INLINE.has(display));
     }
   }
 }
@@ -332,8 +338,6 @@ function classifyElementIntoLayer(
   } else if (classified === 'block' || classified === 'flex' || classified === 'grid' || (classified === 'table' && display !== 'inline-table')) {
     // Level 2: block-level boxes. A display:grid button was an "inline" (level 4), so its
     // blockified children (httpforever's theme icon, a label span) painted under its background.
-    // ponytail: inline-block / inline-flex aren't painted atomically yet, so their block-level
-    // children still paint before their background; give them a pseudo context if it shows up.
     ctx.blockEntries.push(el);
   } else {
     // Level 4: inlines and everything else

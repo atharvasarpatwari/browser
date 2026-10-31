@@ -60,6 +60,14 @@
 <div id="panel">The panel opened (classList toggle restyled it)</div>
 <p id="deleg">document has seen 0 clicks</p>
 
+<h2>1.63: inline-block content, details toggle, svg edited by script</h2>
+<button type="button" style="background:#1d4ed8;color:#fff;border:0;padding:6px 10px"><div>Label in a div</div></button>
+<a href="#" style="display:inline-block;background:#fde68a;padding:6px"><div>Card link block</div></a>
+<details id="d163"><summary>Toggle me</summary>Toggled body</details>
+<p id="toggleLog">toggle events: none</p>
+<svg id="ring" width="48" height="48" viewBox="0 0 48 48"><circle id="ringC" cx="24" cy="24" r="8" fill="none" stroke="#dc2626" stroke-width="4"/></svg>
+<button id="grow" type="button">Grow the ring</button>
+
 <h2>JavaScript (1.47 / 1.54)</h2>
 <ul id="js"></ul>
 <script>
@@ -85,6 +93,9 @@
     var clicks = 0;
     document.getElementById('toggle').addEventListener('click', function () { document.getElementById('panel').classList.toggle('open'); });
     document.addEventListener('click', function () { clicks++; document.getElementById('deleg').textContent = 'document has seen ' + clicks + ' click(s)'; });
+    var toggles = [];
+    document.getElementById('d163').addEventListener('toggle', function () { toggles.push(this.open ? 'open' : 'closed'); document.getElementById('toggleLog').textContent = 'toggle events: ' + toggles.join(', '); });
+    document.getElementById('grow').addEventListener('click', function () { var c = document.getElementById('ringC'); c.setAttribute('r', String(Math.min(22, Number(c.getAttribute('r')) + 6))); });
   });
   window.addEventListener('load', function () { check('load fired', function () { return 'yes'; }, 'yes'); });
 </script>

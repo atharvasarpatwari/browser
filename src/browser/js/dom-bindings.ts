@@ -2012,6 +2012,13 @@ function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void 
       return undefined;
     }),
   });
+  if (el.tagName.toLowerCase() === 'details') {
+    obj.properties.set('open', {
+      value: undefined, writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction('get open', () => el.attributes.has('open')),
+      setter: createNativeFunction('set open', (_t, args) => { setDetailsOpen(el, toBoolean(args[0]), domTree); return undefined; }),
+    });
+  }
 }
 
 const textNodeCache = new WeakMap<DomNode, JSObject>();
@@ -2149,7 +2156,6 @@ export function dispatchDomEvent(el: DomElement, type: string, domTree: IDomTree
 
 /**
  * HTML §4.11.1: a click on a <details>' summary opens or closes it. Tapping one did nothing.
- * ponytail: no `toggle` event yet.
  */
 function toggleDetails(el: DomElement, domTree: IDomTree): void {
   for (let n: DomNode | null = el; n && n.nodeType === 'element'; n = n.parent) {
@@ -2158,10 +2164,22 @@ function toggleDetails(el: DomElement, domTree: IDomTree): void {
     if (tag !== 'summary') continue;
     const details = n.parent as DomElement | null;
     if (details?.tagName.toLowerCase() !== 'details' || details.children.find((c) => c.nodeType === 'element' && (c as DomElement).tagName.toLowerCase() === 'summary') !== n) return;
-    if (details.attributes.has('open')) domTree.removeAttribute(details, 'open');
-    else domTree.setAttribute(details, 'open', '');
+    setDetailsOpen(details, !details.attributes.has('open'), domTree);
     return;
   }
+}
+
+/**
+ * Opens or closes a <details> and fires its `toggle` event (HTML §4.11.1; it doesn't bubble).
+ * ponytail: fired synchronously rather than queued as a task.
+ */
+function setDetailsOpen(details: DomElement, open: boolean, domTree: IDomTree): void {
+  if (open === details.attributes.has('open')) return;
+  if (open) domTree.setAttribute(details, 'open', '');
+  else domTree.removeAttribute(details, 'open');
+  const target = wrapElement(details, domTree);
+  const dispatch = target.properties.get('dispatchEvent')?.value;
+  if (dispatch && typeof dispatch === 'object') callJSFunction(dispatch as JSFunction, target, [createEventObject('toggle', target, { bubbles: false })]);
 }
 
 export function createEventObject(type: string, target: JSValue, options?: { bubbles?: boolean; cancelable?: boolean; composed?: boolean }): JSObject {
