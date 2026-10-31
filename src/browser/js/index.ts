@@ -10,7 +10,7 @@ import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
 import { createPromiseConstructor } from './promise';
-import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, functionPrototypeObject, OBJECT_PROTOTYPE, ARRAY_PROTOTYPE, ITERATOR_KEY, createIteratorArray, iterateJS } from './values';
+import { createObject, createArray, createNativeFunction, Environment, toNumber, toString, toBoolean, callJSFunction, type JSFunction, type NativeFunction, isJSObjectWithMeta, functionPrototypeObject, JSError, getType, OBJECT_PROTOTYPE, ARRAY_PROTOTYPE, ITERATOR_KEY, createIteratorArray, iterateJS } from './values';
 import type { JSValue, JSObject, JSObjectWithMeta } from './values';
 import { IntersectionObserver } from '../rendering/intersection-observer';
 import {
@@ -344,12 +344,36 @@ export function createGlobalEnv(
   const jsonObj = createObject(null);
   jsonObj.properties.set('parse', {
     value: createNativeFunction('parse', (_this, args) => {
-      const str = toString(args[0]);
+      let parsed: unknown;
       try {
-        return toJSValue(JSON.parse(str));
-      } catch {
-        return undefined;
+        parsed = JSON.parse(toString(args[0]));
+      } catch (e) {
+        // A catchable SyntaxError: bad JSON returned undefined, so pages carried on with nothing.
+        const ctor = env.has('SyntaxError') ? env.get('SyntaxError') : undefined;
+        const message = e instanceof Error ? e.message : String(e);
+        throw new JSError(ctor && typeof ctor === 'object' ? callJSFunction(ctor as JSFunction, undefined, [message]) : `SyntaxError: ${message}`);
       }
+      const value = toJSValue(parsed);
+      const reviver = args[1];
+      if (getType(reviver) !== 'function') return value;
+      // The reviver sees every key bottom-up, with its holder as `this`; undefined deletes the key.
+      // It was ignored (JSON.parse(text, reviveDates) kept date strings).
+      const walk = (holder: JSObject, key: string): JSValue => {
+        const v = holder.properties.get(key)?.value;
+        if (v && typeof v === 'object') {
+          const o = v as JSObject;
+          for (const [k, d] of [...o.properties]) {
+            if (!d.enumerable) continue;
+            const nv = walk(o, k);
+            if (nv === undefined) o.properties.delete(k);
+            else o.properties.set(k, { value: nv, writable: true, enumerable: true, configurable: true });
+          }
+        }
+        return callJSFunction(reviver as JSFunction, holder, [key, v]);
+      };
+      const root = createObject(null);
+      root.properties.set('', { value, writable: true, enumerable: true, configurable: true });
+      return walk(root, '');
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -1624,7 +1648,8 @@ export function createGlobalEnv(
       const len = Number(obj.properties.get('length')?.value ?? 0);
       const start = Math.max(0, toNumber(fromIndex ?? 0));
       for (let i = start; i < len; i++) {
-        if (obj.properties.get(String(i))?.value === searchElement) return true;
+        const v = obj.properties.get(String(i))?.value;
+        if (v === searchElement || (v !== v && searchElement !== searchElement)) return true; // SameValueZero: NaN
       }
       return false;
     },

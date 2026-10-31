@@ -574,6 +574,8 @@ function arrayIndexOf(_this: JSValue, args: JSValue[]): JSValue {
 }
 
 function arrayIncludes(_this: JSValue, args: JSValue[]): JSValue {
+  // SameValueZero: unlike indexOf, includes finds NaN ([NaN].includes(NaN) was false).
+  if (args[0] !== args[0]) return typeof _this === 'object' && _this !== null && getArrayElements(_this as JSObject).some((v) => v !== v);
   return arrayIndexOf(_this, args) !== -1;
 }
 

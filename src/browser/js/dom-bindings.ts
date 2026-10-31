@@ -1656,6 +1656,8 @@ function argsToNodes(args: JSValue[]): DomNode[] {
 }
 
 const FRAGMENT_TAG = '#document-fragment';
+/** Each <template>'s content fragment. */
+const templateContents = new WeakMap<DomElement, DomElement>();
 
 /** Default actions the browser performs for script-initiated activation (set by the browser window). */
 export interface ActivationHandler {
@@ -2012,6 +2014,16 @@ function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void 
       return undefined;
     }),
   });
+  if (el.tagName.toLowerCase() === 'template') {
+    // template.content: a fragment holding the template's markup (it was undefined, so stamping
+    // out `tpl.content.cloneNode(true)` threw). Children parsed or set by innerHTML move into it.
+    getter('content', () => {
+      let frag = templateContents.get(el);
+      if (!frag) templateContents.set(el, frag = makeElement(FRAGMENT_TAG, null));
+      for (const c of [...el.children]) domTree.appendChild(frag, c);
+      return wrapElement(frag, domTree);
+    });
+  }
   if (el.tagName.toLowerCase() === 'details') {
     obj.properties.set('open', {
       value: undefined, writable: true, enumerable: true, configurable: true,

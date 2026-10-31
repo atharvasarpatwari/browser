@@ -231,36 +231,44 @@ export class Lexer {
 
   private readNumber(line: number, col: number): Token {
     const start = this.pos;
+    // Digits, allowing ES2021 separators between them (1_000): the lexer stopped at '_', so 1_000 was 1.
+    const digits = (ok: (ch: string) => boolean): void => {
+      while (this.pos < this.source.length) {
+        const ch = this.source[this.pos]!;
+        if (ok(ch) || (ch === '_' && ok(this.source[this.pos + 1] ?? ''))) this.advance();
+        else break;
+      }
+    };
 
     if (this.source[this.pos] === '0' && (this.source[this.pos + 1] === 'x' || this.source[this.pos + 1] === 'X')) {
       this.advance(2);
-      while (this.pos < this.source.length && this.isHexDigit(this.source[this.pos]!)) this.advance();
+      digits((c) => this.isHexDigit(c));
     } else if (this.source[this.pos] === '0' && (this.source[this.pos + 1] === 'b' || this.source[this.pos + 1] === 'B')) {
       this.advance(2);
-      while (this.pos < this.source.length && (this.source[this.pos] === '0' || this.source[this.pos] === '1')) this.advance();
+      digits((c) => c === '0' || c === '1');
     } else if (this.source[this.pos] === '0' && (this.source[this.pos + 1] === 'o' || this.source[this.pos + 1] === 'O')) {
       this.advance(2);
-      while (this.pos < this.source.length && this.isOctalDigit(this.source[this.pos]!)) this.advance();
+      digits((c) => this.isOctalDigit(c));
     } else {
-      while (this.pos < this.source.length && this.isDigit(this.source[this.pos]!)) this.advance();
+      digits((c) => this.isDigit(c));
       if (this.pos < this.source.length && this.source[this.pos] === '.') {
         this.advance();
-        while (this.pos < this.source.length && this.isDigit(this.source[this.pos]!)) this.advance();
+        digits((c) => this.isDigit(c));
       }
       if (this.pos < this.source.length && (this.source[this.pos] === 'e' || this.source[this.pos] === 'E')) {
         this.advance();
         if (this.pos < this.source.length && (this.source[this.pos] === '+' || this.source[this.pos] === '-')) this.advance();
-        while (this.pos < this.source.length && this.isDigit(this.source[this.pos]!)) this.advance();
+        digits((c) => this.isDigit(c));
       }
     }
 
     // BigInt suffix
     if (this.pos < this.source.length && this.source[this.pos] === 'n') {
       this.advance();
-      return this.makeToken(TokenType.BigInt, this.source.slice(start, this.pos), line, col);
+      return this.makeToken(TokenType.BigInt, this.source.slice(start, this.pos).replace(/_/g, ''), line, col);
     }
 
-    return this.makeToken(TokenType.Number, this.source.slice(start, this.pos), line, col);
+    return this.makeToken(TokenType.Number, this.source.slice(start, this.pos).replace(/_/g, ''), line, col);
   }
 
   private readString(line: number, col: number): Token {

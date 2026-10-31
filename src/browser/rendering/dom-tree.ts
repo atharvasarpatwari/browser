@@ -44,6 +44,11 @@ interface DomElement extends DomNode {
 /** A node's children as boxes for layout and paint: its ::before, its DOM children, its ::after. */
 function boxChildren(node: DomNode): readonly DomNode[] {
   const el = node as DomElement;
+  // A closed <details> shows only its summary: its other elements are display:none (cascade), but
+  // bare text in it ("<details><summary>More</summary>Body text</details>") was still rendered.
+  if ((el.tagName === 'details' || el.tagName === 'DETAILS') && !el.attributes?.has('open')) {
+    return node.children.filter((c) => c.nodeType === 'element');
+  }
   if (!el.pseudoBefore && !el.pseudoAfter) return node.children;
   const out: DomNode[] = [];
   if (el.pseudoBefore) out.push(el.pseudoBefore);
@@ -552,7 +557,7 @@ class DomTree implements IDomTree {
       } else {
         n._dirtyPaint = true;
       }
-      for (const c of n.children) stack.push(c);
+      for (const c of boxChildren(n)) stack.push(c);
     }
     this.markDirty(node, kind);
   }
@@ -570,7 +575,9 @@ class DomTree implements IDomTree {
       if (kind === 'style') n._dirtyStyle = false;
       else if (kind === 'layout') n._dirtyLayout = false;
       else n._dirtyPaint = false;
-      for (const c of n.children) stack.push(c);
+      // ::before/::after boxes too: one left layout-dirty was re-laid on its own on the next frame,
+      // at its parent's origin (a summary's ▸ jumped to x=0, away from its text).
+      for (const c of boxChildren(n)) stack.push(c);
     }
   }
 

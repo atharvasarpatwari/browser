@@ -909,6 +909,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
       const box = style ? makePseudoElement(el, pseudo, style, counters)
         : pseudo === 'before' ? insideMarker(el, computed) : null;
       if (box) box.usedStyle = buildUsedStyle(box.computedStyle!, containerWidth, containerHeight, 16);
+      // A new (or removed) generated box only gets a place when its host is laid out again.
+      if (box || (pseudo === 'before' ? el.pseudoBefore : el.pseudoAfter)) this.deps.domTree.markDirty(el, 'layout');
       if (pseudo === 'before') el.pseudoBefore = box;
       else el.pseudoAfter = box;
     }
