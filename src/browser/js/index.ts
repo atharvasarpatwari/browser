@@ -3,7 +3,7 @@ import type { IDomTree, DomElement, DomNode } from '../rendering/dom-tree';
 import type { INavigationController } from '../navigation/navigation-controller';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
-import { Interpreter, stringMethods, functionMethod } from './interpreter';
+import { Interpreter, stringMethods, functionMethod, jsToPlain, plainToJS } from './interpreter';
 import { createDocumentBinding, wrapElement, wrapNode, createEventObject, interfacePrototype, DOM_INTERFACE_NAMES } from './dom-bindings';
 import { getPreferredColorScheme } from '../rendering/color-scheme';
 import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
@@ -127,6 +127,55 @@ export function runJS(source: string, options: RunJSOptions): RunJSResult {
 /**
  * Create a global environment pre-configured with DOM bindings and timers.
  */
+/** `Intl` over the host's Intl: NumberFormat, DateTimeFormat, Collator, PluralRules, RelativeTimeFormat, ListFormat. */
+function createIntl(): JSObject {
+  const intl = createObject(null);
+  const method = (o: JSObject, name: string, fn: (args: JSValue[]) => JSValue): void => {
+    o.properties.set(name, { value: createNativeFunction(name, (_t, a) => fn(a)), writable: true, enumerable: false, configurable: true });
+  };
+  const hostDate = (v: JSValue): Date | number => {
+    const d = (v as { nativeDate?: Date } | null)?.nativeDate;
+    return d instanceof Date ? d : (v === undefined ? new Date() : toNumber(v));
+  };
+  const ctor = <T>(name: string, make: (locales: unknown, options: unknown) => T, wire: (o: JSObject, h: T) => void): void => {
+    const fn = createNativeFunction(name, (_t, a) => {
+      const host = make(jsToPlain(a[0]), jsToPlain(a[1]));
+      const o = createObject(null);
+      wire(o, host);
+      method(o, 'resolvedOptions', () => plainToJS((host as unknown as { resolvedOptions(): Record<string, unknown> }).resolvedOptions()));
+      return o;
+    });
+    (fn as unknown as JSObject).properties?.set('supportedLocalesOf', {
+      value: createNativeFunction('supportedLocalesOf', (_t, a) => createArray((jsToPlain(a[0]) ? [jsToPlain(a[0])].flat() : []) as JSValue[])),
+      writable: true, enumerable: false, configurable: true,
+    });
+    intl.properties.set(name, { value: fn, writable: true, enumerable: false, configurable: true });
+  };
+  type L = string | string[] | undefined;
+  ctor('NumberFormat', (l, o) => new Intl.NumberFormat(l as L, o as Intl.NumberFormatOptions), (o, h) => {
+    method(o, 'format', (a) => h.format(toNumber(a[0])));
+    method(o, 'formatToParts', (a) => createArray(h.formatToParts(toNumber(a[0])).map((p) => plainToJS({ ...p }) as unknown as JSValue)));
+  });
+  ctor('DateTimeFormat', (l, o) => new Intl.DateTimeFormat(l as L, o as Intl.DateTimeFormatOptions), (o, h) => {
+    method(o, 'format', (a) => h.format(hostDate(a[0])));
+    method(o, 'formatToParts', (a) => createArray(h.formatToParts(hostDate(a[0])).map((p) => plainToJS({ ...p }) as unknown as JSValue)));
+  });
+  ctor('Collator', (l, o) => new Intl.Collator(l as L, o as Intl.CollatorOptions), (o, h) => {
+    method(o, 'compare', (a) => h.compare(toString(a[0]), toString(a[1])));
+  });
+  ctor('PluralRules', (l, o) => new Intl.PluralRules(l as L, o as Intl.PluralRulesOptions), (o, h) => {
+    method(o, 'select', (a) => h.select(toNumber(a[0])));
+  });
+  ctor('RelativeTimeFormat', (l, o) => new Intl.RelativeTimeFormat(l as L, o as Intl.RelativeTimeFormatOptions), (o, h) => {
+    method(o, 'format', (a) => h.format(toNumber(a[0]), toString(a[1]) as Intl.RelativeTimeFormatUnit));
+  });
+  ctor('ListFormat', (l, o) => new (Intl as unknown as { ListFormat: new (l: unknown, o: unknown) => { format(x: string[]): string; resolvedOptions(): Record<string, unknown> } }).ListFormat(l, o), (o, h) => {
+    method(o, 'format', (a) => h.format((jsToPlain(a[0]) as unknown[] ?? []).map(String)));
+  });
+  method(intl, 'getCanonicalLocales', (a) => createArray(Intl.getCanonicalLocales(jsToPlain(a[0]) as L) as JSValue[]));
+  return intl;
+}
+
 export function createGlobalEnv(
   doc: DomDocument,
   domTree: IDomTree,
@@ -477,11 +526,17 @@ export function createGlobalEnv(
       if (typeof desc === 'object' && desc !== null) {
         const d = desc as JSObject;
         const val = d.properties.get('value');
+        // Accessor descriptors: `get`/`set` were dropped, so a defined getter read undefined.
+        const isFn = (v: unknown): v is JSFunction => typeof v === 'object' && v !== null && (v as { type?: string }).type === 'closure';
+        const getter = d.properties.get('get')?.value;
+        const setter = d.properties.get('set')?.value;
         jsObj.properties.set(prop, {
           value: val ? val.value : undefined,
           writable: !!(d.properties.get('writable')?.value),
           enumerable: !!(d.properties.get('enumerable')?.value),
           configurable: !!(d.properties.get('configurable')?.value),
+          ...(isFn(getter) ? { getter } : {}),
+          ...(isFn(setter) ? { setter } : {}),
         });
       }
       return jsObj;
@@ -497,6 +552,13 @@ export function createGlobalEnv(
       const desc = jsObj.properties.get(prop);
       if (!desc) return undefined;
       const result = createObject(null);
+      if (desc.getter || desc.setter) {
+        result.properties.set('get', { value: desc.getter, writable: true, enumerable: true, configurable: true });
+        result.properties.set('set', { value: desc.setter, writable: true, enumerable: true, configurable: true });
+        result.properties.set('enumerable', { value: desc.enumerable, writable: true, enumerable: true, configurable: true });
+        result.properties.set('configurable', { value: desc.configurable, writable: true, enumerable: true, configurable: true });
+        return result;
+      }
       result.properties.set('value', { value: desc.value, writable: true, enumerable: true, configurable: true });
       result.properties.set('writable', { value: desc.writable, writable: true, enumerable: true, configurable: true });
       result.properties.set('enumerable', { value: desc.enumerable, writable: true, enumerable: true, configurable: true });
@@ -879,6 +941,10 @@ export function createGlobalEnv(
   regExpProto.properties.set('flags', { value: '', writable: false, enumerable: false, configurable: false });
   regExpCtorObj.properties.set('prototype', { value: regExpProto, writable: false, enumerable: false, configurable: false });
   env.setLocal('RegExp', regExpCtorObj);
+
+  // Intl (it did not exist: `new Intl.NumberFormat(...)` threw, and pages that format prices,
+  // dates or plurals stopped there). Each constructor wraps the platform's own formatter.
+  env.setLocal('Intl', createIntl());
 
   // Map constructor
   const mapProto = createObject(null);
@@ -1482,6 +1548,14 @@ export function createGlobalEnv(
     return arrCtorObj;
   })());
 
+  /** An array-like's elements as a host array. */
+  const elementsOf = (v: JSValue): JSValue[] => {
+    if (typeof v !== 'object' || v === null) return [];
+    const o = v as JSObject;
+    const len = Number(o.properties.get('length')?.value ?? 0);
+    return Array.from({ length: len }, (_x, i) => o.properties.get(String(i))?.value as JSValue);
+  };
+
   // Array.prototype methods
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const arrProtoMethods: Record<string, (...args: any[]) => any> = {
@@ -1787,6 +1861,58 @@ export function createGlobalEnv(
         obj.properties.set(String(i), { value: items[i][1], writable: true, enumerable: true, configurable: true });
       }
       return _this;
+    },
+    // ES2019–2023 methods sites use; each was "not a function".
+    at: (_this, index) => {
+      const xs = elementsOf(_this);
+      const i = Math.trunc(toNumber(index ?? 0));
+      return xs[i < 0 ? xs.length + i : i];
+    },
+    findLast: (_this, callback) => {
+      const xs = elementsOf(_this);
+      for (let i = xs.length - 1; i >= 0; i--) if (callJSFunction(callback as JSFunction, undefined, [xs[i], i, _this])) return xs[i];
+      return undefined;
+    },
+    findLastIndex: (_this, callback) => {
+      const xs = elementsOf(_this);
+      for (let i = xs.length - 1; i >= 0; i--) if (callJSFunction(callback as JSFunction, undefined, [xs[i], i, _this])) return i;
+      return -1;
+    },
+    lastIndexOf: (_this, search) => {
+      const xs = elementsOf(_this);
+      for (let i = xs.length - 1; i >= 0; i--) if (xs[i] === search) return i;
+      return -1;
+    },
+    flatMap: (_this, callback) => {
+      const out: JSValue[] = [];
+      elementsOf(_this).forEach((v, i) => {
+        const r = callJSFunction(callback as JSFunction, undefined, [v, i, _this]);
+        if (typeof r === 'object' && r !== null && (r as JSObject).type === 'array') out.push(...elementsOf(r));
+        else out.push(r);
+      });
+      return createArray(out);
+    },
+    reduceRight: (_this, callback, ...init) => {
+      const xs = elementsOf(_this);
+      let i = xs.length - 1;
+      let acc: JSValue;
+      if (init.length > 0) acc = init[0];
+      else { if (i < 0) throw new TypeError('Reduce of empty array with no initial value'); acc = xs[i--]; }
+      for (; i >= 0; i--) acc = callJSFunction(callback as JSFunction, undefined, [acc, xs[i], i, _this]);
+      return acc;
+    },
+    toReversed: (_this) => createArray(elementsOf(_this).reverse()),
+    toSorted: (_this, compareFn) => {
+      const copy = createArray(elementsOf(_this));
+      return arrProtoMethods.sort!(copy, compareFn);
+    },
+    with: (_this, index, value) => {
+      const xs = elementsOf(_this);
+      const i = Math.trunc(toNumber(index));
+      const at = i < 0 ? xs.length + i : i;
+      if (at < 0 || at >= xs.length) throw new RangeError('Invalid index');
+      xs[at] = value;
+      return createArray(xs);
     },
     toString: (_this: any) => {
       if (typeof _this !== 'object' || _this === null) return '';

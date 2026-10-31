@@ -38,6 +38,30 @@ function regexArg(v: JSValue): RegExp {
   return p instanceof RegExp ? p : new RegExp(p);
 }
 
+/** A JS value as a plain host value (objects one level deep: Intl/locale options, locale lists). */
+export function jsToPlain(v: JSValue): unknown {
+  if (v === undefined || v === null || typeof v !== 'object') return v === null ? undefined : v;
+  const o = v as JSObject;
+  if (o.type === 'array') {
+    const len = Number(o.properties.get('length')?.value ?? 0);
+    return Array.from({ length: len }, (_x, i) => jsToPlain(o.properties.get(String(i))?.value as JSValue));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, d] of o.properties) {
+    const val = d.value;
+    if (val === undefined || (typeof val === 'object' && val !== null && (val as { type?: string }).type !== 'array')) continue;
+    out[k] = typeof val === 'object' && val !== null ? jsToPlain(val) : val;
+  }
+  return out;
+}
+
+/** A plain host object of strings/numbers as a JS object. */
+export function plainToJS(o: Record<string, unknown>): JSObject {
+  const r = createObject(null);
+  for (const [k, v] of Object.entries(o)) r.properties.set(k, { value: (v === undefined ? undefined : v) as JSValue, writable: true, enumerable: true, configurable: true });
+  return r;
+}
+
 /** String.prototype.replace, including a regex pattern and a replacer function. */
 function stringReplace(str: string, pattern: JSValue, replacement: JSValue): string {
   const pat = patternArg(pattern);
@@ -80,9 +104,38 @@ export function stringMethods(obj: string): Record<string, NativeFunction> {
     padStart: (_t, a) => (obj as string).padStart(toNumber(a[0]), toString(a[1] ?? ' ')),
     padEnd: (_t, a) => (obj as string).padEnd(toNumber(a[0]), toString(a[1] ?? ' ')),
     match: (_t, a) => {
-      const m = (obj as string).match(regexArg(a[0]));
-      return m ? createArray(m.map(v => v as unknown as JSValue)) : null;
+      const re = regexArg(a[0]);
+      const m = (obj as string).match(re);
+      if (!m) return null;
+      const result = createArray(m.map(v => (v === undefined ? null : v) as unknown as JSValue));
+      if (!re.global) {
+        // Like exec(): index, input, groups. `str.match(/(?<y>\d+)/).groups.y` read undefined.
+        result.properties.set('index', { value: m.index ?? 0, writable: true, enumerable: true, configurable: true });
+        result.properties.set('input', { value: obj, writable: true, enumerable: true, configurable: true });
+        result.properties.set('groups', { value: m.groups ? plainToJS(m.groups) : undefined, writable: true, enumerable: true, configurable: true });
+      }
+      return result;
     },
+    matchAll: (_t, a) => {
+      const re = regexArg(a[0]);
+      const all = [...(obj as string).matchAll(re.global ? re : new RegExp(re.source, re.flags + 'g'))];
+      return createArray(all.map((m) => {
+        const r = createArray(m.map(v => (v === undefined ? null : v) as unknown as JSValue));
+        r.properties.set('index', { value: m.index ?? 0, writable: true, enumerable: true, configurable: true });
+        r.properties.set('groups', { value: m.groups ? plainToJS(m.groups) : undefined, writable: true, enumerable: true, configurable: true });
+        return r as unknown as JSValue;
+      }));
+    },
+    // ES2021–2022 string methods sites use (they were "not a function")
+    replaceAll: (_t, a) => {
+      const p = patternArg(a[0]);
+      if (p instanceof RegExp) return stringReplace(obj as string, a[0], a[1]);
+      return (obj as string).split(p).join(typeof a[1] === 'object' && a[1] !== null ? '' : toString(a[1]));
+    },
+    at: (_t, a) => { const s = obj as string; const i = Math.trunc(toNumber(a[0] ?? 0)); return s.charAt(i < 0 ? s.length + i : i) || undefined; },
+    codePointAt: (_t, a) => (obj as string).codePointAt(toNumber(a[0] ?? 0)),
+    normalize: (_t, a) => (obj as string).normalize(a[0] === undefined ? undefined : toString(a[0]) as 'NFC'),
+    localeCompare: (_t, a) => (obj as string).localeCompare(toString(a[0]), a[1] === undefined ? undefined : toString(a[1]) as string, jsToPlain(a[2]) as Intl.CollatorOptions),
     search: (_t, a) => (obj as string).search(regexArg(a[0])),
     valueOf: (_t: JSValue, _a: JSValue[]) => obj,
     toString: (_t: JSValue, _a: JSValue[]) => obj,
@@ -1862,6 +1915,8 @@ export class Interpreter {
         toFixed: (_t, a) => (obj as number).toFixed(toNumber(a[0])),
         toPrecision: (_t, a) => (obj as number).toPrecision(toNumber(a[0])),
         toExponential: (_t, a) => (obj as number).toExponential(toNumber(a[0])),
+        // It fell through to Object's "[object Object]". Locale and options go to the platform.
+        toLocaleString: (_t: JSValue, a: JSValue[]) => (obj as number).toLocaleString(a[0] === undefined ? undefined : jsToPlain(a[0]) as string, jsToPlain(a[1]) as Intl.NumberFormatOptions),
       };
       if (key in numMethods) return createNativeFunction(key, numMethods[key]);
       return undefined;

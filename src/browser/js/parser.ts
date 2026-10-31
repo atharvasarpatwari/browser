@@ -461,7 +461,28 @@ export class Parser {
   private parseNewExpression(): AST.NewExpression {
     const tok = this.peek();
     this.advance();
-    const callee = this.parseExpression(18);
+    // The callee is a MemberExpression: a primary plus `.name` / `[expr]`, and the first `(…)` is
+    // the constructor's arguments. parseExpression(18) stopped before `.`, so `new o.C(3)` was
+    // `(new o).C(3)`: every `new Intl.NumberFormat()`, `new google.maps.Map()` failed.
+    let callee: AST.Expression = this.parsePrefix();
+    for (;;) {
+      if (this.is(TokenType.Dot)) {
+        const dot = this.peek();
+        this.advance();
+        const propTok = this.peek();
+        this.advance();
+        const property: AST.Identifier = { type: 'Identifier', name: propTok.value, loc: { line: propTok.line, column: propTok.column } };
+        callee = { type: 'MemberExpression', object: callee, property, computed: false, optional: false, loc: { line: dot.line, column: dot.column } };
+      } else if (this.is(TokenType.LBracket)) {
+        const br = this.peek();
+        this.advance();
+        const property = this.parseExpression();
+        this.expect(TokenType.RBracket);
+        callee = { type: 'MemberExpression', object: callee, property, computed: true, optional: false, loc: { line: br.line, column: br.column } };
+      } else {
+        break;
+      }
+    }
     let args: AST.Expression[] = [];
     if (this.is(TokenType.LParen)) {
       this.advance();
