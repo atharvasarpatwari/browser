@@ -58,6 +58,10 @@ export function isPositioned(style: ReadonlyMap<string, string>): boolean {
  * Parse a CSS length value to LengthOrAuto.
  * Handles: 'auto', '10px', '50%', plain numbers.
  */
+/** The root element's font size, for `rem` insets; the layout engine sets it with each layout. */
+let rootFontSize = 16;
+export function setPositioningRootFontSize(px: number): void { rootFontSize = px; }
+
 export function parseLength(
   raw: string | undefined,
   fontSize: number,
@@ -76,11 +80,12 @@ export function parseLength(
     const n = parseFloat(raw);
     return { kind: 'percent', value: isFinite(n) ? n : 0 };
   }
-  if (raw.endsWith('em')) {
-    const n = parseFloat(raw);
-    return { kind: 'px', value: isFinite(n) ? n * fontSize : 0 };
-  }
+  // rem before em ('1rem' ends with 'em'), and against the root font: both read the element's.
   if (raw.endsWith('rem')) {
+    const n = parseFloat(raw);
+    return { kind: 'px', value: isFinite(n) ? n * rootFontSize : 0 };
+  }
+  if (raw.endsWith('em')) {
     const n = parseFloat(raw);
     return { kind: 'px', value: isFinite(n) ? n * fontSize : 0 };
   }

@@ -155,3 +155,18 @@ describe('self-closing tags inside <svg>', () => {
     expect(find(doc, 'div').children.some((c: any) => c.text === 'after' || c.data === 'after' || c.value === 'after')).toBe(true);
   });
 });
+
+describe('rem lengths', () => {
+  it('resolve against the root font, not the element\'s (a 2.4rem button in a 13.333px button font)', async () => {
+    const { domTree, layout, r } = await render(
+      '<button id="b" style="display:grid;width:2.4rem;height:2.4rem;padding:0;border:0;box-sizing:border-box"></button>' +
+      '<div style="position:relative;height:100px"><i id="p" style="position:absolute;top:1rem;left:2rem;font-size:30px;width:1px;height:1px"></i></div>' +
+      '<div style="display:grid;grid-template-columns:2rem 1fr;font-size:40px;width:300px"><b id="g">x</b><b>y</b></div>');
+    const box = (id: string) => layout.getLayoutBox(domTree.getElementById(id)!.domId)!;
+    expect(box('b').height).toBeCloseTo(38.4, 1);
+    expect(box('b').width).toBeCloseTo(38.4, 1);
+    expect(box('p').x).toBeCloseTo(32, 0);
+    expect(box('g').width).toBeCloseTo(32, 0);
+    r.dispose();
+  });
+});

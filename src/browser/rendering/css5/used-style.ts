@@ -92,8 +92,8 @@ function resolveLength(value: string, defaultFontSize: number, containerWidth: n
   const s = value.trim();
   if (s === '0' || s === '0px') return 0;
   if (s.endsWith('px')) return parseFloat(s) || 0;
+  if (s.endsWith('rem')) return (parseFloat(s) || 0) * rootFontSize; // before em: 'rem' ends with 'em'
   if (s.endsWith('em')) return (parseFloat(s) || 0) * defaultFontSize;
-  if (s.endsWith('rem')) return (parseFloat(s) || 0) * rootFontSize;
   if (s.endsWith('%')) return (parseFloat(s) || 0) / 100 * containerWidth;
   if (s.endsWith('vw')) return (parseFloat(s) || 0) / 100 * containerWidth;
   if (s.endsWith('vh')) return (parseFloat(s) || 0) / 100 * containerHeight;

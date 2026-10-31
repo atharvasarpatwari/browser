@@ -178,11 +178,11 @@ export function resolveTrackBase(
     const pct = parseFloat(def) / 100;
     return { px: containerSize * pct, isFr: false, fr: 0 };
   }
+  if (def.endsWith('rem')) { // before em: '2rem' ends with 'em'
+    return { px: 16 * parseFloat(def), isFr: false, fr: 0 };
+  }
   if (def.endsWith('em')) {
     return { px: fontSize * parseFloat(def), isFr: false, fr: 0 };
-  }
-  if (def.endsWith('rem')) {
-    return { px: 16 * parseFloat(def), isFr: false, fr: 0 };
   }
   return { px: parseFloat(def) || 0, isFr: false, fr: 0 };
 }

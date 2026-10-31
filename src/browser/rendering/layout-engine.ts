@@ -5,7 +5,7 @@ import type { IDomTree, DomDocument, DomElement, DomNode, DomTextNode, LayoutBox
 import { boxChildren } from './dom-tree';
 import { resolveMathFunctions } from './css5/math-functions';
 import { DamageTracker } from './damage-tracker';
-import { findContainingBlock as findContainingBlockForScheme, resolveOutOfFlow, applyInFlowOffset } from './positioning';
+import { findContainingBlock as findContainingBlockForScheme, resolveOutOfFlow, applyInFlowOffset, setPositioningRootFontSize } from './positioning';
 import { classifyDisplay, type ClassifiedChild } from './formatting/types';
 import { classifyChildren, collapseMargins, isMarginCollapseBlocked } from './formatting/block-context';
 import { InlineFormattingContext } from './formatting/inline-context';
@@ -235,6 +235,7 @@ class LayoutEngine implements ILayoutEngine {
   layout(document: DomDocument, domTree?: IDomTree, config?: Partial<LayoutConfig>): void {
     if (config) this.config = { ...this.config, ...config };
     this.rootFontSize = this.documentRootFontSize(document);
+    setPositioningRootFontSize(this.rootFontSize);
     this.layoutBoxes.clear();
     this.elementPositions.length = 0;
     this.positionedQueue.length = 0;
@@ -284,6 +285,7 @@ class LayoutEngine implements ILayoutEngine {
   layoutIncremental(document: DomDocument, domTree: IDomTree, config?: Partial<LayoutConfig>): DamageTracker {
     if (config) this.config = { ...this.config, ...config };
     this.rootFontSize = this.documentRootFontSize(document);
+    setPositioningRootFontSize(this.rootFontSize);
     const damage = new DamageTracker();
 
     domTree.processMutations();
@@ -2215,14 +2217,16 @@ class LayoutEngine implements ILayoutEngine {
       return isFinite(n) ? n : 0;
     }
 
-    if (value.endsWith('em')) {
-      const n = parseFloat(value);
-      return isFinite(n) ? n * fontSize : 0;
-    }
-
+    // rem before em: '2.4rem' ends with 'em' too, so every rem resolved against the element's own
+    // font (httpforever's 2.4rem buttons were 32 px tall in a 13.333 px button font, not 43 px).
     if (value.endsWith('rem')) {
       const n = parseFloat(value);
       return isFinite(n) ? n * this.rootFontSize : 0;
+    }
+
+    if (value.endsWith('em')) {
+      const n = parseFloat(value);
+      return isFinite(n) ? n * fontSize : 0;
     }
 
     if (value.endsWith('%')) {
