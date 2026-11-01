@@ -239,6 +239,8 @@ class LayoutEngine implements ILayoutEngine {
   private readonly layoutBoxes = new Map<string, LayoutBox>();
   private readonly elementPositions: Array<{ element: DomElement; box: LayoutBox }> = [];
   private rootFontSize = DEFAULT_LAYOUT_CONFIG.defaultFontSize;
+  /** Where each laid-out box's flow ends (its margin edge before any relative offset or translation). */
+  private readonly flowEnds = new Map<string, number>();
   /** Inline-blocks whose content waits to be moved to where their line puts them (see placeInlineBlocks). */
   private pendingInlineBlocks: DomElement[] = [];
   /** True while an inline-block's content is measured for shrink-to-fit: lines are not aligned. */
@@ -662,6 +664,7 @@ class LayoutEngine implements ILayoutEngine {
 
     // ── Update LayoutBox with final height ───────────────────────────────
     box.height = contentHeight + paddingTop + paddingBottom + borderTop + borderBottom;
+    this.applyStaticTranslation(node, box, style, fontSize);
 
     // ── Handle overflow: create scrollable container if needed ────────────
     const overflowX = style.get('overflow-x') ?? style.get('overflow') ?? 'visible';
@@ -699,6 +702,7 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     // Return the next Y position after this element's margin box.
+    this.flowEnds.set(node.domId, posY + box.height + marginBottom);
     return posY + box.height + marginBottom;
   }
 
@@ -728,7 +732,8 @@ class LayoutEngine implements ILayoutEngine {
             childY = this.layoutNodeIncremental(child as DomElement, x, childY, availableWidth, parentFontSize, domTree, damage);
           }
         }
-        return existingBox.y + existingBox.height + existingBox.marginBottom;
+        // The flow end, not the box's: relative offsets and transforms move the box only.
+        return this.flowEnds.get(node.domId) ?? existingBox.y + existingBox.height + existingBox.marginBottom;
       }
       return y;
     }
@@ -904,6 +909,48 @@ class LayoutEngine implements ILayoutEngine {
     const side = (prop: string): number => this.resolveLength(style.get(prop) ?? '0', fontSize, 0);
     return Math.max(0, outer - side('padding-top') - side('padding-bottom')
       - this.parseBorderWidth(style.get('border-top-width') ?? '0') - this.parseBorderWidth(style.get('border-bottom-width') ?? '0'));
+  }
+
+  /**
+   * A transform made only of translations (and the `translate` property) moves the box and its
+   * content after layout, like a relative offset, so paint, taps and getBoundingClientRect agree.
+   * Static transforms weren't applied at all: `top:50%; left:50%; transform:translate(-50%,-50%)`
+   * centring sat half a box down-right, and slide offsets never moved.
+   * ponytail: scale/rotate/skew aren't drawn (the rasterizer has no general matrix).
+   */
+  private applyStaticTranslation(node: DomElement, box: LayoutBox, style: ReadonlyMap<string, string>, fontSize: number): void {
+    let dx = 0, dy = 0;
+    const len = (v: string | undefined, along: number): number => {
+      if (!v) return 0;
+      const t = v.trim();
+      return t.endsWith('%') && !MATH_FN.test(t) ? parseFloat(t) / 100 * along : this.resolveLength(t, fontSize, along);
+    };
+    const transform = style.get('transform');
+    if (transform && transform !== 'none') {
+      const fns = [...transform.matchAll(/(translate(?:X|Y|3d)?)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/gi)];
+      if (fns.length === 0 || transform.replace(/(translate(?:X|Y|3d)?)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/gi, '').trim() !== '') {
+        (node as { _staticTranslate?: { x: number; y: number } })._staticTranslate = undefined;
+        return;
+      }
+      for (const [, name, args] of fns) {
+        const a = args!.split(/\s*,\s*/);
+        const fn = name!.toLowerCase();
+        if (fn === 'translatex') dx += len(a[0], box.width);
+        else if (fn === 'translatey') dy += len(a[0], box.height);
+        else { dx += len(a[0], box.width); dy += len(a[1], box.height); }
+      }
+    }
+    const tr = style.get('translate');
+    if (tr && tr !== 'none') {
+      const [x, y] = tr.trim().split(/\s+/);
+      dx += len(x, box.width);
+      dy += len(y, box.height);
+    }
+    (node as { _staticTranslate?: { x: number; y: number } })._staticTranslate = dx || dy ? { x: dx, y: dy } : undefined;
+    if (!dx && !dy) return;
+    box.x += dx;
+    box.y += dy;
+    this.translateContent(node, dx, dy);
   }
 
   /** CSS 2.2 §9.4.1: boxes whose contents are laid out in a new block formatting context. */
@@ -2707,6 +2754,8 @@ class LayoutEngine implements ILayoutEngine {
         this.translateContent(node, 0, dy);
       }
     }
+
+    this.applyStaticTranslation(node, box, style, fontSize);
 
     // Update layoutBoxes with final values
     this.layoutBoxes.set(node.domId, box);

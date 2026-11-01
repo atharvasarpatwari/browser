@@ -1307,6 +1307,7 @@ function applyBoxShadowToPixels(
   shadow: BoxShadow, x: number, y: number, w: number, h: number,
 ): void {
   if (w <= 0 || h <= 0 || shadow.color.a <= 0) return;
+  if (shadow.inset) { applyInsetShadowToPixels(pixels, pw, ph, shadow, x, y, w, h); return; }
   const sigma = Math.max(0, shadow.blur) / 2;
   const r = Math.round(sigma); // each of the three box passes
   const pad = 3 * r + 1;
@@ -1347,6 +1348,63 @@ function applyBoxShadowToPixels(
       if (px < 0 || px >= pw) continue;
       if (px + 0.5 > bx0 && px + 0.5 < bx1 && py + 0.5 > by0 && py + 0.5 < by1) continue; // under the element
       const alpha = mask[my * mw + mx]! * ca;
+      if (alpha <= 0.002) continue;
+      const di = (py * pw + px) * 4;
+      pixels[di] = pixels[di]! * (1 - alpha) + cr * alpha;
+      pixels[di + 1] = pixels[di + 1]! * (1 - alpha) + cg * alpha;
+      pixels[di + 2] = pixels[di + 2]! * (1 - alpha) + cb * alpha;
+      pixels[di + 3] = Math.max(pixels[di + 3]!, alpha * 255);
+    }
+  }
+}
+
+/**
+ * An inset shadow (CSS Backgrounds §7.1.1): inside the box, everywhere except a "hole" (the box
+ * shrunk by the spread and moved by the offset), with the hole's edge blurred. Inset shadows went
+ * through the outer path, which skips every pixel under the element, so they never showed.
+ */
+function applyInsetShadowToPixels(
+  pixels: Uint8ClampedArray, pw: number, ph: number,
+  shadow: BoxShadow, x: number, y: number, w: number, h: number,
+): void {
+  const r = Math.round(Math.max(0, shadow.blur) / 2);
+  const x0 = Math.round(x), y0 = Math.round(y), bw = Math.round(w), bh = Math.round(h);
+  const mw = bw, mh = bh;
+  // 1 inside the hole, 0 elsewhere (including beyond the box, so the blur darkens the edges).
+  const hole = new Float32Array(mw * mh);
+  const hx0 = Math.round(shadow.offsetX + shadow.spread), hy0 = Math.round(shadow.offsetY + shadow.spread);
+  const hx1 = Math.round(bw + shadow.offsetX - shadow.spread), hy1 = Math.round(bh + shadow.offsetY - shadow.spread);
+  for (let yy = Math.max(0, hy0); yy < Math.min(mh, hy1); yy++) {
+    for (let xx = Math.max(0, hx0); xx < Math.min(mw, hx1); xx++) hole[yy * mw + xx] = 1;
+  }
+  if (r > 0) {
+    const tmp = new Float32Array(Math.max(mw, mh));
+    const pass = (len: number, lines: number, at: (line: number, i: number) => number) => {
+      for (let line = 0; line < lines; line++) {
+        for (let i = 0; i < len; i++) tmp[i] = hole[at(line, i)]!;
+        let sum = 0;
+        for (let i = 0; i <= r && i < len; i++) sum += tmp[i]!;
+        for (let i = 0; i < len; i++) {
+          hole[at(line, i)] = sum / (2 * r + 1);
+          const add = i + r + 1, drop = i - r;
+          if (add < len) sum += tmp[add]!;
+          if (drop >= 0) sum -= tmp[drop]!;
+        }
+      }
+    };
+    for (let k = 0; k < 3; k++) {
+      pass(mw, mh, (line, i) => line * mw + i);
+      pass(mh, mw, (line, i) => i * mw + line);
+    }
+  }
+  const { r: cr, g: cg, b: cb, a: ca } = shadow.color;
+  for (let my = 0; my < mh; my++) {
+    const py = y0 + my;
+    if (py < 0 || py >= ph) continue;
+    for (let mx = 0; mx < mw; mx++) {
+      const px = x0 + mx;
+      if (px < 0 || px >= pw) continue;
+      const alpha = (1 - hole[my * mw + mx]!) * ca;
       if (alpha <= 0.002) continue;
       const di = (py * pw + px) * 4;
       pixels[di] = pixels[di]! * (1 - alpha) + cr * alpha;

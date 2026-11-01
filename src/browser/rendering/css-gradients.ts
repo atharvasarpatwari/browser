@@ -6,6 +6,8 @@ export type GradientType = 'linear' | 'radial' | 'conic' | 'repeating-linear' | 
 export interface ColorStop {
   color: RGBA;
   offset: number;
+  /** A position given in px: an offset only once the gradient line's length is known. */
+  px?: number;
 }
 
 export interface GradientInfo {
@@ -16,6 +18,8 @@ export interface GradientInfo {
   position: { cx: number; cy: number };
   stops: ColorStop[];
   repetitions: boolean;
+  /** The stops as written (auto = -1, px kept), re-normalized per gradient length when any is px. */
+  rawStops?: ColorStop[];
   /** Explicit radial size (`120% 140%`, `40px`), as fractions of the box (rx of width, ry of height). */
   radii?: { rx: number; ry: number; px?: { rx: number; ry: number } };
 }
@@ -47,51 +51,54 @@ function parseAngle(angleStr: string): number {
   return 180;
 }
 
-function parseStops(args: string): ColorStop[] {
+function parseRawStops(args: string): ColorStop[] {
   const stops: ColorStop[] = [];
-  const parts = splitGradientStops(args);
-  for (const part of parts) {
+  for (const part of splitGradientStops(args)) {
     const trimmed = part.trim();
     if (!trimmed) continue;
     // A colour, then one or two positions (`#2f8f4e 45%`, `rgba(0,0,0,.5) 10%`, `#fff 0 40%`).
-    // The colour part used to be required to contain no digits, so every hex or rgb() stop with a
-    // position failed to parse and painted black.
     const match = trimmed.match(/^(.*?)\s+(-?\d*\.?\d+(?:%|px)?)(?:\s+(-?\d*\.?\d+(?:%|px)?))?$/);
     if (match) {
-      const color = parseColor(match[1].trim());
-      // ponytail: px positions need the gradient length; they become automatic positions.
-      const offsetOf = (t: string) => (t.endsWith('%') ? (parseFloat(t) || 0) / 100 : t.endsWith('px') ? -1 : parseFloat(t) || 0);
-      stops.push({ color, offset: offsetOf(match[2]) });
-      if (match[3]) stops.push({ color, offset: offsetOf(match[3]) });
+      const color = parseColor(match[1]!.trim());
+      const stopAt = (t: string): ColorStop => (t.endsWith('px')
+        ? { color, offset: -1, px: parseFloat(t) || 0 }
+        : { color, offset: t.endsWith('%') ? (parseFloat(t) || 0) / 100 : parseFloat(t) || 0 });
+      stops.push(stopAt(match[2]!));
+      if (match[3]) stops.push(stopAt(match[3]));
     } else {
       stops.push({ color: parseColor(trimmed), offset: -1 });
     }
   }
-  if (stops.length === 0) {
-    stops.push({ color: { r: 0, g: 0, b: 0, a: 1 }, offset: 0 });
-    stops.push({ color: { r: 0, g: 0, b: 0, a: 1 }, offset: 1 });
-  }
-  if (stops.length === 1) {
-    const c = stops[0];
-    stops.push({ color: c.color, offset: 1 });
-  }
-  let hasAny = false;
-  for (const s of stops) { if (s.offset >= 0) { hasAny = true; break; } }
-  if (!hasAny) {
-    for (let i = 0; i < stops.length; i++) {
-      stops[i].offset = stops.length > 1 ? i / (stops.length - 1) : 0;
-    }
-  }
-  stops.sort((a, b) => a.offset - b.offset);
-  if (stops[0].offset < 0) stops[0].offset = 0;
-  for (let i = 1; i < stops.length; i++) {
-    if (stops[i].offset < 0) {
-      const prev = stops[i - 1].offset;
-      const next = stops[i + 1]?.offset ?? 1;
-      stops[i].offset = prev + (next - prev) / 2;
-    }
+  if (stops.length === 0) stops.push({ color: { r: 0, g: 0, b: 0, a: 1 }, offset: -1 }, { color: { r: 0, g: 0, b: 0, a: 1 }, offset: -1 });
+  if (stops.length === 1) stops.push({ color: stops[0]!.color, offset: -1 });
+  return stops;
+}
+
+/**
+ * Stop positions per CSS Images §3.5.1: px against the gradient length, a missing first/last at
+ * 0%/100%, each position at least the one before, and runs of automatic stops spread evenly. Stops
+ * were sorted by offset instead, so an automatic stop (-1) jumped to the front
+ * (`red 10%, blue, green 90%` started blue) and px stops were treated as automatic.
+ */
+function normalizeStops(raw: readonly ColorStop[], length?: number): ColorStop[] {
+  const stops = raw.map((st) => ({ color: st.color, offset: st.px !== undefined && length ? st.px / length : st.px !== undefined ? -1 : st.offset }));
+  if (stops[0]!.offset < 0) stops[0]!.offset = 0;
+  if (stops[stops.length - 1]!.offset < 0) stops[stops.length - 1]!.offset = 1;
+  let max = -Infinity;
+  for (const st of stops) if (st.offset >= 0) { st.offset = Math.max(st.offset, max); max = st.offset; }
+  for (let i = 1; i < stops.length - 1; i++) {
+    if (stops[i]!.offset >= 0) continue;
+    let j = i;
+    while (stops[j]!.offset < 0) j++;
+    const from = stops[i - 1]!.offset, to = stops[j]!.offset;
+    for (let k = i; k < j; k++) stops[k]!.offset = from + (to - from) * (k - i + 1) / (j - i + 1);
+    i = j;
   }
   return stops;
+}
+
+function parseStops(args: string): ColorStop[] {
+  return normalizeStops(parseRawStops(args));
 }
 
 function splitGradientStops(args: string): string[] {
@@ -161,22 +168,33 @@ export function parseGradient(value: string): GradientInfo | null {
     }
   }
 
-  const stops = parseStops(remainder);
+  const rawStops = parseRawStops(remainder);
+  const stops = normalizeStops(rawStops);
 
-  return { type: gtype, angle, shape, size, position: { cx, cy }, stops, repetitions: repeating, ...(radii ? { radii } : {}) };
+  return {
+    type: gtype, angle, shape, size, position: { cx, cy }, stops, repetitions: repeating,
+    ...(rawStops.some((st) => st.px !== undefined) ? { rawStops } : {}),
+    ...(radii ? { radii } : {}),
+  };
 }
 
 export function evaluateGradient(grad: GradientInfo, x: number, y: number, w: number, h: number): RGBA {
   if (!w || !h) return { r: 0, g: 0, b: 0, a: 0 };
 
   let t: number;
-  const { stops, angle, position, shape, size } = grad;
+  const { angle, position, shape, size } = grad;
+  let { stops } = grad;
 
   if (grad.type === 'linear' || grad.type === 'repeating-linear') {
+    // The gradient line through the centre, long enough to reach the corners (CSS Images §3.1.1).
+    // t was scaled to run from -0.5 to 1.5 across the box, so every linear gradient changed colour
+    // in its middle half only.
     const rad = angle * Math.PI / 180;
     const nx = Math.sin(rad);
     const ny = -Math.cos(rad);
-    t = ((x / w - 0.5) * nx + (y / h - 0.5) * ny) * 2 + 0.5;
+    const length = Math.abs(w * nx) + Math.abs(h * ny) || 1;
+    t = ((x - w / 2) * nx + (y - h / 2) * ny) / length + 0.5;
+    if (grad.rawStops) stops = stopsForLength(grad, length);
   } else if (grad.radii) {
     // Explicit radii: distance in units of the ellipse's own radii.
     const rx = Number.isFinite(grad.radii.rx) ? grad.radii.rx * w : grad.radii.px!.rx;
@@ -190,16 +208,30 @@ export function evaluateGradient(grad: GradientInfo, x: number, y: number, w: nu
     t = Math.sqrt(dx * dx + dy * dy) * Math.SQRT2;
   }
 
+  // Repeating gradients repeat the span of their stops, not 0..1 (`… #00f 10px 20px` repeats every 20px).
   if (grad.repetitions) {
-    t = t - Math.floor(t);
+    const first = stops[0]!.offset, period = stops[stops.length - 1]!.offset - first;
+    t = period > 0 ? first + ((((t - first) % period) + period) % period) : t - Math.floor(t);
   }
 
   return interpolateStops(stops, t);
 }
 
+const stopsCache = new WeakMap<GradientInfo, { length: number; stops: ColorStop[] }>();
+
+function stopsForLength(grad: GradientInfo, length: number): ColorStop[] {
+  const hit = stopsCache.get(grad);
+  if (hit && hit.length === length) return hit.stops;
+  const stops = normalizeStops(grad.rawStops!, length);
+  stopsCache.set(grad, { length, stops });
+  return stops;
+}
+
 function interpolateStops(stops: ColorStop[], t: number): RGBA {
-  if (t <= 0 || stops.length === 1) return stopColor(stops[0]);
-  if (t >= 1) return stopColor(stops[stops.length - 1]);
+  // Before the first stop / after the last one, their colours continue (not just outside 0..1:
+  // `transparent 50%, #00f 50%` has no stop at 100%).
+  if (stops.length === 1 || t <= stops[0]!.offset) return stopColor(stops[0]!);
+  if (t >= stops[stops.length - 1]!.offset) return stopColor(stops[stops.length - 1]!);
 
   for (let i = 0; i < stops.length - 1; i++) {
     const a = stops[i];

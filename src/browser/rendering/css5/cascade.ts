@@ -1102,6 +1102,15 @@ export function expandShorthands(
       expanded = expandBoxShorthand('margin', decl.value);
     } else if (prop === 'padding') {
       expanded = expandBoxShorthand('padding', decl.value);
+    } else if (prop === 'outline') {
+      // outline: <width> || <style> || <color> — never expanded, so outlines had no style or width.
+      const out = new Map<string, string>();
+      for (const t of splitTopLevel(decl.value.trim(), false)) {
+        if (/^(none|hidden|dotted|dashed|solid|double|groove|ridge|inset|outset|auto)$/i.test(t)) out.set('outline-style', t);
+        else if (/^(thin|medium|thick)$/i.test(t) || /^-?[\d.]+[a-z%]*$/i.test(t)) out.set('outline-width', t);
+        else out.set('outline-color', t);
+      }
+      expanded = out.size > 0 ? out : null;
     } else if (prop === 'inset') {
       // inset: 0 never reached top/right/bottom/left, so `position:absolute; inset:0` overlays and
       // backdrops were 0x0 at their static position.

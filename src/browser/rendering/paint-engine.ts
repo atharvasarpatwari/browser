@@ -18,6 +18,20 @@ import { LayerCompositor } from './compositing/layer-compositor';
 import { LayerTree } from './compositing/layer-tree';
 import { LayerPromoter } from './compositing/layer-promoter';
 import { parseGradient, isGradientValue } from './css-gradients';
+
+/** A background-image list split into its comma-separated layers (commas inside () stay). */
+function splitLayers(value: string): string[] {
+  if (!value || value === 'none') return [];
+  const out: string[] = [];
+  let depth = 0, cur = '';
+  for (const ch of value) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
 import { parseBackgrounds } from './enhanced-backgrounds';
 import { parseBorders, parseBorderRadius, renderBorderSide } from './borders-enhanced';
 import { parseBoxShadow, parseTextShadow } from './shadows';
@@ -644,20 +658,29 @@ class PaintEngine implements IPaintEngine {
         if (posParts[1] && posParts[1].endsWith('%')) bgY = by + (bh - bgH) * parseFloat(posParts[1]) / 100;
       }
 
-      if (isGradientValue(bgImage)) {
-        const grad = parseGradient(bgImage);
-        if (grad) {
-          commands.push({ type: 'setFillGradient', params: [grad, bgX, bgY, bgW, bgH] });
-        } else {
-          commands.push({ type: 'setFillStyle', params: [bgColor] });
-          commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
+      // background-clip: the painted area stops at the padding or content edge (it was ignored).
+      const bgClip = (style.get('background-clip') ?? 'border-box').trim();
+      let cx = bx, cy = by, cw = bw, ch = bh;
+      if (bgClip === 'padding-box' || bgClip === 'content-box') {
+        cx += layoutBox.borderLeft; cy += layoutBox.borderTop;
+        cw -= layoutBox.borderLeft + layoutBox.borderRight; ch -= layoutBox.borderTop + layoutBox.borderBottom;
+        if (bgClip === 'content-box') {
+          cx += layoutBox.paddingLeft; cy += layoutBox.paddingTop;
+          cw -= layoutBox.paddingLeft + layoutBox.paddingRight; ch -= layoutBox.paddingTop + layoutBox.paddingBottom;
         }
-      } else if (bgImage && bgImage !== 'none' && bgImage.startsWith('url(')) {
+      }
+      const clipped = bgClip === 'padding-box' || bgClip === 'content-box';
+      // The colour first, then each image layer from the bottom (the first listed is on top). A
+      // gradient replaced the colour, so `background: linear-gradient(…transparent…), red` showed
+      // white through the gradient, and only one gradient layer was ever drawn.
+      if (bgColor !== 'transparent' && !/gradient\(|url\(/i.test(bgColor)) {
         commands.push({ type: 'setFillStyle', params: [bgColor] });
-        commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
-      } else if (bgColor !== 'transparent') {
-        commands.push({ type: 'setFillStyle', params: [bgColor] });
-        commands.push({ type: 'fillRect', params: [bgX, bgY, bgW, bgH] });
+        commands.push({ type: 'fillRect', params: [cx, cy, Math.max(0, cw), Math.max(0, ch)] });
+      }
+      for (const layer of splitLayers(bgImage).reverse()) {
+        if (!isGradientValue(layer)) continue;
+        const grad = parseGradient(layer);
+        if (grad) commands.push({ type: 'setFillGradient', params: clipped ? [grad, cx, cy, Math.max(0, cw), Math.max(0, ch)] : [grad, bgX, bgY, bgW, bgH] });
       }
 
 
@@ -704,6 +727,22 @@ class PaintEngine implements IPaintEngine {
       }
 
       if (hasRadius) commands.push({ type: 'setBorderRadius', params: [null, 0, 0, 0, 0] });
+
+      // ── Outline: outside the border box, offset by outline-offset; it was never painted ─
+      const outlineStyle = style.get('outline-style') ?? 'none';
+      const outlineWidth = parseFloat(style.get('outline-width') ?? '0') || 0;
+      if (outlineStyle !== 'none' && outlineStyle !== 'hidden' && outlineWidth > 0) {
+        let oc = style.get('outline-color') ?? 'currentcolor';
+        if (oc === 'invert' || oc === 'auto' || oc.toLowerCase() === 'currentcolor') oc = style.get('color') ?? '#000000';
+        const off = parseFloat(style.get('outline-offset') ?? '0') || 0;
+        const ox = layoutBox.x - off - outlineWidth, oy = layoutBox.y - off - outlineWidth;
+        const ow = layoutBox.width + 2 * (off + outlineWidth), oh = layoutBox.height + 2 * (off + outlineWidth);
+        commands.push({ type: 'setFillStyle', params: [oc] });
+        commands.push({ type: 'fillRect', params: [ox, oy, ow, outlineWidth] });
+        commands.push({ type: 'fillRect', params: [ox, oy + oh - outlineWidth, ow, outlineWidth] });
+        commands.push({ type: 'fillRect', params: [ox, oy + outlineWidth, outlineWidth, oh - 2 * outlineWidth] });
+        commands.push({ type: 'fillRect', params: [ox + ow - outlineWidth, oy + outlineWidth, outlineWidth, oh - 2 * outlineWidth] });
+      }
 
       // ── Own content (image, control, text) is clipped by the element's own overflow ──
       const ownClip = overflowClipRect(node);

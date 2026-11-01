@@ -223,7 +223,9 @@ function createContext(el: DomElement, isRoot: boolean, options?: StackingBuildO
   if (animatedTransform && animatedTransform !== 'none') {
     const parsed = parseTransform(animatedTransform);
     if (parsed && isPureTranslation4x4(parsed.matrix)) {
-      translate = { x: parsed.matrix.m41, y: parsed.matrix.m42 };
+      // Layout already moved the box by its static translation: paint only the difference.
+      const baked = (el as { _staticTranslate?: { x: number; y: number } })._staticTranslate;
+      translate = { x: parsed.matrix.m41 - (baked?.x ?? 0), y: parsed.matrix.m42 - (baked?.y ?? 0) };
     }
   }
 

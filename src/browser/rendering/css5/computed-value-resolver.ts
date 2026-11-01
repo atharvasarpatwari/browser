@@ -20,6 +20,48 @@
 
 import { hasMathFunctions, resolveMathFunctions, type MathResolutionContext } from './math-functions.js';
 import { getPreferredColorScheme } from '../color-scheme';
+import { parseColor } from '../rasterizer';
+
+/**
+ * Replaces each color-mix() with its rgba() result. ponytail: mixed in sRGB whatever the
+ * interpolation space (oklab/oklch mixes come out slightly different from browsers).
+ */
+function resolveColorMix(value: string): string {
+  let out = value;
+  for (let guard = 0; guard < 8; guard++) {
+    const at = out.toLowerCase().indexOf('color-mix(');
+    if (at < 0) break;
+    let depth = 0, end = -1;
+    for (let i = at + 'color-mix'.length; i < out.length; i++) {
+      if (out[i] === '(') depth++;
+      else if (out[i] === ')' && --depth === 0) { end = i; break; }
+    }
+    if (end < 0) break;
+    const args: string[] = [];
+    let d = 0, cur = '';
+    for (const ch of out.slice(at + 'color-mix('.length, end)) {
+      if (ch === '(') d++;
+      else if (ch === ')') d--;
+      if (ch === ',' && d === 0) { args.push(cur.trim()); cur = ''; } else cur += ch;
+    }
+    args.push(cur.trim());
+    const parts = args.slice(1).map((a) => {
+      const m = /^(.*?)\s+(-?[\d.]+)%$/.exec(a) ?? /^(-?[\d.]+)%\s+(.*)$/.exec(a);
+      if (!m) return { color: a, pct: null as number | null };
+      return /%$/.test(a) ? { color: m[1]!, pct: parseFloat(m[2]!) } : { color: m[2]!, pct: parseFloat(m[1]!) };
+    });
+    if (parts.length !== 2) break;
+    let p1 = parts[0]!.pct, p2 = parts[1]!.pct;
+    if (p1 === null && p2 === null) { p1 = 50; p2 = 50; } else if (p1 === null) p1 = 100 - p2!; else if (p2 === null) p2 = 100 - p1;
+    const total = p1 + p2! || 100;
+    const w1 = p1 / total, w2 = p2! / total;
+    const a = parseColor(parts[0]!.color), b = parseColor(parts[1]!.color);
+    const mix = (x: number, y: number): number => Math.round(x * w1 + y * w2);
+    const alpha = Math.round((a.a * w1 + b.a * w2) * 1000) / 1000 * Math.min(1, total / 100);
+    out = `${out.slice(0, at)}rgba(${mix(a.r, b.r)}, ${mix(a.g, b.g)}, ${mix(a.b, b.b)}, ${alpha})${out.slice(end + 1)}`;
+  }
+  return out;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NAMED COLOR TABLE (CSS Color Level 4 — 148 named colors)
@@ -377,6 +419,9 @@ export function resolveComputedValue(
     }
   }
 
+  // color-mix(in <space>, a [p], b [p]) (CSS Color 5) as an rgba(): it painted black.
+  if (/color-mix\(/i.test(v)) v = resolveColorMix(v);
+
   // light-dark(a, b) (CSS Color 5): the dark value when the user prefers dark.
   if (v.includes('light-dark(')) v = resolveLightDark(v, getPreferredColorScheme() === 'dark');
 
@@ -384,7 +429,14 @@ export function resolveComputedValue(
   if (v === '' || v === 'initial') return v;
   if (v === 'auto' || v === 'normal' || v === 'none') return v;
   if (v === 'inherit') return v;
-  if (v === 'currentcolor') {
+  // currentColor is case-insensitive and can sit inside a value (box-shadow, gradients, the border
+  // shorthand). Only the lower-case whole value was resolved, so the usual camel-case
+  // `border: 1px solid currentColor` painted black.
+  if (prop !== 'color' && /\bcurrentcolor\b/i.test(v)) {
+    if (v.toLowerCase() === 'currentcolor') return ctx.currentColor ?? 'canvastext';
+    if (ctx.currentColor) v = v.replace(/\bcurrentcolor\b/gi, ctx.currentColor);
+  }
+  if (v.toLowerCase() === 'currentcolor') {
     // Resolve currentcolor to the element's computed color value.
     return ctx.currentColor ?? 'canvastext';
   }
