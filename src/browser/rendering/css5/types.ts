@@ -98,7 +98,7 @@ export type CssPseudoClassSelector =
   | { readonly type: 'is'; readonly selectors: readonly CssSelector[] }
   | { readonly type: 'any'; readonly selectors: readonly CssSelector[] }
   | { readonly type: 'where'; readonly selectors: readonly CssSelector[] }
-  | { readonly type: 'has'; readonly selectors: readonly CssSelector[] };
+  | { readonly type: 'has'; readonly selectors: readonly CssSelector[]; readonly relative?: readonly CssCombinator[] };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DECLARATION TYPES

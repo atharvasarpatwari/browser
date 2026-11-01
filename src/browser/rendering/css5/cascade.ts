@@ -41,6 +41,8 @@ export interface StyleableElement {
   attributes: ReadonlyMap<string, string>;
   parent: StyleableElement | null;
   children: StyleableElement[];
+  hasText?: boolean;
+  checked?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -566,13 +568,10 @@ function collectStyleRules(rule: CssRule, ctx: CollectContext): void {
       break;
     }
     case 'layer-order': {
-      // @layer a, b, c; — declares layer order (names listed first = lowest priority).
-      for (let i = rule.names.length - 1; i >= 0; i--) {
-        const name = rule.names[i]!;
-        if (name && !ctx.layerOrder.includes(name)) {
-          // Insert at beginning so first-declared = lowest index
-          ctx.layerOrder.unshift(name);
-        }
+      // @layer a, b, c; — layers rank by first declaration, earliest lowest. They were unshifted,
+      // which put names declared after any earlier layer below it.
+      for (const name of rule.names) {
+        if (name && !ctx.layerOrder.includes(name)) ctx.layerOrder.push(name);
       }
       break;
     }
@@ -1515,13 +1514,11 @@ export function computeCascade(
     // Unlayered (-1) beats layered (>=0) — unlayered sorts AFTER layered
     // so it overrides when iterating ascending.
     if (a.layerIndex !== b.layerIndex) {
-      // Both unlayered: compare normally
-      if (a.layerIndex === -1 && b.layerIndex === -1) return 0;
-      // One unlayered: it wins (sorts later = higher priority)
-      if (a.layerIndex === -1) return 1;
-      if (b.layerIndex === -1) return -1;
-      // Both layered: higher layer index = declared later = higher priority
-      return a.layerIndex - b.layerIndex;
+      // Normal: unlayered beats layered, later layers beat earlier. !important reverses both
+      // (CSS Cascade 5 §6.4): an early layer's !important wins.
+      const rank = (e: CascadeEntry): number => (e.layerIndex === -1 ? Infinity : e.layerIndex);
+      const d = rank(a) - rank(b);
+      return a.important ? -d : d;
     }
     if (a.specificity !== b.specificity) return a.specificity - b.specificity;
     if (a.sourceOrder !== b.sourceOrder) return a.sourceOrder - b.sourceOrder;

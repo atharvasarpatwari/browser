@@ -30,6 +30,10 @@ export interface SelectableElement {
   readonly attributes: ReadonlyMap<string, string>;
   readonly parent: SelectableElement | null;
   readonly children: readonly SelectableElement[];
+  /** Has a text child (children lists only elements): `:empty` needs it. */
+  readonly hasText?: boolean;
+  /** A checkbox/radio's live checked state (a tap changes it, not the attribute). */
+  readonly checked?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,11 +216,35 @@ function matchesPseudoClass(element: SelectableElement, pseudo: CssPseudoClassSe
     case 'where':
       return matchesSelectorList(element, pseudo.selectors);
     case 'has':
-      return matchesHasPseudoClass(element, pseudo.selectors);
+      return matchesHasPseudoClass(element, pseudo.selectors, pseudo.relative);
     default:
       return false;
   }
 }
+
+const FORM_CONTROLS = new Set(['button', 'input', 'select', 'textarea', 'optgroup', 'option', 'fieldset']);
+const isFormControl = (el: SelectableElement): boolean => FORM_CONTROLS.has(el.tagName.toLowerCase());
+
+/** HTML §4.16.3 disabled: its own attribute, or inside a disabled fieldset. */
+function isDisabled(el: SelectableElement): boolean {
+  if (!isFormControl(el)) return false;
+  if (el.attributes.has('disabled')) return true;
+  for (let p = el.parent; p; p = p.parent) {
+    if (p.tagName.toLowerCase() === 'fieldset' && p.attributes.has('disabled')) return true;
+  }
+  return false;
+}
+
+function isChecked(el: SelectableElement): boolean {
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'option') return el.attributes.has('selected');
+  if (tag !== 'input') return false;
+  const type = (el.attributes.get('type') ?? '').toLowerCase();
+  if (type !== 'checkbox' && type !== 'radio') return false;
+  return el.checked ?? el.attributes.has('checked');
+}
+
+const isFormField = (el: SelectableElement): boolean => ['input', 'select', 'textarea'].includes(el.tagName.toLowerCase());
 
 function matchesDynamicPseudoClass(element: SelectableElement, name: string): boolean {
   // In a server-side/headless context, these states don't apply.
@@ -228,11 +256,13 @@ function matchesDynamicPseudoClass(element: SelectableElement, name: string): bo
     case 'visited':  return false;
     case 'link':     return true;  // :link matches unvisited links
     case 'any-link': return true;  // :any-link matches links
-    case 'enabled':  return true;  // Most elements are enabled by default
-    case 'disabled': return false;
-    case 'checked':  return false;
-    case 'required': return false;
-    case 'optional': return true;
+    // Form states from the element (they were constant: nothing was ever :disabled, :checked or
+    // :required, so `input:checked + label` toggles and disabled-button styles never applied).
+    case 'enabled':  return isFormControl(element) && !isDisabled(element);
+    case 'disabled': return isDisabled(element);
+    case 'checked':  return isChecked(element);
+    case 'required': return isFormField(element) && element.attributes.has('required');
+    case 'optional': return isFormField(element) && !element.attributes.has('required');
     case 'read-only': {
       const readOnly = element.attributes.get('contenteditable');
       return readOnly === 'false' || readOnly === undefined;
@@ -257,13 +287,21 @@ function matchesDynamicPseudoClass(element: SelectableElement, name: string): bo
       return element.parent === null;
     }
     case 'empty': {
-      return element.children.length === 0 && !hasTextContent(element);
+      return element.children.length === 0 && !element.hasText;
     }
     case 'blank': {
-      return element.children.length === 0 && !hasTextContent(element);
+      return element.children.length === 0 && !element.hasText;
     }
     case 'focus-within': return false;
     case 'focus-visible': return false;
+    // The parser files these argument-less structural ones as dynamic.
+    case 'only-child':
+    case 'only-of-type':
+    case 'first-child':
+    case 'last-child':
+    case 'first-of-type':
+    case 'last-of-type':
+      return matchesStructuralPseudoClass(element, name, null);
     default: return false;
   }
 }
@@ -281,20 +319,33 @@ function matchesStructuralPseudoClass(element: SelectableElement, name: string, 
     case 'last-child':   return idx === siblings.length - 1;
     case 'first-of-type': return typeIdx === 0;
     case 'last-of-type':  return typeIdx === sameTypeSiblings.length - 1;
+    case 'only-child':    return siblings.length === 1 || !element.parent;
+    case 'only-of-type':  return sameTypeSiblings.length === 1 || !element.parent;
 
-    case 'nth-child': {
-      if (!value) return false;
-      const anb = parseAnB(value);
-      if (!anb) return false;
-      const pos = idx + 1; // 1-based
-      return matchesAnB(anb, pos);
-    }
+    case 'nth-child':
     case 'nth-last-child': {
       if (!value) return false;
-      const anb = parseAnB(value);
+      // `An+B of S` (Selectors 4 §14.4) counts only the siblings matching S.
+      const of = /^(.*?)\s+of\s+(.+)$/i.exec(value.trim());
+      const anb = parseAnB(of ? of[1]! : value);
       if (!anb) return false;
-      const pos = siblings.length - idx; // 1-based from end
-      return matchesAnB(anb, pos);
+      let pool = siblings;
+      if (of) {
+        const filter = parseSelectorListCached(of[2]!);
+        if (!filter || !matchesSelectorList(element, filter)) return false;
+        pool = siblings.filter((s) => matchesSelectorList(s, filter));
+      }
+      const at = pool.indexOf(element);
+      return matchesAnB(anb, name === 'nth-child' ? at + 1 : pool.length - at);
+    }
+    case 'lang': {
+      // :lang(fr) matches the nearest lang attribute "fr" or "fr-…" (case-insensitive).
+      if (!value) return false;
+      let lang: string | undefined;
+      for (let n: SelectableElement | null = element; n && lang === undefined; n = n.parent) lang = n.attributes.get('lang');
+      const want = value.trim().replace(/^["']|["']$/g, '').toLowerCase();
+      const have = (lang ?? '').toLowerCase();
+      return have === want || have.startsWith(want + '-');
     }
     case 'nth-of-type': {
       if (!value) return false;
@@ -326,16 +377,26 @@ function matchesStructuralPseudoClass(element: SelectableElement, name: string, 
     }
 
     case 'empty': {
-      return element.children.length === 0 && !hasTextContent(element);
+      return element.children.length === 0 && !element.hasText;
     }
 
     default: return false;
   }
 }
 
-function matchesHasPseudoClass(element: SelectableElement, selectors: readonly CssSelector[]): boolean {
-  // :has() checks if any descendant matches the selector
-  return hasDescendantMatching(element, selectors);
+function matchesHasPseudoClass(element: SelectableElement, selectors: readonly CssSelector[], relative?: readonly CssCombinator[]): boolean {
+  // Each relative selector is anchored by its combinator: `> x` a child, `+ x` the next sibling,
+  // `~ x` a later sibling, else any descendant.
+  const siblings = element.parent ? element.parent.children : [];
+  const idx = siblings.indexOf(element);
+  return selectors.some((sel, i) => {
+    switch (relative?.[i] ?? ' ') {
+      case '>': return element.children.some((c) => matchesSelector(c, sel));
+      case '+': return idx >= 0 && idx + 1 < siblings.length && matchesSelector(siblings[idx + 1]!, sel);
+      case '~': return idx >= 0 && siblings.slice(idx + 1).some((s) => matchesSelector(s, sel));
+      default:  return hasDescendantMatching(element, [sel]);
+    }
+  });
 }
 
 function hasDescendantMatching(element: SelectableElement, selectors: readonly CssSelector[]): boolean {
@@ -371,9 +432,11 @@ function parseAnB(value: string): AnB | null {
   }
 
   let a = 0;
-  if (match[1] !== undefined && match[1] !== '' && match[1] !== '+') {
+  if (match[1] === '-') {
+    a = -1; // -n+3: parseInt('-') was NaN, so :nth-child(-n+3) ("the first three") never matched
+  } else if (match[1] !== undefined && match[1] !== '' && match[1] !== '+') {
     a = parseInt(match[1], 10);
-  } else if (match[1] === '' || match[1] === '+') {
+  } else if (match[1] === '' || match[1] === '+' || match[1] === undefined) {
     a = 1;
   }
 
@@ -434,6 +497,18 @@ export function querySelectorAll(root: SelectableElement, selector: string): Sel
  * Parse a CSS selector string into CssSelector[].
  * Delegates to the parser module's parseSelector.
  */
+const selectorListCache = new Map<string, CssSelector[] | null>();
+
+/** A selector list from pseudo-class arguments (`nth-child(2 of .x, .y)`), parsed once. */
+function parseSelectorListCached(text: string): CssSelector[] | null {
+  if (!selectorListCache.has(text)) {
+    const parser = new CssParser();
+    const list = text.split(',').map((s) => parser.parseSelector(s.trim())).filter((s): s is CssSelector => !!s);
+    selectorListCache.set(text, list.length > 0 ? list : null);
+  }
+  return selectorListCache.get(text)!;
+}
+
 function parseSelectorString(str: string): CssSelector[] | null {
   try {
     const parser = new CssParser();
@@ -468,8 +543,4 @@ function hasValue(element: SelectableElement): boolean {
   return value !== undefined && value.length > 0;
 }
 
-function hasTextContent(element: SelectableElement): boolean {
-  // Check if element has any text-like children (in parse tree, text nodes are separate)
-  // For our purposes, we check if the element has children with text-like properties
-  return false;
-}
+

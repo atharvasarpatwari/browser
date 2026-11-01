@@ -225,6 +225,7 @@ interface IDomTree extends IDisposable {
   clearMutations(): void;
   processMutations(): void;
   markDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void;
+  markStyleDirtyFrom?(el: DomElement): void;
   markSubtreeDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void;
   clearDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void;
   clearSubtreeDirty(node: DomNode, kind: 'style' | 'layout' | 'paint'): void;
@@ -456,7 +457,8 @@ class DomTree implements IDomTree {
    * (`.open .menu`) and its later siblings (`+`, `~`). Nothing marked them: after the first frame,
    * `el.style.x = …`, classList toggles and theme switches never changed what was drawn.
    */
-  private markStyleDirtyFrom(el: DomElement): void {
+  /** Restyle `el`, its subtree and later siblings (descendant, `+` and `~` selectors may change). */
+  markStyleDirtyFrom(el: DomElement): void {
     const mark = (n: DomNode): void => {
       const stack: DomNode[] = [n];
       while (stack.length > 0) {

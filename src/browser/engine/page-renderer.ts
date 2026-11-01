@@ -29,7 +29,7 @@
 
 import type { IDisposable } from '../../app/dependency-container';
 import type { IResourceLoader } from '../networking/resource-loader';
-import type { IDomTree, DomNode, DomElement, DomDocument, UsedStyle } from '../rendering/dom-tree';
+import type { IDomTree, DomNode, DomElement, DomDocument, DomTextNode, UsedStyle } from '../rendering/dom-tree';
 import type { ICssParser, CssRule } from '../rendering/css-parser';
 import type { ILayoutEngine } from '../rendering/layout-engine';
 import type { IPaintEngine } from '../rendering/paint-engine';
@@ -124,6 +124,14 @@ function applyDarkCanvasText(root: Map<string, string>): void {
   const scheme = (root.get('color-scheme') ?? '').toLowerCase();
   const dark = /\bdark\b/.test(scheme) && getPreferredColorScheme() === 'dark';
   root.set('color', dark ? '#ffffff' : '#000000');
+}
+
+/** What selectors need beyond tag and attributes: text children (:empty), checked state (:checked). */
+function selectorFacts(el: DomElement): { hasText: boolean; checked: boolean | undefined } {
+  return {
+    hasText: el.children.some((c) => c.nodeType === 'text' && ((c as DomTextNode).text ?? '').length > 0),
+    checked: el.formChecked,
+  };
 }
 
 class PageRenderer implements IPageRenderer, IDisposable {
@@ -595,6 +603,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
         attributes: node.attributes,
         parent,
         children: [],
+        ...selectorFacts(node),
       };
       nodes.set(node, styleable);
       styleable.children = node.children
@@ -798,6 +807,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
     let order = 0;
     for (const rule of rules) {
       if (rule.selector === '__external__') continue;
+      if (rule.selector === '__layer_order__') {
+        css5Rules.push({ type: 'layer-order', names: rule.layerNames ?? [] });
+        continue;
+      }
 
       // @keyframes rules (selector === '') are carried through the legacy
       // CssRule[] pipe so the animator can resolve them at runtime.
@@ -826,7 +839,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
         declarations: Array.from(rule.declarations.entries()).map(([prop, value]) => ({
           property: prop,
           value,
-          important: false,
+          // `!important` was hard-coded false, so no stylesheet !important ever beat anything.
+          important: rule.important?.has(prop) ?? false,
         })),
         specificity: { id: rule.specificity.id, a: rule.specificity.class, b: rule.specificity.tag },
         sourceOrder: order++,
@@ -837,6 +851,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       for (const mediaQueries of [...(rule.media ?? [])].reverse()) {
         wrapped = { type: 'media', mediaQueries, rules: [wrapped] };
       }
+      if (rule.layer) wrapped = { type: 'layer', names: [rule.layer], rules: [wrapped] };
       css5Rules.push(wrapped);
     }
 
@@ -866,6 +881,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
         attributes: el.attributes,
         parent: parentStyleable,
         children: childStyleables,
+        ...selectorFacts(el),
       };
 
       // Fix children's parent pointers to point to this node.
@@ -1132,6 +1148,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
   /** Redraw one element whose look changed outside layout (a form control's checked state). */
   repaintElement(el: DomElement): void {
+    // A control's state changed (a tapped checkbox): `:checked + label` rules must restyle too.
+    this.deps.domTree.markStyleDirtyFrom?.(el);
     this.reflowController?.invalidatePaint(el);
     this.requestReflow();
   }

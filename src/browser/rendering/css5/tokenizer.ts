@@ -215,7 +215,7 @@ export class CssTokenizer {
     this.advance(); // #
 
     let value = '';
-    while (this.pos < this.input.length && this.isIdentChar(this.input[this.pos]!)) {
+    while (this.pos < this.input.length && (this.isIdentChar(this.input[this.pos]!) || this.isEscapeAt(this.pos))) {
       if (this.input[this.pos] === '\\') {
         this.advance();
         value += this.consumeEscaped();
@@ -293,7 +293,7 @@ export class CssTokenizer {
       }
     }
 
-    while (this.pos < this.input.length && this.isIdentChar(this.input[this.pos]!)) {
+    while (this.pos < this.input.length && (this.isIdentChar(this.input[this.pos]!) || this.isEscapeAt(this.pos))) {
       if (this.input[this.pos] === '\\') {
         this.advance();
         value += this.consumeEscaped();
@@ -303,6 +303,15 @@ export class CssTokenizer {
     }
 
     return value;
+  }
+
+  /**
+   * A valid escape at `pos` (CSS Syntax §4.3.8): a backslash not followed by a newline. Escapes
+   * were only read at the start of a name, so Tailwind's `.md\:flex` and `.w-1\/2` ended at the
+   * backslash: class `md`, then a bogus `:flex` — the classes never matched anything.
+   */
+  private isEscapeAt(pos: number): boolean {
+    return this.input[pos] === '\\' && pos + 1 < this.input.length && this.input[pos + 1] !== '\n';
   }
 
   private consumeNumberOrDimension(): void {

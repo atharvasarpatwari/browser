@@ -38,6 +38,12 @@ interface CssRule {
    * Without it the legacy pipe dropped every @media block, so responsive styles never applied.
    */
   readonly media?: readonly (readonly CssMediaQuery[])[];
+  /** Properties declared `!important`. The map above holds values only, so importance was lost. */
+  readonly important?: ReadonlySet<string>;
+  /** The cascade layer the rule sits in (`a.b` when nested); absent when unlayered. */
+  readonly layer?: string;
+  /** On a `__layer_order__` marker: the names an `@layer a, b;` statement declares, in order. */
+  readonly layerNames?: readonly string[];
 }
 
 interface CssKeyframeDecl {
@@ -216,21 +222,34 @@ class CssParser implements ICssParser {
     order: number,
     sourceUrl: string | null,
     media: readonly (readonly CssMediaQuery[])[] = [],
+    layer?: string,
   ): CssRule[] {
     if (rule.type === 'media') {
-      return rule.rules.flatMap((inner) => this.convertRule(inner, order, sourceUrl, [...media, rule.mediaQueries]));
+      return rule.rules.flatMap((inner) => this.convertRule(inner, order, sourceUrl, [...media, rule.mediaQueries], layer));
     }
     // @supports is static (it doesn't depend on the viewport), so it's settled here.
     if (rule.type === 'supports') {
       return evaluateSupportsCondition(rule.condition)
-        ? rule.rules.flatMap((inner) => this.convertRule(inner, order, sourceUrl, media))
+        ? rule.rules.flatMap((inner) => this.convertRule(inner, order, sourceUrl, media, layer))
         : [];
     }
-    // ponytail: @layer contents are flattened in source order, so layer precedence is lost
-    // (layered rules should lose to unlayered ones). Fine for base/components/utilities stacks
-    // declared in order; carry the layer name on CssRule if a site needs the real ordering.
+    // Cascade layers travel on each rule (and `@layer a, b;` as a marker) so the cascade can rank
+    // them: they were flattened, so layered rules beat unlayered ones by specificity (Tailwind v4's
+    // utilities, every layer of a framework vs. the page's own CSS).
     if (rule.type === 'layer') {
-      return rule.rules.flatMap((inner) => this.convertRule(inner, order, sourceUrl, media));
+      const names = rule.names.length > 0 ? rule.names : [`__anonymous_layer_${++anonymousLayers}`];
+      const full = layer ? `${layer}.${names[0]}` : names[0]!;
+      return rule.rules.flatMap((inner) => this.convertRule(inner, order, sourceUrl, media, full));
+    }
+    if (rule.type === 'layer-order') {
+      return [{
+        selector: '__layer_order__',
+        specificity: { id: 0, class: 0, tag: 0 },
+        declarations: new Map(),
+        source: 'style-tag' as const,
+        sourceUrl,
+        layerNames: rule.names.map((n) => (layer ? `${layer}.${n}` : n)),
+      }];
     }
     if (rule.type === 'keyframes') {
       return [{
@@ -253,8 +272,11 @@ class CssParser implements ICssParser {
     return rule.selectors.map((selector) => {
       const selectorStr = selectorToString(selector);
       const declMap = new Map<string, string>();
+      const important = new Set<string>();
       for (const decl of rule.declarations) {
         declMap.set(decl.property, decl.value);
+        if (decl.important) important.add(decl.property);
+        else important.delete(decl.property);
       }
 
       return {
@@ -264,6 +286,8 @@ class CssParser implements ICssParser {
         source: 'style-tag' as const,
         sourceUrl: rule.sourceUrl ?? sourceUrl,
         ...(media.length > 0 ? { media } : {}),
+        ...(important.size > 0 ? { important } : {}),
+        ...(layer ? { layer } : {}),
       };
     });
   }
@@ -281,6 +305,8 @@ class CssParser implements ICssParser {
 // ─────────────────────────────────────────────────────────────────────────────
 // SELECTOR → STRING (for backward compat)
 // ─────────────────────────────────────────────────────────────────────────────
+
+let anonymousLayers = 0;
 
 function selectorToString(selector: CssSelector): string {
   if (selector.type === 'compound') {
@@ -300,6 +326,22 @@ function selectorToString(selector: CssSelector): string {
   }
 }
 
+/**
+ * A class or id name as selector text (CSSOM `CSS.escape`): `md:flex` must be written `md\:flex`.
+ * Names went out raw, so the re-parsed selector read `.md` plus a pseudo-class `:flex`.
+ */
+function escapeIdent(name: string): string {
+  let out = '';
+  for (let i = 0; i < name.length; i++) {
+    const ch = name[i]!;
+    const code = ch.charCodeAt(0);
+    if (/[0-9]/.test(ch) && (i === 0 || (i === 1 && name[0] === '-'))) out += `\\${code.toString(16)} `;
+    else if (/[a-zA-Z0-9_-]/.test(ch) || code >= 0x80) out += ch;
+    else out += `\\${ch}`;
+  }
+  return out;
+}
+
 function compoundToString(sel: CssCompoundSelector): string {
   let result = '';
 
@@ -309,8 +351,8 @@ function compoundToString(sel: CssCompoundSelector): string {
     result += '*';
   }
 
-  if (sel.id) result += `#${sel.id}`;
-  for (const cls of sel.classes) result += `.${cls}`;
+  if (sel.id) result += `#${escapeIdent(sel.id)}`;
+  for (const cls of sel.classes) result += `.${escapeIdent(cls)}`;
 
   for (const attr of sel.attributes) {
     if (attr.operator) {
@@ -331,7 +373,10 @@ function compoundToString(sel: CssCompoundSelector): string {
       const inner = pc.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
       result += `:is(${inner})`;
     } else if (pc.type === 'has') {
-      const inner = pc.selectors.map((s: CssSelector) => selectorToString(s)).join(', ');
+      const inner = pc.selectors.map((s: CssSelector, i: number) => {
+        const comb = pc.relative?.[i] ?? ' ';
+        return (comb === ' ' ? '' : `${comb} `) + selectorToString(s);
+      }).join(', ');
       result += `:has(${inner})`;
     } else if (pc.type === 'structural') {
       result += `:${pc.name}`;

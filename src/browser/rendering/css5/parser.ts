@@ -460,7 +460,7 @@ export class CssParser {
           if (name === 'not') return { type: 'negation', selectors };
           if (name === 'is' || name === 'any' || name === 'matches') return { type: 'is', selectors };
           if (name === 'where') return { type: 'where', selectors };
-          if (name === 'has') return { type: 'has', selectors };
+          if (name === 'has') return parseRelativeSelectorList(arg);
         }
         return { type: 'structural', name, value: arg };
       }
@@ -501,7 +501,7 @@ export class CssParser {
       if (name === 'not') return { type: 'negation', selectors };
       if (name === 'is' || name === 'any' || name === 'matches') return { type: 'is', selectors };
       if (name === 'where') return { type: 'where', selectors };
-      if (name === 'has') return { type: 'has', selectors };
+      if (name === 'has') return parseRelativeSelectorList(arg);
     }
 
     return { type: 'structural', name, value: arg };
@@ -1714,6 +1714,50 @@ interface SelectorToken {
   value: string;
 }
 
+/**
+ * `:has()`'s argument: relative selectors, each led by an optional `>`, `+` or `~` (Selectors 4
+ * §4.5). The leading combinator was dropped, so `:has(+ p)` and `:has(~ .x)` looked for
+ * descendants instead of siblings.
+ */
+function parseRelativeSelectorList(arg: string): CssPseudoClassSelector {
+  const selectors: CssSelector[] = [];
+  const relative: CssCombinator[] = [];
+  for (const part of splitTopLevelCommas(arg)) {
+    let text = part.trim();
+    let combinator: CssCombinator = ' ';
+    if (/^[>+~]/.test(text)) { combinator = text[0] as CssCombinator; text = text.slice(1).trim(); }
+    const sel = new CssParser().parseSelector(text);
+    if (sel) { selectors.push(sel); relative.push(combinator); }
+  }
+  return { type: 'has', selectors, relative };
+}
+
+/** An identifier at `i` in selector text, with CSS escapes decoded (`md\:flex` → `md:flex`). */
+function readSelectorIdent(str: string, i: number): { name: string; end: number } {
+  let name = '';
+  while (i < str.length) {
+    const ch = str[i]!;
+    if (ch === '\\' && i + 1 < str.length && str[i + 1] !== '\n') {
+      const hex = /^[0-9a-fA-F]{1,6}/.exec(str.slice(i + 1))?.[0];
+      if (hex) {
+        const cp = parseInt(hex, 16);
+        name += cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) ? '\ufffd' : String.fromCodePoint(cp);
+        i += 1 + hex.length;
+        if (i < str.length && /[ \t\n]/.test(str[i]!)) i++; // one whitespace ends a hex escape
+      } else {
+        name += str[i + 1]!;
+        i += 2;
+      }
+    } else if (isIdentChar(ch)) {
+      name += ch;
+      i++;
+    } else {
+      break;
+    }
+  }
+  return { name, end: i };
+}
+
 /** Splits a selector-list argument at commas outside (), [] and strings. */
 function splitTopLevelCommas(str: string): string[] {
   const parts: string[] = [];
@@ -1752,17 +1796,15 @@ function tokenizeSelector(str: string): SelectorToken[] {
 
     if (ch === '*') { tokens.push({ type: 'star', value: '*' }); i++; continue; }
     if (ch === '#') {
-      i++;
-      let name = '';
-      while (i < str.length && isIdentChar(str[i]!)) { name += str[i]!; i++; }
-      tokens.push({ type: 'hash', value: name });
+      const id = readSelectorIdent(str, i + 1);
+      tokens.push({ type: 'hash', value: id.name });
+      i = id.end;
       continue;
     }
     if (ch === '.') {
-      i++;
-      let name = '';
-      while (i < str.length && isIdentChar(str[i]!)) { name += str[i]!; i++; }
-      tokens.push({ type: 'class', value: name });
+      const cls = readSelectorIdent(str, i + 1);
+      tokens.push({ type: 'class', value: cls.name });
+      i = cls.end;
       continue;
     }
     if (ch === '[') {
@@ -1847,10 +1889,11 @@ function tokenizeSelector(str: string): SelectorToken[] {
     }
 
     // Ident (tag name)
-    if (isIdentChar(ch) || (ch === '-' && i + 1 < str.length && isIdentChar(str[i + 1]!))) {
-      let name = '';
-      while (i < str.length && isIdentChar(str[i]!)) { name += str[i]!; i++; }
-      tokens.push({ type: 'ident', value: name });
+    if (isIdentChar(ch) || ch === '\\' || (ch === '-' && i + 1 < str.length && isIdentChar(str[i + 1]!))) {
+      const ident = readSelectorIdent(str, i);
+      if (ident.end === i) { i++; continue; }
+      tokens.push({ type: 'ident', value: ident.name });
+      i = ident.end;
       continue;
     }
 
@@ -1960,9 +2003,11 @@ function buildCompoundFromTokens(tokens: SelectorToken[], start: number, end: nu
               const innerSelector = buildSelectorFromTokens(innerTokens, 0, innerTokens.length);
               if (innerSelector) innerSelectors.push(innerSelector);
             }
-            if (innerSelectors.length > 0) {
+            if (pseudoName === 'has') {
+              const has = parseRelativeSelectorList(arg);
+              if (has.type === 'has' && has.selectors.length > 0) pseudoClasses.push(has);
+            } else if (innerSelectors.length > 0) {
               if (pseudoName === 'not') pseudoClasses.push({ type: 'negation', selectors: innerSelectors });
-              else if (pseudoName === 'has') pseudoClasses.push({ type: 'has', selectors: innerSelectors });
               else if (pseudoName === 'where') pseudoClasses.push({ type: 'where', selectors: innerSelectors });
               else pseudoClasses.push({ type: 'is', selectors: innerSelectors });
             }
