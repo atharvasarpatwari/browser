@@ -1403,6 +1403,20 @@ class LayoutEngine implements ILayoutEngine {
     const rawCross = style.get(crossSizeProp);
     if (rawCross && rawCross !== 'auto') {
       availableCrossSize = resolve(crossSizeProp, '0');
+    } else if (!isHorizontal) {
+      availableCrossSize = availableWidth; // a column's cross size is its (definite) width
+    }
+
+    // A column's main size is its definite content-box height, else the sum of its items (set
+    // below). It was the container's width, so every column item was as tall as the page was wide.
+    let columnMainSize: number | null = null;
+    const rawHeight = style.get('height');
+    if (!isHorizontal && rawHeight && rawHeight !== 'auto' && !rawHeight.includes('%')) {
+      columnMainSize = resolve('height', '0');
+      if ((style.get('box-sizing') ?? 'content-box') === 'border-box') {
+        columnMainSize = Math.max(0, columnMainSize - resolve('padding-top', style.get('padding') ?? '0') - resolve('padding-bottom', style.get('padding') ?? '0')
+          - this.parseBorderWidth(style.get('border-top-width') ?? '0') - this.parseBorderWidth(style.get('border-bottom-width') ?? '0'));
+      }
     }
 
     // ── Collect flex items ───────────────────────────────────────────────
@@ -1484,6 +1498,11 @@ class LayoutEngine implements ILayoutEngine {
       if (autoBasis && isHorizontal && item.flexBasis === 0) {
         item.flexBasis = this.measureContentWidth(childEl, availableWidth, this.resolveFontSize(childStyle, fontSize), domTree);
       }
+      // In a column it is the item's content height, laid out at the container's width.
+      if (autoBasis && !isHorizontal) {
+        this.measureLayout(childEl, () => this.layoutNode(childEl, 0, 0, availableWidth, fontSize, domTree));
+        item.flexBasis = this.layoutBoxes.get(childEl.domId)?.height ?? 0;
+      }
 
       // Check if item has explicit cross size
       const crossSizePropItem = isHorizontal ? 'height' : 'width';
@@ -1496,13 +1515,17 @@ class LayoutEngine implements ILayoutEngine {
       flexItems.push(item);
     }
 
-    if (flexItems.length === 0) return contentY;
+    if (flexItems.length === 0) return isHorizontal ? contentY : contentY + (columnMainSize ?? 0);
+
+    if (!isHorizontal && columnMainSize === null) {
+      columnMainSize = flexItems.reduce((s, it) => s + it.flexBasis + it.marginTop + it.marginBottom, 0) + (flexItems.length - 1) * mainAxisGap;
+    }
 
     // ── Create flex context and resolve main sizes ──────────────────────
     const flexCtx = new FlexFormattingContext({
       direction, wrap, justifyContent, alignItems, alignContent,
       mainAxisGap, crossAxisGap,
-      availableMainSize: availableWidth,
+      availableMainSize: isHorizontal ? availableWidth : columnMainSize!,
       availableCrossSize,
     });
 
@@ -1529,13 +1552,26 @@ class LayoutEngine implements ILayoutEngine {
         borderBoxY = contentY + item.mainOffset;
       }
 
-      const itemAvailWidth = isHorizontal ? item.mainSize : availableWidth;
+      let itemAvailWidth = isHorizontal ? item.mainSize : availableWidth;
+      // A column item that doesn't stretch (align-items: center, `margin: 0 auto`) is as wide as its
+      // content, not the column.
+      const itemStyle = item.element.computedStyle ?? new Map<string, string>();
+      const align = item.alignSelf === 'auto' ? alignItems : item.alignSelf;
+      if (!isHorizontal && !item.hasDefiniteCrossSize && (align !== 'stretch' || item.autoMargins?.left || item.autoMargins?.right)) {
+        const frame = item.paddingLeft + item.paddingRight + item.borderLeft + item.borderRight;
+        itemAvailWidth = Math.min(availableWidth, this.measureContentWidth(item.element, Math.max(0, availableWidth - frame - item.marginLeft - item.marginRight),
+          this.resolveFontSize(itemStyle, fontSize), domTree) + frame + item.marginLeft + item.marginRight);
+      }
 
-      // Temporarily override the main-axis size so layoutNode uses the
-      // flex-computed mainSize instead of the element's explicit width/height.
+      // Override the main-axis size for this layout so layoutNode uses the flex-computed mainSize
+      // instead of the element's explicit width/height. Restored afterwards: it used to stay, so a
+      // re-layout at another width kept the old size as if it were authored.
       const origStyle = item.element.computedStyle;
+      const authored = origStyle?.get(mainSizeProp);
       if (origStyle && item.mainSize > 0) {
-        origStyle.set(mainSizeProp, `${item.mainSize}px`);
+        const contentBox = !isHorizontal && (origStyle.get('box-sizing') ?? 'content-box') === 'content-box';
+        const frame = contentBox ? item.paddingTop + item.paddingBottom + item.borderTop + item.borderBottom : 0;
+        origStyle.set(mainSizeProp, `${Math.max(0, item.mainSize - frame)}px`);
       }
 
       this.layoutNode(
@@ -1546,6 +1582,9 @@ class LayoutEngine implements ILayoutEngine {
         fontSize,
         domTree,
       );
+      if (origStyle && item.mainSize > 0) {
+        if (authored === undefined) origStyle.delete(mainSizeProp); else origStyle.set(mainSizeProp, authored);
+      }
     }
 
     // ── Update cross sizes from actual layout ───────────────────────────
@@ -1592,7 +1631,8 @@ class LayoutEngine implements ILayoutEngine {
           ...box,
           x: finalX,
           y: finalY,
-          height: item.hasDefiniteCrossSize ? box.height : item.crossSize,
+          // A column's height is its main size, which layoutNode already applied.
+          height: item.hasDefiniteCrossSize || !isHorizontal ? box.height : item.crossSize,
         };
         this.layoutBoxes.set(item.element.domId, newBox);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1606,7 +1646,7 @@ class LayoutEngine implements ILayoutEngine {
       }
     }
 
-    return contentY + totalCrossSize;
+    return contentY + (isHorizontal ? totalCrossSize : columnMainSize!);
   }
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -298,7 +298,10 @@ export class Parser {
       case TokenType.Instanceof:
       case TokenType.In: // had a precedence but no case here: `x in o` looped forever (froze iana.org)
         this.advance();
-        const right = this.parseExpression(prec);
+        // Left-associative: the right operand binds tighter, so `10 - 3 - 2` is (10 - 3) - 2. It was
+        // parsed at the same precedence, which grouped right (10 - (3 - 2) = 9) and broke page
+        // arithmetic like `a + b - c - d`. Only `**` is right-associative.
+        const right = this.parseExpression(tok.type === TokenType.StarStar ? prec : prec + 1);
         return { type: 'BinaryExpression', operator: tok.value, left, right, loc: { line: tok.line, column: tok.column } };
 
       // Logical operators
@@ -306,7 +309,7 @@ export class Parser {
       case TokenType.PipePipe:
       case TokenType.QuestionQuestion:
         this.advance();
-        const logRight = this.parseExpression(prec);
+        const logRight = this.parseExpression(prec + 1);
         return { type: 'LogicalExpression', operator: tok.value, left, right: logRight, loc: { line: tok.line, column: tok.column } };
 
       // Assignment operators
@@ -324,6 +327,8 @@ export class Parser {
       case TokenType.GreaterGreaterAssign:
       case TokenType.GreaterGreaterGreaterAssign:
       case TokenType.QuestionQuestionAssign:
+      case TokenType.PipePipeAssign:
+      case TokenType.AmpersandAmpersandAssign:
         this.advance();
         // Right-associative (a = b = c) but stops at commas: `prec - 1` let the comma operator in,
         // so minified `a=1,b=2` parsed as a=(1,b=2) and `for(i=0,j=5;…)` set i to 5.
@@ -1355,7 +1360,9 @@ export class Parser {
       case TokenType.LessLessAssign:
       case TokenType.GreaterGreaterAssign:
       case TokenType.GreaterGreaterGreaterAssign:
-      case TokenType.QuestionQuestionAssign: return 2;
+      case TokenType.QuestionQuestionAssign:
+      case TokenType.PipePipeAssign:
+      case TokenType.AmpersandAmpersandAssign: return 2;
 
       case TokenType.Question: return 3;
       case TokenType.QuestionQuestion: return 4;

@@ -1,0 +1,58 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nova 1.65-1.72 checks</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:8px;font:14px/18px sans-serif;background:#fff;color:#222}
+h2{font-size:15px;margin:10px 0 4px}
+.t{border:1px solid #ccc;margin:0 0 6px;padding:4px}
+.r{font-weight:bold}
+.box{background:#4a7;color:#fff}
+#summary{position:sticky;top:0;background:#222;color:#fff;padding:6px;font-weight:bold}
+</style></head><body>
+<div id="summary">running...</div>
+
+<h2>1.72 flex column</h2>
+<div class="t"><div id="col" style="display:flex;flex-direction:column;background:#eef"><div id="c1" class="box" style="height:30px">one</div><div id="c2" class="box" style="background:#a47">two</div></div></div>
+<div class="t"><div id="colf" style="display:flex;flex-direction:column;height:120px;background:#eef"><div id="f1" class="box" style="height:30px">head</div><div id="f2" class="box" style="flex:1;background:#a47">fills rest</div></div></div>
+<div class="t"><div id="cc" style="display:flex;flex-direction:column;align-items:center;background:#eef"><div id="cci" class="box">centred</div></div></div>
+<h2>1.72 row-reverse, margin:auto</h2>
+<div class="t"><div id="rr" style="display:flex;flex-direction:row-reverse;background:#eef"><div id="rr1" class="box" style="width:60px">1</div><div id="rr2" class="box" style="width:60px;background:#a47">2</div></div></div>
+<div class="t"><div id="ma" style="display:flex;height:80px;background:#eef"><div id="mai" class="box" style="width:100px;height:20px;margin:auto">centre</div></div></div>
+<h2>1.71 floats, empty inlines</h2>
+<div class="t" style="overflow:hidden"><div id="fr" style="float:right"><ul style="margin:0;padding:0;list-style:none"><li id="l1" style="float:left;padding:0 6px">Domains</li><li id="l2" style="float:left;padding:0 6px">Protocols</li></ul></div></div>
+<div class="t"><p id="p1" style="margin:0;line-height:20px">As of 2026<sup style="display:none">[x]</sup><span></span>, one line</p></div>
+<h2>1.70 tables</h2>
+<div class="t"><table id="tb" style="border-spacing:4px"><colgroup><col style="width:80px"><col></colgroup><tr><td id="td1" style="background:#ddf">a</td><td style="background:#ddf">b</td></tr><tr><td rowspan="2" id="rs" style="background:#fdd">rowspan</td><td>c</td></tr><tr><td id="td3">d</td></tr></table></div>
+<h2>1.69 paint</h2>
+<div class="t" style="position:relative;height:60px"><div id="tr" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:80px;height:30px;background:linear-gradient(90deg,#f00,#00f);outline:2px solid #000"></div></div>
+<h2>1.65-1.68 css, selectors, DOM</h2>
+<div class="t"><div id="bs" style="box-sizing:content-box;width:100px;padding:10px;background:#cfc">content-box</div></div>
+<div class="t"><div class="sm:p-2" id="esc">tailwind escape</div><div id="has"><span class="hit">x</span></div></div>
+<style>.sm\:p-2{color:rgb(0,128,0)} #has:has(.hit){color:rgb(0,0,255)}</style>
+<div class="t"><div id="ib" style="float:left;width:60px;height:40px;background:#fc9"></div><div id="beside">text beside a float wraps around it nicely</div><div style="clear:both"></div></div>
+
+<div id="out"></div>
+<script>
+var res=[];
+function R(id){var e=document.getElementById(id);var r=e.getBoundingClientRect();return {x:Math.round(r.left),y:Math.round(r.top),w:Math.round(r.width),h:Math.round(r.height)};}
+function T(name,fn){var ok=false,info='';try{var v=fn();ok=v===true;if(!ok)info=String(v);}catch(e){info='err '+e;}res.push([name,ok,info]);}
+T('column stacks, auto height',function(){var a=R('c1'),b=R('c2'),c=R('col');return (b.y===a.y+30&&a.h===30&&b.h>=14&&b.h<=24&&c.h===a.h+b.h)||JSON.stringify([a,b,c]);});
+T('column flex:1 fills',function(){var b=R('f2');return b.h===90||JSON.stringify(b);});
+T('column align-items center',function(){var c=R('cc'),i=R('cci');return (i.w<c.w/2&&Math.abs((i.x-c.x)-(c.x+c.w-i.x-i.w))<=1)||JSON.stringify([c,i]);});
+T('row-reverse',function(){var c=R('rr'),a=R('rr1'),b=R('rr2');return (a.x+a.w===c.x+c.w&&b.x+b.w===a.x)||JSON.stringify([c,a,b]);});
+T('margin:auto centres',function(){var c=R('ma'),i=R('mai');return (i.y-c.y===30&&Math.abs((i.x-c.x)-(c.w-100)/2)<=1)||JSON.stringify([c,i]);});
+T('float menu in a row at right',function(){var a=R('l1'),b=R('l2'),f=R('fr');return (a.y===b.y&&b.x>a.x&&a.w<120)||JSON.stringify([a,b,f]);});
+T('empty/hidden inline one line',function(){return R('p1').h===20||JSON.stringify(R('p1'));});
+T('table col width + rowspan',function(){var a=R('td1'),r=R('rs'),d=R('td3');return (a.w===80&&r.h>a.h&&d.x>r.x)||JSON.stringify([a,r,d]);});
+T('translate(-50%,-50%) centre',function(){var t=R('tr'),p=document.getElementById('tr').parentNode.getBoundingClientRect();return Math.abs((t.x+t.w/2)-(p.left+p.width/2))<=1||JSON.stringify(t);});
+T('content-box width',function(){return R('bs').w===120||JSON.stringify(R('bs'));});
+T('escaped class selector',function(){return getComputedStyle(document.getElementById('esc')).color==='rgb(0, 128, 0)'||getComputedStyle(document.getElementById('esc')).color;});
+T(':has()',function(){return getComputedStyle(document.getElementById('has')).color==='rgb(0, 0, 255)'||getComputedStyle(document.getElementById('has')).color;});
+T('offsetWidth',function(){return document.getElementById('bs').offsetWidth===120||document.getElementById('bs').offsetWidth;});
+T('text beside float',function(){var f=R('ib'),t=R('beside');return t.y<f.y+f.h||JSON.stringify([f,t]);});
+var pass=0,html='';for(var i=0;i<res.length;i++){if(res[i][1])pass++;html+='<div class="r" style="color:'+(res[i][1]?'#080':'#c00')+'">'+(res[i][1]?'PASS ':'FAIL ')+res[i][0]+(res[i][1]?'':' '+res[i][2])+'</div>';}
+document.getElementById('out').innerHTML=html;
+document.getElementById('summary').textContent='Nova 1.65-1.72: '+pass+'/'+res.length+' pass';
+document.title='RESULT '+pass+'/'+res.length+' '+res.filter(function(r){return !r[1];}).map(function(r){return r[0]+': '+r[2];}).join(' | ');
+</script>
+</body></html>

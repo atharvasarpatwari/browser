@@ -6,6 +6,7 @@ import { Parser } from './parser';
 import { Interpreter, stringMethods, functionMethod, jsToPlain, plainToJS } from './interpreter';
 import { createDocumentBinding, wrapElement, wrapNode, createEventObject, interfacePrototype, DOM_INTERFACE_NAMES, createFormData } from './dom-bindings';
 import { getPreferredColorScheme } from '../rendering/color-scheme';
+import { parseColor, isParsableColor } from '../rendering/rasterizer';
 import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
 import { EventLoop, bindTimers, bindQueueMicrotask } from './event-loop';
@@ -2178,7 +2179,18 @@ export function createGlobalEnv(
 
     wmethod('getComputedStyle', (_t, a) => {
       const node = (a[0] as { __domNode?: { computedStyle?: Map<string, string> } } | undefined)?.__domNode;
-      const computed = node?.computedStyle ?? new Map<string, string>();
+      const raw = node?.computedStyle ?? new Map<string, string>();
+      // Colours serialise the way browsers report them, `rgb(0, 128, 0)` / `rgba(0, 0, 0, 0)`: the
+      // authored text came back as-is (`green`, `#008000`, `rgb(0,128,0)`), so scripts comparing
+      // against the standard form never matched.
+      const computed = new Map<string, string>();
+      for (const [k, v] of raw) {
+        if (/color$/.test(k) && isParsableColor(v)) {
+          const c = parseColor(v);
+          const r = Math.round(c.r), g = Math.round(c.g), b = Math.round(c.b);
+          computed.set(k, c.a >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${+c.a.toFixed(3)})`);
+        } else computed.set(k, v);
+      }
       const out = createObject(null);
       for (const [k, v] of computed) {
         const d = { value: v, writable: false, enumerable: true, configurable: true };

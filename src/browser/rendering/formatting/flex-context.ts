@@ -56,12 +56,20 @@ export function isRowDirection(dir: FlexDirection): boolean {
   return dir === 'row' || dir === 'row-reverse';
 }
 
+function isReverse(dir: FlexDirection): boolean {
+  return dir === 'row-reverse' || dir === 'column-reverse';
+}
+
+// Main start is the right/bottom edge in the reverse directions: offsets are computed from it and
+// mirrored at the end of computePositions.
 function mainMarginStart(item: FlexItem, dir: FlexDirection): number {
-  return isRowDirection(dir) ? item.marginLeft : item.marginTop;
+  if (isRowDirection(dir)) return isReverse(dir) ? item.marginRight : item.marginLeft;
+  return isReverse(dir) ? item.marginBottom : item.marginTop;
 }
 
 function mainMarginEnd(item: FlexItem, dir: FlexDirection): number {
-  return isRowDirection(dir) ? item.marginRight : item.marginBottom;
+  if (isRowDirection(dir)) return isReverse(dir) ? item.marginLeft : item.marginRight;
+  return isReverse(dir) ? item.marginTop : item.marginBottom;
 }
 
 function crossMarginStart(item: FlexItem, dir: FlexDirection): number {
@@ -124,8 +132,8 @@ export class FlexFormattingContext {
   }
 
   /**
-   * Returns items in the order they appear in flex lines.
-   * For reverse directions, this is reversed DOM order within each line.
+   * Returns items in the order they appear in flex lines (order-modified document order; reverse
+   * directions mirror the offsets instead of reordering).
    */
   getItemsInLineOrder(): FlexItem[] {
     const result: FlexItem[] = [];
@@ -171,14 +179,6 @@ export class FlexFormattingContext {
 
       if (currentLine.items.length > 0) {
         this.lines.push(currentLine);
-      }
-    }
-
-    // Step 3.5: For reverse directions, reverse items within each line
-    // so the first DOM child ends up last visually.
-    if (direction === 'row-reverse' || direction === 'column-reverse') {
-      for (const line of this.lines) {
-        line.items.reverse();
       }
     }
 
@@ -262,8 +262,11 @@ export class FlexFormattingContext {
       // Auto margins take the positive free space before justify-content does (Flexbox §8.1):
       // `margin-left: auto` pushes an item (and those after it) to the end. They were 0.
       const row = isRowDirection(direction);
-      const autoStart = (it: FlexItem): boolean => !!(row ? it.autoMargins?.left : it.autoMargins?.top);
-      const autoEnd = (it: FlexItem): boolean => !!(row ? it.autoMargins?.right : it.autoMargins?.bottom);
+      const rev = isReverse(direction);
+      const autoStart = (it: FlexItem): boolean => !!(row ? (rev ? it.autoMargins?.right : it.autoMargins?.left) : (rev ? it.autoMargins?.bottom : it.autoMargins?.top));
+      const autoEnd = (it: FlexItem): boolean => !!(row ? (rev ? it.autoMargins?.left : it.autoMargins?.right) : (rev ? it.autoMargins?.top : it.autoMargins?.bottom));
+      const crossAutoStart = (it: FlexItem): boolean => !!(row ? it.autoMargins?.top : it.autoMargins?.left);
+      const crossAutoEnd = (it: FlexItem): boolean => !!(row ? it.autoMargins?.bottom : it.autoMargins?.right);
       const autoCount = line.items.reduce((n, it) => n + (autoStart(it) ? 1 : 0) + (autoEnd(it) ? 1 : 0), 0);
       const lineFree = availableMainSize - line.mainSize;
       const perAuto = autoCount > 0 && lineFree > 0 ? lineFree / autoCount : 0;
@@ -278,6 +281,16 @@ export class FlexFormattingContext {
         // Main offset (includes justify-content)
         item.mainOffset = runningMainOffset + mStart;
         runningMainOffset += mStart + item.mainSize + mEnd + gapAfter;
+        if (rev) item.mainOffset = availableMainSize - item.mainOffset - item.mainSize;
+
+        // Auto margins on the cross axis take the line's free cross space, ahead of align-self
+        // (§8.1): `margin: auto` centres an item both ways. They were 0, so it sat at the top.
+        if (crossAutoStart(item) || crossAutoEnd(item)) {
+          const free = Math.max(0, line.crossSize - item.crossSize - crossMarginStart(item, direction) - crossMarginEnd(item, direction));
+          const share = crossAutoStart(item) && crossAutoEnd(item) ? free / 2 : crossAutoStart(item) ? free : 0;
+          item.crossOffset = lineCrossOff + crossMarginStart(item, direction) + share;
+          continue;
+        }
 
         // Cross offset based on align-self (or align-items)
         const effectiveAlign = item.alignSelf === 'auto' ? alignItems : item.alignSelf;

@@ -151,6 +151,9 @@ export class Lexer {
       return this.makeToken(TokenType.GreaterGreaterGreater, '>>>', startLine, startCol);
     }
 
+    // Logical assignment (ES2021): `||=` lexed as `||` then `=`, so `x ||= 5` was a syntax error.
+    if (threeChar === '||=') { this.advance(3); return this.makeToken(TokenType.PipePipeAssign, '||=', startLine, startCol); }
+    if (threeChar === '&&=') { this.advance(3); return this.makeToken(TokenType.AmpersandAmpersandAssign, '&&=', startLine, startCol); }
     if (threeChar === '===') { this.advance(3); return this.makeToken(TokenType.EqualEqualEqual, '===', startLine, startCol); }
     if (threeChar === '!==') { this.advance(3); return this.makeToken(TokenType.BangEqualEqual, '!==', startLine, startCol); }
 
@@ -492,6 +495,8 @@ export class Lexer {
       case TokenType.QuestionDot:
       case TokenType.QuestionQuestion:
       case TokenType.QuestionQuestionAssign:
+      case TokenType.PipePipeAssign:
+      case TokenType.AmpersandAmpersandAssign:
       case TokenType.Colon:
       case TokenType.Comma:
       case TokenType.LParen:

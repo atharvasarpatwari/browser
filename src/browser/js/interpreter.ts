@@ -303,6 +303,16 @@ export function functionMethod(fn: JSFunction, key: string): JSFunction | null {
   return null;
 }
 
+/**
+ * A `{ ... }` block with let/const/class declarations gets its own scope: they were declared in the
+ * enclosing one, so `{ let a = 2; }` overwrote an outer `a`. Blocks without them keep the enclosing
+ * scope, so sloppy-mode function declarations in blocks stay visible outside (Annex B).
+ */
+function blockScope(body: AST.Statement[], env: Environment): Environment {
+  const lexical = body.some((s) => (s.type === 'VariableDeclaration' && s.kind !== 'var') || s.type === 'ClassDeclaration');
+  return lexical ? new Environment(env) : env;
+}
+
 export class Interpreter {
   private globalEnv: Environment;
   private eventLoop?: EventLoop;
@@ -482,7 +492,7 @@ export class Interpreter {
   private exec(stmt: AST.Statement, env: Environment): JSValue | BreakSignal | ContinueSignal | ReturnSignal | ThrowSignal {
     this.checkTimeout();
     switch (stmt.type) {
-      case 'BlockStatement': return this.execBlock(stmt.body, env);
+      case 'BlockStatement': return this.execBlock(stmt.body, blockScope(stmt.body, env));
       case 'ExpressionStatement': return this.evalExpr(stmt.expression, env);
       case 'VariableDeclaration': this.execVarDecl(stmt, env); return undefined;
       case 'FunctionDeclaration': this.execFuncDecl(stmt, env); return undefined;
@@ -988,7 +998,7 @@ export class Interpreter {
     if (!hasSuspend(stmt)) return this.exec(stmt, env);
     this.checkTimeout();
     switch (stmt.type) {
-      case 'BlockStatement': return yield* this.execBlockR(stmt.body, env);
+      case 'BlockStatement': return yield* this.execBlockR(stmt.body, blockScope(stmt.body, env));
       case 'ExpressionStatement': return yield* this.evalR(stmt.expression, env);
       case 'VariableDeclaration': yield* this.execVarDeclR(stmt, env); return undefined;
       case 'ReturnStatement': return { type: 'return', value: stmt.argument ? yield* this.evalR(stmt.argument, env) : undefined } as ReturnSignal;
@@ -1501,6 +1511,8 @@ export class Interpreter {
         case '>>=': newVal = toNumber(current) >> toNumber(right); break;
         case '>>>=': newVal = toNumber(current) >>> toNumber(right); break;
         case '??=': newVal = (current !== null && current !== undefined) ? current : right; break;
+        case '||=': newVal = toBoolean(current) ? current : right; break;
+        case '&&=': newVal = toBoolean(current) ? right : current; break;
         default: newVal = right;
       }
       env.set(name, newVal);
@@ -1589,6 +1601,8 @@ export class Interpreter {
         case '>>=': newVal = toNumber(current) >> toNumber(right); break;
         case '>>>=': newVal = toNumber(current) >>> toNumber(right); break;
         case '??=': newVal = (current !== null && current !== undefined) ? current : right; break;
+        case '||=': newVal = toBoolean(current) ? current : right; break;
+        case '&&=': newVal = toBoolean(current) ? right : current; break;
         default: newVal = right;
       }
       obj.properties.has(key) && obj.properties.get(key)!.setter
