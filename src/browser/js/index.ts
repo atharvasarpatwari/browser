@@ -311,37 +311,58 @@ export function createGlobalEnv(
     }
     return undefined;
   };
-  const jsonStrify = (val: JSValue): string | undefined => {
-    if (val === undefined || typeof val === 'function') return undefined;
-    if (val === null) return 'null';
-    if (typeof val === 'boolean') return val ? 'true' : 'false';
-    if (typeof val === 'number') {
-      if (Object.is(val, -0)) return '0';
-      if (isNaN(val) || !isFinite(val)) return 'null';
-      return String(val);
+  // JSON.stringify(value, replacer, space): JS values are turned into plain ones (toJSON, the replacer
+  // function or key list, enumerable own keys, functions and symbols dropped) and handed to the host's
+  // JSON.stringify for escaping and indentation. Functions used to crash it ("obj.properties is not
+  // iterable"), `space` was ignored and Dates came out as {}.
+  const isCallable = (v: JSValue): v is JSFunction => !!v && typeof v === 'object' && 'closure' in v;
+  const lookup = (o: JSObject, k: string): JSValue => {
+    for (let p: JSObject | null = o, d = 0; p && d < 64; p = p.prototype, d++) {
+      const desc = p.properties?.get(k);
+      if (desc) return desc.getter ? callJSFunction(desc.getter, o, []) : desc.value;
     }
-    if (typeof val === 'string') return `"${val.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')}"`;
-    if (typeof val === 'object') {
-      const obj = val as JSObject;
-      if (obj.type === 'array') {
-        const len = Number(obj.properties.get('length')?.value ?? 0);
-        const elems: string[] = [];
-        for (let i = 0; i < len; i++) {
-          const v = obj.properties.get(String(i))?.value;
-          elems.push(jsonStrify(v) ?? 'null');
-        }
-        return `[${elems.join(',')}]`;
-      }
-      const pairs: string[] = [];
-      for (const [k, desc] of obj.properties) {
-        const v = desc.value;
-        if (v === undefined || typeof v === 'function') continue;
-        pairs.push(`"${k}":${jsonStrify(v) ?? 'null'}`);
-      }
-      return `{${pairs.join(',')}}`;
-    }
-    return toString(val);
+    return undefined;
   };
+  const toPlainJSON = (value: JSValue, replacer: JSValue, allow: Set<string> | null): unknown => {
+    const stack = new Set<JSObject>();
+    const conv = (holder: JSObject, key: string, val: JSValue): unknown => {
+      if (val && typeof val === 'object' && !isCallable(val)) {
+        const toJSON = lookup(val as JSObject, 'toJSON');
+        if (isCallable(toJSON)) val = callJSFunction(toJSON, val, [key]);
+      }
+      if (isCallable(replacer)) val = callJSFunction(replacer, holder, [key, val]);
+      if (val === null || typeof val !== 'object') return val;
+      if (isCallable(val) || (val as JSObjectWithMeta).__type_override === 'symbol') return undefined;
+      const obj = val as JSObject;
+      if (stack.has(obj)) throw new TypeError('Converting circular structure to JSON');
+      stack.add(obj);
+      try {
+        if (obj.type === 'array') {
+          const len = Number(obj.properties.get('length')?.value ?? 0);
+          return Array.from({ length: len }, (_, i) => conv(obj, String(i), obj.properties.get(String(i))?.value));
+        }
+        const out: Record<string, unknown> = {};
+        for (const [k, desc] of obj.properties ?? []) {
+          if (desc.enumerable === false || (allow && !allow.has(k))) continue;
+          out[k] = conv(obj, k, desc.getter ? callJSFunction(desc.getter, obj, []) : desc.value);
+        }
+        return out;
+      } finally {
+        stack.delete(obj);
+      }
+    };
+    const root = createObject(null);
+    root.properties.set('', { value, writable: true, enumerable: true, configurable: true });
+    return conv(root, '', value);
+  };
+  const jsonStrify = (val: JSValue, replacer?: JSValue, space?: JSValue): string | undefined => {
+    const allow = replacer && typeof replacer === 'object' && (replacer as JSObject).type === 'array'
+      ? new Set(getArrayElementsOf(replacer as JSObject).map((k) => toString(k))) : null;
+    const gap = typeof space === 'number' ? Math.min(10, Math.max(0, Math.trunc(space))) : typeof space === 'string' ? space.slice(0, 10) : undefined;
+    return JSON.stringify(toPlainJSON(val, replacer, allow), null, gap);
+  };
+  const getArrayElementsOf = (a: JSObject): JSValue[] =>
+    Array.from({ length: Number(a.properties.get('length')?.value ?? 0) }, (_, i) => a.properties.get(String(i))?.value);
   const jsonObj = createObject(null);
   jsonObj.properties.set('parse', {
     value: createNativeFunction('parse', (_this, args) => {
@@ -380,9 +401,7 @@ export function createGlobalEnv(
   });
   jsonObj.properties.set('stringify', {
     value: createNativeFunction('stringify', (_this, args) => {
-      const val = args[0];
-      const result = jsonStrify(val);
-      return result === undefined ? undefined : result;
+      return jsonStrify(args[0], args[1], args[2]);
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -761,6 +780,12 @@ export function createGlobalEnv(
     }),
     writable: true, enumerable: false, configurable: true,
   });
+  // `sym.description` (ES2019) was undefined.
+  symbolProto.properties.set('description', {
+    value: undefined,
+    getter: createNativeFunction('description', (t) => (t as JSObjectWithMeta | null)?.symbolDescription),
+    writable: false, enumerable: false, configurable: true,
+  });
   symbolProto.properties.set('valueOf', {
     value: createNativeFunction('valueOf', (_this) => _this),
     writable: true, enumerable: false, configurable: true,
@@ -962,8 +987,18 @@ export function createGlobalEnv(
       writable: true, enumerable: false, configurable: true,
     });
   }
-  regExpProto.properties.set('source', { value: '', writable: false, enumerable: false, configurable: false });
-  regExpProto.properties.set('flags', { value: '', writable: false, enumerable: false, configurable: false });
+  // source/flags/global/sticky… read the native RegExp. They were fixed values ('' and missing), so
+  // code branching on `re.flags.includes('g')` or `re.sticky` took the wrong path.
+  for (const prop of ['source', 'flags', 'global', 'ignoreCase', 'multiline', 'sticky', 'unicode', 'dotAll', 'hasIndices'] as const) {
+    regExpProto.properties.set(prop, {
+      value: undefined,
+      getter: createNativeFunction(prop, (t) => {
+        const re = isJSObjectWithMeta(t) ? t.nativeRegExp : undefined;
+        return re ? (re as unknown as Record<string, JSValue>)[prop] : undefined;
+      }),
+      writable: false, enumerable: false, configurable: true,
+    });
+  }
   regExpCtorObj.properties.set('prototype', { value: regExpProto, writable: false, enumerable: false, configurable: false });
   env.setLocal('RegExp', regExpCtorObj);
 
@@ -1291,13 +1326,12 @@ export function createGlobalEnv(
   function setFromArgs(_this: JSObject, args: JSValue[]): void {
     const iterable = args[0];
     const s = setGetStore(_this);
-    if (typeof iterable === 'object' && iterable !== null && (iterable as JSObject).type === 'array') {
-      const len = Number((iterable as JSObject).properties.get('length')?.value ?? 0);
-      for (let i = 0; i < len; i++) {
-        const val = (iterable as JSObject).properties.get(String(i))?.value;
-        const k = setResolveKey([val]);
-        if (k.isObj) s.obj.add(k.objKey!); else s.prim.add(k.primKey!);
-      }
+    // Any iterable: a string, another Set, a Map's keys(), a generator. Only arrays used to count,
+    // so `new Set("hello")` and `new Set(otherSet)` were empty.
+    if (iterable === undefined || iterable === null) return;
+    for (const val of iterateJS(iterable)) {
+      const k = setResolveKey([val]);
+      if (k.isObj) s.obj.add(k.objKey!); else s.prim.add(k.primKey!);
     }
   }
   function setCreateFromValues(proto: JSObject, vals: JSValue[]): JSObject {

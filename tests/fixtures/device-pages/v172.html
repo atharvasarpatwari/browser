@@ -1,5 +1,5 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nova 1.65-1.72 checks</title>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nova 1.65-1.73 checks</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;padding:8px;font:14px/18px sans-serif;background:#fff;color:#222}
@@ -54,9 +54,14 @@ T('JS 10-3-2 = 5',function(){return (10-3-2)===5||(10-3-2);});
 T('JS block scope',function(){let a=1;{let a=2;}return a===1||a;});
 T('JS ||= &&=',function(){let x=0;x||=5;x&&=x+1;let y=null;y??=7;return x+y===13||(x+y);});
 T('computed rgb(r, g, b)',function(){var e=document.getElementById('bs');var c=getComputedStyle(e).backgroundColor;return /^rgb\(\d+, \d+, \d+\)$/.test(c)||c;});
+T('1.73 slice(-2)',function(){return [1,2,3,4,5].slice(-2).join()==='4,5'||[1,2,3,4,5].slice(-2).join();});
+T('1.73 JSON indent+methods',function(){var j=JSON.stringify({a:1,f:function(){},d:new Date(0)},null,2);return (j.split('\n').length===4&&j.indexOf('1970-01-01')>0)||j;});
+T('1.73 [] == false',function(){return ([]==false)===true;});
+T('1.73 static block',function(){return (new Function('class A{static{A.y=2}}return A.y'))()===2||'no';});
+T('1.73 Set(string)',function(){return Array.from(new Set('hello')).join('')==='helo'||Array.from(new Set('hello')).join('');});
 var pass=0,html='';for(var i=0;i<res.length;i++){if(res[i][1])pass++;html+='<div class="r" style="color:'+(res[i][1]?'#080':'#c00')+'">'+(res[i][1]?'PASS ':'FAIL ')+res[i][0]+(res[i][1]?'':' '+res[i][2])+'</div>';}
 document.getElementById('out').innerHTML=html;
-document.getElementById('summary').textContent='Nova 1.65-1.72: '+pass+'/'+res.length+' pass';
+document.getElementById('summary').textContent='Nova 1.65-1.73: '+pass+'/'+res.length+' pass';
 document.title='RESULT '+pass+'/'+res.length+' '+res.filter(function(r){return !r[1];}).map(function(r){return r[0]+': '+r[2];}).join(' | ');
 </script>
 </body></html>

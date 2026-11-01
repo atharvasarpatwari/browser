@@ -89,7 +89,8 @@ export function stringMethods(obj: string): Record<string, NativeFunction> {
     substr: (_t, a) => (obj as string).substr(toNumber(a[0]), a[1] !== undefined ? toNumber(a[1]) : undefined),
     split: (_t, a) => {
       const sep = a[0] !== undefined ? patternArg(a[0]) : undefined;
-      const parts = sep !== undefined ? (obj as string).split(sep as string) : [obj as string];
+      const limit = a[1] !== undefined ? toNumber(a[1]) >>> 0 : undefined;
+      const parts = sep !== undefined ? (obj as string).split(sep as string, limit) : [obj as string].slice(0, limit);
       return createArray(parts.map(p => p as unknown as JSValue));
     },
     replace: (_t, a) => stringReplace(obj as string, a[0], a[1]),
@@ -311,6 +312,24 @@ export function functionMethod(fn: JSFunction, key: string): JSFunction | null {
 function blockScope(body: AST.Statement[], env: Environment): Environment {
   const lexical = body.some((s) => (s.type === 'VariableDeclaration' && s.kind !== 'var') || s.type === 'ClassDeclaration');
   return lexical ? new Environment(env) : env;
+}
+
+/**
+ * `==` (IsLooselyEqual, §7.2.14). The host's `==` compared Nova's object records, so an array or
+ * object against a primitive was never equal (`[] == false`, `[1] == 1`, `{} == "[object Object]"`).
+ */
+function looseEquals(a: JSValue, b: JSValue): boolean {
+  const isObj = (v: JSValue) => v !== null && typeof v === 'object';
+  if (isObj(a) && isObj(b)) return a === b;
+  if (a == null || b == null) return a == null && b == null; // eslint-disable-line eqeqeq
+  if (typeof a === 'boolean') return looseEquals(Number(a), b);
+  if (typeof b === 'boolean') return looseEquals(a, Number(b));
+  // toPrimitive hands back the object when its valueOf/toString are host built-ins; then the
+  // built-in string form ("[object Object]", "1,2") is the primitive.
+  const prim = (v: JSValue) => { const p = toPrimitive(v, 'default'); return isObj(p) ? toString(p) : p; };
+  if (isObj(a)) return looseEquals(prim(a), b);
+  if (isObj(b)) return looseEquals(a, prim(b));
+  return a == b; // eslint-disable-line eqeqeq -- both primitives now
 }
 
 export class Interpreter {
@@ -1455,8 +1474,8 @@ export class Interpreter {
       case '>': return compare(left, right, (a, b) => a > b);
       case '<=': return compare(left, right, (a, b) => a <= b);
       case '>=': return compare(left, right, (a, b) => a >= b);
-      case '==': return left == right as unknown as boolean; // eslint-disable-line eqeqeq -- JS loose-equality semantics
-      case '!=': return left != right as unknown as boolean; // eslint-disable-line eqeqeq -- JS loose-equality semantics
+      case '==': return looseEquals(left, right);
+      case '!=': return !looseEquals(left, right);
       case '===': return left === right;
       case '!==': return left !== right;
       case '&': return toNumber(left) & toNumber(right);

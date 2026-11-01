@@ -582,9 +582,11 @@ function arrayIncludes(_this: JSValue, args: JSValue[]): JSValue {
 function arraySlice(_this: JSValue, args: JSValue[]): JSValue {
   if (typeof _this !== 'object' || _this === null) return createArray([]);
   const elems = getArrayElements(_this as JSObject);
-  const start = args[0] !== undefined ? Math.max(0, toNumber(args[0])) : 0;
-  const end = args[1] !== undefined ? Math.min(elems.length, toNumber(args[1])) : elems.length;
-  return createArray(elems.slice(start, end));
+  // Negative indices count from the end (`slice(-2)` is the last two); they were clamped to 0, so
+  // `slice(-2)` copied the whole array. Array.prototype.slice has the same rules as JS's own.
+  const start = args[0] !== undefined ? toNumber(args[0]) : 0;
+  const end = args[1] !== undefined ? toNumber(args[1]) : elems.length;
+  return createArray(elems.slice(start || 0, Number.isNaN(end) ? 0 : end));
 }
 
 function arrayConcat(_this: JSValue, args: JSValue[]): JSValue {
@@ -763,26 +765,29 @@ const arrayNativeMethods: Record<string, NativeFunction> = {
   splice: arraySplice,
   unshift: arrayUnshift,
   flat: arrayFlat,
+  // keys/values/entries return iterators (`.next()` works), not plain arrays.
   keys: (_this) => {
-    if (typeof _this !== 'object' || _this === null) return createArray([]);
+    if (typeof _this !== 'object' || _this === null) return createIteratorArray([]);
     const len = Number((_this as JSObject).properties.get('length')?.value ?? 0);
-    return createArray(Array.from({ length: len }, (_, i) => i));
+    return createIteratorArray(Array.from({ length: len }, (_, i) => i));
   },
   values: (_this) => {
-    if (typeof _this !== 'object' || _this === null) return createArray([]);
-    return createArray(getArrayElements(_this as JSObject));
+    if (typeof _this !== 'object' || _this === null) return createIteratorArray([]);
+    return createIteratorArray(getArrayElements(_this as JSObject));
   },
   entries: (_this) => {
-    if (typeof _this !== 'object' || _this === null) return createArray([]);
+    if (typeof _this !== 'object' || _this === null) return createIteratorArray([]);
     const elems = getArrayElements(_this as JSObject);
-    return createArray(elems.map((v, i) => createArray([i, v])));
+    return createIteratorArray(elems.map((v, i) => createArray([i, v])));
   },
   fill: (_this, args) => {
     if (typeof _this !== 'object' || _this === null) return _this;
     const arr = _this as JSObject;
     const val = args[0];
     const len = Number(arr.properties.get('length')?.value ?? 0);
-    for (let i = 0; i < len; i++) setArrayElement(arr, i, val);
+    // fill(value, start, end), negative from the end; start/end were ignored (filled everything).
+    const rel = (v: JSValue, d: number) => { if (v === undefined) return d; const n = Math.trunc(toNumber(v)) || 0; return n < 0 ? Math.max(0, len + n) : Math.min(n, len); };
+    for (let i = rel(args[1], 0), end = rel(args[2], len); i < end; i++) setArrayElement(arr, i, val);
     return arr;
   },
   every: (_this, args) => {

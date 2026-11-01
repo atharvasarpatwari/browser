@@ -955,6 +955,18 @@ export class Parser {
     const body: (AST.PropertyDefinition | AST.MethodDefinition)[] = [];
     while (!this.is(TokenType.RBrace) && !this.is(TokenType.EOF)) {
       if (this.is(TokenType.Semicolon)) { this.advance(); continue; }
+      // `static { … }` (ES2022 static initialization block): run once with `this` = the class, as a
+      // static field holding an immediately-called arrow. It parsed as a field named `{`, a syntax
+      // error that dropped the whole script.
+      if (this.is(TokenType.Static) && this.peek(1).type === TokenType.LBrace) {
+        this.advance();
+        const block = this.parseBlock();
+        const arrow = { type: 'ArrowFunctionExpression', params: [], body: block, async: false, expression: false } as unknown as AST.Expression;
+        const call = { type: 'CallExpression', callee: arrow, arguments: [], optional: false } as unknown as AST.Expression;
+        const key = { type: 'Identifier', name: `#staticBlock${body.length}` } as AST.Identifier;
+        body.push({ type: 'PropertyDefinition', key, value: call, kind: 'init', computed: false, shorthand: false, method: false, static: true } as AST.PropertyDefinition);
+        continue;
+      }
       let isStatic = false;
       if (this.is(TokenType.Static) && this.memberNameFollows()) { this.advance(); isStatic = true; }
       const mods = this.parseMethodModifiers();

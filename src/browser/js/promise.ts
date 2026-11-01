@@ -439,6 +439,10 @@ export function createPromiseConstructor(eventLoop: EventLoop): JSValue {
     value: createPromiseAllSettledFn(eventLoop),
     writable: true, enumerable: false, configurable: true,
   });
+  ctor.properties.set('any', {
+    value: createPromiseAnyFn(eventLoop),
+    writable: true, enumerable: false, configurable: true,
+  });
 
   return ctor;
 }
@@ -634,5 +638,44 @@ function createPromiseAllSettledFn(eventLoop: EventLoop): JSFunction {
     }
 
     return allPromise;
+  });
+}
+
+// ── Promise.any() ───────────────────────────────────────────────────────────
+// The first fulfilment wins; if every input rejects, it rejects with an AggregateError-like error
+// carrying `errors`. It was missing, so `Promise.any(...)` threw "not a function".
+function createPromiseAnyFn(eventLoop: EventLoop): JSFunction {
+  return createNativeFunction('any', (_this, args) => {
+    const arg = args[0];
+    const items = typeof arg === 'object' && arg !== null && (arg as JSObject).type === 'array'
+      ? Array.from({ length: Number((arg as JSObject).properties.get('length')?.value ?? 0) }, (_, i) => (arg as JSObject).properties.get(String(i))?.value)
+      : [];
+    const anyPromise = createPromiseObj(eventLoop);
+    promiseEventLoops.set(anyPromise, eventLoop);
+    const errors: JSValue[] = [];
+    let remaining = items.length;
+    let settled = false;
+    const rejectAll = () => {
+      const err = createObject(null);
+      err.properties.set('name', { value: 'AggregateError', writable: true, enumerable: false, configurable: true });
+      err.properties.set('message', { value: 'All promises were rejected', writable: true, enumerable: false, configurable: true });
+      err.properties.set('errors', { value: createArray(errors), writable: true, enumerable: false, configurable: true });
+      rejectPromise(anyPromise, err);
+    };
+    if (remaining === 0) { rejectAll(); return anyPromise; }
+    items.forEach((item, idx) => {
+      const resolved = isPromiseObject(item) ? item : promiseResolveValue(eventLoop, item);
+      const onFulfilled = createNativeFunction('onFulfilled', (_t, a) => {
+        if (!settled) { settled = true; fulfillPromise(anyPromise, a[0]); }
+        return undefined;
+      });
+      const onRejected = createNativeFunction('onRejected', (_t, a) => {
+        errors[idx] = a[0];
+        if (--remaining === 0 && !settled) { settled = true; rejectAll(); }
+        return undefined;
+      });
+      callJSFunction((resolved as JSObject).properties.get('then')?.value as JSFunction, resolved, [onFulfilled, onRejected]);
+    });
+    return anyPromise;
   });
 }
