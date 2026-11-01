@@ -20,11 +20,25 @@ export function handleInTable(ctx: TreeBuilderContext, token: Token): void {
       return;
     case 'open':
       switch (token.tagName) {
-        case 'caption':
+        // §13.2.6.9: clear the stack *back to* the table (popCurrentNodeUntil('table') popped the
+        // table itself), then a caption or column group goes inside it. <colgroup> landed beside the
+        // table with every row nested in it, so Wikipedia/docs tables with column groups vanished.
+        case 'caption': {
+          clearToTableContext(ctx);
+          ctx.formattingElements.pushMarker();
+          ctx.setMode(Im.IN_CAPTION); // before inserting: "in table" foster-parents insertions
+          ctx.insertHTMLElement(token);
+          return;
+        }
         case 'colgroup':
+          clearToTableContext(ctx);
+          ctx.setMode(Im.IN_COLUMN_GROUP);
+          ctx.insertHTMLElement(token);
+          return;
         case 'col':
-          ctx.popCurrentNodeUntil('table');
-          ctx.setMode(Im.IN_TABLE_BODY);
+          clearToTableContext(ctx);
+          ctx.setMode(Im.IN_COLUMN_GROUP);
+          ctx.insertHTMLElement({ kind: 'open', tagName: 'colgroup', attrs: new Map(), offset: token.offset } as Token);
           ctx.processToken(token);
           return;
         case 'tbody':
@@ -379,4 +393,9 @@ export function handleInCell(ctx: TreeBuilderContext, token: Token): void {
       break;
   }
   ctx.reprocessInBody(token);
+}
+
+/** §13.2.6.9 "clear the stack back to a table context": pop until table, template or html. */
+function clearToTableContext(ctx: TreeBuilderContext): void {
+  for (let n = ctx.currentNode(); n && !['table', 'template', 'html'].includes(n.tagName); n = ctx.currentNode()) ctx.popCurrentNode();
 }

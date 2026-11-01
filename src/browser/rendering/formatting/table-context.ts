@@ -23,6 +23,8 @@ export interface ResolvedColumn {
   minWidth: number;
   maxWidth: number;
   finalWidth: number;
+  /** Has a specified width (a cell's or a <col>'s): spare width goes to the others first. */
+  fixed?: boolean;
 }
 
 export type TableLayoutType = 'auto' | 'fixed';
@@ -165,7 +167,15 @@ export class TableFormattingContext {
     this.captions.push(...elements);
   }
 
+  /** Widths from <col>/<colgroup> elements, by column index. */
+  private specifiedColumnWidths = new Map<number, number>();
+
+  setColumnWidth(index: number, px: number): void {
+    this.specifiedColumnWidths.set(index, px);
+  }
+
   addRow(cells: TableCell[]): void {
+    for (const cell of cells) cell.row = this.rows.length;
     this.rows.push({ cells, height: 0 });
     for (const cell of cells) {
       while (this.columns.length < cell.col + cell.colspan) {
@@ -195,7 +205,8 @@ export class TableFormattingContext {
     if (colCount === 0) return;
 
     for (let c = 0; c < colCount; c++) {
-      this.columns[c] = { minWidth: 0, maxWidth: 0, finalWidth: 0 };
+      const w = this.specifiedColumnWidths.get(c);
+      this.columns[c] = w !== undefined ? { minWidth: w, maxWidth: w, finalWidth: 0, fixed: true } : { minWidth: 0, maxWidth: 0, finalWidth: 0 };
     }
 
     for (const row of this.rows) {
@@ -216,8 +227,19 @@ export class TableFormattingContext {
         const col = cell.col;
         const span = cell.colspan;
         if (span <= 1) {
-          this.columns[col].minWidth = Math.max(this.columns[col].minWidth, cellMin);
-          this.columns[col].maxWidth = Math.max(this.columns[col].maxWidth, cellMax);
+          const column = this.columns[col]!;
+          if (rawW && rawW !== 'auto') {
+            // A specified width fixes the column (the widest specification wins).
+            column.minWidth = column.fixed ? Math.max(column.minWidth, cellMin) : Math.max(cellMin, cell.minContent ?? 0);
+            column.maxWidth = Math.max(column.minWidth, column.fixed ? column.maxWidth : 0);
+            column.fixed = true;
+          } else if (!column.fixed) {
+            column.minWidth = Math.max(column.minWidth, cellMin);
+            column.maxWidth = Math.max(column.maxWidth, cellMax);
+          } else {
+            column.minWidth = Math.max(column.minWidth, cellMin);
+            column.maxWidth = Math.max(column.maxWidth, column.minWidth);
+          }
         } else {
           const perCol = cellMin / span;
           for (let s = 0; s < span && col + s < colCount; s++) {
@@ -234,18 +256,15 @@ export class TableFormattingContext {
     const totalMax = this.columns.reduce((s, c) => s + c.maxWidth, 0);
 
     if (this.options.tableLayout === 'fixed') {
+      // Fixed layout (CSS 2.2 §17.5.2.1): specified columns keep their width, the rest share what
+      // is left equally. Content doesn't count (it widened empty-looking columns before).
       const fixedAvail = Math.max(0, this.options.availableWidth);
-      for (const col of this.columns) {
-        col.finalWidth = col.minWidth;
-      }
+      for (const col of this.columns) col.finalWidth = col.fixed ? col.minWidth : 0;
       const used = this.columns.reduce((s, c) => s + c.finalWidth, 0);
       const remaining = Math.max(0, fixedAvail - used - totalSpacing);
-      if (remaining > 0) {
-        const equalShare = remaining / colCount;
-        for (const col of this.columns) {
-          col.finalWidth += equalShare;
-        }
-      }
+      const open = this.columns.filter((c) => !c.fixed);
+      const takers = open.length > 0 ? open : this.columns;
+      if (remaining > 0) for (const col of takers) col.finalWidth += remaining / takers.length;
     } else {
       if (totalMin >= availForCols) {
         for (const col of this.columns) {
@@ -259,6 +278,22 @@ export class TableFormattingContext {
         }
       } else {
         const excess = availForCols - totalMin;
+        // Spare width goes to auto columns, not to ones with a specified width (CSS 2.2
+        // §17.5.2.2): a `width:100px` cell's column grew to 246px beside a one-word column.
+        const auto = this.columns.filter((c) => !c.fixed);
+        if (auto.length > 0 && auto.length < this.columns.length) {
+          const room = availForCols - this.columns.reduce((s, c) => s + (c.fixed ? c.minWidth : 0), 0);
+          const autoMin = auto.reduce((s, c) => s + c.minWidth, 0);
+          const autoMax = auto.reduce((s, c) => s + Math.max(c.maxWidth, c.minWidth), 0);
+          for (const col of this.columns) {
+            if (col.fixed) { col.finalWidth = col.minWidth; continue; }
+            const share = autoMax > autoMin ? (Math.max(col.maxWidth, col.minWidth) - col.minWidth) / (autoMax - autoMin) : 1 / auto.length;
+            col.finalWidth = col.minWidth + Math.max(0, room - autoMin) * share;
+          }
+          this.totalWidth = this.columns.reduce((s, c) => s + c.finalWidth, 0) + totalSpacing;
+          this.finishRows(resolveLength, spacing, colCount);
+          return;
+        }
         const distributable = this.columns.filter(c => c.maxWidth > c.minWidth);
         if (distributable.length === 0) {
           const equalShare = excess / colCount;
@@ -280,7 +315,10 @@ export class TableFormattingContext {
     }
 
     this.totalWidth = this.columns.reduce((s, c) => s + c.finalWidth, 0) + totalSpacing;
+    this.finishRows(resolveLength, spacing, colCount);
+  }
 
+  private finishRows(resolveLength: (value: string, fallback: string) => number, spacing: number, colCount: number): void {
     for (const row of this.rows) {
       let rowHeight = 0;
       for (const cell of row.cells) {
@@ -315,6 +353,7 @@ export class TableFormattingContext {
     contentY: number,
     layoutCell: (cell: DomElement, x: number, y: number, w: number, h: number) => number | void,
     stretchCell?: (cell: DomElement, h: number) => void,
+    moveCell?: (cell: DomElement, dy: number) => void,
   ): void {
     const spacing = this.options.borderCollapse === 'separate' ? this.options.borderSpacing : 0;
     const captionWidth = this.totalWidth > 0 ? this.totalWidth : this.options.availableWidth;
@@ -330,24 +369,54 @@ export class TableFormattingContext {
     };
     captions('top');
     y += spacing;
+
+    // Cells sit at their column's x (a running offset put a cell after a rowspan in the spanned
+    // column), are laid out once at the first row's y, then moved to their row once every row's
+    // height is known: a rowspan cell stretches over its rows and grows the last if it needs to.
+    const cols = this.columns;
+    const colX = (c: number): number => {
+      let x = contentX + spacing;
+      for (let i = 0; i < c && i < cols.length; i++) x += cols[i]!.finalWidth + spacing;
+      return x;
+    };
+    const spanWidth = (cell: TableCell): number => {
+      let w = spacing * (cell.colspan - 1);
+      for (let s2 = 0; s2 < cell.colspan && cell.col + s2 < cols.length; s2++) w += cols[cell.col + s2]!.finalWidth;
+      return Math.max(0, w);
+    };
+    const top = y;
+    const heights = new Map<TableCell, number>();
     for (const row of this.rows) {
-      let xOffset = spacing;
-      let rowHeight = row.height;
       for (const cell of row.cells) {
-        const cellX = contentX + xOffset;
-        const cellY = y;
-        let cellW = 0;
-        for (let s = 0; s < cell.colspan && cell.col + s < this.columns.length; s++) {
-          cellW += this.columns[cell.col + s].finalWidth;
-        }
-        cellW += spacing * (cell.colspan - 1);
-        const h = layoutCell(cell.element, cellX, cellY, Math.max(0, cellW), Math.max(0, cell.contentHeight));
-        if (typeof h === 'number') rowHeight = Math.max(rowHeight, h);
-        xOffset += cellW + spacing;
+        const h = layoutCell(cell.element, colX(cell.col), top, spanWidth(cell), Math.max(0, cell.contentHeight));
+        heights.set(cell, typeof h === 'number' ? h : cell.contentHeight);
       }
-      row.height = rowHeight;
-      if (stretchCell) for (const cell of row.cells) stretchCell(cell.element, rowHeight);
-      y += rowHeight + spacing;
+    }
+    for (const row of this.rows) {
+      for (const cell of row.cells) if (cell.rowspan <= 1) row.height = Math.max(row.height, heights.get(cell)!);
+    }
+    const lastRow = this.rows.length - 1;
+    const spanned = (cell: TableCell): number => {
+      let h = 0;
+      const end = Math.min(lastRow, cell.row + cell.rowspan - 1);
+      for (let r = cell.row; r <= end; r++) h += this.rows[r]!.height + (r > cell.row ? spacing : 0);
+      return h;
+    };
+    for (const row of this.rows) {
+      for (const cell of row.cells) {
+        if (cell.rowspan <= 1) continue;
+        const need = heights.get(cell)! - spanned(cell);
+        if (need > 0) this.rows[Math.min(lastRow, cell.row + cell.rowspan - 1)]!.height += need;
+      }
+    }
+    const rowY: number[] = [];
+    for (const row of this.rows) { rowY.push(y); y += row.height + spacing; }
+    for (const row of this.rows) {
+      for (const cell of row.cells) {
+        const dy = rowY[cell.row]! - top;
+        if (dy) moveCell?.(cell.element, dy);
+        stretchCell?.(cell.element, cell.rowspan > 1 ? spanned(cell) : row.height);
+      }
     }
     if (this.captions.some((cap) => sideOf(cap) === 'bottom')) {
       y += spacing;

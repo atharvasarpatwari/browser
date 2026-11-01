@@ -1225,6 +1225,34 @@ class LayoutEngine implements ILayoutEngine {
 
     tblCtx.addCaptions(captions);
 
+    // <col>/<colgroup> widths, by column (span attributes count).
+    let colIndex = 0;
+    const colWidth = (el: DomElement): void => {
+      const span = Math.max(1, parseInt(el.attributes.get('span') ?? '1', 10) || 1);
+      const w = el.computedStyle?.get('width') ?? el.attributes.get('width');
+      for (let k = 0; k < span; k++, colIndex++) if (w && w !== 'auto') tblCtx.setColumnWidth(colIndex, this.resolveLength(/^\d+$/.test(w) ? `${w}px` : w, fontSize, availableWidth));
+    };
+    for (const child of anonChildren) {
+      if (child.nodeType !== 'element') continue;
+      const el = child as DomElement;
+      const role = classifyTableChild(el.computedStyle?.get('display') ?? '');
+      if (role === 'col') colWidth(el);
+      else if (role === 'col-group') {
+        const cols = el.children.filter((c): c is DomElement => c.nodeType === 'element' && classifyTableChild((c as DomElement).computedStyle?.get('display') ?? '') === 'col');
+        if (cols.length > 0) cols.forEach(colWidth); else colWidth(el);
+      }
+    }
+
+    // Header groups first and footer groups last, whatever their source order (CSS 2.2 §17.2).
+    const groupRank = (g: DomElement): number => {
+      const d = g.computedStyle?.get('display');
+      return d === 'table-header-group' ? 0 : d === 'table-footer-group' ? 2 : 1;
+    };
+    rowGroups.sort((a, b) => groupRank(a) - groupRank(b));
+
+    // Which grid slots earlier rows' rowspans cover: a cell takes the next free column.
+    const occupied = new Set<string>();
+    let rowIndex = 0;
     for (const rg of rowGroups) {
       const rgChildren = rg.computedStyle?.get('display') === 'table-row' ? [rg] : rg.children;
       for (const child of rgChildren) {
@@ -1243,6 +1271,8 @@ class LayoutEngine implements ILayoutEngine {
           if (classifyTableChild(cellDisplay) !== 'cell') continue;
           const colspan = parseInt(cellEl.attributes.get('colspan') ?? '1', 10) || 1;
           const rowspan = parseInt(cellEl.attributes.get('rowspan') ?? '1', 10) || 1;
+          while (occupied.has(`${rowIndex},${col}`)) col++;
+          for (let r = 0; r < rowspan; r++) for (let c = 0; c < colspan; c++) occupied.add(`${rowIndex + r},${col + c}`);
           const measured = measureBudget-- > 0 ? this.measureCellWidths(cellEl, availableWidth, fontSize, domTree) : null;
           cells.push({
             minContent: measured?.min,
@@ -1264,6 +1294,7 @@ class LayoutEngine implements ILayoutEngine {
           col += colspan;
         }
         tblCtx.addRow(cells);
+        rowIndex++;
       }
     }
 
@@ -1285,12 +1316,33 @@ class LayoutEngine implements ILayoutEngine {
         this.layoutBoxes.set(cellEl.domId, cellBox);
         this.elementPositions.push({ element: cellEl, box: cellBox });
         if (domTree) domTree.setLayoutBox(cellEl, cellBox);
+        // A cell is as wide as its column(s): its own `width` only sized the column. Laid out at its
+        // own width, a `width:25%` cell came out a quarter of its column.
+        const cellStyle = cellEl.computedStyle;
+        // Its `height` likewise only sizes the row (resolve() counted it): laid out at its natural
+        // height, the row stretch can then place the content per vertical-align.
+        const saved = new Map(['width', 'box-sizing', 'height'].map((k) => [k, cellStyle?.get(k)] as const));
+        cellStyle?.set('width', `${w}px`);
+        cellStyle?.set('box-sizing', 'border-box');
+        cellStyle?.delete('height');
         this.layoutNode(cellEl, x, y, w, fontSize, domTree);
+        if (cellStyle) for (const [k, v] of saved) { if (v === undefined) cellStyle.delete(k); else cellStyle.set(k, v); }
         return this.layoutBoxes.get(cellEl.domId)?.height;
       },
       (cellEl: DomElement, h: number) => {
         const box = this.layoutBoxes.get(cellEl.domId);
-        if (box && box.height < h) box.height = h;
+        if (!box || box.height >= h) return;
+        // vertical-align in a cell places its content in the stretched height (it stayed on top).
+        const free = h - box.height;
+        const va = cellEl.computedStyle?.get('vertical-align');
+        const shift = va === 'middle' ? free / 2 : va === 'bottom' ? free : 0;
+        if (shift) this.translateContent(cellEl, 0, shift);
+        box.height = h;
+      },
+      (cellEl: DomElement, dy: number) => {
+        const box = this.layoutBoxes.get(cellEl.domId);
+        if (box) box.y += dy;
+        this.translateContent(cellEl, 0, dy);
       },
     );
 

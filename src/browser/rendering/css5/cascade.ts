@@ -1412,8 +1412,13 @@ export function getUserAgentDefaults(
       break;
 
     case 'table':
-      styles.set('border-collapse', 'collapse');
+      // border-collapse defaults to separate (HTML §15.3.8): `collapse` here meant border-spacing
+      // never applied to any table.
       styles.set('border-spacing', '2px');
+      break;
+    case 'thead': case 'tbody': case 'tfoot': case 'tr':
+      // HTML §15.3.8: cells inherit middle alignment through their rows (they were top-aligned).
+      styles.set('vertical-align', 'middle');
       break;
 
     case 'details':
