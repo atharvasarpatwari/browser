@@ -350,9 +350,11 @@ describe('Flex Layout', () => {
       engine.layout(doc, tree);
       const c0 = tree.getElementById('c0')!.layoutBox!;
       const c1 = tree.getElementById('c1')!.layoutBox!;
-      // Total basis: 200, free: 800, grow ratio 2:1 → c0 gets 200 + 533.33, c1 gets 200 + 266.67
+      // Bases 100 + 100, free 800 shared 2:1 → c0 = 100 + 533.33, c1 = 100 + 266.67 (the basis used
+      // to be dropped, which made the sum exact; it is now honoured, so compare with float slack).
       expect(c0.width).toBeGreaterThan(c1.width);
-      expect(c0.width + c1.width).toBe(1000);
+      expect(c0.width).toBeCloseTo(633.33, 1);
+      expect(c0.width + c1.width).toBeCloseTo(1000, 6);
     });
   });
 

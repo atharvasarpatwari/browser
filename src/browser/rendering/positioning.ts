@@ -306,6 +306,15 @@ export function resolveOutOfFlow(
     box.y = cbY + top.value + box.marginTop;
   }
 
+  // With both insets and the width set, auto margins share what is left (CSS 2.2 §10.3.7):
+  // `left: 0; right: 0; width: 300px; margin: auto` centres a dialog. They were 0: it sat left.
+  const mlAuto = style.get('margin-left') === 'auto';
+  const mrAuto = style.get('margin-right') === 'auto';
+  if (!left.isAuto && !right.isAuto && hasWidth && (mlAuto || mrAuto)) {
+    const free = cbWidth - left.value - right.value - box.width - (mlAuto ? 0 : box.marginLeft) - (mrAuto ? 0 : box.marginRight);
+    box.x = cbX + left.value + (mlAuto && mrAuto ? Math.max(0, free / 2) : mlAuto ? free : box.marginLeft);
+  }
+
   // ── Auto margins for centering when width/height are not specified ─
   if (!hasWidth) {
     const autoLeft = left.isAuto;

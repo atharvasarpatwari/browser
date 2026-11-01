@@ -38,6 +38,8 @@ export interface FlexItem {
 
   alignSelf: AlignSelf;
   hasDefiniteCrossSize: boolean;
+  /** Which margins are `auto`: on the main axis they absorb the line's free space (§8.1). */
+  autoMargins?: { left: boolean; right: boolean; top: boolean; bottom: boolean };
 }
 
 export interface FlexLine {
@@ -257,15 +259,25 @@ export class FlexFormattingContext {
         line.mainSize, availableMainSize, justifyContent, line.items.length, mainAxisGap,
       );
 
-      let runningMainOffset = lineJustifyOffset;
+      // Auto margins take the positive free space before justify-content does (Flexbox §8.1):
+      // `margin-left: auto` pushes an item (and those after it) to the end. They were 0.
+      const row = isRowDirection(direction);
+      const autoStart = (it: FlexItem): boolean => !!(row ? it.autoMargins?.left : it.autoMargins?.top);
+      const autoEnd = (it: FlexItem): boolean => !!(row ? it.autoMargins?.right : it.autoMargins?.bottom);
+      const autoCount = line.items.reduce((n, it) => n + (autoStart(it) ? 1 : 0) + (autoEnd(it) ? 1 : 0), 0);
+      const lineFree = availableMainSize - line.mainSize;
+      const perAuto = autoCount > 0 && lineFree > 0 ? lineFree / autoCount : 0;
+
+      let runningMainOffset = perAuto > 0 ? 0 : lineJustifyOffset;
+      const gapAfter = perAuto > 0 ? mainAxisGap : lineJustifyGap;
 
       for (const item of line.items) {
-        const mStart = mainMarginStart(item, direction);
-        const mEnd = mainMarginEnd(item, direction);
+        const mStart = mainMarginStart(item, direction) + (autoStart(item) ? perAuto : 0);
+        const mEnd = mainMarginEnd(item, direction) + (autoEnd(item) ? perAuto : 0);
 
         // Main offset (includes justify-content)
         item.mainOffset = runningMainOffset + mStart;
-        runningMainOffset += mStart + item.mainSize + mEnd + lineJustifyGap;
+        runningMainOffset += mStart + item.mainSize + mEnd + gapAfter;
 
         // Cross offset based on align-self (or align-items)
         const effectiveAlign = item.alignSelf === 'auto' ? alignItems : item.alignSelf;

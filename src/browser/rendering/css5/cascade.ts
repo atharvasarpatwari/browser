@@ -1103,6 +1103,10 @@ export function expandShorthands(
       expanded = expandBoxShorthand('margin', decl.value);
     } else if (prop === 'padding') {
       expanded = expandBoxShorthand('padding', decl.value);
+    } else if (prop === 'inset') {
+      // inset: 0 never reached top/right/bottom/left, so `position:absolute; inset:0` overlays and
+      // backdrops were 0x0 at their static position.
+      expanded = new Map([...expandBoxShorthand('inset', decl.value)].map(([k, v]) => [k.slice('inset-'.length), v]));
     } else if (prop === 'border') {
       expanded = expandBorderShorthand(decl.value);
     } else if (prop === 'border-width') {
@@ -1297,8 +1301,9 @@ export function getUserAgentDefaults(
     styles.set('display', 'inline');
   }
 
-  // Shared defaults
-  styles.set('box-sizing', 'border-box');
+  // Shared defaults. box-sizing is left at its initial content-box: every element used to be
+  // border-box, so pages without a `* { box-sizing: border-box }` reset lost their padding and
+  // borders from every width (a 100px box with 10px padding was 100 wide, not 120).
   styles.set('color-scheme', 'light dark');
 
   switch (tag) {

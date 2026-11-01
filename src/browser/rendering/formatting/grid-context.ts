@@ -37,6 +37,9 @@ export interface GridPlacement {
   /** Whether the item spans a single cell in each axis. */
   isAutoColumn: boolean;
   isAutoRow: boolean;
+  /** `span N` for an auto-placed axis (1 when absent). */
+  columnSpan?: number;
+  rowSpan?: number;
 }
 
 /** A positioned grid item with final offsets. */
@@ -153,6 +156,69 @@ export function parseTrackList(value: string): TrackDef[] {
   }
 
   return defs;
+}
+
+/** `value` split at top-level `sep` characters (inside (…) and […] they don't split). */
+function splitTopLevel(value: string, sep: RegExp, limit = Infinity): string[] {
+  const out: string[] = [];
+  let depth = 0, cur = '';
+  for (const ch of value) {
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+    if (depth === 0 && sep.test(ch) && out.length < limit) { if (cur.trim()) out.push(cur.trim()); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+const isDefiniteTrack = (t: string): boolean => /^-?[\d.]+(px|r?em|%)$/.test(t);
+
+/** A track as one size the grid resolves: minmax(a, b) → b when it is fr or a length, else a. */
+function simplifyTrack(track: string): string {
+  const mm = /^minmax\((.*)\)$/i.exec(track);
+  if (mm) {
+    const [min = 'auto', max = 'auto'] = splitTopLevel(mm[1]!, /,/);
+    return max.endsWith('fr') || isDefiniteTrack(max) ? max : isDefiniteTrack(min) ? min : 'auto';
+  }
+  if (/^fit-content\(/i.test(track) || track === 'min-content' || track === 'max-content') return 'auto';
+  return track;
+}
+
+/** The smallest a track can be, in px, for counting auto-fill repetitions. */
+function trackMinPx(track: string, fontSize: number, containerSize: number): number {
+  const mm = /^minmax\((.*)\)$/i.exec(track);
+  const t = mm ? splitTopLevel(mm[1]!, /,/)[0] ?? '' : track;
+  const alt = mm ? splitTopLevel(mm[1]!, /,/)[1] ?? '' : '';
+  if (isDefiniteTrack(t)) return resolveTrackBase(t, fontSize, containerSize).px;
+  return isDefiniteTrack(alt) ? resolveTrackBase(alt, fontSize, containerSize).px : 0;
+}
+
+/**
+ * A grid-template-columns/rows value as plain tracks: repeat(N, …) and repeat(auto-fill|auto-fit,
+ * …) expanded, minmax()/fit-content() simplified, line names dropped. The whitespace tokenizer
+ * cut `repeat(auto-fill,minmax(150px,1fr))` at the first ')' and nothing resolved minmax(), so
+ * those tracks were 0px and responsive card grids piled up in the corner.
+ * ponytail: auto-fit is auto-fill (empty tracks aren't collapsed); minmax keeps one bound.
+ */
+export function expandTrackList(value: string, available: number, gap: number, fontSize: number): string[] {
+  const out: string[] = [];
+  for (const tok of splitTopLevel(value, /\s/)) {
+    if (tok.startsWith('[')) continue;
+    const rep = /^repeat\((.*)\)$/i.exec(tok);
+    if (!rep) { out.push(simplifyTrack(tok)); continue; }
+    const [countRaw = '1', listRaw = ''] = splitTopLevel(rep[1]!, /,/, 1);
+    const raw = splitTopLevel(listRaw, /\s/).filter((t) => !t.startsWith('['));
+    if (raw.length === 0) continue;
+    let count = Math.max(1, parseInt(countRaw, 10) || 1);
+    if (/^auto-fi(ll|t)$/i.test(countRaw.trim())) {
+      const per = raw.reduce((s, t) => s + trackMinPx(t, fontSize, available) + gap, 0);
+      count = per > gap * raw.length ? Math.max(1, Math.floor((available + gap) / per)) : 1;
+    }
+    const list = expandTrackList(raw.join(' '), available, gap, fontSize);
+    for (let r = 0; r < count; r++) out.push(...list);
+  }
+  return out;
 }
 
 /**
@@ -330,25 +396,31 @@ export class GridFormattingContext {
       const p = item.placement;
       if (p.columnStart > 0 && p.rowStart > 0) continue; // already placed
 
-      // Find next free cell
+      // Find next free run of cells as wide (and tall) as the item's spans
+      const colSpan = p.columnStart <= 0 ? Math.min(p.columnSpan ?? 1, Math.max(1, explicitColCount)) : 1;
+      const rowSpan = p.rowStart <= 0 ? (p.rowSpan ?? 1) : 1;
+      const fits = (c0: number, r0: number): boolean => {
+        for (let c = c0; c < c0 + colSpan; c++) for (let r = r0; r < r0 + rowSpan; r++) if (occupied[c]?.[r]) return false;
+        return true;
+      };
       let placed = false;
       while (!placed && autoRow < 1000) {
-        if (autoCol >= explicitColCount) {
+        if (autoCol + colSpan > Math.max(explicitColCount, colSpan)) {
           autoCol = 0;
           autoRow++;
         }
         if (autoRow >= occupied.length) break;
-        if (!occupied[autoCol]![autoRow]) {
+        if (fits(autoCol, autoRow)) {
           // Place here — only set axes that are auto
           if (p.columnStart <= 0) {
             p.columnStart = autoCol + 1;
-            p.columnEnd = autoCol + 2;
+            p.columnEnd = autoCol + 1 + colSpan;
           } else if (p.columnEnd <= 0) {
             p.columnEnd = p.columnStart + 1;
           }
           if (p.rowStart <= 0) {
             p.rowStart = autoRow + 1;
-            p.rowEnd = autoRow + 2;
+            p.rowEnd = autoRow + 1 + rowSpan;
           } else if (p.rowEnd <= 0) {
             p.rowEnd = p.rowStart + 1;
           }
@@ -714,8 +786,24 @@ export class GridFormattingContext {
 export function parseGridPlacement(
   value: string | undefined,
   isRow: boolean,
-): { start: number; end: number } {
+): { start: number; end: number; span?: number } {
   if (!value || value === 'auto') return { start: -1, end: -1 };
+  // `span N` (CSS Grid §8.3): `span 2`, `1 / span 2`, `span 2 / 4`. It parsed as auto, so the
+  // item took one cell (a wide card or a full-width header in a grid stayed one column wide).
+  const spanOf = (s: string | undefined): number | null => {
+    const m = /^span\s+(\d+)$/.exec((s ?? '').trim());
+    return m ? Math.max(1, parseInt(m[1]!, 10)) : null;
+  };
+  const halves = value.split('/').map((s) => s.trim());
+  if (halves.length <= 2) {
+    const [a, b] = halves;
+    const sa = spanOf(a), sb = spanOf(b);
+    if (sa !== null || sb !== null) {
+      if (sa !== null && b === undefined) return { start: -1, end: -1, span: sa };
+      if (sb !== null) { const start = parseGridLine(a!); return start > 0 ? { start, end: start + sb } : { start: -1, end: -1, span: sb }; }
+      const end = parseGridLine(b!); return end > 0 ? { start: Math.max(1, end - sa!), end } : { start: -1, end: -1, span: sa! };
+    }
+  }
 
   // grid-area: row-start / col-start / row-end / col-end
   const parts = value.split('/').map(s => s.trim());
@@ -760,13 +848,14 @@ function parseGridLine(s: string): number {
 export function parseGridTemplateAreas(value: string): { rows: string[][]; columns: number } {
   if (!value || value === 'none') return { rows: [], columns: 0 };
 
-  const lines = value.match(/"[^"]*"/g);
+  // Single-quoted rows are valid CSS strings too; only "…" rows were read.
+  const lines = value.match(/"[^"]*"|'[^']*'/g);
   if (!lines) return { rows: [], columns: 0 };
 
   const rows: string[][] = [];
   let columns = 0;
   for (const line of lines) {
-    const inner = line.replace(/"/g, '').trim();
+    const inner = line.slice(1, -1).trim();
     const cells = inner.split(/\s+/);
     rows.push(cells);
     columns = Math.max(columns, cells.length);

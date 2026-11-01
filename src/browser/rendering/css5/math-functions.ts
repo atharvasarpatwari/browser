@@ -573,9 +573,13 @@ function formatResult(result: { value: number; unit: string }): string {
 /**
  * Checks if a CSS value contains math functions.
  */
+// A math function name, not the end of another one: `minmax(150px, 1fr)` holds `max(`, which was
+// evaluated, so `repeat(auto-fill, minmax(150px, 1fr))` became `repeat(auto-fill,min150px)` and
+// every responsive card grid fell back to one column.
+const MATH_CALL = /(?:^|[^a-z0-9-])(calc|min|max|clamp)\s*\(/i;
+
 export function hasMathFunctions(value: string): boolean {
-  const lower = value.toLowerCase();
-  return lower.includes('calc(') || lower.includes('min(') || lower.includes('max(') || lower.includes('clamp(');
+  return MATH_CALL.test(value);
 }
 
 /**
@@ -644,14 +648,14 @@ export function resolveMathFunctions(
 function resolveInnermostFunction(value: string, ctx: MathResolutionContext): string {
   let i = 0;
   while (i < value.length) {
-    const nameMatch = value.slice(i).match(/^(calc|min|max|clamp)\s*\(/i);
+    const nameMatch = i > 0 && /[a-z0-9-]/i.test(value[i - 1]!) ? null : value.slice(i).match(/^(calc|min|max|clamp)\s*\(/i);
     if (nameMatch) {
       const name = nameMatch[1]!.toLowerCase();
       const openParenIdx = i + nameMatch[0].length - 1; // index of the '('
       const closeParenIdx = findMatchingParen(value, openParenIdx);
       if (closeParenIdx >= 0) {
         const argsContent = value.slice(openParenIdx + 1, closeParenIdx);
-        const hasNested = /(calc|min|max|clamp)\s*\(/i.test(argsContent);
+        const hasNested = MATH_CALL.test(argsContent);
         if (!hasNested) {
           const evaluated = evaluateFunction(name, argsContent, ctx);
           if (evaluated !== null) {

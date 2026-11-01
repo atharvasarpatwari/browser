@@ -49,12 +49,29 @@ function boxChildren(node: DomNode): readonly DomNode[] {
   if ((el.tagName === 'details' || el.tagName === 'DETAILS') && !el.attributes?.has('open')) {
     return node.children.filter((c) => c.nodeType === 'element');
   }
-  if (!el.pseudoBefore && !el.pseudoAfter) return node.children;
+  // A display:contents element is replaced by its children (CSS Display §2.5). It was laid out as
+  // one box, so the items of a flex or grid wrapped in it became a single item.
+  let kids: readonly DomNode[] = node.children;
+  if (kids.some(isContents)) kids = kids.flatMap((c) => (isContents(c) ? boxChildren(c) : [c]));
+  if (!el.pseudoBefore && !el.pseudoAfter) return kids;
   const out: DomNode[] = [];
   if (el.pseudoBefore) out.push(el.pseudoBefore);
-  for (const c of node.children) out.push(c);
+  for (const c of kids) out.push(c);
   if (el.pseudoAfter) out.push(el.pseudoAfter);
   return out;
+}
+
+const isContents = (n: DomNode): boolean => n.nodeType === 'element' && (n as DomElement).computedStyle?.get('display') === 'contents';
+
+/**
+ * Every node under `node` for dirty-flag walks: all DOM children (boxed or not) and the generated
+ * boxes. A walk that skipped one (a display:contents element, text in a closed details) left its
+ * flag set, and markDirty stops at a dirty ancestor, so later changes never reached the top.
+ */
+function flagChildren(node: DomNode): readonly DomNode[] {
+  const el = node as DomElement;
+  if (!el.pseudoBefore && !el.pseudoAfter) return node.children;
+  return [...(el.pseudoBefore ? [el.pseudoBefore] : []), ...node.children, ...(el.pseudoAfter ? [el.pseudoAfter] : [])];
 }
 
 interface DomTextNode extends DomNode {
@@ -557,7 +574,7 @@ class DomTree implements IDomTree {
       } else {
         n._dirtyPaint = true;
       }
-      for (const c of boxChildren(n)) stack.push(c);
+      for (const c of flagChildren(n)) stack.push(c);
     }
     this.markDirty(node, kind);
   }
@@ -577,7 +594,7 @@ class DomTree implements IDomTree {
       else n._dirtyPaint = false;
       // ::before/::after boxes too: one left layout-dirty was re-laid on its own on the next frame,
       // at its parent's origin (a summary's ▸ jumped to x=0, away from its text).
-      for (const c of boxChildren(n)) stack.push(c);
+      for (const c of flagChildren(n)) stack.push(c);
     }
   }
 

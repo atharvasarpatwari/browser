@@ -19,7 +19,7 @@ import {
 import type { FlexDirection, FlexWrap, JustifyContent, AlignItems, AlignContent, AlignSelf, FlexItem } from './formatting/flex-context';
 import {
   GridFormattingContext,
-  parseTrackList,
+  expandTrackList,
   parseGridPlacement,
   parseGridTemplateAreas,
   findAreaPlacement,
@@ -194,6 +194,25 @@ const FILLS_LINE = new Set(['block', 'list-item', 'flex', 'grid', 'table', 'flow
 function isInsetSet(style: ReadonlyMap<string, string>, prop: string): boolean {
   const v = style.get(prop);
   return v !== undefined && v !== 'auto';
+}
+
+/** `flex` shorthand → grow, shrink, basis (CSS Flexbox §7.2); null when it doesn't parse. */
+export function parseFlexShorthand(value: string): { grow: number; shrink: number; basis: string } | null {
+  const v = value.trim().toLowerCase();
+  if (v === 'none') return { grow: 0, shrink: 0, basis: 'auto' };
+  if (v === 'auto') return { grow: 1, shrink: 1, basis: 'auto' };
+  if (v === 'initial') return { grow: 0, shrink: 1, basis: 'auto' };
+  const nums: number[] = [];
+  let basis: string | null = null;
+  for (const part of v.split(/\s+/)) {
+    // A unitless number is grow then shrink; anything else (or a third number) is the basis.
+    if (/^[+]?(\d+\.?\d*|\.\d+)$/.test(part) && nums.length < 2 && basis === null) nums.push(parseFloat(part));
+    else if (basis === null) basis = part;
+    else return null;
+  }
+  if (nums.length === 0 && basis === null) return null;
+  // Omitted: grow 1, shrink 1, basis 0% (so `flex: 1` shares space equally, `flex: 120px` grows).
+  return { grow: nums[0] ?? 1, shrink: nums[1] ?? 1, basis: basis ?? '0%' };
 }
 
 class LayoutEngine implements ILayoutEngine {
@@ -450,7 +469,16 @@ class LayoutEngine implements ILayoutEngine {
     const fixedMargins = (marginLeftAuto ? 0 : marginLeft) + (marginRightAuto ? 0 : marginRight);
 
     let borderWidthBox: number;
-    if (specWidth && specWidth !== 'auto') {
+    // width: fit-content / max-content / min-content size the box to its content (CSS Sizing 3
+    // §2.1). They resolved as lengths, to 0, so `width: fit-content` tags and pills had no width.
+    const intrinsicWidth = specWidth !== undefined && /^(fit-content|max-content|min-content)$|^fit-content\(/.test(specWidth.trim());
+    if (intrinsicWidth) {
+      const frame = paddingLeft + paddingRight + borderLeft + borderRight;
+      const flex = classifyDisplay(display) === 'flex';
+      borderWidthBox = frame + (specWidth!.trim() === 'min-content'
+        ? this.measureContentWidth(node, 1, fontSize, domTree, flex, true)
+        : this.measureContentWidth(node, Math.max(0, availableWidth - fixedMargins - frame), fontSize, domTree, flex));
+    } else if (specWidth && specWidth !== 'auto') {
       const specified = resolve('width', '0');
       if (boxSizing === 'border-box') {
         borderWidthBox = Math.min(specified, availableWidth);
@@ -493,13 +521,18 @@ class LayoutEngine implements ILayoutEngine {
       : marginLeft;
 
     // ── Resolve height ────────────────────────────────────────────────────
+    // A percentage resolves against the containing block's height, and is `auto` when that isn't
+    // definite (CSS 2.2 §10.5). It resolved against the available *width*: `height: 50%` in a 200px
+    // tall parent on a 600px wide page was 300px, and the parent grew to hold it.
+    const pctHeight = specHeight !== undefined && /^-?[\d.]+%$/.test(specHeight.trim());
+    const pctBase = pctHeight ? this.percentHeightBase(node) : null;
+    const hasHeight = !!specHeight && specHeight !== 'auto' && (!pctHeight || pctBase !== null);
     let specifiedContentHeight: number;
-    if (specHeight && specHeight !== 'auto') {
-      if (boxSizing === 'border-box') {
-        specifiedContentHeight = resolve('height', '0') - paddingTop - paddingBottom - borderTop - borderBottom;
-      } else {
-        specifiedContentHeight = resolve('height', '0');
-      }
+    if (hasHeight) {
+      const outer = pctHeight ? parseFloat(specHeight!) / 100 * pctBase! : resolve('height', '0');
+      specifiedContentHeight = boxSizing === 'border-box'
+        ? outer - paddingTop - paddingBottom - borderTop - borderBottom
+        : outer;
     } else if (intrinsic.height != null) {
       // height attribute supplies the intrinsic height (box-sizing aware).
       specifiedContentHeight = boxSizing === 'border-box'
@@ -600,7 +633,12 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     // ── Compute content height ────────────────────────────────────────────
-    const contentHeight = this.clampContentHeight(style, Math.max(specifiedContentHeight, childY - contentY),
+    // A box that clips its overflow keeps its specified height; it grew to fit its content, so a
+    // 300px overflow:hidden carousel or card was as tall as everything in it.
+    // ponytail: overflow:visible boxes with a height still grow to their content (it covers Nova's
+    // font metrics being wider than the page's), where browsers let the content overflow.
+    const clips = hasHeight && !['visible', undefined].includes(style.get('overflow-y') ?? style.get('overflow'));
+    const contentHeight = this.clampContentHeight(style, clips ? specifiedContentHeight : Math.max(specifiedContentHeight, childY - contentY),
       resolve, boxSizing, paddingTop + paddingBottom + borderTop + borderBottom);
 
     // ── Update LayoutBox with final height ───────────────────────────────
@@ -737,11 +775,16 @@ class LayoutEngine implements ILayoutEngine {
 
     let childY = contentY;
     let inlineRun: ClassifiedChild[] = [];
+    // The bottom margin of the block laid out just before, while nothing separates it from the next:
+    // adjacent sibling margins collapse (CSS 2.2 §8.3.1). They were added, so every gap between
+    // paragraphs, headings and list items was doubled (two 16px margins made 32px, not 16px).
+    let prevMarginBottom: number | null = null;
 
     const flushInlineRun = (): void => {
       if (inlineRun.length === 0) return;
       childY = this.layoutAnonymousBlock(parent, inlineRun, contentX, childY, availableWidth, parentFontSize, domTree);
       inlineRun = [];
+      prevMarginBottom = null;
     };
 
     for (const child of boxChildren(parent)) {
@@ -789,10 +832,18 @@ class LayoutEngine implements ILayoutEngine {
           // Handle clear — move below all floats on the cleared side
           const clearVal = childStyle.get('clear') ?? 'none';
           if (clearVal !== 'none') {
-            childY = this.floatContext.getYAfterClear(clearVal as 'left' | 'right' | 'both' | 'none', childY);
+            const cleared = this.floatContext.getYAfterClear(clearVal as 'left' | 'right' | 'both' | 'none', childY);
+            if (cleared !== childY) prevMarginBottom = null; // clearance separates the margins
+            childY = cleared;
           }
 
+          if (prevMarginBottom !== null) {
+            const raw = childStyle.get('margin-top') ?? childStyle.get('margin') ?? '0';
+            const top = raw === 'auto' ? 0 : this.resolveLength(raw, this.resolveFontSize(childStyle, parentFontSize), availableWidth);
+            childY -= prevMarginBottom + top - collapseMargins(prevMarginBottom, top);
+          }
           childY = this.layoutNode(childEl, contentX, childY, availableWidth, parentFontSize, domTree);
+          prevMarginBottom = this.layoutBoxes.get(childEl.domId)?.marginBottom ?? 0;
         } else {
           inlineRun.push({ node: childEl, display, isBlock: false });
         }
@@ -808,6 +859,32 @@ class LayoutEngine implements ILayoutEngine {
     }
     this.floatContext = oldFloatContext;
     return childY;
+  }
+
+  /**
+   * The height a percentage height of `el` resolves against: its parent's definite content height
+   * (a length, or a percentage of a definite one), the viewport for the root; null when auto.
+   */
+  private percentHeightBase(el: DomElement, depth = 0): number | null {
+    const parent = el.parent;
+    if (!parent || parent.nodeType !== 'element' || depth > 32) return this.config.viewportHeight;
+    const p = parent as DomElement;
+    const style = p.computedStyle ?? new Map<string, string>();
+    const h = (style.get('height') ?? 'auto').trim();
+    if (h === 'auto') return p.tagName.toLowerCase() === 'html' ? this.config.viewportHeight : null;
+    const fontSize = parseFloat(style.get('font-size') ?? '') || this.config.defaultFontSize;
+    let outer: number;
+    if (/^-?[\d.]+%$/.test(h)) {
+      const base = this.percentHeightBase(p, depth + 1);
+      if (base === null) return null;
+      outer = parseFloat(h) / 100 * base;
+    } else {
+      outer = this.resolveLength(h, fontSize, 0);
+    }
+    if ((style.get('box-sizing') ?? 'content-box') !== 'border-box') return outer;
+    const side = (prop: string): number => this.resolveLength(style.get(prop) ?? '0', fontSize, 0);
+    return Math.max(0, outer - side('padding-top') - side('padding-bottom')
+      - this.parseBorderWidth(style.get('border-top-width') ?? '0') - this.parseBorderWidth(style.get('border-bottom-width') ?? '0'));
   }
 
   /** CSS 2.2 §9.4.1: boxes whose contents are laid out in a new block formatting context. */
@@ -1231,6 +1308,10 @@ class LayoutEngine implements ILayoutEngine {
         crossSize: 0,
         mainOffset: 0,
         crossOffset: 0,
+        autoMargins: {
+          left: childStyle.get('margin-left') === 'auto', right: childStyle.get('margin-right') === 'auto',
+          top: childStyle.get('margin-top') === 'auto', bottom: childStyle.get('margin-bottom') === 'auto',
+        },
         marginLeft:   rc('margin-left',   childStyle.get('margin') ?? '0'),
         marginRight:  rc('margin-right',  childStyle.get('margin') ?? '0'),
         marginTop:    rc('margin-top',    childStyle.get('margin') ?? '0'),
@@ -1247,41 +1328,22 @@ class LayoutEngine implements ILayoutEngine {
         hasDefiniteCrossSize: false,
       };
 
-      // Handle flex shorthand: flex: <grow> <shrink> <basis>
+      // flex: <grow> <shrink>? || <basis> (CSS Flexbox §7.2). The old split turned shrink 0 into 1
+      // (`parseFloat('0') || 1`, so `flex: 0 0 120px` and `flex: none` items still shrank), took the
+      // basis from the flex-basis longhand instead (`0 0 120px` was 0 wide) and read `1 200px` as
+      // shrink 200.
       const flexShorthand = childStyle.get('flex');
-      if (flexShorthand) {
-        const parts = flexShorthand.split(/\s+/);
-        if (parts.length === 1) {
-          const v = parseFloat(parts[0]);
-          if (!isNaN(v)) { item.flexGrow = v; item.flexShrink = 1; item.flexBasis = 0; }
-        } else if (parts.length === 2) {
-          item.flexGrow = parseFloat(parts[0]) || 0;
-          item.flexShrink = parseFloat(parts[1]) || 1;
-          item.flexBasis = 0;
-        } else if (parts.length >= 3) {
-          item.flexGrow = parseFloat(parts[0]) || 0;
-          item.flexShrink = parseFloat(parts[1]) || 1;
-          item.flexBasis = parts[2] === 'auto' ? 0 : rc('flex-basis', '0');
-        }
-      }
-      let autoBasis = !flexShorthand || /\bauto\b|^\s*(none|initial)\s*$/.test(flexShorthand);
-
-      // Resolve flex-basis if not set by shorthand
-      if (!flexShorthand || item.flexBasis === 0) {
-        const childFlexBasis = childStyle.get('flex-basis');
-        if (childFlexBasis && childFlexBasis !== 'auto') {
-          item.flexBasis = rc('flex-basis', '0');
-          autoBasis = false;
-        } else {
-          const mainSizeProp = isHorizontal ? 'width' : 'height';
-          const rawMain = childStyle.get(mainSizeProp);
-          if (rawMain && rawMain !== 'auto') {
-            item.flexBasis = rc(mainSizeProp, '0');
-            autoBasis = false;
-          }
-        }
+      const flex = flexShorthand ? parseFlexShorthand(flexShorthand) : null;
+      if (flex) { item.flexGrow = flex.grow; item.flexShrink = flex.shrink; }
+      // The basis: the shorthand's, else flex-basis; `auto` is the main size, else the content size.
+      const basis = flex ? flex.basis : (childStyle.get('flex-basis') ?? 'auto');
+      let autoBasis = false;
+      if (basis !== 'auto' && basis !== 'content') {
+        item.flexBasis = this.resolveLength(basis, fontSize, availableWidth);
       } else {
-        autoBasis = false;
+        const rawMain = childStyle.get(isHorizontal ? 'width' : 'height');
+        if (rawMain && rawMain !== 'auto') item.flexBasis = rc(isHorizontal ? 'width' : 'height', '0');
+        else autoBasis = true;
       }
       // flex-basis:auto with width:auto is the item's max-content width (CSS Flexbox §9.2.3.E).
       // It was 0, so a text column next to a thumbnail (Wikipedia search results) was laid out
@@ -1439,15 +1501,13 @@ class LayoutEngine implements ILayoutEngine {
     const justifyContent = (style.get('justify-items') ?? 'stretch') as GridAxisAlign;
     const alignItems = (style.get('align-items') ?? 'stretch') as GridAxisAlign;
 
-    // Parse grid-template-columns — use parseTrackList for repeat/minmax support
+    // Parse grid-template-columns: repeat()/minmax() expanded to plain tracks
     const rawCols = style.get('grid-template-columns');
-    const colDefs = rawCols && rawCols !== 'none' ? parseTrackList(rawCols) : [];
-    const columns = colDefs.map(d => d.value);
+    const columns = rawCols && rawCols !== 'none' ? expandTrackList(rawCols, availableWidth, colGap, fontSize) : [];
 
     // Parse grid-template-rows
     const rawRows = style.get('grid-template-rows');
-    const rowDefs = rawRows && rawRows !== 'none' ? parseTrackList(rawRows) : [];
-    const rows = rowDefs.map(d => d.value);
+    const rows = rawRows && rawRows !== 'none' ? expandTrackList(rawRows, 0, rowGap, fontSize) : [];
 
     // Parse grid-template-areas
     const rawAreas = style.get('grid-template-areas');
@@ -1500,11 +1560,15 @@ class LayoutEngine implements ILayoutEngine {
         this.resolveLength(childStyle.get(prop) ?? fallback, fontSize, availableWidth);
 
       // Parse grid-column / grid-row / grid-area
-      const rawGridArea = childStyle.get('grid-area');
-      const rawGridColumn = childStyle.get('grid-column');
-      const rawGridRow = childStyle.get('grid-row');
+      // `auto` is the initial value, not a placement: a computed `grid-column: auto` made every
+      // `grid-area: name` item skip its template area and land in the first free cell.
+      const placementOf = (prop: string): string | undefined => { const v = childStyle.get(prop)?.trim(); return v && v !== 'auto' ? v : undefined; };
+      const rawGridArea = placementOf('grid-area');
+      const rawGridColumn = placementOf('grid-column');
+      const rawGridRow = placementOf('grid-row');
 
       let colStart = -1, colEnd = -1, rowStart = -1, rowEnd = -1;
+      let colSpan: number | undefined, rowSpan: number | undefined;
 
       if (rawGridArea) {
         const parsed = parseGridPlacement(rawGridArea, false);
@@ -1516,11 +1580,13 @@ class LayoutEngine implements ILayoutEngine {
       } else {
         if (rawGridColumn) {
           const parsed = parseGridPlacement(rawGridColumn, false);
+          colSpan = parsed.span;
           colStart = parsed.start;
           colEnd = parsed.end;
         }
         if (rawGridRow) {
           const parsed = parseGridPlacement(rawGridRow, true);
+          rowSpan = parsed.span;
           rowStart = parsed.start;
           rowEnd = parsed.end;
         }
@@ -1556,6 +1622,8 @@ class LayoutEngine implements ILayoutEngine {
           rowEnd: rowEnd,
           isAutoColumn: colStart <= 0,
           isAutoRow: rowStart <= 0,
+          columnSpan: colSpan,
+          rowSpan,
         },
         colOffset: 0,
         rowOffset: 0,
@@ -2562,6 +2630,19 @@ class LayoutEngine implements ILayoutEngine {
       if (hasBottom && !hasTop) {
         // Anchored by its bottom: resolveOutOfFlow placed it before its height was known.
         const dy = -box.height;
+        box.y += dy;
+        this.translateContent(node, 0, dy);
+      } else if (hasTop && hasBottom && (style.get('margin-top') === 'auto' || style.get('margin-bottom') === 'auto')) {
+        // Both insets and the height set: auto margins share the rest (CSS 2.2 §10.6.4), so
+        // `inset: 0; margin: auto; height: 200px` centres vertically. Known only now, after layout.
+        const cbH = containingBlock ? ((cbBox?.height ?? 0) - (cbBox?.borderTop ?? 0) - (cbBox?.borderBottom ?? 0)) : this.config.viewportHeight;
+        const cbY = containingBlock ? (cbBox?.y ?? 0) + (cbBox?.borderTop ?? 0) : 0;
+        const topPx = this.resolveLength(style.get('top')!, fontSize, cbH);
+        const bottomPx = this.resolveLength(style.get('bottom')!, fontSize, cbH);
+        const mtAuto = style.get('margin-top') === 'auto';
+        const mbAuto = style.get('margin-bottom') === 'auto';
+        const free = cbH - topPx - bottomPx - box.height - (mtAuto ? 0 : box.marginTop) - (mbAuto ? 0 : box.marginBottom);
+        const dy = cbY + topPx + (mtAuto && mbAuto ? Math.max(0, free / 2) : mtAuto ? free : box.marginTop) - box.y;
         box.y += dy;
         this.translateContent(node, 0, dy);
       }
