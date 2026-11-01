@@ -463,11 +463,11 @@ describe('LayoutEngine', () => {
       engine.layout(doc, tree);
       const child1 = tree.getElementById('child1')!.layoutBox!;
       const child2 = tree.getElementById('child2')!.layoutBox!;
-      // Empty inline children have the same x position (inline flow)
-      // Both are laid out horizontally — child2 wraps to next line when child1 fills the line
+      // Empty inline children take no room: same position, same line (1.71 — they used to be
+      // sized like inline-blocks across the whole line, so child2 wrapped onto a line of its own).
       expect(child1.x).toBe(child2.x);
-      expect(child1.height).toBeGreaterThan(0);
-      expect(child2.height).toBeGreaterThan(0);
+      expect(child2.y).toBe(child1.y);
+      expect(child1.width).toBe(0);
     });
   });
 

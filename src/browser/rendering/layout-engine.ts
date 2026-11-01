@@ -215,6 +215,9 @@ function effectiveTextAlign(el: DomElement): string | undefined {
   return align;
 }
 
+/** Elements whose content is outside CSS (replaced, CSS 2.2 §3.1) or drawn as a control. */
+const REPLACED_TAGS = new Set(['img', 'video', 'canvas', 'iframe', 'embed', 'object', 'svg', 'input', 'select', 'textarea', 'button', 'audio', 'meter', 'progress', 'picture']);
+
 /** `flex` shorthand → grow, shrink, basis (CSS Flexbox §7.2); null when it doesn't parse. */
 export function parseFlexShorthand(value: string): { grow: number; shrink: number; basis: string } | null {
   const v = value.trim().toLowerCase();
@@ -1019,9 +1022,12 @@ class LayoutEngine implements ILayoutEngine {
         borderWidthBox = specified + paddingLeft + paddingRight + borderLeft + borderRight;
       }
     } else {
-      // Auto width: shrink-wrap to content
-      const contentWidth = availableWidth - marginLeft - marginRight - paddingLeft - paddingRight - borderLeft - borderRight;
-      borderWidthBox = Math.max(0, contentWidth);
+      // Auto width: shrink-to-fit (CSS 2.2 §10.3.5). It took the whole line, so floated menu items
+      // (IANA's header nav, `li { float: left }` menus) stacked vertically instead of in a row.
+      const frame = paddingLeft + paddingRight + borderLeft + borderRight;
+      const room = Math.max(0, availableWidth - marginLeft - marginRight - frame);
+      const flex = ['flex', 'inline-flex'].includes(elStyle.get('display') ?? '');
+      borderWidthBox = this.measureContentWidth(el, room, elFontSize, domTree, flex) + frame;
     }
 
     // Resolve height
@@ -1137,6 +1143,9 @@ class LayoutEngine implements ILayoutEngine {
       const elDisplay = elStyle.get('display') ?? 'inline';
       const elPosition = elStyle.get('position') ?? 'static';
       const elClassified = classifyDisplay(elDisplay);
+      // display:none inside a line takes no room. It was laid out (unpainted) as an inline: Wikipedia's
+      // hidden `<sup style="display:none">` "[update]" link broke "As of 2026, the most used …".
+      if (elClassified === 'none') continue;
       // <br> is a forced line break. It was an empty inline as wide as the line: a wrap plus an
       // extra line, so every <br> left a blank line too.
       if (el.tagName.toLowerCase() === 'br' && elDisplay !== 'none') {
@@ -1909,6 +1918,9 @@ class LayoutEngine implements ILayoutEngine {
       const elDisplay = elStyle.get('display') ?? 'inline';
       const elPosition = elStyle.get('position') ?? 'static';
       const elClassified = classifyDisplay(elDisplay);
+      // display:none inside a line takes no room. It was laid out (unpainted) as an inline: Wikipedia's
+      // hidden `<sup style="display:none">` "[update]" link broke "As of 2026, the most used …".
+      if (elClassified === 'none') continue;
       // <br> is a forced line break. It was an empty inline as wide as the line: a wrap plus an
       // extra line, so every <br> left a blank line too.
       if (el.tagName.toLowerCase() === 'br' && elDisplay !== 'none') {
@@ -2054,7 +2066,11 @@ class LayoutEngine implements ILayoutEngine {
     parentFontSize: number,
     domTree?: IDomTree,
   ): void {
-    if (boxChildren(el).length === 0 || this.resolveIntrinsicSize(el).width != null) {
+    // Only replaced elements (images, controls) take the atomic path when empty. An empty <span>
+    // went there too and was sized like an inline-block across the whole line, so Wikipedia's empty
+    // `<span typeof="mw:Nowiki">` spans broke sentences in two ("As of 2026 | , the most used …").
+    const replaced = REPLACED_TAGS.has(el.tagName.toLowerCase());
+    if ((boxChildren(el).length === 0 && replaced) || this.resolveIntrinsicSize(el).width != null) {
       this.layoutInlineElement(el, ifc, contentX, contentY, availableWidth, parentFontSize, domTree);
       return;
     }
@@ -2089,6 +2105,7 @@ class LayoutEngine implements ILayoutEngine {
       const innerStyle = inner.computedStyle ?? new Map();
       const innerPosition = innerStyle.get('position') ?? 'static';
       const innerClassified = classifyDisplay(innerStyle.get('display') ?? 'inline');
+      if (innerClassified === 'none') continue;
       if (inner.tagName.toLowerCase() === 'br' && innerStyle.get('display') !== 'none') {
         ifc.lineBreak(lineHeight);
         continue;
