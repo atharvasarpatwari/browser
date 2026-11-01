@@ -9,6 +9,7 @@ import { findContainingBlock as findContainingBlockForScheme, resolveOutOfFlow, 
 import { classifyDisplay, type ClassifiedChild } from './formatting/types';
 import { classifyChildren, collapseMargins, isMarginCollapseBlocked } from './formatting/block-context';
 import { InlineFormattingContext } from './formatting/inline-context';
+import { getTextMeasurer } from './formatting/text-measure';
 import { FloatContext } from './formatting/float-context';
 import {
   FlexFormattingContext,
@@ -194,6 +195,24 @@ const FILLS_LINE = new Set(['block', 'list-item', 'flex', 'grid', 'table', 'flow
 function isInsetSet(style: ReadonlyMap<string, string>, prop: string): boolean {
   const v = style.get(prop);
   return v !== undefined && v !== 'auto';
+}
+
+/**
+ * text-align with `start`/`end` resolved by direction: an rtl block (dir="rtl", Arabic/Hebrew
+ * pages) was left-aligned.
+ */
+function effectiveTextAlign(el: DomElement): string | undefined {
+  const style = el.computedStyle;
+  const align = style?.get('text-align');
+  let rtl = style?.get('direction') === 'rtl';
+  if (!style?.has('direction')) for (let n: DomNode | null = el; n; n = n.parent) {
+    const d = n.nodeType === 'element' ? (n as DomElement).attributes.get('dir') : undefined;
+    if (d) { rtl = d.toLowerCase() === 'rtl'; break; }
+  }
+  if (!rtl) return align;
+  if (!align || align === 'start') return 'right';
+  if (align === 'end') return 'left';
+  return align;
 }
 
 /** `flex` shorthand → grow, shrink, basis (CSS Flexbox §7.2); null when it doesn't parse. */
@@ -1046,13 +1065,19 @@ class LayoutEngine implements ILayoutEngine {
     const inlineBlocksFrom = this.pendingInlineBlocks.length;
     const parentStyle = parent.computedStyle ?? new Map();
     const parentLineHeight = this.resolveLineHeight(parentStyle, parentFontSize);
+    // text-indent applies to the block's first line only: this run must start its content.
+    const indent = parentStyle.get('text-indent');
+    const firstContent = boxChildren(parent).find((c) => !(c.nodeType === 'text' && !((c as DomNode & { text?: string }).text ?? '').trim()));
+    if (indent && indent !== '0' && indent !== '0px' && children[0]?.node === firstContent) {
+      ifc.setTextIndent(this.resolveLength(indent, parentFontSize, availableWidth));
+    }
 
     for (const child of children) {
       if (child.node.nodeType === 'text') {
         const textNode = child.node as DomElement & { text?: string };
         const text = textNode.text ?? (child.node as unknown as { text: string }).text ?? '';
         if (text) {
-          ifc.letterSpacing = this.letterSpacingOf(parent, parentFontSize);
+          this.applyTextSpacing(ifc, parent, parentFontSize);
           ifc.addTextRun(transformText(text, parent), parentFontSize, parentLineHeight, 'sans-serif', undefined, preservesWhitespace(parent), null, noWrap(parent));
         }
         continue;
@@ -1089,7 +1114,7 @@ class LayoutEngine implements ILayoutEngine {
       }
     }
 
-    const totalHeight = ifc.finalize(this.measuringShrinkToFit ? 'start' : parentStyle.get('text-align'));
+    const totalHeight = ifc.finalize(this.measuringShrinkToFit ? 'start' : effectiveTextAlign(parent));
     this.populateTextRuns(parent, ifc, parentFontSize);
     this.placeInlineBlocks(inlineBlocksFrom);
     return startY + Math.max(totalHeight, parentLineHeight);
@@ -1763,6 +1788,8 @@ class LayoutEngine implements ILayoutEngine {
       defaultFontSize: parentFontSize,
       originX: contentX,
     });
+    const indent = parent.computedStyle?.get('text-indent');
+    if (indent && indent !== '0' && indent !== '0px') ifc.setTextIndent(this.resolveLength(indent, parentFontSize, availableWidth));
     const inlineBlocksFrom = this.pendingInlineBlocks.length;
 
     for (const child of boxChildren(parent)) {
@@ -1770,7 +1797,7 @@ class LayoutEngine implements ILayoutEngine {
         const text = (child as DomNode & { text: string }).text ?? '';
         if (text) {
           const lineHeight = this.resolveLineHeight(parent.computedStyle ?? new Map(), parentFontSize);
-          ifc.letterSpacing = this.letterSpacingOf(parent, parentFontSize);
+          this.applyTextSpacing(ifc, parent, parentFontSize);
           ifc.addTextRun(transformText(text, parent), parentFontSize, lineHeight, 'sans-serif', undefined, preservesWhitespace(parent), null, noWrap(parent));
         }
         continue;
@@ -1812,13 +1839,24 @@ class LayoutEngine implements ILayoutEngine {
       }
     }
 
-    const totalHeight = ifc.finalize(this.measuringShrinkToFit ? 'start' : parent.computedStyle?.get('text-align'));
+    const totalHeight = ifc.finalize(this.measuringShrinkToFit ? 'start' : effectiveTextAlign(parent));
 
     // Populate text runs on the parent's LayoutBox for painting
     this.populateTextRuns(parent, ifc, parentFontSize);
     this.placeInlineBlocks(inlineBlocksFrom);
 
     return contentY + Math.max(totalHeight, this.resolveLineHeight(parent.computedStyle ?? new Map(), parentFontSize));
+  }
+
+  /** letter-spacing, word-spacing and long-word breaking for the text runs of `el`. */
+  private applyTextSpacing(ifc: InlineFormattingContext, el: DomElement, fontSize: number): void {
+    const style = el.computedStyle ?? new Map<string, string>();
+    ifc.letterSpacing = this.letterSpacingOf(el, fontSize);
+    const ws = style.get('word-spacing');
+    ifc.wordSpacing = ws && ws !== 'normal' ? this.resolveLength(ws, this.resolveFontSize(style, fontSize), 0) : 0;
+    const ow = style.get('overflow-wrap') ?? style.get('word-wrap');
+    const wb = style.get('word-break');
+    ifc.breakWords = ow === 'anywhere' || ow === 'break-word' || wb === 'break-all' || wb === 'break-word';
   }
 
   /** letter-spacing in px (`normal` is 0); it was ignored. */
@@ -1888,7 +1926,12 @@ class LayoutEngine implements ILayoutEngine {
     for (const [owner, b] of ownerBounds) {
       const ownerBox = this.layoutBoxes.get(owner.domId);
       if (!ownerBox) continue;
-      ownerBox.x = b.x0; ownerBox.y = b.y0; ownerBox.width = b.x1 - b.x0; ownerBox.height = b.y1 - b.y0;
+      // Its padding and borders extend around the text (vertically without moving the line).
+      const x0 = b.x0 - ownerBox.paddingLeft - ownerBox.borderLeft;
+      const y0 = b.y0 - ownerBox.paddingTop - ownerBox.borderTop;
+      ownerBox.x = x0; ownerBox.y = y0;
+      ownerBox.width = b.x1 + ownerBox.paddingRight + ownerBox.borderRight - x0;
+      ownerBox.height = b.y1 + ownerBox.paddingBottom + ownerBox.borderBottom - y0;
     }
   }
 
@@ -1919,20 +1962,26 @@ class LayoutEngine implements ILayoutEngine {
     const style = el.computedStyle ?? new Map();
     const fontSize = this.resolveFontSize(style, parentFontSize);
     const lineHeight = this.resolveLineHeight(style, fontSize);
+    const len = (prop: string): number => {
+      const v = style.get(prop);
+      return !v || v === 'auto' ? 0 : this.resolveLength(v, fontSize, availableWidth);
+    };
+    const border = (side: string): number => (['none', 'hidden'].includes(style.get(`border-${side}-style`) ?? 'none') ? 0 : this.parseBorderWidth(style.get(`border-${side}-width`) ?? '0'));
     const box: LayoutBox = {
       x: contentX, y: ifc.getEndY(), width: 0, height: 0,
-      marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0,
-      paddingTop: 0, paddingRight: 0, paddingBottom: 0, paddingLeft: 0,
-      borderTop: 0, borderRight: 0, borderBottom: 0, borderLeft: 0,
+      marginTop: 0, marginRight: len('margin-right'), marginBottom: 0, marginLeft: len('margin-left'),
+      paddingTop: len('padding-top'), paddingRight: len('padding-right'), paddingBottom: len('padding-bottom'), paddingLeft: len('padding-left'),
+      borderTop: border('top'), borderRight: border('right'), borderBottom: border('bottom'), borderLeft: border('left'),
     };
     this.layoutBoxes.set(el.domId, box);
     this.elementPositions.push({ element: el, box });
     domTree?.setLayoutBox(el, box);
+    ifc.addSpace(box.marginLeft + box.borderLeft + box.paddingLeft);
 
     for (const child of boxChildren(el)) {
       if (child.nodeType === 'text') {
         const text = (child as DomNode & { text: string }).text ?? '';
-        ifc.letterSpacing = this.letterSpacingOf(el, fontSize);
+        this.applyTextSpacing(ifc, el, parentFontSize);
         if (text) ifc.addTextRun(transformText(text, el), fontSize, lineHeight, 'sans-serif', style.get('font-weight'), preservesWhitespace(el), el, noWrap(el));
         continue;
       }
@@ -1956,6 +2005,7 @@ class LayoutEngine implements ILayoutEngine {
         this.flowInlineElement(inner, ifc, contentX, contentY, availableWidth, fontSize, domTree);
       }
     }
+    ifc.addSpace(box.paddingRight + box.borderRight + box.marginRight);
   }
 
   private layoutInlineElement(
@@ -2283,6 +2333,16 @@ class LayoutEngine implements ILayoutEngine {
     if (value.endsWith('px')) {
       const n = parseFloat(value);
       return isFinite(n) ? n : 0;
+    }
+
+    // ch (the "0" advance) and ex (x-height, ~0.5em): parsed as plain numbers, so width:10ch was 10px.
+    if (value.endsWith('ch')) {
+      const n = parseFloat(value);
+      return isFinite(n) ? n * getTextMeasurer().measure('0', fontSize, 'sans-serif', 'normal').width : 0;
+    }
+    if (value.endsWith('ex')) {
+      const n = parseFloat(value);
+      return isFinite(n) ? n * fontSize * 0.5 : 0;
     }
 
     // rem before em: '2.4rem' ends with 'em' too, so every rem resolved against the element's own

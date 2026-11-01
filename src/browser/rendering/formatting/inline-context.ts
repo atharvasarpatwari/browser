@@ -82,42 +82,37 @@ export class InlineFormattingContext {
   /**
    * Gets the available width at a given Y position, accounting for floats.
    */
-  private getAvailableWidthAt(y: number): number {
-    let width = this.availableWidth;
-
+  /**
+   * The free span of a line at `y` (absolute) between the floats beside it, relative to originX.
+   * The helpers below were called with the line's used *width* as their y and subtracted startY
+   * from a float's x, so floats almost never narrowed a line: text after a floated image ran
+   * underneath it.
+   */
+  private zoneBounds(y: number): { left: number; right: number } {
+    let left = 0;
+    let right = this.availableWidth;
+    const bottom = y + this.defaultFontSize * 1.2;
     for (const zone of this.exclusionZones) {
-      // Check if this zone overlaps with the Y position
-      if (zone.y < this.startY + y + this.defaultFontSize * 1.2 && zone.bottom > this.startY + y) {
-        if (zone.side === 'left') {
-          // Left float pushes content right
-          const rightEdge = zone.x;
-          // The available width is reduced from the left
-          width = Math.min(width, this.availableWidth - (this.availableWidth - rightEdge));
-        } else {
-          // Right float pushes content left
-          width = Math.min(width, zone.x);
-        }
+      if (zone.y < bottom && zone.bottom > y) {
+        if (zone.side === 'left') left = Math.max(left, zone.x - this.originX);
+        else right = Math.min(right, zone.x - this.originX);
       }
     }
+    left = Math.max(0, Math.min(left, this.availableWidth));
+    return { left, right: Math.max(left, right) };
+  }
 
-    return Math.max(0, width);
+  private getAvailableWidthAt(_y: number): number {
+    const b = this.zoneBounds(this.currentLine.y);
+    return b.right - b.left;
   }
 
   /**
    * Gets the X offset at a given Y position, accounting for left floats.
    */
-  private getLeftOffsetAt(y: number): number {
-    let offset = 0;
-
-    for (const zone of this.exclusionZones) {
-      if (zone.side === 'left' &&
-          zone.y < this.startY + y + this.defaultFontSize * 1.2 &&
-          zone.bottom > this.startY + y) {
-        offset = Math.max(offset, zone.x - this.startY);
-      }
-    }
-
-    return offset;
+  /** Lines are shifted past left floats in finalize(), once per line. */
+  private getLeftOffsetAt(_y: number): number {
+    return 0;
   }
 
   /**
@@ -186,8 +181,18 @@ export class InlineFormattingContext {
     }
 
     // white-space: normal collapses runs of spaces/tabs/newlines to one space (CSS Text §4.1.1);
-    // source indentation used to show up as wide gaps mid-sentence. pre* keeps them.
+    // source indentation used to show up as wide gaps mid-sentence. pre* keeps them, with tabs
+    // advancing to the next 8-space stop (tab-size 8; a tab measured as nothing).
     if (!preserveWhitespace) text = text.replace(/[ \t\n\r\f]+/g, ' ');
+    else if (text.includes('\t')) {
+      let col = 0;
+      text = text.replace(/[\t\n]|[^\t\n]+/g, (m) => {
+        if (m === '\n') { col = 0; return m; }
+        if (m === '\t') { const n = 8 - (col % 8); col += n; return ' '.repeat(n); }
+        col += m.length;
+        return m;
+      });
+    }
 
     const measurer = getTextMeasurer();
     const weight = fontWeight ?? this.fontWeight;
@@ -216,7 +221,14 @@ export class InlineFormattingContext {
       const ls = this.letterSpacing;
       const spaced = (t: string): number => (ls ? ls * [...t].length : 0); // letter-spacing adds after each character
       const metrics = measurer.measure(seg.text, fontSize, ff, weight);
-      const segWidth = metrics.width + spaced(seg.text);
+      const segWidth = metrics.width + spaced(seg.text) + (isWhitespace ? this.wordSpacing : 0);
+
+      // A word wider than the whole line breaks between characters when the style allows it.
+      if (this.breakWords && !isWhitespace && segWidth > this.getAvailableWidthAt(0) - this.currentLine.usedWidth
+        && (segWidth > this.getAvailableWidthAt(0) || this.currentLine.usedWidth === 0)) {
+        this.pushBrokenWord(seg.text, fontSize, lineHeight, ff, weight);
+        continue;
+      }
 
       // Check if we need to wrap
       const availWidth = this.getAvailableWidthAt(this.currentLine.usedWidth);
@@ -351,8 +363,10 @@ export class InlineFormattingContext {
       line.height = Math.max(line.height, strutHeight);
 
       // text-align (CSS Text §6.1): shift the line by its free space. Trailing spaces hang,
-      // so they don't count. ponytail: justify and rtl start/end are treated as left-to-right start.
-      const shift = this.alignmentShift(line, textAlign);
+      // so they don't count. The line also starts past any left float beside it.
+      // ponytail: justify is treated as start.
+      const span = this.zoneBounds(line.y);
+      const shift = span.left + this.alignmentShift(line, textAlign, span.right - span.left);
       if (shift > 0) for (const box of line.boxes) box.box.x += shift;
 
       // Position each box vertically within the line box
@@ -368,7 +382,7 @@ export class InlineFormattingContext {
     return totalHeight;
   }
 
-  private alignmentShift(line: LineBox, textAlign: string): number {
+  private alignmentShift(line: LineBox, textAlign: string, lineWidth = this.availableWidth): number {
     const align = textAlign.replace(/^-webkit-/, '');
     if (align !== 'center' && align !== 'right' && align !== 'end') return 0;
     let used = line.usedWidth;
@@ -377,7 +391,7 @@ export class InlineFormattingContext {
       if (b.textContent === undefined || b.textContent.trim() !== '') break;
       used -= b.box.width;
     }
-    const free = this.availableWidth - used;
+    const free = lineWidth - used;
     if (free <= 0) return 0;
     return align === 'center' ? free / 2 : free;
   }
@@ -427,6 +441,43 @@ export class InlineFormattingContext {
 
   /** letter-spacing (px) for the text added next; set by layout from the text's element. */
   letterSpacing = 0;
+  /** word-spacing in px, added to each word separator. */
+  wordSpacing = 0;
+  /** overflow-wrap: anywhere / break-word, word-break: break-all — a word wider than the line breaks. */
+  breakWords = false;
+
+  /** text-indent: the first line starts this far in (CSS Text §8.1). It was ignored. */
+  setTextIndent(px: number): void {
+    if (this.lineBoxes.length === 1 && this.currentLine.boxes.length === 0) this.currentLine.usedWidth = px;
+  }
+
+  /**
+   * Horizontal space on the current line: an inline element's left or right margin + border +
+   * padding. They were ignored, so a padded `<span>` (badges, pill links) had its text flush against
+   * its neighbours and its background drawn over them.
+   */
+  addSpace(px: number): void {
+    if (px > 0) this.currentLine.usedWidth += px;
+  }
+
+  /** A word too wide for any line, broken between characters where it overflows. */
+  private pushBrokenWord(text: string, fontSize: number, lineHeight: number, ff: string, weight: string): void {
+    const measurer = getTextMeasurer();
+    let rest = text;
+    while (rest.length > 0) {
+      const room = this.getAvailableWidthAt(0) - this.currentLine.usedWidth;
+      let n = 1;
+      while (n < rest.length && measurer.measure(rest.slice(0, n + 1), fontSize, ff, weight).width <= room) n++;
+      if (measurer.measure(rest.slice(0, n), fontSize, ff, weight).width > room && this.currentLine.usedWidth > 0) {
+        this.startNewLine();
+        continue;
+      }
+      const piece = rest.slice(0, n);
+      this.pushTextSegment(piece, measurer.measure(piece, fontSize, ff, weight).width, fontSize, lineHeight, ff);
+      rest = rest.slice(n);
+      if (rest.length > 0) this.startNewLine();
+    }
+  }
 
   private startNewLine(): void {
     const lastLineHeight = this.currentLine.height || this.computeStrutHeight();

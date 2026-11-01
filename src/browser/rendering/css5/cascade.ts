@@ -1767,6 +1767,9 @@ export function computeComputedStyles(
       const firstSummary = parent.children.find((c) => c.tagName.toLowerCase() === 'summary');
       if (element !== firstSummary) computed.set('display', 'none');
     }
+    // HTML §15.3.6: dir="rtl"/"ltr" sets direction (inherited), so start/end alignment follows it.
+    const dir = element.attributes.get('dir')?.toLowerCase();
+    if (dir === 'rtl' || dir === 'ltr') computed.set('direction', dir);
     // HTML §15.5.4: a details' summary is a list item with a ▸ / ▾ marker inside it.
     if (parent && parent.tagName.toLowerCase() === 'details' && element.tagName.toLowerCase() === 'summary') {
       computed.set('display', 'list-item');
