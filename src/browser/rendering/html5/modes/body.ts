@@ -304,7 +304,8 @@ function inBodyStartTag(ctx: TreeBuilderContext, token: Token): void {
       ctx.insertHTMLElement(token);
       if (tag === 'img') ctx.discoverResources(token);
       ctx.popCurrentNode();
-      token.attrs?.delete('alt');
+      // (An `alt` delete stood here: the element shares the token's attribute map, so every image
+      // lost its alt text, and [alt] selectors and alt fallbacks never saw it.)
       if (tag === 'input') {
         const type = (token.attrs?.get('type') ?? '').toLowerCase();
         if (type !== 'hidden') ctx.framesetOk = false;

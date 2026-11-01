@@ -4,7 +4,7 @@ import type { INavigationController } from '../navigation/navigation-controller'
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter, stringMethods, functionMethod, jsToPlain, plainToJS } from './interpreter';
-import { createDocumentBinding, wrapElement, wrapNode, createEventObject, interfacePrototype, DOM_INTERFACE_NAMES } from './dom-bindings';
+import { createDocumentBinding, wrapElement, wrapNode, createEventObject, interfacePrototype, DOM_INTERFACE_NAMES, createFormData } from './dom-bindings';
 import { getPreferredColorScheme } from '../rendering/color-scheme';
 import type { IHtmlParser, HtmlDocument } from '../rendering/html-parser';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from './history-bindings';
@@ -2290,6 +2290,7 @@ export function createGlobalEnv(
       return { bubbles: flag('bubbles'), cancelable: flag('cancelable'), composed: flag('composed'), detail: o?.properties?.get('detail')?.value ?? null };
     };
     env.setLocal('Event', createNativeFunction('Event', (_t, a) => createEventObject(toString(a[0]), null, eventInit(a[1]))));
+    env.setLocal('FormData', createNativeFunction('FormData', (_t, a) => createFormData(a[0])));
     env.setLocal('CustomEvent', createNativeFunction('CustomEvent', (_t, a) => {
       const init = eventInit(a[1]);
       const evt = createEventObject(toString(a[0]), null, init);

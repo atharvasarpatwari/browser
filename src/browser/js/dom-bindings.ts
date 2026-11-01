@@ -1910,6 +1910,97 @@ function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void 
   getter('children', () => createArray(elementChildren().map((c) => wrapElement(c, domTree))));
   getter('childNodes', () => createArray(el.children.map((c) => wrapNode(c, domTree))));
   getter('childElementCount', () => elementChildren().length);
+
+  // Layout geometry. offsetWidth/clientWidth were undefined, so script-measured UI (menus sized to
+  // their content, carousels, sticky headers, "is it overflowing?" checks) computed NaN and broke.
+  const box = () => el.layoutBox;
+  const offsetParentEl = (): DomElement | null => {
+    for (let p = parentEl(); p; p = p.parent && p.parent.nodeType === 'element' ? p.parent as DomElement : null) {
+      const pos = p.computedStyle?.get('position') ?? 'static';
+      if (pos !== 'static' || p.tagName.toLowerCase() === 'body') return p;
+    }
+    return null;
+  };
+  getter('offsetWidth', () => Math.round(box()?.width ?? 0));
+  getter('offsetHeight', () => Math.round(box()?.height ?? 0));
+  getter('offsetLeft', () => Math.round((box()?.x ?? 0) - (offsetParentEl()?.layoutBox?.x ?? 0)));
+  getter('offsetTop', () => Math.round((box()?.y ?? 0) - (offsetParentEl()?.layoutBox?.y ?? 0)));
+  getter('offsetParent', () => wrapNode(offsetParentEl(), domTree));
+  const clientW = () => { const b = box(); return b ? Math.round(b.width - b.borderLeft - b.borderRight) : 0; };
+  const clientH = () => { const b = box(); return b ? Math.round(b.height - b.borderTop - b.borderBottom) : 0; };
+  getter('clientWidth', clientW);
+  getter('clientHeight', clientH);
+  getter('clientLeft', () => Math.round(box()?.borderLeft ?? 0));
+  getter('clientTop', () => Math.round(box()?.borderTop ?? 0));
+  // ponytail: no per-element scrolling yet, so the scroll size is the client size.
+  getter('scrollWidth', clientW);
+  getter('scrollHeight', clientH);
+
+  getter('outerHTML', () => outerHTMLOf(el));
+  obj.properties.set('innerText', {
+    value: undefined, writable: true, enumerable: true, configurable: true,
+    // ponytail: the text content, without CSS-aware line breaks or hidden-element skipping.
+    getter: createNativeFunction('get innerText', () => textOf(el)),
+    setter: createNativeFunction('set innerText', (_t, args) => {
+      const val = toString(args[0]);
+      (el as { children: DomNode[] }).children = [makeTextNode(val, el)];
+      domTree.setTextContent(el, val);
+      return undefined;
+    }),
+  });
+  method('getAttributeNames', () => createArray([...el.attributes.keys()]));
+  obj.properties.set('nodeType', { value: 1, writable: false, enumerable: true, configurable: true });
+  if (!obj.properties.has('nodeName')) getter('nodeName', () => el.tagName.toUpperCase());
+  // DOM §4.4: preceding 2, following 4, contains 8, contained-by 16.
+  method('compareDocumentPosition', (args) => {
+    const other = domNodeOf(args[0]);
+    if (!other || other === el) return 0;
+    const chain = (n: DomNode): DomNode[] => { const out: DomNode[] = []; for (let c: DomNode | null = n; c; c = c.parent) out.unshift(c); return out; };
+    const a = chain(el), b = chain(other);
+    if (a[0] !== b[0]) return 1 | 32; // disconnected
+    if (b.includes(el)) return 4 | 16;  // other is inside el: follows and is contained
+    if (a.includes(other)) return 2 | 8;  // other contains el: precedes and contains
+    let i = 0;
+    while (a[i] === b[i]) i++;
+    const parent = a[i - 1]!;
+    return parent.children.indexOf(a[i]!) < parent.children.indexOf(b[i]!) ? 4 : 2;
+  });
+
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'select') {
+    const options = (): DomElement[] => {
+      const out: DomElement[] = [];
+      const walk = (n: DomElement): void => { for (const c of n.children) if (c.nodeType === 'element') { const e = c as DomElement; if (e.tagName.toLowerCase() === 'option') out.push(e); else walk(e); } };
+      walk(el);
+      return out;
+    };
+    getter('options', () => createArray(options().map((o) => wrapElement(o, domTree))));
+    obj.properties.set('selectedIndex', {
+      value: undefined, writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction('get selectedIndex', () => {
+        const opts = options();
+        const value = controlValue(el);
+        const i = opts.findIndex((o) => (o.attributes.get('value') ?? textOf(o).trim()) === value);
+        return i >= 0 ? i : (opts.length > 0 ? 0 : -1);
+      }),
+      setter: createNativeFunction('set selectedIndex', (_t, args) => {
+        const o = options()[Math.trunc(Number(args[0]))];
+        if (o) { setControlValue(el, o.attributes.get('value') ?? textOf(o).trim()); domTree.markDirty(el, 'paint'); }
+        return undefined;
+      }),
+    });
+  }
+  if (tag === 'form') {
+    // form.elements: its controls in tree order, also reachable by name.
+    getter('elements', () => {
+      const arr = createArray(formControlsOf(el).map((c) => wrapElement(c, domTree)));
+      for (const c of formControlsOf(el)) {
+        const name = c.attributes.get('name') ?? c.attributes.get('id');
+        if (name && !arr.properties.has(name)) arr.properties.set(name, { value: wrapElement(c, domTree), writable: false, enumerable: false, configurable: true });
+      }
+      return arr;
+    });
+  }
   getter('parentNode', () => wrapNode(parentEl(), domTree));
   getter('parentElement', () => wrapNode(parentEl(), domTree));
   getter('firstChild', () => wrapNode(el.children[0], domTree));
@@ -1950,9 +2041,17 @@ function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void 
 
   // Selectors scoped to this element. ponytail: a document-wide query filtered to descendants
   // (O(document) per call); walk the subtree directly if it shows up in profiles.
+  // `:scope` is this element (it matched only the root, so `el.querySelectorAll(':scope > li')`
+  // found nothing): mark it for the query with an attribute set outside the DOM's mutation log.
+  const scoped = (selector: string): readonly DomElement[] => {
+    if (!/:scope\b/i.test(selector)) return domTree.querySelectorAll(selector);
+    const attrs = el.attributes as Map<string, string>;
+    attrs.set('data-nova-scope', '');
+    try { return domTree.querySelectorAll(selector.replace(/:scope\b/gi, '[data-nova-scope]')); } finally { attrs.delete('data-nova-scope'); }
+  };
   method('querySelectorAll', (args) => createArray(
-    domTree.querySelectorAll(toString(args[0])).filter((e) => isDescendantOf(e, el)).map((e) => wrapElement(e, domTree))));
-  method('querySelector', (args) => wrapNode(domTree.querySelectorAll(toString(args[0])).find((e) => isDescendantOf(e, el)), domTree));
+    scoped(toString(args[0])).filter((e) => isDescendantOf(e, el)).map((e) => wrapElement(e, domTree))));
+  method('querySelector', (args) => wrapNode(scoped(toString(args[0])).find((e) => isDescendantOf(e, el)), domTree));
   method('closest', (args) => {
     const matches = new Set(domTree.querySelectorAll(toString(args[0])));
     for (let n: DomNode | null = el; n && n.nodeType === 'element'; n = n.parent) if (matches.has(n as DomElement)) return wrapNode(n, domTree);
@@ -2079,23 +2178,96 @@ function getTextContent(el: DomElement): string {
   return text;
 }
 
+// HTML §13.3: void elements have no end tag. `<br>` came back as `<br></br>`, which a script's
+// innerHTML round trip re-parsed into two line breaks.
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+
 function getInnerHTML(el: DomElement): string {
   let html = '';
   for (const child of el.children) {
     if (child.nodeType === 'text') {
       html += escapeHTML((child as DomNode & { text?: string }).text ?? '');
     } else if (child.nodeType === 'element') {
-      const childEl = child as DomElement;
-      html += `<${childEl.tagName}`;
-      for (const [k, v] of childEl.attributes) {
-        html += ` ${k}="${escapeAttr(v)}"`;
-      }
-      html += '>';
-      html += getInnerHTML(childEl);
-      html += `</${childEl.tagName}>`;
+      html += outerHTMLOf(child as DomElement);
     }
   }
   return html;
+}
+
+function outerHTMLOf(el: DomElement): string {
+  const tag = el.tagName.toLowerCase();
+  let html = `<${tag}`;
+  for (const [k, v] of el.attributes) html += ` ${k}="${escapeAttr(v)}"`;
+  html += '>';
+  if (VOID_TAGS.has(tag)) return html;
+  return html + getInnerHTML(el) + `</${tag}>`;
+}
+
+function textOf(n: DomNode): string {
+  if (n.nodeType === 'text') return (n as DomNode & { text?: string }).text ?? '';
+  return n.children.map(textOf).join('');
+}
+
+const domNodeOf = (v: JSValue): DomNode | null =>
+  (typeof v === 'object' && v !== null && '__domNode' in v ? (v as JSObject & { __domNode: DomNode }).__domNode : null);
+
+const LISTED_CONTROLS = new Set(['button', 'fieldset', 'input', 'object', 'output', 'select', 'textarea']);
+
+function formControlsOf(form: DomElement): DomElement[] {
+  const out: DomElement[] = [];
+  const walk = (n: DomElement): void => {
+    for (const c of n.children) {
+      if (c.nodeType !== 'element') continue;
+      const e = c as DomElement;
+      if (LISTED_CONTROLS.has(e.tagName.toLowerCase())) out.push(e);
+      walk(e);
+    }
+  };
+  walk(form);
+  return out;
+}
+
+/**
+ * `new FormData(form)` (XHR §5): the form's successful controls as name/value pairs. FormData
+ * didn't exist, so scripts that serialize a form before submitting it with fetch threw.
+ * ponytail: string values only (no File entries).
+ */
+export function createFormData(formArg: JSValue): JSObject {
+  const entries: Array<[string, string]> = [];
+  const form = domNodeOf(formArg) as DomElement | null;
+  if (form && form.nodeType === 'element') {
+    for (const c of formControlsOf(form)) {
+      const name = c.attributes.get('name');
+      const kind = controlKind(c);
+      if (!name || !kind || c.attributes.has('disabled')) continue;
+      const type = (c.attributes.get('type') ?? '').toLowerCase();
+      if (kind === 'button' || type === 'file' || type === 'image' || type === 'reset' || type === 'submit') continue;
+      if ((kind === 'checkbox' || kind === 'radio') && !controlChecked(c)) continue;
+      entries.push([name, (kind === 'checkbox' || kind === 'radio') ? (c.attributes.get('value') ?? 'on') : controlValue(c)]);
+    }
+  }
+  const fd = createObject(null);
+  const fn = (name: string, f: (a: JSValue[]) => JSValue): void => {
+    fd.properties.set(name, { value: createNativeFunction(name, (_t, a) => f(a)), writable: true, enumerable: false, configurable: true });
+  };
+  fn('get', (a) => entries.find(([k]) => k === toString(a[0]))?.[1] ?? null);
+  fn('getAll', (a) => createArray(entries.filter(([k]) => k === toString(a[0])).map(([, v]) => v)));
+  fn('has', (a) => entries.some(([k]) => k === toString(a[0])));
+  fn('append', (a) => { entries.push([toString(a[0]), toString(a[1])]); return undefined; });
+  fn('set', (a) => {
+    const k = toString(a[0]);
+    const i = entries.findIndex(([n]) => n === k);
+    const rest = entries.filter(([n], j) => n !== k || j === i);
+    entries.splice(0, entries.length, ...rest);
+    if (i >= 0) entries[entries.findIndex(([n]) => n === k)]![1] = toString(a[1]); else entries.push([k, toString(a[1])]);
+    return undefined;
+  });
+  fn('delete', (a) => { const k = toString(a[0]); for (let i = entries.length - 1; i >= 0; i--) if (entries[i]![0] === k) entries.splice(i, 1); return undefined; });
+  fn('entries', () => createArray(entries.map(([k, v]) => createArray([k, v]))));
+  fn('keys', () => createArray(entries.map(([k]) => k)));
+  fn('values', () => createArray(entries.map(([, v]) => v)));
+  fn('forEach', (a) => { for (const [k, v] of [...entries]) callJSFunction(a[0] as JSFunction, undefined, [v, k, fd]); return undefined; });
+  return fd;
 }
 
 function escapeHTML(s: string): string {
