@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-01
 **Session:** "keep improving the nova app"; then "the android system is connected test it now"
-**Status:** Completed (installed on the tablet; 14/14 device checks pass on the build before the JS-probe fixes; the final build is installed but not re-run on the device because the tablet was in use)
+**Status:** Completed (final build installed on the tablet; **18/18** device checks pass)
 
 ---
 
@@ -106,6 +106,7 @@ On the device, a shrink-to-fit box can be a few pixels narrower than its text as
 - **Node renders:** compared the current build with a HEAD (1.71) baseline. IANA and httpforever are pixel-identical. Wikipedia's mobile header now shows its right-side search and account icons, which 1.71 dropped.
 - **Tablet (OPD2305), Nova 1.72:**
   - `v172.html`: 11/14 before the JS fixes, **14/14** after.
+  - Final build (with the JS-probe fixes): the page gained four checks (`10-3-2`, block scope, logical assignment, computed `rgb(r, g, b)`) and passes **18/18**. It was served on port 8766, because another process already serves `doc/` on 8765.
   - httpforever (`device-pages/hf`) renders correctly.
 
 ## Test Results

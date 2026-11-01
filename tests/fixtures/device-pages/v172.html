@@ -50,6 +50,10 @@ T('escaped class selector',function(){return getComputedStyle(document.getElemen
 T(':has()',function(){return getComputedStyle(document.getElementById('has')).color==='rgb(0, 0, 255)'||getComputedStyle(document.getElementById('has')).color;});
 T('offsetWidth',function(){return document.getElementById('bs').offsetWidth===120||document.getElementById('bs').offsetWidth;});
 T('text beside float',function(){var f=R('ib'),t=R('beside');return t.y<f.y+f.h||JSON.stringify([f,t]);});
+T('JS 10-3-2 = 5',function(){return (10-3-2)===5||(10-3-2);});
+T('JS block scope',function(){let a=1;{let a=2;}return a===1||a;});
+T('JS ||= &&=',function(){let x=0;x||=5;x&&=x+1;let y=null;y??=7;return x+y===13||(x+y);});
+T('computed rgb(r, g, b)',function(){var e=document.getElementById('bs');var c=getComputedStyle(e).backgroundColor;return /^rgb\(\d+, \d+, \d+\)$/.test(c)||c;});
 var pass=0,html='';for(var i=0;i<res.length;i++){if(res[i][1])pass++;html+='<div class="r" style="color:'+(res[i][1]?'#080':'#c00')+'">'+(res[i][1]?'PASS ':'FAIL ')+res[i][0]+(res[i][1]?'':' '+res[i][2])+'</div>';}
 document.getElementById('out').innerHTML=html;
 document.getElementById('summary').textContent='Nova 1.65-1.72: '+pass+'/'+res.length+' pass';
