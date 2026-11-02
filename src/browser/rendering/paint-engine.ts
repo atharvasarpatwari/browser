@@ -1,3 +1,4 @@
+import { findContainingBlock } from './positioning';
 import type { IDisposable } from '../../app/dependency-container';
 import type { DomDocument, DomElement, DomNode, LayoutBox, TextRun } from './dom-tree';
 import { boxChildren } from './dom-tree';
@@ -218,10 +219,10 @@ function fitWithEllipsis(run: TextRun, room: number): TextRun | null {
   return null;
 }
 
-/** Is `el` a `position: fixed` box or inside one? */
+/** Is `el` a `position: fixed` box or inside one? One inside a transformed ancestor scrolls with it. */
 function isInFixedBox(el: DomElement): boolean {
   for (let n: DomNode | null = el; n && n.nodeType === 'element'; n = n.parent) {
-    if ((n as DomElement).computedStyle?.get('position') === 'fixed') return true;
+    if ((n as DomElement).computedStyle?.get('position') === 'fixed' && !findContainingBlock(n as DomElement, 'fixed')) return true;
   }
   return false;
 }

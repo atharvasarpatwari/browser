@@ -93,6 +93,8 @@ export interface InlineLevelBox {
   baselineOffset: number;
   /** Whether this is an anonymous text run (no backing DOM element). */
   isAnonymous: boolean;
+  /** `vertical-align: middle | top | bottom` on an atomic inline: placed against the line box. */
+  lineAlign?: 'middle' | 'top' | 'bottom';
   /** The text content for anonymous text runs. */
   textContent?: string;
   /** Font size for this box (used for text measurement and rendering). */

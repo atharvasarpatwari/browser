@@ -141,6 +141,19 @@ export function resolveFontSize(style: ReadonlyMap<string, string>): number {
  * Returns the ancestor element, or `null` for the initial containing block
  * (viewport).
  */
+/**
+ * A transform, filter, perspective, `will-change` of those, or paint/layout containment makes a box
+ * the containing block of its fixed (and absolute) descendants (CSS Transforms 1 §2). Fixed boxes
+ * always used the viewport, so a fixed overlay inside a transformed modal or slide-in panel landed
+ * at the page corner instead of inside it.
+ */
+export function createsFixedContainingBlock(style: ReadonlyMap<string, string>): boolean {
+  const set = (p: string) => { const v = style.get(p)?.trim(); return !!v && v !== 'none'; };
+  if (set('transform') || set('perspective') || set('filter') || set('backdrop-filter')) return true;
+  if (/transform|perspective|filter/.test(style.get('will-change') ?? '')) return true;
+  return /paint|layout|strict|content/.test(style.get('contain') ?? '');
+}
+
 export function findContainingBlock(
   node: DomElement,
   scheme: PositionScheme,
@@ -148,10 +161,9 @@ export function findContainingBlock(
   if (scheme === 'fixed' || scheme === 'absolute') {
     let current: DomElement | null = node.parent as DomElement ?? null;
     while (current) {
-      const pos = getPositionScheme(current.computedStyle ?? new Map());
-      if (pos !== 'static') {
-        return current;
-      }
+      const style = current.computedStyle ?? new Map();
+      if (createsFixedContainingBlock(style)) return current;
+      if (scheme === 'absolute' && getPositionScheme(style) !== 'static') return current;
       current = current.parent as DomElement ?? null;
     }
     return null; // initial containing block (viewport)

@@ -364,6 +364,8 @@ export interface ResolutionContext {
   readonly viewportHeight?: number;
   /** The root element's font-size in px, for rem (default: 16). */
   readonly rootFontSize?: number;
+  /** The element's own computed font-size in px: `em` in every property but font-size itself. */
+  readonly fontSize?: number;
 }
 
 const DEFAULT_CTX: ResolutionContext = { parentFontSize: 16, parentFontWeight: 400 };
@@ -408,7 +410,9 @@ export function resolveComputedValue(
   // Resolve math functions (calc, min, max, clamp) if present
   if (hasMathFunctions(v)) {
     const mathCtx: MathResolutionContext = {
-      fontSize: ctx.parentFontSize,
+      // em is the element's own font size, except in font-size itself (the parent's). It was always
+      // the parent's, so `font-size: 10px; width: calc(2em + 5px)` was 37px wide instead of 25px.
+      fontSize: prop === 'font-size' ? ctx.parentFontSize : (ctx.fontSize ?? ctx.parentFontSize),
       rootFontSize: ctx.rootFontSize ?? 16, // rem is the root's size, not the parent's
       viewportWidth: ctx.viewportWidth,
       viewportHeight: ctx.viewportHeight,
@@ -718,8 +722,17 @@ export function resolveAllComputedValues(
   computed: Map<string, string>,
   context?: ResolutionContext,
 ): Map<string, string> {
-  const ctx = context ?? DEFAULT_CTX;
+  let ctx = context ?? DEFAULT_CTX;
+  // font-size first: the other properties' em (in calc()/min()/max()) are relative to it.
+  const fs = computed.get('font-size');
+  if (fs !== undefined) {
+    const px = resolveComputedValue('font-size', fs, ctx);
+    computed.set('font-size', px);
+    const n = parseFloat(px);
+    if (px.trim().endsWith('px') && isFinite(n)) ctx = { ...ctx, fontSize: n };
+  }
   for (const [prop, value] of computed) {
+    if (prop === 'font-size') continue;
     const resolved = resolveComputedValue(prop, value, ctx);
     if (resolved !== value) {
       computed.set(prop, resolved);

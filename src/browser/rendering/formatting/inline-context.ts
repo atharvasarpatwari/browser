@@ -146,7 +146,7 @@ export class InlineFormattingContext {
     // Update line height
     const boxHeight = lb.height + lb.marginTop + lb.marginBottom;
     this.currentLine.height = Math.max(this.currentLine.height, boxHeight);
-    this.currentLine.baseline = Math.max(this.currentLine.baseline, box.baselineOffset);
+    if (!box.lineAlign) this.currentLine.baseline = Math.max(this.currentLine.baseline, box.baselineOffset);
 
     return this.currentLine;
   }
@@ -371,6 +371,13 @@ export class InlineFormattingContext {
 
       // Position each box vertically within the line box
       for (const box of line.boxes) {
+        // middle/top/bottom place an atomic inline against the finished line box (CSS 2.2 §10.8.1);
+        // they were all baseline-aligned, so a `vertical-align: middle` icon beside text sat at the
+        // top of a tall line.
+        const h = box.box.height + box.box.marginTop + box.box.marginBottom;
+        if (box.lineAlign === 'middle') { box.box.y = line.y + Math.max(0, (line.height - h) / 2) + box.box.marginTop; continue; }
+        if (box.lineAlign === 'top') { box.box.y = line.y + box.box.marginTop; continue; }
+        if (box.lineAlign === 'bottom') { box.box.y = line.y + Math.max(0, line.height - h) + box.box.marginTop; continue; }
         // Position relative to line box top
         const offsetFromTop = line.baseline - box.baselineOffset;
         box.box.y = line.y + Math.max(0, offsetFromTop);
