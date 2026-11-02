@@ -91,7 +91,7 @@ function wrapStorage(storage: IStorage, callerOrigin?: string, storageOrigin?: s
       checkOrigin();
       const key = toString(args[0]);
       const result = storage.getItem(key);
-      return result === null ? undefined : result;
+      return result; // null for a missing key, as in browsers (it was undefined)
     }),
     writable: true, enumerable: true, configurable: true,
   });
@@ -135,7 +135,7 @@ function wrapStorage(storage: IStorage, callerOrigin?: string, storageOrigin?: s
       checkOrigin();
       const index = toNumber(args[0]);
       const result = storage.key(index);
-      return result === null ? undefined : result;
+      return result; // null for a missing key, as in browsers (it was undefined)
     }),
     writable: true, enumerable: true, configurable: true,
   });

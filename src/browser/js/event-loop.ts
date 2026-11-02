@@ -165,7 +165,14 @@ export class EventLoop {
     this.drainMicrotasks();
 
     // Step 2: Execute one due macrotask
-    const idx = this.tasks.findIndex(t => now - t.scheduledAt >= t.delay);
+    // The earliest due timer first (ties in scheduling order). It took the first due one in
+    // insertion order, so once both were due `setTimeout(a, 10); setTimeout(b, 0)` ran a before b.
+    let idx = -1;
+    for (let i = 0; i < this.tasks.length; i++) {
+      const t = this.tasks[i]!;
+      if (now - t.scheduledAt < t.delay) continue;
+      if (idx < 0 || t.scheduledAt + t.delay < this.tasks[idx]!.scheduledAt + this.tasks[idx]!.delay) idx = i;
+    }
     if (idx >= 0) {
       const task = this.tasks.splice(idx, 1)[0]!;
       this.timers.delete(task.id);

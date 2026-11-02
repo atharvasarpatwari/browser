@@ -140,17 +140,70 @@ function makeTextNode(text: string, parent: DomNode | null): DomTextNode {
 }
 
 /** addEventListener's third argument: `true` (capture) or `{ capture, once }`. */
-function listenerOptions(opts: JSValue): { capture: boolean; once: boolean } {
+function listenerOptions(opts: JSValue): { capture: boolean; once: boolean; signal?: JSObject } {
   if (typeof opts === 'boolean') return { capture: opts, once: false };
   if (opts && typeof opts === 'object' && 'properties' in opts) {
     const o = opts as JSObject;
-    return { capture: toBoolean(o.properties.get('capture')?.value ?? false), once: toBoolean(o.properties.get('once')?.value ?? false) };
+    const signal = o.properties.get('signal')?.value;
+    return {
+      capture: toBoolean(o.properties.get('capture')?.value ?? false), once: toBoolean(o.properties.get('once')?.value ?? false),
+      signal: signal && typeof signal === 'object' ? signal as JSObject : undefined,
+    };
   }
   return { capture: false, once: false };
 }
 
+/**
+ * addEventListener's `signal` option: an aborted signal adds nothing, and aborting later removes
+ * the listener. It was ignored, so listeners meant to be torn down with `controller.abort()` kept
+ * firing. Returns false when the listener must not be added.
+ */
+function bindListenerSignal(signal: JSObject | undefined, remove: () => void): boolean {
+  if (!signal) return true;
+  const d = signal.properties.get('aborted');
+  const aborted = d?.getter ? callJSFunction(d.getter, signal, []) : d?.value;
+  if (toBoolean(aborted)) return false;
+  const add = signal.properties.get('addEventListener')?.value;
+  if (add && typeof add === 'object' && 'closure' in add) {
+    callJSFunction(add as JSFunction, signal, ['abort', createNativeFunction('onabort', () => { remove(); return undefined; })]);
+  }
+  return true;
+}
+
 /** Each document node's JS object, so element events can reach `document` listeners. */
 const documentObjects = new WeakMap<DomNode, JSObject>();
+
+/** The root of the tree `el` is in: the document's <html>, or a detached subtree's top element. */
+function topAncestor(el: DomElement): DomElement {
+  let n: DomElement = el;
+  while (n.parent && n.parent.nodeType === 'element') n = n.parent as DomElement;
+  return n;
+}
+
+/** The current document's URL, for resolving `a.href`, `img.src` … (set by createDocumentBinding). */
+let documentUrl: () => string = () => '';
+
+/** A form control's validity state: required, email/url types, pattern and min/max length. */
+function validityOf(el: DomElement): { valid: boolean; valueMissing: boolean; typeMismatch: boolean; patternMismatch: boolean; tooShort: boolean; tooLong: boolean } {
+  const attr = (n: string) => el.attributes.get(n);
+  const type = (attr('type') ?? '').toLowerCase();
+  const res = { valid: true, valueMissing: false, typeMismatch: false, patternMismatch: false, tooShort: false, tooLong: false };
+  if (el.attributes.has('disabled') || ['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) return res;
+  const checkable = type === 'checkbox' || type === 'radio';
+  const v = checkable ? '' : String(controlValue(el) ?? '');
+  if (el.attributes.has('required')) res.valueMissing = checkable ? !controlChecked(el) : v === '';
+  if (v !== '') {
+    if (type === 'email') res.typeMismatch = !/^[^\s@]+@[^\s@]+$/.test(v);
+    if (type === 'url') { try { new URL(v); } catch { res.typeMismatch = true; } }
+    const pattern = attr('pattern');
+    if (pattern) { try { res.patternMismatch = !new RegExp(`^(?:${pattern})$`, 'u').test(v); } catch { /* invalid pattern: ignored, as browsers do */ } }
+    const min = Number(attr('minlength')), max = Number(attr('maxlength'));
+    if (attr('minlength') && v.length < min) res.tooShort = true;
+    if (attr('maxlength') && v.length > max) res.tooLong = true;
+  }
+  res.valid = !(res.valueMissing || res.typeMismatch || res.patternMismatch || res.tooShort || res.tooLong);
+  return res;
+}
 
 export function createDocumentBinding(
   doc: DomDocument,
@@ -160,6 +213,7 @@ export function createDocumentBinding(
 ): JSObject {
   const docObj = createObject(interfacePrototype('Document'));
   documentObjects.set(doc, docObj);
+  documentUrl = cookieUrl;
 
   // document.cookie — through the platform's ScriptCookieProvider (cookie-service.ts).
   // HttpOnly cookies are never visible or writable here.
@@ -285,10 +339,26 @@ export function createDocumentBinding(
 
   // documentElement
   docObj.properties.set('documentElement', {
-    value: doc.children.length > 0 && doc.children[0].nodeType === 'element'
-      ? wrapElement(doc.children[0] as DomElement, domTree) : null,
+    value: doc.htmlElement ? wrapElement(doc.htmlElement, domTree)
+      : doc.children.length > 0 && doc.children[0].nodeType === 'element' ? wrapElement(doc.children[0] as DomElement, domTree) : null,
     writable: true, enumerable: true, configurable: true,
   });
+  // document.head and the live document.forms / images / links collections were missing.
+  const live = (name: string, selector: string) => docObj.properties.set(name, {
+    value: undefined, enumerable: true, configurable: true, writable: false,
+    getter: createNativeFunction(`get ${name}`, () => createArray(domTree.querySelectorAll(selector).map((e) => wrapElement(e, domTree)))),
+  });
+  docObj.properties.set('head', {
+    value: undefined, enumerable: true, configurable: true, writable: false,
+    getter: createNativeFunction('get head', () => {
+      const head = doc.htmlElement?.children.find((c) => c.nodeType === 'element' && (c as DomElement).tagName.toLowerCase() === 'head');
+      return head ? wrapElement(head as DomElement, domTree) : null;
+    }),
+  });
+  live('forms', 'form');
+  live('images', 'img');
+  live('links', 'a[href], area[href]');
+  live('scripts', 'script');
 
   // readyState
   docObj.properties.set('readyState', {
@@ -302,10 +372,12 @@ export function createDocumentBinding(
       const type = toString(args[0]);
       const fn = args[1] as JSFunction;
       // capture / once were ignored here: capture listeners ran while bubbling, `once` every time.
-      const { capture, once } = listenerOptions(args[2]);
+      const { capture, once, signal } = listenerOptions(args[2]);
       const entries = getDomListeners(doc);
       const dup = entries.find(e => e.type === type && e.fn === fn && e.capture === capture);
-      if (!dup) entries.push({ type, fn, capture, once, thisArg: _this });
+      if (!dup && bindListenerSignal(signal, () => { const i = entries.findIndex(e => e.type === type && e.fn === fn && e.capture === capture); if (i >= 0) entries.splice(i, 1); })) {
+        entries.push({ type, fn, capture, once, thisArg: _this });
+      }
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -810,10 +882,12 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
     value: createNativeFunction('addEventListener', (_this, args) => {
       const type = toString(args[0]);
       const fn = args[1] as JSFunction;
-      const { capture, once } = listenerOptions(args[2]);
+      const { capture, once, signal } = listenerOptions(args[2]);
       const entries = getDomListeners(el);
       const dup = entries.find(e => e.type === type && e.fn === fn && e.capture === capture);
-      if (!dup) entries.push({ type, fn, capture, once, thisArg: _this });
+      if (!dup && bindListenerSignal(signal, () => { const i = entries.findIndex(e => e.type === type && e.fn === fn && e.capture === capture); if (i >= 0) entries.splice(i, 1); })) {
+        entries.push({ type, fn, capture, once, thisArg: _this });
+      }
       return undefined;
     }),
     writable: true, enumerable: true, configurable: true,
@@ -936,7 +1010,7 @@ export function wrapElement(el: DomElement, domTree: IDomTree): JSObject {
 
   // matches — was `querySelector(sel) === el`, true only for the first match in the document
   obj.properties.set('matches', {
-    value: createNativeFunction('matches', (_this, args) => domTree.querySelectorAll(toString(args[0])).includes(el)),
+    value: createNativeFunction('matches', (_this, args) => domTree.querySelectorAll(toString(args[0]), topAncestor(el)).includes(el)),
     writable: true, enumerable: true, configurable: true,
   });
 
@@ -2043,17 +2117,21 @@ function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void 
   // (O(document) per call); walk the subtree directly if it shows up in profiles.
   // `:scope` is this element (it matched only the root, so `el.querySelectorAll(':scope > li')`
   // found nothing): mark it for the query with an attribute set outside the DOM's mutation log.
+  // Queried from the element's top-most ancestor, so a detached subtree (a div filled with
+  // innerHTML before it is inserted) is searched too: only the document was, so
+  // `d.innerHTML = '<p>…'; d.querySelector('p')` was null.
   const scoped = (selector: string): readonly DomElement[] => {
-    if (!/:scope\b/i.test(selector)) return domTree.querySelectorAll(selector);
+    const top = topAncestor(el);
+    if (!/:scope\b/i.test(selector)) return domTree.querySelectorAll(selector, top);
     const attrs = el.attributes as Map<string, string>;
     attrs.set('data-nova-scope', '');
-    try { return domTree.querySelectorAll(selector.replace(/:scope\b/gi, '[data-nova-scope]')); } finally { attrs.delete('data-nova-scope'); }
+    try { return domTree.querySelectorAll(selector.replace(/:scope\b/gi, '[data-nova-scope]'), top); } finally { attrs.delete('data-nova-scope'); }
   };
   method('querySelectorAll', (args) => createArray(
     scoped(toString(args[0])).filter((e) => isDescendantOf(e, el)).map((e) => wrapElement(e, domTree))));
   method('querySelector', (args) => wrapNode(scoped(toString(args[0])).find((e) => isDescendantOf(e, el)), domTree));
   method('closest', (args) => {
-    const matches = new Set(domTree.querySelectorAll(toString(args[0])));
+    const matches = new Set(domTree.querySelectorAll(toString(args[0]), topAncestor(el)));
     for (let n: DomNode | null = el; n && n.nodeType === 'element'; n = n.parent) if (matches.has(n as DomElement)) return wrapNode(n, domTree);
     return null;
   });
@@ -2073,7 +2151,48 @@ function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void 
   });
   method('remove', () => { const p = parentEl(); if (p) domTree.removeChild(p, el); return undefined; });
 
-  // Reflected attributes
+  // Reflected attributes (HTML §2.6.1). Only id/className/lang/dir/title were, so `input.type`,
+  // `a.href`, `btn.disabled`, `label.htmlFor` … read undefined. URL attributes resolve against the
+  // document, and links expose their URL parts (`a.pathname`, `a.hash`).
+  const rtag = el.tagName.toLowerCase();
+  const reflect = (prop: string, get: () => JSValue, set?: (v: JSValue) => void) => {
+    if (obj.properties.has(prop)) return;
+    obj.properties.set(prop, {
+      value: undefined, writable: true, enumerable: true, configurable: true,
+      getter: createNativeFunction(`get ${prop}`, get),
+      setter: createNativeFunction(`set ${prop}`, (_t, a) => { set?.(a[0]); return undefined; }),
+    });
+  };
+  const setAttr = (attr: string) => (v: JSValue) => domTree.setAttribute(el, attr, toString(v));
+  for (const [prop, attr] of [['name', 'name'], ['placeholder', 'placeholder'], ['alt', 'alt'], ['rel', 'rel'], ['target', 'target'],
+    ['htmlFor', 'for'], ['autocomplete', 'autocomplete'], ['download', 'download'], ['accept', 'accept'], ['pattern', 'pattern'],
+    ['min', 'min'], ['max', 'max'], ['step', 'step'], ['method', 'method'], ['enctype', 'enctype'], ['inputMode', 'inputmode']]) {
+    reflect(prop!, () => getAttr(el, attr!) ?? (prop === 'method' ? 'get' : ''), setAttr(attr!));
+  }
+  if (['input', 'button', 'select', 'textarea', 'ol', 'script', 'link', 'style', 'source', 'embed', 'object', 'a'].includes(rtag)) {
+    const fallback = rtag === 'input' ? 'text' : rtag === 'button' ? 'submit' : rtag === 'select' ? (el.attributes.has('multiple') ? 'select-multiple' : 'select-one') : rtag === 'textarea' ? 'textarea' : '';
+    reflect('type', () => (rtag === 'input' || rtag === 'button' ? (getAttr(el, 'type') ?? '').toLowerCase() : getAttr(el, 'type')) || fallback, setAttr('type'));
+  }
+  for (const [prop, attr] of [['disabled', 'disabled'], ['required', 'required'], ['readOnly', 'readonly'], ['multiple', 'multiple'],
+    ['autofocus', 'autofocus'], ['noValidate', 'novalidate'], ['defer', 'defer'], ['async', 'async'], ['selected', 'selected']]) {
+    reflect(prop!, () => el.attributes.has(attr!), (v) => { if (toBoolean(v)) domTree.setAttribute(el, attr!, ''); else domTree.removeAttribute(el, attr!); });
+  }
+  const resolved = (attr: string) => () => {
+    const raw = getAttr(el, attr);
+    if (raw == null) return '';
+    try { return new URL(raw, documentUrl() || undefined).href; } catch { return raw; }
+  };
+  const urlAttr = ({ a: 'href', area: 'href', link: 'href', base: 'href', img: 'src', script: 'src', iframe: 'src', video: 'src', audio: 'src',
+    source: 'src', embed: 'src', track: 'src', input: 'src', form: 'action' } as Record<string, string>)[rtag];
+  if (urlAttr) reflect(urlAttr === 'href' ? 'href' : urlAttr, resolved(urlAttr), setAttr(urlAttr));
+  if (rtag === 'a' || rtag === 'area') {
+    const part = (k: 'protocol' | 'host' | 'hostname' | 'port' | 'pathname' | 'search' | 'hash' | 'origin') => () => {
+      const href = resolved('href')();
+      try { return new URL(href)[k]; } catch { return ''; }
+    };
+    for (const k of ['protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash', 'origin'] as const) reflect(k, part(k));
+  }
+
   for (const name of ['lang', 'dir', 'title']) {
     obj.properties.set(name, {
       value: undefined, writable: true, enumerable: true, configurable: true,
@@ -2103,6 +2222,21 @@ function defineTreeApis(obj: JSObject, el: DomElement, domTree: IDomTree): void 
       }),
     });
     getter('form', () => wrapNode(formOf(el), domTree));
+    // Constraint validation (HTML §4.10.20): checkValidity()/reportValidity()/validity were
+    // missing, so form scripts that gate submit on `form.checkValidity()` threw.
+    getter('validity', () => {
+      const r = validityOf(el);
+      const o = createObject(null);
+      for (const [k, v] of Object.entries(r)) o.properties.set(k, { value: v, writable: false, enumerable: true, configurable: true });
+      return o;
+    });
+    method('checkValidity', () => validityOf(el).valid);
+    method('reportValidity', () => validityOf(el).valid);
+  }
+  if (el.tagName.toLowerCase() === 'form') {
+    const formCheck = () => { const ctrls: DomElement[] = []; const walk = (n: DomNode) => { for (const c of n.children ?? []) { if (c.nodeType === 'element') { if (controlKind(c as DomElement)) ctrls.push(c as DomElement); walk(c); } } }; walk(el); return ctrls.every((c) => validityOf(c).valid); };
+    method('checkValidity', formCheck);
+    method('reportValidity', formCheck);
   }
 
   obj.properties.set('hidden', {

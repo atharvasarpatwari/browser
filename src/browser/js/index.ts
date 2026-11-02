@@ -2618,6 +2618,31 @@ export function createGlobalEnv(
     env.setLocal(name, ctorObj);
   }
 
+  // TextEncoder / TextDecoder (UTF-8): missing, so `new TextEncoder()` threw "not a constructor" in
+  // hashing, streaming and byte-length code.
+  const u8Ctor = typedArrayCtors['Uint8Array'] as JSObject & { nativeFn?: NativeFunction };
+  const toBytes = (v: JSValue): Uint8Array => {
+    const view = (v as JSObjectWithMeta | null)?.__nativeView as ArrayLike<number> | undefined;
+    if (view) return Uint8Array.from(view);
+    if (v && typeof v === 'object' && (v as JSObject).type === 'array') return Uint8Array.from([...iterateJS(v)].map(toNumber));
+    return new Uint8Array(0);
+  };
+  const classCtor = (name: string, build: (self: JSObject) => void): JSObject => {
+    const ctor = createNativeFunction(name, () => { const self = createObject(null); build(self); return self; }) as unknown as JSObject;
+    return ctor;
+  };
+  env.setLocal('TextEncoder', classCtor('TextEncoder', (self) => {
+    self.properties.set('encoding', { value: 'utf-8', writable: false, enumerable: true, configurable: true });
+    self.properties.set('encode', { value: createNativeFunction('encode', (_t, a) => {
+      const bytes = new TextEncoder().encode(a[0] === undefined ? '' : toString(a[0]));
+      return u8Ctor.nativeFn ? u8Ctor.nativeFn(undefined, [createArray(Array.from(bytes))]) : createArray(Array.from(bytes));
+    }), writable: true, enumerable: false, configurable: true });
+  }));
+  env.setLocal('TextDecoder', classCtor('TextDecoder', (self) => {
+    self.properties.set('encoding', { value: 'utf-8', writable: false, enumerable: true, configurable: true });
+    self.properties.set('decode', { value: createNativeFunction('decode', (_t, a) => new TextDecoder().decode(toBytes(a[0]))), writable: true, enumerable: false, configurable: true });
+  }));
+
   // Storage APIs (localStorage, sessionStorage, indexedDB)
   bindStorageAPIs(env, { origin: pageOrigin ?? 'https://localhost', diskPath: storageDir });
 

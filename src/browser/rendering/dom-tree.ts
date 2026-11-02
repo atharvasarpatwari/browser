@@ -205,7 +205,8 @@ interface IDomTree extends IDisposable {
   getElementsByTagName(tagName: string): readonly DomElement[];
   getElementsByClassName(names: string): readonly DomElement[];
   querySelector(selector: string): DomElement | null;
-  querySelectorAll(selector: string): readonly DomElement[];
+  /** Matches in document order; `root` (default: the document) can be a detached subtree. */
+  querySelectorAll(selector: string, root?: DomElement): readonly DomElement[];
   /** Converts parsed HTML nodes (e.g. an innerHTML fragment) into detached DOM nodes. */
   parseFragment?(nodes: readonly HtmlNode[]): DomNode[];
   insertBefore(parent: DomElement, newChild: DomNode, referenceChild: DomNode | null): void;
@@ -379,8 +380,9 @@ class DomTree implements IDomTree {
     return result instanceof SelectableDomNode ? result.domElement : null;
   }
 
-  querySelectorAll(selector: string): readonly DomElement[] {
-    const root = this.document?.bodyElement ?? this.document?.htmlElement;
+  querySelectorAll(selector: string, from?: DomElement): readonly DomElement[] {
+    // From <html>, not <body>: document.querySelector('meta[name=…]'), 'title', 'link' found nothing.
+    const root = from ?? this.document?.htmlElement ?? this.document?.bodyElement;
     if (!root) return [];
     const selectable = this.toSelectable(root);
     const results = css5QuerySelectorAll(selectable, selector);
