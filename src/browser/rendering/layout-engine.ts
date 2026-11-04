@@ -689,7 +689,11 @@ class LayoutEngine implements ILayoutEngine {
     // 300px overflow:hidden carousel or card was as tall as everything in it.
     // ponytail: overflow:visible boxes with a height still grow to their content (it covers Nova's
     // font metrics being wider than the page's), where browsers let the content overflow.
-    const clips = hasHeight && !['visible', undefined].includes(style.get('overflow-y') ?? style.get('overflow'));
+    // A collapsed box keeps its height too: `height: 0` (collapsed menus, Wikipedia's folded
+    // contents list) and a visibility:hidden box, whose content can't be seen anyway. They grew to
+    // their content, leaving a large empty box where nothing was meant to be.
+    const collapsed = hasHeight && (specifiedContentHeight <= 0 || style.get('visibility') === 'hidden');
+    const clips = collapsed || (hasHeight && !['visible', undefined].includes(style.get('overflow-y') ?? style.get('overflow')));
     const contentHeight = this.clampContentHeight(style, clips ? specifiedContentHeight : Math.max(specifiedContentHeight, childY - contentY),
       resolve, boxSizing, paddingTop + paddingBottom + borderTop + borderBottom);
 
@@ -906,8 +910,25 @@ class LayoutEngine implements ILayoutEngine {
           } else if (prevMarginBottom !== null) {
             childY -= prevMarginBottom + top - collapseMargins(prevMarginBottom, top);
           }
+          // A table or a block that starts its own formatting context must not overlap floats
+          // (CSS 2.2 §9.5): it goes beside them, narrowed, or below them when the band is too
+          // narrow. It was laid out across the whole line, under the float: Wikipedia's contents
+          // box (display: table) covered the floated figure's caption.
+          // ponytail: the band is measured at the box's top edge only.
+          let bandX = contentX, bandWidth = availableWidth;
+          if (this.floatContext?.hasFloats() && (childFmt === 'table' || this.establishesBfc(childEl))) {
+            const free = this.floatContext.getAvailableWidth(childY, 1);
+            if (free < availableWidth) {
+              if (free >= Math.min(availableWidth / 3, 200)) {
+                bandX = contentX + this.floatContext.getLeftOffset(childY, 1);
+                bandWidth = free;
+              } else {
+                childY = this.floatContext.getYAfterClear('both', childY);
+              }
+            }
+          }
           const startY = childY;
-          childY = this.layoutNode(childEl, contentX, childY, availableWidth, parentFontSize, domTree);
+          childY = this.layoutNode(childEl, bandX, childY, bandWidth, parentFontSize, domTree);
           const laid = this.layoutBoxes.get(childEl.domId);
           prevMarginBottom = laid?.marginBottom ?? 0;
           // An empty block (no height, border or padding) lets its top and bottom margins collapse
@@ -1075,6 +1096,7 @@ class LayoutEngine implements ILayoutEngine {
     domTree?: IDomTree,
   ): void {
     const elStyle = el.computedStyle ?? new Map();
+    const floatedTable = ['table', 'inline-table'].includes(elStyle.get('display') ?? '');
     const elFontSize = this.resolveFontSize(elStyle, parentFontSize);
 
     // Resolve box model
@@ -1114,7 +1136,9 @@ class LayoutEngine implements ILayoutEngine {
       const frame = paddingLeft + paddingRight + borderLeft + borderRight;
       const room = Math.max(0, availableWidth - marginLeft - marginRight - frame);
       const flex = ['flex', 'inline-flex'].includes(elStyle.get('display') ?? '');
-      borderWidthBox = this.measureContentWidth(el, room, elFontSize, domTree, flex) + frame;
+      // A floated table starts at the room it has: table layout shrinks it to its columns, and a
+      // caption wraps to that width instead of widening the table to its own line length.
+      borderWidthBox = floatedTable ? room + frame : this.measureContentWidth(el, room, elFontSize, domTree, flex) + frame;
     }
 
     // Resolve height
@@ -1158,6 +1182,10 @@ class LayoutEngine implements ILayoutEngine {
       childY = this.layoutFlexContainer(el, childContentX, childContentY, contentWidth, elFontSize, domTree);
     } else if (fmtType === 'grid' || fmtType === 'inline-grid') {
       childY = this.layoutGridContainer(el, childContentX, childContentY, contentWidth, elFontSize, domTree);
+    } else if (floatedTable) {
+      // A floated `display: table` (Wikipedia's <figure>, floated right) went to inline layout below,
+      // so its image and its caption ran side by side as text and the box took the whole column.
+      childY = this.layoutTableContainer(el, childContentX, childContentY, contentWidth, elFontSize, domTree);
     } else if (fmtType === 'block') {
       childY = this.layoutBlockChildren(el, childContentX, childContentY, contentWidth, elFontSize, domTree);
     } else {

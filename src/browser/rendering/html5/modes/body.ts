@@ -183,7 +183,10 @@ function inBodyStartTag(ctx: TreeBuilderContext, token: Token): void {
           ctx.popCurrentNodeUntil('li');
           break;
         }
-        if (SPECIAL_ELEMENTS.has(el.tagName) && el.tagName !== 'ul' && el.tagName !== 'ol') {
+        // §13.2.6.4.7: stop at a special element other than address, div and p. ul and ol are
+        // special: they were skipped, so the first <li> of a nested list closed the *outer* item,
+        // and every list nested in a list item (menus, Wikipedia's contents) fell apart.
+        if (SPECIAL_ELEMENTS.has(el.tagName) && el.tagName !== 'address' && el.tagName !== 'div' && el.tagName !== 'p') {
           break;
         }
       }
@@ -204,7 +207,7 @@ function inBodyStartTag(ctx: TreeBuilderContext, token: Token): void {
           ctx.popCurrentNodeUntil(tag);
           break;
         }
-        if (SPECIAL_ELEMENTS.has(el.tagName) && el.tagName !== 'p') {
+        if (SPECIAL_ELEMENTS.has(el.tagName) && el.tagName !== 'address' && el.tagName !== 'div' && el.tagName !== 'p') {
           break;
         }
       }
