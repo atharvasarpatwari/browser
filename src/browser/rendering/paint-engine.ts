@@ -13,7 +13,8 @@ import {
   type PaintCmd,
 } from './formatting/stacking';
 import { buildRenderObject, sortByPaintOrder, type RenderObject } from './render-tree';
-import { Rasterizer, isParsableColor } from './rasterizer';
+import { Rasterizer, isParsableColor, parseColor } from './rasterizer';
+import { cssImageFor, firstCssUrl, tintThroughMask, type CssImage } from './css-images';
 import { GpuRasterizer } from './gpu/gpu-rasterizer';
 import { LayerCompositor } from './compositing/layer-compositor';
 import { LayerTree } from './compositing/layer-tree';
@@ -637,12 +638,21 @@ class PaintEngine implements IPaintEngine {
           bgColor = bgShorthand;
         }
       }
-      // A mask-image url() is never loaded here. A mask image that isn't available masks everything
-      // out (CSS Masking §6.4: it counts as a transparent black layer), so an icon drawn as a
-      // currentColor background through an SVG mask (MDN's nav, link and filter icons) shows
-      // nothing. It used to paint as a solid square.
-      // ponytail: only the element's own background is dropped; load and apply the mask for real icons.
-      if (/url\(/.test(`${style.get('mask-image') ?? ''} ${style.get('-webkit-mask-image') ?? ''} ${style.get('mask') ?? ''}`)) bgColor = 'transparent';
+      // A mask-image url(): the background colour shows through the mask image's alpha (an icon
+      // drawn as a currentColor background through an SVG, MDN's and Wikipedia's icons). Until the
+      // image is loaded, or if it can't be, the mask hides everything (CSS Masking §6.4: a
+      // transparent black layer). It used to paint the whole box as a solid square.
+      // ponytail: only the element's own background is masked, not its borders or children.
+      const maskValue = `${style.get('mask-image') ?? ''} ${style.get('-webkit-mask-image') ?? ''} ${style.get('mask') ?? ''}`;
+      if (firstCssUrl(maskValue)) {
+        const mask = cssImageFor(node, 'mask');
+        const color = parseColor(bgColor);
+        if (mask && color.a > 0) {
+          const g = (p: string): string | undefined => style.get(p) ?? style.get('-webkit-' + p);
+          commands.push(...cssImageCommands(tintThroughMask(mask.image, color), mask, g('mask-size'), g('mask-position'), g('mask-repeat') ?? 'repeat', bx, by, bw, bh));
+        }
+        bgColor = 'transparent';
+      }
       const bgImage = style.get('background-image') ?? 'none';
       const bgSize = style.get('background-size') ?? 'auto';
       const bgPos = style.get('background-position') ?? '0% 0%';
@@ -683,6 +693,13 @@ class PaintEngine implements IPaintEngine {
       if (bgColor !== 'transparent' && !/gradient\(|url\(/i.test(bgColor)) {
         commands.push({ type: 'setFillStyle', params: [bgColor] });
         commands.push({ type: 'fillRect', params: [cx, cy, Math.max(0, cw), Math.max(0, ch)] });
+      }
+      // A url() background image (photos, sprites, icons set from CSS): it was never painted.
+      // ponytail: the first url() layer only, positioned in the border box.
+      const bgImg = cssImageFor(node, 'background');
+      if (bgImg && firstCssUrl(bgImage === 'none' ? style.get('background') : bgImage)) {
+        commands.push(...cssImageCommands(bgImg.image, bgImg, style.get('background-size'), style.get('background-position'),
+          style.get('background-repeat') ?? 'repeat', cx, cy, Math.max(0, cw), Math.max(0, ch)));
       }
       for (const layer of splitLayers(bgImage).reverse()) {
         if (!isGradientValue(layer)) continue;
@@ -1141,6 +1158,63 @@ function getZIndex(element: DomElement): number {
   if (!zRaw || zRaw === 'auto') return 0;
   const z = parseInt(zRaw, 10);
   return isNaN(z) ? 0 : z;
+}
+
+/** One length or percentage of `of`; null for auto. */
+function sizeComponent(v: string | undefined, of: number): number | null {
+  if (!v || v === 'auto') return null;
+  if (v.endsWith('%')) return parseFloat(v) / 100 * of;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Draw commands for a CSS image layer in the box x,y,w,h: `size` (cover, contain, lengths,
+ * percentages, auto), `position` (keywords, lengths, percentages) and `repeat` (CSS Backgrounds
+ * 3 §3.4–3.9). Tiles are clipped to the box.
+ */
+function cssImageCommands(image: ImageData, natural: CssImage, size: string | undefined, position: string | undefined,
+  repeat: string, x: number, y: number, w: number, h: number): PaintCommand[] {
+  if (w <= 0 || h <= 0) return [];
+  const nw = natural.width || image.width, nh = natural.height || image.height;
+  let dw = nw, dh = nh;
+  const sz = (size ?? 'auto').trim().split(/\s+/);
+  if (sz[0] === 'cover' || sz[0] === 'contain') {
+    const k = sz[0] === 'cover' ? Math.max(w / nw, h / nh) : Math.min(w / nw, h / nh);
+    dw = nw * k; dh = nh * k;
+  } else {
+    const sw = sizeComponent(sz[0], w), sh = sizeComponent(sz[1] ?? 'auto', h);
+    if (sw !== null && sh !== null) { dw = sw; dh = sh; }
+    else if (sw !== null) { dw = sw; dh = nh * sw / nw; }
+    else if (sh !== null) { dh = sh; dw = nw * sh / nh; }
+  }
+  if (dw <= 0 || dh <= 0) return [];
+  // Position: one or two values; a lone keyword centres the other axis.
+  const KW: Record<string, string> = { left: '0%', right: '100%', top: '0%', bottom: '100%', center: '50%' };
+  let toks = (position ?? '0% 0%').trim().split(/\s+/);
+  if (toks.length === 1) toks = toks[0] === 'top' || toks[0] === 'bottom' ? ['center', toks[0]] : [toks[0]!, 'center'];
+  if (toks[0] === 'top' || toks[0] === 'bottom' || toks[1] === 'left' || toks[1] === 'right') toks = [toks[1]!, toks[0]!];
+  const off = (t: string | undefined, free: number): number => {
+    const v = KW[t ?? 'center'] ?? t ?? '50%';
+    return v.endsWith('%') ? free * parseFloat(v) / 100 : parseFloat(v) || 0;
+  };
+  const px = x + off(toks[0], w - dw), py = y + off(toks[1], h - dh);
+  const r = repeat.trim();
+  const rx = r === 'repeat' || r === 'repeat-x' || r.startsWith('repeat ') || r === 'space' || r === 'round';
+  const ry = r === 'repeat' || r === 'repeat-y' || r.endsWith(' repeat') || r === 'space' || r === 'round';
+  const x0 = rx ? px - Math.ceil((px - x) / dw) * dw : px, y0 = ry ? py - Math.ceil((py - y) / dh) * dh : py;
+  const cmds: PaintCommand[] = [{ type: 'save', params: [] }, { type: 'clip', params: [x, y, w, h] }];
+  let n = 0;
+  for (let ty = y0; ty < y + h && n < 2000; ty += dh) {
+    for (let tx = x0; tx < x + w && n < 2000; tx += dw) {
+      cmds.push({ type: 'drawImage', params: [image, tx, ty, dw, dh] });
+      n++;
+      if (!rx) break;
+    }
+    if (!ry) break;
+  }
+  cmds.push({ type: 'restore', params: [] });
+  return cmds;
 }
 
 /** Convert RGBA object to CSS rgba() string */

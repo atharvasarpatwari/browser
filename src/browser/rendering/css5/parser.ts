@@ -969,10 +969,11 @@ function isIdentChar(ch: string): boolean {
 }
 
 /** Split on semicolons while respecting string boundaries. */
-function splitOnSemicolon(raw: string): string[] {
+export function splitOnSemicolon(raw: string): string[] {
   const parts: string[] = [];
   let current = '';
   let inString: string | null = null;
+  let depth = 0;
   let i = 0;
 
   while (i < raw.length) {
@@ -1003,7 +1004,11 @@ function splitOnSemicolon(raw: string): string[] {
       continue;
     }
 
-    if (ch === ';') {
+    // A ';' inside parentheses belongs to the value: `url(data:image/png;base64,…)` was cut at
+    // the ';', so every unquoted data: URL image was lost.
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    else if (ch === ';' && depth === 0) {
       parts.push(current);
       current = '';
       i++;

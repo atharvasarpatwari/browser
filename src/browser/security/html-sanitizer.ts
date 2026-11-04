@@ -1,5 +1,6 @@
 import type { IDomTree, DomNode, DomElement, DomTextNode, DomDocument } from '../rendering/dom-tree';
 import { BLOCKED_URL_SCHEMES } from './blocked-url-schemes';
+import { splitOnSemicolon } from '../rendering/css5/parser';
 
 export interface HtmlSanitizerConfig {
   readonly strippedElements?: ReadonlySet<string>;
@@ -158,7 +159,9 @@ export function sanitizeHtmlTree(root: SanitizeRoot, domTree: IDomTree, config?:
 const DANGEROUS_CSS_PATTERNS: RegExp[] = [
   /expression\s*\(/i,                    // IE CSS expressions: expression(alert(1))
   /url\s*\(\s*['"]?\s*javascript\s*:/i,  // url(javascript:...) — script execution
-  /url\s*\(\s*['"]?\s*data\s*:/i,        // url(data:...) — data exfiltration
+  // url(data:…) other than an image. A data:image/… URL is drawn as an image (no script, no
+  // request), as every browser allows; blocking it dropped inline-style icons and sprites.
+  /url\s*\(\s*['"]?\s*data\s*:(?!\s*image\/)/i,
   /url\s*\(\s*['"]?\s*vbscript\s*:/i,    // url(vbscript:...) — IE script
   /-moz-binding\s*:/i,                   // Firefox XBL binding attacks
   /behavior\s*:\s*url/i,                 // IE behavior attachment
@@ -195,7 +198,9 @@ export function sanitizeCssValue(value: string): string {
  * Strips dangerous CSS injection patterns.
  */
 export function sanitizeStyleAttribute(value: string): string {
-  const declarations = value.split(';');
+  // Split outside parentheses and strings: a ';' inside url(data:…;base64,…) left the tail of a
+  // dropped declaration ("base64,…)") in the attribute.
+  const declarations = splitOnSemicolon(value);
   const safe: string[] = [];
   for (const decl of declarations) {
     if (!containsDangerousCss(decl)) {

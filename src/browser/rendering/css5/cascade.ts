@@ -25,6 +25,7 @@ import type {
   CssKeyframesRule,
 } from './types';
 
+import { splitOnSemicolon } from './parser';
 import { matchesSelectorList, matchesSelectorListForPseudo, selectorPseudoElement } from './selector';
 import { getPreferredColorScheme } from '../color-scheme';
 import { controlUaDefaults } from '../form-controls';
@@ -847,8 +848,15 @@ function expandBackgroundShorthand(value: string): Map<string, string> {
 
   // Split on spaces/commas outside parentheses: a plain split broke rgb(1, 2, 3),
   // linear-gradient(to right, …) and light-dark(#eee,#222) into fragments ("#222)").
-  const tokens = splitTopLevel(trimmed);
+  // `position / size` (CSS Backgrounds §3.10): the slash, spaced or not, was read as the colour
+  // and the size as more position ("right bottom 10px 10px").
+  const tokens = splitTopLevel(trimmed).flatMap((t) => (t.includes('/') && !t.includes('(') ? t.split(/(\/)/).filter(Boolean) : [t]));
+  const size: string[] = [];
+  let afterSlash = false;
   for (const t of tokens) {
+    if (t === '/') { afterSlash = true; continue; }
+    if (afterSlash && /^(cover|contain|auto|-?[\d.]+[a-z%]*)$/i.test(t)) { size.push(t); continue; }
+    afterSlash = false;
     if (t.startsWith('url(') || t.startsWith('linear-') || t.startsWith('radial-') || t.startsWith('repeating-') || t.startsWith('conic-')) {
       image = t;
     } else if (/^(repeat|no-repeat|repeat-x|repeat-y|space|round)$/i.test(t)) {
@@ -857,7 +865,7 @@ function expandBackgroundShorthand(value: string): Map<string, string> {
       attachment = t;
     } else {
       // Treat as position or color
-      if (/^(center|left|right|top|bottom|\d)/.test(t)) {
+      if (/^(center|left|right|top|bottom|-?[\d.])/.test(t)) {
         position.push(t);
       } else {
         color = t;
@@ -868,6 +876,7 @@ function expandBackgroundShorthand(value: string): Map<string, string> {
   if (color) result.set('background-color', color);
   if (image) result.set('background-image', image);
   if (position.length > 0) result.set('background-position', position.join(' '));
+  if (size.length > 0) result.set('background-size', size.join(' '));
   result.set('background-repeat', repeat);
   result.set('background-attachment', attachment);
   return result;
@@ -1809,7 +1818,8 @@ export function applyInheritance(
 
 function parseInlineDeclarations(raw: string): CssDeclaration[] {
   const declarations: CssDeclaration[] = [];
-  const parts = raw.split(';');
+  // Not raw.split(';'): a ';' inside url(data:…;base64,…) or a string belongs to the value.
+  const parts = splitOnSemicolon(raw);
   for (const part of parts) {
     const colon = part.indexOf(':');
     if (colon === -1) continue;

@@ -18,6 +18,7 @@ import { getScriptCookieProvider } from '../networking/cookie-service';
 import { HtmlParser } from '../rendering/html-parser';
 import { controlKind, controlValue, setControlValue, controlChecked, formOf } from '../rendering/form-controls';
 import { wrapNativeTypedArray } from './typed-arrays';
+import { splitOnSemicolon } from '../rendering/css5/parser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DOM BINDINGS — Bridges the JS interpreter to the Nova DOM tree
@@ -1762,8 +1763,8 @@ const kebabToCamel = (k: string): string => k.replace(/-([a-z])/g, (_m, c: strin
 
 function parseInlineStyle(css: string): Map<string, string> {
   const m = new Map<string, string>();
-  // ponytail: splits on ';', so a ';' inside url("…") breaks; a real declaration parser if a site needs it.
-  for (const part of css.split(';')) {
+  // Outside parentheses and strings: a ';' inside url(data:…;base64,…) belongs to the value.
+  for (const part of splitOnSemicolon(css)) {
     const i = part.indexOf(':');
     if (i > 0) m.set(part.slice(0, i).trim().toLowerCase(), part.slice(i + 1).trim());
   }

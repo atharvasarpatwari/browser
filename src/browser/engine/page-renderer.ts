@@ -65,6 +65,7 @@ import type { SecurityLayer } from '../media/security-layer';
 import { ReflowRepaintController } from '../rendering/reflow-repaint-controller';
 import { renderInlineSvgs, invalidateInlineSvgAt, type SvgDecode } from '../rendering/inline-svg';
 import { ImageDecoder } from '../image/decoder';
+import { loadCssImages, decodeDataUrl, type CssImage, type CssImageFetch } from '../rendering/css-images';
 import type { LayerCompositor } from '../rendering/compositing/layer-compositor';
 import { CssAnimationAnimator } from '../rendering/css-animations';
 import { setAnimationRuntime, dispatchAnimationEventToElement, dispatchDomEvent } from '../js/dom-bindings';
@@ -325,7 +326,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
     const iframeCount = await this.renderIframeChildren(doc, result.url);
     // Inline <svg> (logos, icons) painted nothing: rasterize each through the image decoder.
     const svgCount = await renderInlineSvgs(doc.children, this.svgDecode, this.dpr);
-    if (iframeCount > 0 || svgCount > 0) {
+    // CSS url() images (background-image, mask-image icons) were never loaded.
+    const cssImageCount = await loadCssImages(doc.children, this.cssImageFetch, this.dpr, result.url, this.cssImageCache);
+    if (iframeCount > 0 || svgCount > 0 || cssImageCount > 0) {
       // Full repaint so embedded frames appear in the very first rasterized
       // output rather than waiting for an incremental reflow frame.
       paintEngine.paint(doc);
@@ -470,6 +473,12 @@ class PageRenderer implements IPageRenderer, IDisposable {
       return [];
     }
     if (signal.aborted || !css) return [];
+    // A url() in a stylesheet is relative to the sheet, not the page (CSS Values §4.5.1). Made
+    // absolute here so the CSS image pass, which only knows the page URL, fetches the right file.
+    css = css.replace(/url\(\s*(["']?)([^"')\s]+)\1\s*\)/gi, (m, q: string, ref: string) => {
+      if (/^(data:|#|[a-z][a-z0-9+.-]*:)/i.test(ref)) return m;
+      try { return `url(${q}${new URL(ref, url).toString()}${q})`; } catch { return m; }
+    });
 
     const imports = (cssParser as CssParser).getCss5Parser().parseStylesheetRobust(css, url).rules
       .filter((r): r is Extract<Css5Rule, { type: 'import' }> => r.type === 'import');
@@ -905,6 +914,27 @@ class PageRenderer implements IPageRenderer, IDisposable {
   private readonly svgDecode: SvgDecode = (markup) => this.deps.svgDecode
     ? this.deps.svgDecode(markup)
     : new ImageDecoder().decode(new TextEncoder().encode(markup), 'image/svg+xml');
+
+  private readonly cssImageCache = new Map<string, Promise<CssImage | null>>();
+  /** Loads and decodes a CSS image (`data:` URLs decoded here; SVGs at the box size). */
+  private readonly cssImageFetch: CssImageFetch = async (url, size) => {
+    let bytes: Uint8Array, type: string;
+    const data = url.startsWith('data:') ? decodeDataUrl(url) : null;
+    if (data) ({ bytes, type } = data);
+    else {
+      if (!/^https?:/i.test(url)) return null;
+      const res = await this.deps.resourceLoader.loadImage(url);
+      if (!res || res.error || !res.bodyBinary) return null;
+      bytes = res.bodyBinary instanceof Uint8Array ? res.bodyBinary : new Uint8Array(res.bodyBinary as ArrayBuffer);
+      type = res.contentType ?? '';
+    }
+    const decoded = await this.imageDecoder.decode(bytes, type, size);
+    if (!decoded) return null;
+    const image = { data: decoded.data, width: decoded.width, height: decoded.height, colorSpace: 'srgb' } as unknown as ImageData;
+    // A raster image's natural size is its pixels; an SVG's is its own (the decoder scaled it up).
+    return { image, width: decoded.naturalWidth ?? decoded.width, height: decoded.naturalHeight ?? decoded.height };
+  };
+  private readonly imageDecoder = new ImageDecoder();
 
   /** CSS counters during the full style pass (null otherwise: incremental restyles keep their text). */
   private counters: Counters | null = null;
