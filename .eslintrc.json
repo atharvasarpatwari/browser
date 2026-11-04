@@ -30,7 +30,7 @@
     "no-constant-condition": ["error", { "checkLoops": false }],
     "no-useless-escape": "warn"
   },
-  "ignorePatterns": ["dist", "coverage", "node_modules"],
+  "ignorePatterns": ["dist", "coverage", "node_modules", "tests/fixtures/**"],
   "overrides": [
     {
       "files": ["tests/**/*.ts", "**/*.test.ts", "**/*.spec.ts"],

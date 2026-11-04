@@ -2,7 +2,7 @@ import type { INavigationController } from '../navigation/navigation-controller'
 import type { NavigationEntry } from '../navigation/navigation-controller';
 import {
   type JSValue, type JSObject, type JSFunction,
-  createObject, createNativeFunction, toNumber, toString, toBoolean,
+  createObject, createArray, createNativeFunction, toNumber, toString, toBoolean,
   callJSFunction,
 } from './values';
 
@@ -139,6 +139,26 @@ function serializeState(state: unknown): JSValue {
   }
 }
 
+/** A stored entry state as the page sees it (history.state, popstate's e.state). */
+function stateForPage(state: unknown): JSValue {
+  return plainToPage(serializeState(state));
+}
+
+/**
+ * A JSON value as page objects and arrays. JSON.parse gives host objects, which page scripts can't
+ * read (they have no property map), so `history.state` and popstate's `e.state` came back as `{}`
+ * and `e.state.step` was undefined.
+ */
+function plainToPage(v: unknown): JSValue {
+  if (v === null || typeof v !== 'object') return v as JSValue;
+  if (Array.isArray(v)) return createArray(v.map(plainToPage));
+  const o = createObject(null);
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    o.properties.set(k, { value: plainToPage(x), writable: true, enumerable: true, configurable: true });
+  }
+  return o;
+}
+
 // ── HISTORY BINDING ──────────────────────────────────────────────────────────
 
 /**
@@ -160,7 +180,7 @@ export function createHistoryBinding(
     writable: false, enumerable: true, configurable: false,
     getter: createNativeFunction('get state', () => {
       const entry = controller.getCurrentEntry();
-      return entry !== null ? serializeState(entry.state) : null;
+      return entry !== null ? stateForPage(entry.state) : null;
     }),
   });
 
@@ -180,7 +200,7 @@ export function createHistoryBinding(
     value: createNativeFunction('back', () => {
       const result = controller.back();
       if (result.success && result.entry) {
-        dispatchWindowEvent(winObj, createPopStateEvent(serializeState(result.entry.state)));
+        dispatchWindowEvent(winObj, createPopStateEvent(stateForPage(result.entry.state)));
       }
       return undefined;
     }),
@@ -193,7 +213,7 @@ export function createHistoryBinding(
     value: createNativeFunction('forward', () => {
       const result = controller.forward();
       if (result.success && result.entry) {
-        dispatchWindowEvent(winObj, createPopStateEvent(serializeState(result.entry.state)));
+        dispatchWindowEvent(winObj, createPopStateEvent(stateForPage(result.entry.state)));
       }
       return undefined;
     }),
@@ -207,7 +227,7 @@ export function createHistoryBinding(
       const delta = args.length > 0 ? Math.trunc(toNumber(args[0])) : 0;
       const result = controller.go(delta);
       if (result.success && result.entry) {
-        dispatchWindowEvent(winObj, createPopStateEvent(serializeState(result.entry.state)));
+        dispatchWindowEvent(winObj, createPopStateEvent(stateForPage(result.entry.state)));
       }
       return undefined;
     }),
@@ -440,7 +460,7 @@ export function wireHistoryEvents(
       return;
     }
     lastEntryId = entry.id;
-    dispatchWindowEvent(winObj, createPopStateEvent(serializeState(entry.state)));
+    dispatchWindowEvent(winObj, createPopStateEvent(stateForPage(entry.state)));
   });
 
   // ── hashchange: fired when a same-page hash jump occurs ────────────────────

@@ -3,7 +3,7 @@ import { NavigationController, NavigationState } from '../src/browser/navigation
 import { UrlParser } from '../src/browser/navigation/url-parser';
 import { Lexer } from '../src/browser/js/lexer';
 import { Parser } from '../src/browser/js/parser';
-import { Interpreter } from '../src/browser/js/interpreter';
+import { Interpreter, jsToPlain } from '../src/browser/js/interpreter';
 import { createGlobalEnv, runJS } from '../src/browser/js/index';
 import { createHistoryBinding, createLocationBinding, wireHistoryEvents, bindWindowEvents } from '../src/browser/js/history-bindings';
 import { createObject, createNativeFunction, type JSValue, type JSObject, Environment } from '../src/browser/js/values';
@@ -85,8 +85,10 @@ describe('History API bindings', () => {
 
   it('history.state should reflect current entry state from JS', async () => {
     await controller.navigate('https://example.com/stateful', undefined, { x: 1 });
-    const { value } = evalJSWithController('history.state', controller);
-    expect(value).toEqual({ x: 1 });
+    const { value, env } = evalJSWithController('var s = history.state; var x = s.x; s', controller);
+    // A page object (scripts read its properties), not a host object: it was `{}` to scripts.
+    expect(jsToPlain(value)).toEqual({ x: 1 });
+    expect(env.get('x')).toBe(1);
   });
 
   // ── history.length ────────────────────────────────────────────────────────
@@ -120,23 +122,16 @@ describe('History API bindings', () => {
     await controller.navigate('https://example.com/s1', undefined, { step: 1 });
     await controller.navigate('https://example.com/s2', undefined, { step: 2 });
 
-    let popState: unknown = undefined;
-    const doc = makeMinimalDoc();
-    const domTree = makeMinimalDomTree(doc);
-    const eventLoop = new EventLoop();
-    const env = createGlobalEnv(doc as any, domTree as any, eventLoop, controller);
-
-    evalJSWithController(`
-      window.addEventListener('popstate', function(e) {
-        __captured = e.state;
-      });
+    // The listener and history.back() run in ONE page environment. Two separate evals each built
+    // their own window, so the listener never saw the back() and the event went unchecked.
+    const { env } = evalJSWithController(`
+      var captured = 'popstate not fired';
+      window.addEventListener('popstate', function (e) { captured = JSON.stringify(e.state); });
+      history.back();
     `, controller);
 
-    // Trigger back via history.back()
-    evalJSWithController('history.back()', controller);
-
-    // Verify the entry state changed
     expect(controller.getCurrentEntry()!.state).toEqual({ step: 1 });
+    expect(env.get('captured')).toBe('{"step":1}');
   });
 
   // ── history.forward() ─────────────────────────────────────────────────────

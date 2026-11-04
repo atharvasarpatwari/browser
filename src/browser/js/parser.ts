@@ -1411,12 +1411,13 @@ export class Parser {
       case TokenType.PlusPlus:
       case TokenType.MinusMinus: return 16;
 
+      // tag`…` (TemplateEnd/TemplateHead): a template right after an expression is a tagged
+      // template (it was parsed as the next statement, so the tag and everything before it on
+      // the line were dropped).
       case TokenType.Dot:
       case TokenType.QuestionDot:
       case TokenType.LBracket:
       case TokenType.LParen:
-      // tag`…`: a template right after an expression is a tagged template (it was parsed as the
-      // next statement, so the tag and everything before it on the line were dropped).
       case TokenType.TemplateEnd:
       case TokenType.TemplateHead: return 17;
 

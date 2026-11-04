@@ -20,15 +20,14 @@ class StubCanvas {
   height = 1;
   private drawn: { text: string; x: number; y: number } | null = null;
   getContext() {
-    const self = this;
     return {
       font: '', fillStyle: '', textBaseline: '',
       measureText: (t: string) => ({ width: [...t].length * GLYPH_W, actualBoundingBoxAscent: GLYPH_H, actualBoundingBoxDescent: 2 }),
-      fillText(text: string, x: number, y: number) { fillTextCalls++; self.drawn = { text, x, y }; },
-      clearRect() { self.drawn = null; },
-      getImageData(_x: number, _y: number, w: number, h: number) {
+      fillText: (text: string, x: number, y: number) => { fillTextCalls++; this.drawn = { text, x, y }; },
+      clearRect: () => { this.drawn = null; },
+      getImageData: (_x: number, _y: number, w: number, h: number) => {
         const data = new Uint8ClampedArray(w * h * 4);
-        const d = self.drawn;
+        const d = this.drawn;
         if (d) {
           for (let py = Math.max(0, d.y - GLYPH_H); py < d.y; py++) {
             for (let px = d.x; px < Math.min(w, d.x + [...d.text].length * GLYPH_W); px++) data[(py * w + px) * 4 + 3] = 255;

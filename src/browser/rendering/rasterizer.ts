@@ -261,7 +261,7 @@ function parseModernColor(value: string): RGBA | null {
     }
     case 'hwb': {
       // hwb(h w b): an hsl colour mixed with white and black.
-      let w = colorComponent(p1, 1), bl = colorComponent(p2, 1);
+      const w = colorComponent(p1, 1), bl = colorComponent(p2, 1);
       if (w + bl >= 1) { const g = w / (w + bl); return { r: clamp255(Math.round(g * 255)), g: clamp255(Math.round(g * 255)), b: clamp255(Math.round(g * 255)), a: clamp01(alpha) }; }
       const base = parseColor(`hsl(${((colorComponent(p0, 360) % 360) + 360) % 360} 100% 50%)`);
       const mix = (c: number): number => clamp255(Math.round((c / 255) * (1 - w - bl) * 255 + w * 255));

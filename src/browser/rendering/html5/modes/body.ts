@@ -501,16 +501,15 @@ function inBodyEndTag(ctx: TreeBuilderContext, token: Token): void {
       return;
     }
 
+    // §13.2.6.4.7 lists button, dl and pre too; without them </button>, </dl> and </pre> closed
+    // nothing, and everything after a <button> on a page was nested inside it.
     case 'address': case 'article': case 'aside': case 'blockquote':
     case 'center': case 'details': case 'dialog': case 'dir':
     case 'div': case 'fieldset': case 'figcaption': case 'figure':
     case 'footer': case 'header': case 'hgroup':
     case 'hr': case 'listing': case 'main': case 'menu': case 'nav':
     case 'ol': case 'p': case 'search': case 'section': case 'summary':
-    case 'ul':
-    // §13.2.6.4.7 lists these too; without them </button>, </dl> and </pre> closed nothing, and
-    // everything after a <button> on a page was nested inside it.
-    case 'button': case 'dl': case 'pre': {
+    case 'ul': case 'button': case 'dl': case 'pre': {
       if (!ctx.isInScope(tag)) {
         ctx.parseError(token);
         return;

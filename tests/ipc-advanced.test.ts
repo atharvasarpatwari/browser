@@ -229,6 +229,7 @@ describe('Channel streaming', () => {
   });
 
   it('stream error in handler sends done', async () => {
+    // eslint-disable-next-line require-yield -- the handler fails before producing anything
     pair.chB.onStream(async function* () {
       throw new Error('handler error');
     });

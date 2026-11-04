@@ -166,10 +166,10 @@ describe('JSONSerializer', () => {
   });
 
   it('preserves BigInt through round-trip', () => {
-    const big = BigInt(9007199254740993);
+    const big = 9007199254740993n; // 2^53 + 1: BigInt(9007199254740993) rounded it to 2^53 first
     const msg = createFireAndForget('ch', 'main-to-renderer', 'p1', { num: big });
     const decoded = serializer.decode(serializer.encode(msg));
-    expect((decoded as any).payload.num).toBe(BigInt(9007199254740993));
+    expect((decoded as any).payload.num).toBe(9007199254740993n);
   });
 
   it('preserves undefined through round-trip', () => {
