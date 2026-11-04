@@ -4,12 +4,14 @@ interface SettingDefinition {
   readonly key: string;
   readonly label: string;
   readonly description: string;
-  readonly type: 'text' | 'number' | 'boolean' | 'select' | 'range';
+  readonly type: 'text' | 'password' | 'number' | 'boolean' | 'select' | 'range' | 'action';
   readonly defaultValue: unknown;
   readonly options?: readonly { readonly label: string; readonly value: string }[];
   readonly min?: number;
   readonly max?: number;
   readonly step?: number;
+  /** Button text for type 'action' (defaults to the setting's label). */
+  readonly actionLabel?: string;
 }
 
 interface SettingsSection {
@@ -21,7 +23,7 @@ interface SettingsSection {
   readonly renderExtra?: (ctx: { container: HTMLElement; page: ISettingsPage }) => void;
 }
 
-type SettingsPageEventType = 'settingChanged' | 'sectionChanged';
+type SettingsPageEventType = 'settingChanged' | 'sectionChanged' | 'actionTriggered';
 
 interface SettingsPageEvent {
   readonly kind: SettingsPageEventType;
@@ -67,6 +69,8 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'doNotTrack', label: 'Send Do Not Track', description: 'Request sites not to track you', type: 'boolean', defaultValue: false },
       { key: 'stripTrackingParams', label: 'Remove tracking parameters', description: 'Strip utm_*, fbclid and similar from the links you open', type: 'boolean', defaultValue: true },
       { key: 'speculativeLoading', label: 'Prepare likely destinations', description: 'While you type, look up the address of the site you are very likely to open so it loads faster (this tells your DNS resolver the site name before you press Enter; never in private browsing)', type: 'boolean', defaultValue: true },
+      { key: 'openPrivacyPolicy', label: 'Privacy Policy', description: 'See what Nova stores on this device and what the AI Research feature sends to Anthropic', type: 'action', actionLabel: 'View', defaultValue: null },
+      { key: 'clearBrowsingData', label: 'Clear browsing data', description: 'Permanently delete your browsing history from this device', type: 'action', actionLabel: 'Clear now', defaultValue: null },
     ],
   },
   {
@@ -89,7 +93,7 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
     id: 'ai-research', title: 'AI Research', icon: '🔬',
     settings: [
       { key: 'researchEnabled', label: 'Enable AI Research', description: 'Show research panel in browser', type: 'boolean', defaultValue: true },
-      { key: 'anthropicApiKey', label: 'Anthropic API Key', description: 'API key for Claude web search', type: 'text', defaultValue: '' },
+      { key: 'anthropicApiKey', label: 'Anthropic API Key', description: 'API key for Claude web search. Your research queries are sent to Anthropic — see Privacy Policy. Encrypted on disk where supported.', type: 'password', defaultValue: '' },
       { key: 'researchMaxSearches', label: 'Max searches per query', description: 'Maximum web searches per research session', type: 'range', defaultValue: 10, min: 1, max: 30, step: 1 },
       { key: 'researchModel', label: 'Model', description: 'Claude model for research', type: 'select', defaultValue: 'claude-sonnet-4-5-20250929', options: [{ label: 'Sonnet 4.5', value: 'claude-sonnet-4-5-20250929' }, { label: 'Opus 4', value: 'claude-opus-4-20250514' }] },
     ],
@@ -310,6 +314,27 @@ class SettingsPage implements ISettingsPage {
           input.addEventListener('blur', () => { input.style.borderColor = 'var(--border-default,rgba(255,255,255,.1))'; });
           input.addEventListener('change', () => this.setSetting(setting.key, input.value));
           row.appendChild(input);
+          break;
+        }
+        case 'password': {
+          const input = document.createElement('input');
+          input.type = 'password';
+          input.autocomplete = 'off';
+          input.value = String(currentValue);
+          input.style.cssText = 'width:100%;padding:7px 10px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);outline:none;transition:border .15s;';
+          input.addEventListener('focus', () => { input.style.borderColor = 'var(--border-accent,rgba(124,156,245,.4))'; });
+          input.addEventListener('blur', () => { input.style.borderColor = 'var(--border-default,rgba(255,255,255,.1))'; });
+          input.addEventListener('change', () => this.setSetting(setting.key, input.value));
+          row.appendChild(input);
+          break;
+        }
+        case 'action': {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = setting.actionLabel ?? setting.label;
+          button.style.cssText = 'padding:7px 14px;border:1px solid var(--border-default,rgba(255,255,255,.1));border-radius:var(--radius-sm,4px);font-size:13px;background:var(--bg-elevated,#1c1c1e);color:var(--text-primary,#e0e0e0);cursor:pointer;';
+          button.addEventListener('click', () => this.emit({ kind: 'actionTriggered', key: setting.key }));
+          row.appendChild(button);
           break;
         }
         case 'boolean': {

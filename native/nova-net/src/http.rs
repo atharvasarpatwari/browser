@@ -1,11 +1,13 @@
-//! Not currently wired into the running browser. Nothing in `src/` imports
-//! `src/native/index.ts`'s `httpFetch`/`resolveDns`/`tlsConnect` wrappers — the
-//! live networking path is the pure-TypeScript stack in
-//! `src/browser/networking/raw-socket-http-client.ts` +
-//! `redirect-handler.ts`, which already handles redirects and chunked
-//! transfer-encoding. This module lacks both (and connection reuse) as a
-//! result of being unintegrated, not by deliberate scope — don't treat the
-//! gaps as a settled design until this gets wired in.
+//! Being wired into the running browser via
+//! `src/browser/networking/native-http-client.ts`. The live networking path
+//! otherwise is the pure-TypeScript stack in
+//! `src/browser/networking/raw-socket-http-client.ts`; redirect-following
+//! and retry live in `request-manager.ts` itself, not in
+//! `redirect-handler.ts` (that file is unused — don't assume it's where
+//! redirect logic lives). This module dechunks `Transfer-Encoding: chunked`
+//! bodies and returns the body as raw bytes (binary-safe); it still has no
+//! connection reuse and no proxy support — `RawSocketHttpClient` covers
+//! those cases when this one isn't used.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -56,7 +58,7 @@ pub struct HttpResponse {
     pub status: u16,
     pub status_text: String,
     pub headers: HashMap<String, String>,
-    pub body: Option<String>,
+    pub body: Option<Vec<u8>>,
 }
 
 pub async fn fetch(request: &HttpRequest) -> Result<HttpResponse, HttpError> {
@@ -154,27 +156,66 @@ pub async fn fetch(request: &HttpRequest) -> Result<HttpResponse, HttpError> {
     })
 }
 
-fn send_and_receive<S: Read + Write>(mut stream: S, req_str: &str) -> Result<String, HttpError> {
+fn send_and_receive<S: Read + Write>(mut stream: S, req_str: &str) -> Result<Vec<u8>, HttpError> {
     stream.write_all(req_str.as_bytes()).map_err(HttpError::Io)?;
 
-    let mut response = String::new();
-    stream.read_to_string(&mut response).map_err(HttpError::Io)?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).map_err(HttpError::Io)?;
     Ok(response)
 }
 
-fn parse_http_response(response: &str) -> Result<(u16, String, HashMap<String, String>, Option<String>), HttpError> {
+/// Finds the byte offset of the first occurrence of `needle` in `haystack`.
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Decodes an HTTP/1.1 chunked-transfer body (RFC 7230 §4.1) into a flat
+/// byte buffer: each chunk is `<hex-size>[;ext]\r\n<data>\r\n`, terminated
+/// by a zero-size chunk. Chunk extensions and trailing headers are ignored
+/// — nothing in this client reads trailers today.
+fn decode_chunked_body(mut data: &[u8]) -> Result<Vec<u8>, HttpError> {
+    let mut out = Vec::new();
+    loop {
+        let line_end = find_subslice(data, b"\r\n")
+            .ok_or_else(|| HttpError::ConnectionFailed("malformed chunk size line".to_string()))?;
+        let size_line = std::str::from_utf8(&data[..line_end])
+            .map_err(|_| HttpError::ConnectionFailed("chunk size line is not valid UTF-8".to_string()))?;
+        let size_hex = size_line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_hex, 16)
+            .map_err(|_| HttpError::ConnectionFailed(format!("invalid chunk size: {size_hex}")))?;
+
+        data = &data[line_end + 2..];
+        if size == 0 {
+            break;
+        }
+        if data.len() < size + 2 {
+            return Err(HttpError::ConnectionFailed("truncated chunk data".to_string()));
+        }
+        out.extend_from_slice(&data[..size]);
+        data = &data[size + 2..]; // skip chunk data + its trailing \r\n
+    }
+    Ok(out)
+}
+
+fn parse_http_response(response: &[u8]) -> Result<(u16, String, HashMap<String, String>, Option<Vec<u8>>), HttpError> {
     // Split on the blank line that separates headers from body. Searching the
-    // raw string for the separator (rather than summing `.lines()` lengths)
-    // avoids guessing how many bytes each line's terminator consumed.
-    let (head, raw_body) = match response.find("\r\n\r\n") {
-        Some(idx) => (&response[..idx], Some(&response[idx + 4..])),
-        None => match response.find("\n\n") {
-            Some(idx) => (&response[..idx], Some(&response[idx + 2..])),
-            None => (response, None),
+    // raw bytes for the separator (rather than summing `.lines()` lengths)
+    // avoids guessing how many bytes each line's terminator consumed, and
+    // keeps the body as raw bytes instead of forcing it through lossy UTF-8.
+    let (head, raw_body) = match find_subslice(response, b"\r\n\r\n") {
+        Some(idx) => (&response[..idx], &response[idx + 4..]),
+        None => match find_subslice(response, b"\n\n") {
+            Some(idx) => (&response[..idx], &response[idx + 2..]),
+            None => (response, &response[response.len()..]),
         },
     };
 
-    let mut lines = head.lines();
+    // Headers are always ASCII-ish text per the HTTP spec — invalid UTF-8
+    // here is a genuine protocol violation worth surfacing, unlike the body.
+    let head_str = std::str::from_utf8(head)
+        .map_err(|_| HttpError::ConnectionFailed("response headers are not valid UTF-8".to_string()))?;
+
+    let mut lines = head_str.lines();
 
     let status_line = lines
         .next()
@@ -202,7 +243,18 @@ fn parse_http_response(response: &str) -> Result<(u16, String, HashMap<String, S
         }
     }
 
-    let body = raw_body.filter(|b| !b.is_empty()).map(|b| b.to_string());
+    let is_chunked = headers
+        .get("transfer-encoding")
+        .map(|v| v.to_ascii_lowercase().contains("chunked"))
+        .unwrap_or(false);
+
+    let body = if is_chunked {
+        Some(decode_chunked_body(raw_body)?)
+    } else if raw_body.is_empty() {
+        None
+    } else {
+        Some(raw_body.to_vec())
+    };
 
     Ok((status, status_text, headers, body))
 }
@@ -229,20 +281,51 @@ mod tests {
 
     #[test]
     fn test_parse_http_response() {
-        let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\nHello World";
+        let response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\nHello World";
         let (status, status_text, headers, body) = parse_http_response(response).unwrap();
         assert_eq!(status, 200);
         assert_eq!(status_text, "OK");
         assert_eq!(headers.get("content-type").unwrap(), "text/html");
-        assert_eq!(body.unwrap(), "Hello World");
+        assert_eq!(body.unwrap(), b"Hello World");
     }
 
     #[test]
     fn test_parse_http_response_no_body() {
-        let response = "HTTP/1.1 204 No Content\r\n\r\n";
+        let response = b"HTTP/1.1 204 No Content\r\n\r\n";
         let (status, status_text, headers, body) = parse_http_response(response).unwrap();
         assert_eq!(status, 204);
         assert!(body.is_none());
+    }
+
+    #[test]
+    fn test_parse_http_response_binary_body() {
+        // A body that isn't valid UTF-8 (e.g. PNG magic bytes) must survive
+        // intact — this is exactly what broke before bodies were bytes.
+        let mut response = b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n".to_vec();
+        let binary = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0x00];
+        response.extend_from_slice(&binary);
+        let (status, _, _, body) = parse_http_response(&response).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body.unwrap(), binary);
+    }
+
+    #[test]
+    fn test_parse_http_response_chunked() {
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Transfer-Encoding: chunked\r\n",
+            "\r\n",
+            "5\r\n",
+            "Hello\r\n",
+            "7\r\n",
+            " World!\r\n",
+            "0\r\n",
+            "\r\n",
+        );
+        let (status, _, headers, body) = parse_http_response(response.as_bytes()).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(headers.get("transfer-encoding").unwrap(), "chunked");
+        assert_eq!(body.unwrap(), b"Hello World!");
     }
 
     #[tokio::test]

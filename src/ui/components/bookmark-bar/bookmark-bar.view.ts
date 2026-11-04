@@ -21,6 +21,7 @@ interface IBookmarkBarView extends IDisposable {
   detach(): void;
   update(state: BookmarkBarState): void;
   setEventHandler(handler: (event: BookmarkBarEventUnion) => void): void;
+  setKeyboardNavEnabled(enabled: boolean): void;
 }
 
 const ICON_FOLDER =
@@ -34,6 +35,7 @@ class BookmarkBarView implements IBookmarkBarView {
   private backButton: HTMLElement | null = null;
   private addButton: HTMLElement | null = null;
   private eventHandler: ((event: BookmarkBarEventUnion) => void) | null = null;
+  private keyboardNavEnabled = true;
 
   constructor(model: IBookmarkBar, config?: Partial<BookmarkBarViewConfig>) {
     this.model = model;
@@ -65,6 +67,10 @@ class BookmarkBarView implements IBookmarkBarView {
 
   setEventHandler(handler: (event: BookmarkBarEventUnion) => void): void {
     this.eventHandler = handler;
+  }
+
+  setKeyboardNavEnabled(enabled: boolean): void {
+    this.keyboardNavEnabled = enabled;
   }
 
   private build(): void {
@@ -123,12 +129,22 @@ class BookmarkBarView implements IBookmarkBarView {
         folderEl.className = 'nova-bk-folder';
         folderEl.title = item.title;
         folderEl.innerHTML = ICON_FOLDER;
+        folderEl.setAttribute('role', 'button');
+        folderEl.tabIndex = 0;
         const span = document.createElement('span');
         span.textContent = item.title;
         folderEl.appendChild(span);
-        folderEl.addEventListener('click', async () => {
+        const activateFolder = async (): Promise<void> => {
           this.dispatchEvent({ kind: 'folderClicked', folder: item });
           await this.model.navigateIntoFolder(item.id);
+        };
+        folderEl.addEventListener('click', () => { void activateFolder(); });
+        folderEl.addEventListener('keydown', (e) => {
+          if (!this.keyboardNavEnabled) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            void activateFolder();
+          }
         });
         this.itemsContainer.appendChild(folderEl);
       } else {
@@ -139,9 +155,19 @@ class BookmarkBarView implements IBookmarkBarView {
         span.textContent = displayTitle;
         bmEl.appendChild(span);
         bmEl.title = `${item.title}\n${item.url ?? ''}`;
-        bmEl.addEventListener('click', () => {
+        bmEl.setAttribute('role', 'button');
+        bmEl.tabIndex = 0;
+        const activateBookmark = (): void => {
           if (item.url) {
             this.dispatchEvent({ kind: 'bookmarkClicked', bookmark: item });
+          }
+        };
+        bmEl.addEventListener('click', activateBookmark);
+        bmEl.addEventListener('keydown', (e) => {
+          if (!this.keyboardNavEnabled) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            activateBookmark();
           }
         });
         this.itemsContainer.appendChild(bmEl);

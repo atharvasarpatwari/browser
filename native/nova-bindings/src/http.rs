@@ -1,5 +1,6 @@
-//! N-API wrapper around `nova_net::http`, which is not currently called from
-//! anywhere in `src/` — see the module doc on `nova-net/src/http.rs`.
+//! N-API wrapper around `nova_net::http`, called from
+//! `src/browser/networking/native-http-client.ts` — see the module doc on
+//! `nova-net/src/http.rs` for what this client does and doesn't support.
 
 use std::collections::HashMap;
 
@@ -20,7 +21,10 @@ pub struct NapiHttpResponse {
     pub status: u32,
     pub status_text: String,
     pub headers: HashMap<String, String>,
-    pub body: Option<String>,
+    /// Raw response bytes — a `Buffer` on the JS side (a `Uint8Array`
+    /// subclass), not a string, so binary bodies (images, fonts) cross the
+    /// boundary intact instead of through a lossy UTF-8 conversion.
+    pub body: Option<Buffer>,
 }
 
 #[napi]
@@ -41,7 +45,7 @@ pub async fn http_fetch(request: NapiHttpRequest) -> Result<NapiHttpResponse> {
         status: response.status as u32,
         status_text: response.status_text,
         headers: response.headers,
-        body: response.body,
+        body: response.body.map(Buffer::from),
     })
 }
 

@@ -116,6 +116,8 @@ describe('BrowserWindowPage — native chrome bridge', () => {
         return fallback;
       },
       getValue: () => undefined,
+      getBoolean: (_key: string, fallback = false) => fallback,
+      onChange: () => {},
     } as unknown as Parameters<typeof page.setSettingsService>[0]);
     await page.mount(container);
     const state = page.getChromeState();
