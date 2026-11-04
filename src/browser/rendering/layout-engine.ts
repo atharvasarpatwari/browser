@@ -963,6 +963,18 @@ class LayoutEngine implements ILayoutEngine {
    * The height a percentage height of `el` resolves against: its parent's definite content height
    * (a length, or a percentage of a definite one), the viewport for the root; null when auto.
    */
+  /**
+   * `el`'s specified outer `height` in px (before box-sizing), or null when it behaves as auto: no
+   * height, or a percentage of a containing block whose height isn't definite (CSS 2.2 §10.5).
+   */
+  private specifiedHeight(el: DomElement, fontSize: number): number | null {
+    const h = (el.computedStyle?.get('height') ?? 'auto').trim();
+    if (h === 'auto') return null;
+    if (!/^-?[\d.]+%$/.test(h)) return this.resolveLength(h, fontSize, 0);
+    const base = this.percentHeightBase(el);
+    return base === null ? null : parseFloat(h) / 100 * base;
+  }
+
   private percentHeightBase(el: DomElement, depth = 0): number | null {
     const parent = el.parent;
     if (!parent || parent.nodeType !== 'element' || depth > 32) return this.config.viewportHeight;
@@ -1142,14 +1154,13 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     // Resolve height
-    const specHeight = elStyle.get('height');
+    // A percentage of an auto-height parent is auto (it resolved against the available width).
+    const outerHeight = this.specifiedHeight(el, elFontSize);
     let specifiedContentHeight: number;
-    if (specHeight && specHeight !== 'auto') {
-      if (boxSizing === 'border-box') {
-        specifiedContentHeight = resolve('height', '0') - paddingTop - paddingBottom - borderTop - borderBottom;
-      } else {
-        specifiedContentHeight = resolve('height', '0');
-      }
+    if (outerHeight !== null) {
+      specifiedContentHeight = boxSizing === 'border-box'
+        ? outerHeight - paddingTop - paddingBottom - borderTop - borderBottom
+        : outerHeight;
     } else {
       specifiedContentHeight = 0;
     }
@@ -1268,11 +1279,12 @@ class LayoutEngine implements ILayoutEngine {
         continue;
       }
 
-      // Absolute/fixed children are removed from flow
+      // Absolute/fixed children are removed from flow. Their static position is where the line has got
+      // to, not its start: MDN's link icons (`::after { position: absolute }`) sat at the left edge.
       if (elPosition === 'absolute' || elPosition === 'fixed') {
         const containingBlock = findContainingBlockForScheme(el, elPosition as 'absolute' | 'fixed' | 'sticky');
         const elFontSize = this.resolveFontSize(elStyle, parentFontSize);
-        this.positionedQueue.push({ element: el, containingBlock, fontSize: elFontSize, availableWidth, domTree, staticX: contentX, staticY: startY });
+        this.positionedQueue.push({ element: el, containingBlock, fontSize: elFontSize, availableWidth, domTree, staticX: ifc.cursor().x, staticY: ifc.cursor().y });
         continue;
       }
 
@@ -1517,7 +1529,9 @@ class LayoutEngine implements ILayoutEngine {
     let availableCrossSize: number | null = null;
     const rawCross = style.get(crossSizeProp);
     if (rawCross && rawCross !== 'auto') {
-      availableCrossSize = resolve(crossSizeProp, '0');
+      // A percentage height of an auto-height parent is auto (it resolved against the width, so an
+      // `inline-flex; height: 100%` box was as tall as it was wide).
+      availableCrossSize = isHorizontal ? this.specifiedHeight(parent, fontSize) : resolve(crossSizeProp, '0');
     } else if (!isHorizontal) {
       availableCrossSize = availableWidth; // a column's cross size is its (definite) width
     }
@@ -1622,9 +1636,11 @@ class LayoutEngine implements ILayoutEngine {
       // Check if item has explicit cross size
       const crossSizePropItem = isHorizontal ? 'height' : 'width';
       const rawItemCross = childStyle.get(crossSizePropItem);
-      if (rawItemCross && rawItemCross !== 'auto') {
+      const itemCross = !rawItemCross || rawItemCross === 'auto' ? null
+        : isHorizontal ? this.specifiedHeight(childEl, fontSize) : rc(crossSizePropItem, '0');
+      if (itemCross !== null) {
         item.hasDefiniteCrossSize = true;
-        item.crossSize = rc(crossSizePropItem, '0');
+        item.crossSize = itemCross;
       }
 
       flexItems.push(item);
@@ -2093,7 +2109,7 @@ class LayoutEngine implements ILayoutEngine {
       if (elPosition === 'absolute' || elPosition === 'fixed') {
         const containingBlock = findContainingBlockForScheme(el, elPosition as 'absolute' | 'fixed' | 'sticky');
         const elFontSize = this.resolveFontSize(elStyle, parentFontSize);
-        this.positionedQueue.push({ element: el, containingBlock, fontSize: elFontSize, availableWidth, domTree, staticX: contentX, staticY: contentY });
+        this.positionedQueue.push({ element: el, containingBlock, fontSize: elFontSize, availableWidth, domTree, staticX: ifc.cursor().x, staticY: ifc.cursor().y });
         continue;
       }
 
@@ -2179,9 +2195,18 @@ class LayoutEngine implements ILayoutEngine {
           if (!ownerRuns.has(owner)) ownerRuns.set(owner, []);
           ownerRuns.get(owner)!.push(run);
           // Grow the owner and every inline ancestor up to the block to cover this fragment.
+          // An inline box's height is its content area, the font's ascent + descent around the
+          // baseline (CSS 2.2 §10.6.1), not the line height: MDN's inline <code> backgrounds were a
+          // whole 28px line tall and covered the lines above and below. ponytail: Arial-like
+          // metrics (0.905 / 0.212 em); per-font metrics would need the font's tables.
+          const fs = ilBox.fontSize ?? fontSize;
+          const top = Math.max(ilBox.box.y, run.y - 0.905 * fs);
+          const bottom = Math.min(ilBox.box.y + ilBox.box.height, run.y + 0.212 * fs);
           for (let n: DomElement | null = owner; n && n !== el; n = n.parent as DomElement | null) {
             const b = ownerBounds.get(n);
-            const { x, y, width, height } = ilBox.box;
+            const { x, width } = ilBox.box;
+            const y = bottom > top ? top : ilBox.box.y;
+            const height = bottom > top ? bottom - top : ilBox.box.height;
             ownerBounds.set(n, b
               ? { x0: Math.min(b.x0, x), y0: Math.min(b.y0, y), x1: Math.max(b.x1, x + width), y1: Math.max(b.y1, y + height) }
               : { x0: x, y0: y, x1: x + width, y1: y + height });
@@ -2275,7 +2300,7 @@ class LayoutEngine implements ILayoutEngine {
       }
       if (innerPosition === 'absolute' || innerPosition === 'fixed') {
         const containingBlock = findContainingBlockForScheme(inner, innerPosition as 'absolute' | 'fixed' | 'sticky');
-        this.positionedQueue.push({ element: inner, containingBlock, fontSize: this.resolveFontSize(innerStyle, fontSize), availableWidth, domTree, staticX: contentX, staticY: contentY });
+        this.positionedQueue.push({ element: inner, containingBlock, fontSize: this.resolveFontSize(innerStyle, fontSize), availableWidth, domTree, staticX: ifc.cursor().x, staticY: ifc.cursor().y });
       } else if (isAtomicInline(innerClassified)) {
         this.layoutInlineBlockElement(inner, ifc, contentX, contentY, availableWidth, fontSize, domTree);
       } else if (BLOCK_LEVEL.has(innerStyle.get('display') ?? 'inline')) {
@@ -2455,12 +2480,14 @@ class LayoutEngine implements ILayoutEngine {
       childBottom = layoutContent(innerWidth);
     }
 
-    const specHeight = elStyle.get('height');
+    // A percentage of an auto-height parent is auto. It resolved against the available width, so
+    // MDN's sidebar toggle (`height: 100%` inside a 32px flex header) was 1016px tall.
+    const outerHeight = this.specifiedHeight(el, elFontSize);
     let contentHeight: number;
-    if (specHeight && specHeight !== 'auto') {
+    if (outerHeight !== null) {
       contentHeight = boxSizing === 'border-box'
-        ? resolve('height', '0') - padT - padB - borderT - borderB
-        : resolve('height', '0');
+        ? outerHeight - padT - padB - borderT - borderB
+        : outerHeight;
     } else if (intrinsic.height != null) {
       contentHeight = intrinsic.height;
     } else {

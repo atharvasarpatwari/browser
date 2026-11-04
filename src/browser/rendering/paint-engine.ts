@@ -637,6 +637,12 @@ class PaintEngine implements IPaintEngine {
           bgColor = bgShorthand;
         }
       }
+      // A mask-image url() is never loaded here. A mask image that isn't available masks everything
+      // out (CSS Masking §6.4: it counts as a transparent black layer), so an icon drawn as a
+      // currentColor background through an SVG mask (MDN's nav, link and filter icons) shows
+      // nothing. It used to paint as a solid square.
+      // ponytail: only the element's own background is dropped; load and apply the mask for real icons.
+      if (/url\(/.test(`${style.get('mask-image') ?? ''} ${style.get('-webkit-mask-image') ?? ''} ${style.get('mask') ?? ''}`)) bgColor = 'transparent';
       const bgImage = style.get('background-image') ?? 'none';
       const bgSize = style.get('background-size') ?? 'auto';
       const bgPos = style.get('background-position') ?? '0% 0%';

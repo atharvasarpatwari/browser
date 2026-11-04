@@ -42,6 +42,10 @@ export function contentText(content: string, host: DomElement, counters?: Counte
   while (i < v.length) {
     const ch = v[i]!;
     if (ch === ' ' || ch === '\t' || ch === '\n') { i++; continue; }
+    // `content: "\200b" / " (external)"`: what follows the slash is alternative text for
+    // assistive technology, not rendered (CSS Content §1.1). It used to be appended, so MDN's
+    // 1em link icons held " (external)" and wrapped three lines tall.
+    if (ch === '/') break;
     if (ch === '"' || ch === "'") {
       let j = i + 1;
       while (j < v.length && v[j] !== ch) {

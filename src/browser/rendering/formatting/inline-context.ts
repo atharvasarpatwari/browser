@@ -281,6 +281,11 @@ export class InlineFormattingContext {
     }
   }
 
+  /** Where the next inline content would go: an out-of-flow box's static position (CSS 2.2 §10.3.7). */
+  cursor(): { x: number; y: number } {
+    return { x: this.originX + this.currentLine.usedWidth, y: this.currentLine.y };
+  }
+
   /**
    * A new text run starts at an inline element boundary. If the line ends in text and UAX #14 gives
    * no break between its last character and `text`'s first (a comma after a word), the run can't

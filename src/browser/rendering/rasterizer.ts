@@ -113,12 +113,14 @@ export function parseColor(color: string): RGBA {
 
   if (lower.startsWith('#')) {
     const hex = lower.slice(1);
-    if (hex.length === 3) {
+    // #rgb and #rgba (CSS Color 4 §5.2). #rgba used to fall through to black, so MDN's
+    // `border: 1px solid #0000` (transparent) drew black outlines.
+    if (hex.length === 3 || hex.length === 4) {
       return {
         r: clamp255(hexChar(hex.charCodeAt(0)) * 17),
         g: clamp255(hexChar(hex.charCodeAt(1)) * 17),
         b: clamp255(hexChar(hex.charCodeAt(2)) * 17),
-        a: 1,
+        a: hex.length === 4 ? hexChar(hex.charCodeAt(3)) * 17 / 255 : 1,
       };
     }
     if (hex.length === 6) {
