@@ -897,6 +897,7 @@ describe('BrowserWindowPage — search wiring', () => {
     getBoolean: (k: string, f = false) => (typeof flags[k] === 'boolean' ? (flags[k] as boolean) : f),
     getNumber: (_k: string, f = 0) => f,
     getValue: () => undefined,
+    onChange: () => undefined,
     setValue,
     init: () => undefined,
   }) as unknown as Parameters<BrowserWindowPage['setSettingsService']>[0];
