@@ -259,6 +259,11 @@ export class InlineFormattingContext {
             const afterMetrics = measurer.measure(after, fontSize, ff, weight);
             this.pushTextSegment(after, afterMetrics.width + spaced(after), fontSize, lineHeight, ff);
           }
+        } else if (seg.start === 0 && this.carryNoBreakTail(seg.text)) {
+          // No break opportunity between the previous run and this one (", the" after "2026"):
+          // the previous word moved down with it, or the line overflows. It used to start the
+          // new line with the comma.
+          this.pushTextSegment(seg.text, segWidth, fontSize, lineHeight, ff);
         } else {
           // No good break point — start a new line
           this.startNewLine();
@@ -274,6 +279,35 @@ export class InlineFormattingContext {
         this.pushTextSegment(seg.text, segWidth, fontSize, lineHeight, ff);
       }
     }
+  }
+
+  /**
+   * A new text run starts at an inline element boundary. If the line ends in text and UAX #14 gives
+   * no break between its last character and `text`'s first (a comma after a word), the run can't
+   * start a new line: the trailing word boxes after the line's last space move down with it, and the
+   * caller appends `text` after them. If there is no space to break at (the line is one word, or an
+   * atomic box comes first), nothing moves and the line overflows. Returns false when a break is allowed.
+   */
+  private carryNoBreakTail(text: string): boolean {
+    const boxes = this.currentLine.boxes;
+    const last = boxes[boxes.length - 1];
+    const prevText = last?.isAnonymous ? last.textContent : undefined;
+    if (!last || !prevText) return false;
+    if (findBreakOpportunities(prevText.slice(-1) + text[0]).some((o) => o.index === 1)) return false;
+    let i = boxes.length;
+    while (i > 0 && boxes[i - 1]!.isAnonymous && boxes[i - 1]!.textContent && !/\s$/.test(boxes[i - 1]!.textContent!)) i--;
+    if (i === 0 || !boxes[i - 1]!.isAnonymous) return true; // no space to break at: overflow
+    const moved = boxes.splice(i);
+    this.startNewLine();
+    for (const m of moved) {
+      m.box.x = this.originX + this.currentLine.usedWidth;
+      m.box.y = this.startY + this.currentLine.y;
+      this.currentLine.boxes.push(m);
+      this.currentLine.usedWidth += m.box.width;
+      this.currentLine.height = Math.max(this.currentLine.height, m.box.height);
+      this.currentLine.baseline = Math.max(this.currentLine.baseline, m.baselineOffset);
+    }
+    return true;
   }
 
   /**
