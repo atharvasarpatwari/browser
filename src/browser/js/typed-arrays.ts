@@ -780,6 +780,17 @@ function wrapTypedArray(buf: ArrayBuffer, offset: number, length: number, meta: 
   return ta;
 }
 
+/**
+ * A page typed array over an existing native view (same memory): a host API's bytes, such as a
+ * canvas ImageData, as something page scripts can index. Writes through either side are shared.
+ */
+export function wrapNativeTypedArray(view: ArrayBufferView & { length: number }): JSObject {
+  const name = view.constructor.name;
+  const meta = (TYPED_ARRAY_META as Record<string, TypedArrayMeta | undefined>)[name];
+  if (!meta) throw new Error('Not a typed array: ' + name);
+  return wrapTypedArray(view.buffer as ArrayBuffer, view.byteOffset, view.length, meta);
+}
+
 // Create prototypes per typed array name
 const typedArrayProtos: Record<string, JSObject> = {};
 for (const name of TYPED_ARRAY_NAMES) {

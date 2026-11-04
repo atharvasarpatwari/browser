@@ -1,5 +1,5 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nova 1.65-1.73 checks</title>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nova 1.65-1.78 checks</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;padding:8px;font:14px/18px sans-serif;background:#fff;color:#222}
@@ -31,6 +31,9 @@ h2{font-size:15px;margin:10px 0 4px}
 <style>.sm\:p-2{color:rgb(0,128,0)} #has:has(.hit){color:rgb(0,0,255)}</style>
 <div class="t"><div id="ib" style="float:left;width:60px;height:40px;background:#fc9"></div><div id="beside">text beside a float wraps around it nicely</div><div style="clear:both"></div></div>
 
+<h2>1.78 block in link, canvas, radial</h2>
+<div class="t"><a id="bl" href="#">before<div id="blcard" style="height:50px;background:#ddf">card inside a link</div>after</a><div id="blnext" style="height:10px;background:#a47"></div></div>
+<div class="t"><div id="rg" style="width:200px;height:100px;background:radial-gradient(circle closest-side, #000 0%, #000 60%, #fff 61%)"></div><span>should be a round black dot</span></div>
 <div id="out"></div>
 <script>
 var res=[];
@@ -59,9 +62,12 @@ T('1.73 JSON indent+methods',function(){var j=JSON.stringify({a:1,f:function(){}
 T('1.73 [] == false',function(){return ([]==false)===true;});
 T('1.73 static block',function(){return (new Function('class A{static{A.y=2}}return A.y'))()===2||'no';});
 T('1.73 Set(string)',function(){return Array.from(new Set('hello')).join('')==='helo'||Array.from(new Set('hello')).join('');});
+T('1.78 block in link: next below card',function(){var c=R('blcard'),n=R('blnext');return n.y>=c.y+c.h||JSON.stringify([c,n]);});
+T('1.78 canvas nonzero overlap filled',function(){var cv=document.createElement('canvas');cv.width=40;cv.height=20;var x=cv.getContext('2d');x.fillStyle='#000';x.beginPath();x.rect(0,0,30,20);x.rect(10,0,30,20);x.fill();var a=x.getImageData(20,10,1,1).data[3];return a>0||('alpha '+a);});
+T('1.78 canvas evenodd hole',function(){var cv=document.createElement('canvas');cv.width=40;cv.height=20;var x=cv.getContext('2d');x.fillStyle='#000';x.beginPath();x.rect(0,0,30,20);x.rect(10,0,30,20);x.fill('evenodd');var a=x.getImageData(20,10,1,1).data[3],b=x.getImageData(5,10,1,1).data[3];return (a===0&&b>0)||('hole '+a+' side '+b);});
 var pass=0,html='';for(var i=0;i<res.length;i++){if(res[i][1])pass++;html+='<div class="r" style="color:'+(res[i][1]?'#080':'#c00')+'">'+(res[i][1]?'PASS ':'FAIL ')+res[i][0]+(res[i][1]?'':' '+res[i][2])+'</div>';}
 document.getElementById('out').innerHTML=html;
-document.getElementById('summary').textContent='Nova 1.65-1.73: '+pass+'/'+res.length+' pass';
+document.getElementById('summary').textContent='Nova 1.65-1.78: '+pass+'/'+res.length+' pass';
 document.title='RESULT '+pass+'/'+res.length+' '+res.filter(function(r){return !r[1];}).map(function(r){return r[0]+': '+r[2];}).join(' | ');
 </script>
 </body></html>

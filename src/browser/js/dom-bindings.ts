@@ -17,6 +17,7 @@ import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../
 import { getScriptCookieProvider } from '../networking/cookie-service';
 import { HtmlParser } from '../rendering/html-parser';
 import { controlKind, controlValue, setControlValue, controlChecked, formOf } from '../rendering/form-controls';
+import { wrapNativeTypedArray } from './typed-arrays';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DOM BINDINGS — Bridges the JS interpreter to the Nova DOM tree
@@ -1326,7 +1327,10 @@ function wrapPattern(p: any): JSObject {
 function wrapImageData(d: { data: Uint8ClampedArray; width: number; height: number }): JSObject {
   const obj = createObject(null);
   (obj as unknown as CanvasExtensions).__raw = d;
-  obj.properties.set('data', { value: d.data as unknown as JSValue, writable: false, enumerable: true, configurable: false });
+  // A page Uint8ClampedArray over the same bytes. The host array was handed over as it was, so
+  // `imageData.data[3]` was undefined to page scripts (no property map) and pixel reads failed;
+  // the shared memory keeps in-place edits + putImageData working.
+  obj.properties.set('data', { value: wrapNativeTypedArray(d.data), writable: false, enumerable: true, configurable: false });
   obj.properties.set('width', { value: d.width, writable: false, enumerable: true, configurable: false });
   obj.properties.set('height', { value: d.height, writable: false, enumerable: true, configurable: false });
   return obj;
