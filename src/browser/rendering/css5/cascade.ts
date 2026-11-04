@@ -1318,6 +1318,7 @@ const BLOCK_ELEMENTS = new Set([
   'fieldset',
   'figcaption',
   'legend',
+  'center',
 ]);
 
 /** CSS Display §2.7 blockification of inline-level display types. */
@@ -1378,6 +1379,107 @@ const NON_RENDERED_ELEMENTS = new Set([
   'noscript', 'datalist', 'noembed', 'noframes', 'param', 'rp', 'area',
 ]);
 
+/** A legacy colour attribute value: names and #hex as they are, bare hex ("ff6600") given its '#'. */
+function legacyColor(v: string): string {
+  const t = v.trim();
+  return /^[\da-f]{3}$|^[\da-f]{6}$/i.test(t) ? `#${t}` : t;
+}
+
+/** A dimension attribute: `100` → 100px, `85%` → 85%; anything else is ignored (null). */
+function legacyLength(v: string | undefined): string | null {
+  const t = (v ?? '').trim();
+  const m = /^(\d+(?:\.\d+)?)(%?)/.exec(t);
+  return m ? (m[2] ? `${m[1]}%` : `${m[1]}px`) : null;
+}
+
+const LEGACY_FONT_SIZES = ['x-small', 'small', 'medium', 'large', 'x-large', 'xx-large', 'xxx-large'];
+
+/**
+ * The CSS that presentational HTML attributes map to (HTML §15.3 "presentational hints"). They were
+ * all ignored, so table-built pages lost their layout: Hacker News' `<table width="85%">` shrank to
+ * its content, its orange `bgcolor` header was missing, `cellspacing="0"` left 2px gaps between
+ * cells and `align="right"` rank numbers stayed left.
+ */
+function presentationalHints(element: StyleableElement): Map<string, string> {
+  const hints = new Map<string, string>();
+  const tag = element.tagName.toLowerCase();
+  const attr = (n: string) => element.attributes.get(n);
+  const cellLike = tag === 'td' || tag === 'th';
+  const rowLike = cellLike || tag === 'tr' || tag === 'thead' || tag === 'tbody' || tag === 'tfoot';
+
+  const bg = attr('bgcolor');
+  if (bg && (tag === 'body' || tag === 'table' || rowLike)) hints.set('background-color', legacyColor(bg));
+  if (tag === 'body' && attr('text')) hints.set('color', legacyColor(attr('text')!));
+
+  if (tag === 'table' || cellLike || tag === 'col' || tag === 'colgroup' || tag === 'hr') {
+    const w = legacyLength(attr('width'));
+    if (w) hints.set('width', w);
+  }
+  if (tag === 'table' || cellLike || tag === 'tr') {
+    const h = legacyLength(attr('height'));
+    if (h) hints.set('height', h);
+  }
+
+  const align = attr('align')?.trim().toLowerCase();
+  if (align) {
+    if (tag === 'table') {
+      if (align === 'center') { hints.set('margin-left', 'auto'); hints.set('margin-right', 'auto'); }
+      else if (align === 'left' || align === 'right') hints.set('float', align);
+    } else if (rowLike || ['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'caption'].includes(tag)) {
+      const map: Record<string, string> = { left: 'left', right: 'right', center: '-webkit-center', middle: '-webkit-center', justify: 'justify' };
+      if (map[align]) hints.set('text-align', map[align]!);
+    }
+  }
+  const valign = attr('valign')?.trim().toLowerCase();
+  if (valign && rowLike && ['top', 'middle', 'bottom', 'baseline'].includes(valign)) hints.set('vertical-align', valign);
+  if (cellLike && attr('nowrap') !== undefined) hints.set('white-space', 'nowrap');
+
+  if (tag === 'table') {
+    const spacing = legacyLength(attr('cellspacing'));
+    if (spacing && !spacing.endsWith('%')) hints.set('border-spacing', spacing);
+    const border = parseInt(attr('border') ?? '', 10);
+    if (border > 0) {
+      for (const side of ['top', 'right', 'bottom', 'left']) {
+        hints.set(`border-${side}-width`, `${border}px`); hints.set(`border-${side}-style`, 'outset'); hints.set(`border-${side}-color`, '#808080');
+      }
+    }
+  }
+  if (cellLike) {
+    // cellpadding / border belong to the cell's table.
+    let table: StyleableElement | null = element.parent;
+    while (table && table.tagName.toLowerCase() !== 'table') table = table.parent;
+    if (table) {
+      const pad = legacyLength(table.attributes.get('cellpadding'));
+      if (pad && !pad.endsWith('%')) for (const side of ['top', 'right', 'bottom', 'left']) hints.set(`padding-${side}`, pad);
+      if (parseInt(table.attributes.get('border') ?? '', 10) > 0) {
+        for (const side of ['top', 'right', 'bottom', 'left']) {
+          hints.set(`border-${side}-width`, '1px'); hints.set(`border-${side}-style`, 'inset'); hints.set(`border-${side}-color`, '#808080');
+        }
+      }
+    }
+  }
+
+  if (tag === 'font') {
+    if (attr('color')) hints.set('color', legacyColor(attr('color')!));
+    if (attr('face')) hints.set('font-family', attr('face')!);
+    const size = attr('size')?.trim();
+    if (size) {
+      const rel = /^[+-]/.test(size);
+      const n = Math.min(7, Math.max(1, (rel ? 3 : 0) + parseInt(size, 10)));
+      if (Number.isFinite(n)) hints.set('font-size', LEGACY_FONT_SIZES[n - 1]!);
+    }
+  }
+  return hints;
+}
+
+/**
+ * Quirks mode (a document without a doctype, as Hacker News is): tables don't inherit text-align
+ * (HTML §15.3.8 quirks rules), so `<center><table>` cells stay left-aligned like in other browsers.
+ * Set by the page renderer for each document. ponytail: legacy public-id quirks aren't detected.
+ */
+let quirksMode = false;
+export function setQuirksMode(quirks: boolean): void { quirksMode = quirks; }
+
 /** Returns user-agent default declarations for a given element tag. */
 export function getUserAgentDefaults(
   tagName: string,
@@ -1403,6 +1505,7 @@ export function getUserAgentDefaults(
     // never laid out as tables: cells ran together as one line of text.
     styles.set('display', TABLE_DISPLAYS[tag]!);
     if (tag === 'table') { styles.set('border-spacing', '2px'); styles.set('box-sizing', 'border-box'); }
+    if (tag === 'table' && quirksMode) styles.set('text-align', 'start');
     if (tag === 'td' || tag === 'th') {
       for (const side of ['top', 'right', 'bottom', 'left']) styles.set(`padding-${side}`, '1px');
       styles.set('vertical-align', 'inherit');
@@ -1411,6 +1514,10 @@ export function getUserAgentDefaults(
     if (tag === 'caption') styles.set('text-align', 'center');
   } else if (BLOCK_ELEMENTS.has(tag)) {
     styles.set('display', 'block');
+    // <center> (HTML §15.3.3): `text-align: -webkit-center` centres its inline content and its block
+    // children. It had no UA style at all, so it was an inline element and a table in it (Hacker News
+    // wraps its whole page in <center>) was flowed as inline content.
+    if (tag === 'center') styles.set('text-align', '-webkit-center');
   } else if (INLINE_ELEMENTS.has(tag)) {
     styles.set('display', 'inline');
   }
@@ -1884,6 +1991,11 @@ export function computeComputedStyles(
   const uaDefaults = pseudo ? new Map<string, string>() : getUserAgentDefaults(element.tagName, element.attributes.get('type') ?? '');
   if (!pseudo) {
     for (const [prop, val] of uaDefaults) {
+      computed.set(prop, val);
+    }
+    // Presentational attributes (bgcolor, width, align, cellpadding …) as their CSS hints, above
+    // the UA styles and below every author rule (HTML §15.1).
+    for (const [prop, val] of presentationalHints(element)) {
       computed.set(prop, val);
     }
     // HTML §15.3.1 `[hidden] { display: none }` and §15.5.4 a closed <details> shows only its

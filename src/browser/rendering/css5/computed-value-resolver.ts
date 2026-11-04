@@ -496,10 +496,9 @@ export function resolveComputedValue(
   // ── Line-height: number multiplier vs keyword ───────────────────────
   if (prop === 'line-height') {
     if (v === 'normal') return 'normal';
-    const n = parseFloat(v);
-    if (!isNaN(n) && !v.endsWith('px') && !v.endsWith('em') && !v.endsWith('rem') && !v.endsWith('%')) {
-      return String(n);
-    }
+    // Only a bare number is a multiplier. Any other unit was stripped too (`12pt` → `12`), so Hacker
+    // News' `line-height: 12pt` header became 12 × the font size, a 120px-tall bar.
+    if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(v.trim())) return String(parseFloat(v));
   }
 
   // ── Visibility: normalize ───────────────────────────────────────────

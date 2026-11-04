@@ -320,40 +320,45 @@ class TreeBuilder implements TreeBuilderContext {
     this.insertionMode = mode;
   }
 
+  /**
+   * "Reset the insertion mode appropriately" (HTML §13.2.4.1): walk the stack of open elements from
+   * the current node up to the first one that decides the mode. It looked at the current node only
+   * and had no td/th/tr cases, so after a nested table's </table> (the current node is then the
+   * outer td) the parser went to "in body", ignored </td></tr>, and nested every following row inside
+   * that cell: Hacker News' story rows ended up inside its orange header cell.
+   */
   resetInsertionMode(): void {
-    const node = this.openElements.currentNode();
-    if (!node) {
-      this.insertionMode = Im.IN_BODY;
-      return;
+    const stack = this.openElements.array;
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const last = i === 0;
+      const tag = stack[i]!.tagName;
+      if (tag === 'select') {
+        if (!last) {
+          for (let j = i - 1; j > 0; j--) {
+            const a = stack[j]!.tagName;
+            if (a === 'template') break;
+            if (a === 'table') { this.insertionMode = Im.IN_SELECT_IN_TABLE; return; }
+          }
+        }
+        this.insertionMode = Im.IN_SELECT; return;
+      }
+      if ((tag === 'td' || tag === 'th') && !last) { this.insertionMode = Im.IN_CELL; return; }
+      if (tag === 'tr') { this.insertionMode = Im.IN_ROW; return; }
+      if (tag === 'tbody' || tag === 'thead' || tag === 'tfoot') { this.insertionMode = Im.IN_TABLE_BODY; return; }
+      if (tag === 'caption') { this.insertionMode = Im.IN_CAPTION; return; }
+      if (tag === 'colgroup') { this.insertionMode = Im.IN_COLUMN_GROUP; return; }
+      if (tag === 'table') { this.insertionMode = Im.IN_TABLE; return; }
+      if (tag === 'template') {
+        this.insertionMode = this.templateInsertionModes.length > 0 ? this.templateInsertionModes[this.templateInsertionModes.length - 1]! : Im.IN_BODY;
+        return;
+      }
+      if (tag === 'head' && !last) { this.insertionMode = Im.IN_HEAD; return; }
+      if (tag === 'body') { this.insertionMode = Im.IN_BODY; return; }
+      if (tag === 'frameset') { this.insertionMode = Im.IN_FRAMESET; return; }
+      if (tag === 'html') { this.insertionMode = this.headElement ? Im.AFTER_HEAD : Im.BEFORE_HEAD; return; }
+      if (last) { this.insertionMode = Im.IN_BODY; return; }
     }
-
-    const tag = node.tagName;
-
-    if (tag === 'select' && this.templateInsertionModes.length > 0) {
-      this.insertionMode = Im.IN_SELECT_IN_TABLE;
-    } else if (tag === 'select') {
-      this.insertionMode = Im.IN_SELECT;
-    } else if (tag === 'tbody' || tag === 'tfoot' || tag === 'thead') {
-      this.insertionMode = Im.IN_TABLE_BODY;
-    } else if (tag === 'caption') {
-      this.insertionMode = Im.IN_CAPTION;
-    } else if (tag === 'colgroup') {
-      this.insertionMode = Im.IN_COLUMN_GROUP;
-    } else if (tag === 'table') {
-      this.insertionMode = Im.IN_TABLE;
-    } else if (tag === 'body') {
-      this.insertionMode = Im.IN_BODY;
-    } else if (tag === 'frameset') {
-      this.insertionMode = Im.IN_FRAMESET;
-    } else if (tag === 'head') {
-      this.insertionMode = Im.IN_BODY;
-    } else if (tag === 'template' && this.templateInsertionModes.length > 0) {
-      this.insertionMode = this.templateInsertionModes[this.templateInsertionModes.length - 1];
-    } else if (tag === 'html') {
-      this.insertionMode = this.headElement ? Im.AFTER_HEAD : Im.BEFORE_HEAD;
-    } else {
-      this.insertionMode = Im.IN_BODY;
-    }
+    this.insertionMode = Im.IN_BODY;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

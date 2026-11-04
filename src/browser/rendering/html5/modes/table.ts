@@ -294,13 +294,16 @@ export function handleInRow(ctx: TreeBuilderContext, token: Token): void {
           ctx.setMode(Im.IN_CELL);
           ctx.activeFormattingClearUpToMarker();
           return;
+        // §13.2.6.4.14: these (tr included) end the current row, then reprocess. `tr` was missing
+        // (`table` stood in its place) and the scope check used the token's own tag, so a row
+        // opened while a row was still open (`<tr .../>` is not self-closing) nested inside it.
         case 'caption': case 'col': case 'colgroup':
-        case 'tbody': case 'tfoot': case 'thead': case 'table':
-          if (!ctx.isInTableScope(token.tagName!)) {
+        case 'tbody': case 'tfoot': case 'thead': case 'tr':
+          if (!ctx.isInTableScope('tr')) {
             ctx.parseError(token);
             return;
           }
-          ctx.generateImpliedEndTags();
+          for (let n = ctx.currentNode(); n && !['tr', 'template', 'html'].includes(n.tagName); n = ctx.currentNode()) ctx.popCurrentNode();
           ctx.popCurrentNode();
           ctx.setMode(Im.IN_TABLE_BODY);
           ctx.processToken(token);

@@ -50,7 +50,7 @@ import { DomTree } from '../rendering/dom-tree';
 import { LayoutEngine } from '../rendering/layout-engine';
 import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
-import { computeComputedStyles, computePseudoElementStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
+import { computeComputedStyles, computePseudoElementStyles, collectKeyframes, evaluatePrefersReducedMotion, setQuirksMode } from '../rendering/css5/cascade';
 import { makePseudoElement, applyCounterProperties, insideMarker, type Counters } from '../rendering/generated-content';
 import { buildUsedStyle } from '../rendering/css5/used-style';
 import { runJS, createGlobalEnv } from '../js/index';
@@ -254,6 +254,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     }
 
     // 3. Convert the parsed HTML into our internal DOM tree representation
+    setQuirksMode(!htmlDoc.doctype);
     const doc = domTree.buildFromHtml(htmlDoc);
     this.lastDocument = doc;
 
@@ -1038,6 +1039,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       const paintEngine = new PaintEngine();
 
       const parseResult = htmlParser.parse(body, url);
+      setQuirksMode(!parseResult.document.doctype);
       const doc = domTree.buildFromHtml(parseResult.document);
 
       const rules = cssParser.extractStylesFromDocument(parseResult.document);

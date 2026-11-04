@@ -100,6 +100,14 @@ function paintLayerOf(el: DomElement): number {
   return layer;
 }
 
+/**
+ * Block-level displays: inside inline content they break the line and stack (CSS 2.2 §9.2.1.1).
+ * Only `block` did, so a table, flex or grid box inside an inline (a table in a <center> that was
+ * inline) had its rows and cells flowed as inline text.
+ * ponytail: `inline-table` is still flowed inline instead of as an atomic inline.
+ */
+const BLOCK_LEVEL = new Set(['block', 'list-item', 'flow-root', 'table', 'flex', 'grid']);
+
 function isAtomicInline(classified: string): boolean {
   return classified === 'inline-block' || classified === 'inline-flex' || classified === 'inline-grid';
 }
@@ -190,7 +198,10 @@ function inFixedBox(el: DomElement): boolean {
 const MATH_FN = /(?:^|[^a-z-])(calc|min|max|clamp)\(/i;
 
 /** Block-level displays whose auto width fills the containing block. */
-const FILLS_LINE = new Set(['block', 'list-item', 'flex', 'grid', 'table', 'flow-root']);
+// Not 'table': an auto-width table shrinks to its columns, so its box is its extent. Counted as
+// filling, it measured to its last cell's edge, without the trailing border-spacing, so a table in a
+// shrink-to-fit cell (Hacker News' story table) got one spacing too little and its widest column wrapped.
+const FILLS_LINE = new Set(['block', 'list-item', 'flex', 'grid', 'flow-root']);
 
 /** A `left`/`right`/`top`/`bottom` inset that isn't auto. */
 function isInsetSet(style: ReadonlyMap<string, string>, prop: string): boolean {
@@ -204,7 +215,8 @@ function isInsetSet(style: ReadonlyMap<string, string>, prop: string): boolean {
  */
 function effectiveTextAlign(el: DomElement): string | undefined {
   const style = el.computedStyle;
-  const align = style?.get('text-align');
+  const raw = style?.get('text-align');
+  const align = raw === '-webkit-center' || raw === '-moz-center' ? 'center' : raw;
   let rtl = style?.get('direction') === 'rtl';
   if (!style?.has('direction')) for (let n: DomNode | null = el; n; n = n.parent) {
     const d = n.nodeType === 'element' ? (n as DomElement).attributes.get('dir') : undefined;
@@ -494,8 +506,14 @@ class LayoutEngine implements ILayoutEngine {
     }
 
     // Auto margins take no space while the width is worked out (CSS 2.2 §10.3.3).
-    const marginLeftAuto = style.get('margin-left') === 'auto';
-    const marginRightAuto = style.get('margin-right') === 'auto';
+    // In a `text-align: -webkit-center` parent (<center>, <td align=center>) a block child without
+    // horizontal margins is centred like `margin: 0 auto` (the WebKit/Blink behaviour pages rely on).
+    const parentAlign = (node.parent as DomElement | null)?.computedStyle?.get('text-align');
+    const zero = (v: string | undefined) => v === undefined || /^0(px)?$/.test(v.trim());
+    const webkitCenter = (parentAlign === '-webkit-center' || parentAlign === '-moz-center')
+      && zero(style.get('margin-left')) && zero(style.get('margin-right'));
+    const marginLeftAuto = style.get('margin-left') === 'auto' || webkitCenter;
+    const marginRightAuto = style.get('margin-right') === 'auto' || webkitCenter;
     const fixedMargins = (marginLeftAuto ? 0 : marginLeft) + (marginRightAuto ? 0 : marginRight);
 
     let borderWidthBox: number;
@@ -2053,7 +2071,7 @@ class LayoutEngine implements ILayoutEngine {
 
       if (isAtomicInline(elClassified)) {
         this.layoutInlineBlockElement(el, ifc, contentX, contentY, availableWidth, parentFontSize, domTree);
-      } else if (elClassified === 'block') {
+      } else if (BLOCK_LEVEL.has(elDisplay)) {
         // A block element inside an inline element creates a split:
         // CSS 2.2 §9.2.1.1: inline elements containing block-level children
         // are treated as if the element were replaced by its content.
@@ -2232,7 +2250,7 @@ class LayoutEngine implements ILayoutEngine {
         this.positionedQueue.push({ element: inner, containingBlock, fontSize: this.resolveFontSize(innerStyle, fontSize), availableWidth, domTree, staticX: contentX, staticY: contentY });
       } else if (isAtomicInline(innerClassified)) {
         this.layoutInlineBlockElement(inner, ifc, contentX, contentY, availableWidth, fontSize, domTree);
-      } else if (innerClassified === 'block') {
+      } else if (BLOCK_LEVEL.has(innerStyle.get('display') ?? 'inline')) {
         ifc.breakForBlock(0); // end the line before the block
         const blockY = ifc.getEndY();
         const afterY = this.layoutNode(inner, contentX, blockY, availableWidth, fontSize, domTree);
@@ -2624,6 +2642,14 @@ class LayoutEngine implements ILayoutEngine {
       return isFinite(n) ? (n / 100) * this.config.viewportHeight : 0;
     }
 
+    // Absolute units (CSS Values §6.2: 1in = 96px). They fell through to a bare number, so `12pt`
+    // laid out as 12px instead of 16px (Hacker News' header line-height, print-style margins).
+    const abs = /^(-?[\d.]+)(pt|pc|in|cm|mm|q)$/i.exec(value.trim());
+    if (abs) {
+      const per: Record<string, number> = { pt: 96 / 72, pc: 16, in: 96, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6 };
+      return parseFloat(abs[1]!) * per[abs[2]!.toLowerCase()]!;
+    }
+
     const n = parseFloat(value);
     return isFinite(n) ? n : 0;
   }
@@ -2743,12 +2769,18 @@ class LayoutEngine implements ILayoutEngine {
     const raw = style.get('line-height');
     if (!raw || raw === 'normal' || raw === 'auto') return fontSize * 1.2;
 
-    if (!raw.endsWith('px') && !raw.endsWith('em') && !raw.endsWith('rem') && !raw.endsWith('%')) {
-      const n = parseFloat(raw);
-      return isFinite(n) ? n * fontSize : fontSize * 1.2;
+    // A bare number multiplies the font size; a percentage is of the font size; anything else is a
+    // length. Every value not ending in px/em/rem/% was read as a number, so Hacker News'
+    // `line-height: 12pt` became 12 × the font (a 120px header), and `150%` resolved against a
+    // containing width of 0, giving lines no height.
+    const t = raw.trim();
+    if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(t)) return parseFloat(t) * fontSize;
+    if (t.endsWith('%')) {
+      const n = parseFloat(t);
+      return isFinite(n) ? n / 100 * fontSize : fontSize * 1.2;
     }
-
-    return this.resolveLength(raw, fontSize, 0);
+    const px = this.resolveLength(t, fontSize, 0);
+    return isFinite(px) && px > 0 ? px : fontSize * 1.2;
   }
 
   private parseBorderWidth(value: string): number {
