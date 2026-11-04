@@ -203,9 +203,26 @@ export function evaluateGradient(grad: GradientInfo, x: number, y: number, w: nu
     const dy = (y - position.cy * h) / Math.max(1e-6, ry);
     t = Math.sqrt(dx * dx + dy * dy);
   } else {
-    const dx = x / w - position.cx;
-    const dy = y / h - position.cy;
-    t = Math.sqrt(dx * dx + dy * dy) * Math.SQRT2;
+    // The ending shape from `shape` and the size keyword (CSS Images §3.2.2), in px. Both were parsed
+    // and then ignored: every radial gradient was a farthest-corner ellipse, so `circle` stretched
+    // into an oval on a wide box and closest-side / farthest-side spots were the wrong size.
+    const cx = position.cx * w, cy = position.cy * h;
+    const sideX = [cx, w - cx], sideY = [cy, h - cy];
+    const pick = (a: number[], far: boolean) => (far ? Math.max(...a) : Math.min(...a));
+    const far = size === 'farthest-side' || size === 'farthest-corner';
+    const corner = size === 'closest-corner' || size === 'farthest-corner';
+    const dx = x - cx, dy = y - cy;
+    if (shape === 'circle') {
+      const r = corner
+        ? pick([Math.hypot(sideX[0]!, sideY[0]!), Math.hypot(sideX[1]!, sideY[0]!), Math.hypot(sideX[0]!, sideY[1]!), Math.hypot(sideX[1]!, sideY[1]!)], far)
+        : pick([...sideX, ...sideY], far);
+      t = Math.hypot(dx, dy) / Math.max(1e-6, r);
+    } else {
+      // An ellipse sized to the sides; the corner sizes keep that aspect ratio and pass through the corner.
+      const k = corner ? Math.SQRT2 : 1;
+      const rx = pick(sideX, far) * k, ry = pick(sideY, far) * k;
+      t = Math.hypot(dx / Math.max(1e-6, rx), dy / Math.max(1e-6, ry));
+    }
   }
 
   // Repeating gradients repeat the span of their stops, not 0..1 (`… #00f 10px 20px` repeats every 20px).

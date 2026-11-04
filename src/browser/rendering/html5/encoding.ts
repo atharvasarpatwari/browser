@@ -295,8 +295,11 @@ export function prescanMetaCharset(data: Uint8Array): string | null {
 
     // Scan attributes within this <meta ... > tag
     i = afterMeta;
-    const foundCharset = false;
+    // http-equiv and content can come in either order (HTML §13.2.3.2 collects the whole tag first):
+    // `content` used to count only after `http-equiv`, so <meta content="text/html; charset=…"
+    // http-equiv="Content-Type"> was missed and the page decoded with the fallback encoding.
     let foundHttpEquiv = false;
+    let contentCharset: string | null = null;
 
     // Advance to end of tag
     while (i < limit) {
@@ -384,13 +387,12 @@ export function prescanMetaCharset(data: Uint8Array): string | null {
         foundHttpEquiv = value === 'content-type';
       }
 
-      if (attrName === 'content' && foundHttpEquiv) {
+      if (attrName === 'content') {
         // Extract charset from content attribute: "text/html; charset=utf-8"
         const charsetMatch = /charset=([^\s;]+)/i.exec(value);
-        if (charsetMatch) {
-          return normalizeCharset(charsetMatch[1]!);
-        }
+        if (charsetMatch) contentCharset = normalizeCharset(charsetMatch[1]!);
       }
+      if (foundHttpEquiv && contentCharset) return contentCharset;
     }
 
     i++;

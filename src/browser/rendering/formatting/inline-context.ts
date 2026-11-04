@@ -358,9 +358,13 @@ export class InlineFormattingContext {
     let totalHeight = 0;
     const strutHeight = this.computeStrutHeight();
 
+    // An empty line left after a block (breakForBlock) holds nothing: it takes no height.
+    const last = this.lineBoxes[this.lineBoxes.length - 1];
+    const beforeLast = this.lineBoxes[this.lineBoxes.length - 2];
+    if (last && beforeLast?.spacer && last.boxes.length === 0 && last.height === 0) this.lineBoxes.pop();
     for (const line of this.lineBoxes) {
-      // Ensure minimum height of at least the strut height
-      line.height = Math.max(line.height, strutHeight);
+      // Ensure minimum height of at least the strut height (a block's reserved space is exact).
+      if (!line.spacer) line.height = Math.max(line.height, strutHeight);
 
       // text-align (CSS Text §6.1): shift the line by its free space. Trailing spaces hang,
       // so they don't count. The line also starts past any left float beside it.
@@ -435,6 +439,20 @@ export class InlineFormattingContext {
     };
     this.lineBoxes.push(line);
     return line;
+  }
+
+  /**
+   * A block-level box inside inline content (CSS 2.2 §9.2.1.1, `<a href><div>card</div></a>`): the
+   * line before it ends, the block takes `height`, and the next line starts below it. Layout used to
+   * lay the block out and tell the lines nothing, so the text after it and the parent's next sibling
+   * were drawn over the block.
+   */
+  breakForBlock(height: number): void {
+    if (this.currentLine.boxes.length > 0 || this.currentLine.height > 0) this.startNewLine();
+    if (height <= 0) return;
+    this.currentLine.height = height;
+    this.currentLine.spacer = true;
+    this.startNewLine();
   }
 
   /**

@@ -118,6 +118,8 @@ export interface LineBox {
   height: number;
   /** Width consumed so far on this line. */
   usedWidth: number;
+  /** Space a block inside inline content takes (breakForBlock): no strut, no content. */
+  spacer?: boolean;
   /** The baseline Y position (relative to the line box top). */
   baseline: number;
   /** Inline-level boxes on this line. */

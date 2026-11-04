@@ -2058,8 +2058,10 @@ class LayoutEngine implements ILayoutEngine {
         // CSS 2.2 §9.2.1.1: inline elements containing block-level children
         // are treated as if the element were replaced by its content.
         // For simplicity, we lay it out as a block within the inline context.
-        const savedY = this.layoutNode(el, contentX, ifc.getEndY(), availableWidth, parentFontSize, domTree);
-        // The block element breaks the line. We just advance the IFC.
+        ifc.breakForBlock(0); // end the line before the block
+        const blockY = ifc.getEndY();
+        const afterY = this.layoutNode(el, contentX, blockY, availableWidth, parentFontSize, domTree);
+        ifc.breakForBlock(afterY - blockY);
       } else {
         this.flowInlineElement(el, ifc, contentX, contentY, availableWidth, parentFontSize, domTree);
       }
@@ -2231,7 +2233,10 @@ class LayoutEngine implements ILayoutEngine {
       } else if (isAtomicInline(innerClassified)) {
         this.layoutInlineBlockElement(inner, ifc, contentX, contentY, availableWidth, fontSize, domTree);
       } else if (innerClassified === 'block') {
-        this.layoutNode(inner, contentX, ifc.getEndY(), availableWidth, fontSize, domTree);
+        ifc.breakForBlock(0); // end the line before the block
+        const blockY = ifc.getEndY();
+        const afterY = this.layoutNode(inner, contentX, blockY, availableWidth, fontSize, domTree);
+        ifc.breakForBlock(afterY - blockY);
       } else {
         this.flowInlineElement(inner, ifc, contentX, contentY, availableWidth, fontSize, domTree);
       }

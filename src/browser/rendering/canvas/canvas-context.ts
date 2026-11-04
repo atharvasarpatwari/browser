@@ -472,7 +472,7 @@ export class CanvasRenderingContext2D {
       this._scanlineFill(segments, (px, py) => {
         if (!this._inClip(px, py)) return;
         this._blendPixel(px, py, r, g, b, alpha);
-      });
+      }, fillRule);
     } else {
       this._scanlineFill(segments, (px, py) => {
         if (!this._inClip(px, py)) return;
@@ -480,7 +480,7 @@ export class CanvasRenderingContext2D {
         const alpha = (a / 255) * globalAlpha;
         if (alpha <= 0) return;
         this._blendPixel(px, py, r, g, b, alpha);
-      });
+      }, fillRule);
     }
   }
 
@@ -945,7 +945,13 @@ export class CanvasRenderingContext2D {
   // INTERNAL: SCANLINE FILL
   // ──────────────────────────────────────────────────────────────────────────
 
-  private _scanlineFill(segments: Segment[], plotPixel: (x: number, y: number) => void): void {
+  /**
+   * Fills the path with the nonzero (default) or evenodd rule. It always filled between pairs of
+   * crossings, which is evenodd: two overlapping same-direction subpaths (rect + rect, a ring drawn
+   * as two circles one way) left a hole where browsers fill. Edges are half-open [top, bottom) so a
+   * vertex shared by two edges counts once.
+   */
+  private _scanlineFill(segments: Segment[], plotPixel: (x: number, y: number) => void, fillRule: CanvasFillRule = 'nonzero'): void {
     if (segments.length === 0) return;
 
     // Find bounding box
@@ -961,7 +967,7 @@ export class CanvasRenderingContext2D {
     // For each scanline
     for (let y = y0; y <= y1; y++) {
       const scanY = y + 0.5; // Pixel center
-      const intersections: number[] = [];
+      const crossings: { x: number; dir: number }[] = [];
 
       for (const seg of segments) {
         // Skip horizontal segments
@@ -970,20 +976,23 @@ export class CanvasRenderingContext2D {
         // Check if scanline crosses this edge
         const minY2 = Math.min(seg.y1, seg.y2);
         const maxY2 = Math.max(seg.y1, seg.y2);
-        if (scanY < minY2 || scanY > maxY2) continue;
+        if (scanY < minY2 || scanY >= maxY2) continue;
 
-        // Compute intersection x
+        // Compute intersection x and the edge's direction (down = +1)
         const t = (scanY - seg.y1) / (seg.y2 - seg.y1);
-        intersections.push(seg.x1 + t * (seg.x2 - seg.x1));
+        crossings.push({ x: seg.x1 + t * (seg.x2 - seg.x1), dir: seg.y2 > seg.y1 ? 1 : -1 });
       }
 
-      // Sort intersections
-      intersections.sort((a, b) => a - b);
+      crossings.sort((a, b) => a.x - b.x);
 
-      // Fill between pairs (nonzero winding)
-      for (let i = 0; i + 1 < intersections.length; i += 2) {
-        const x0_ = Math.max(0, Math.floor(intersections[i]!));
-        const x1_ = Math.min(this._width - 1, Math.ceil(intersections[i + 1]!));
+      // Spans where the point is inside: winding != 0 (nonzero) or an odd crossing count (evenodd).
+      let winding = 0;
+      for (let i = 0; i + 1 < crossings.length; i++) {
+        winding += fillRule === 'evenodd' ? 1 : crossings[i]!.dir;
+        const inside = fillRule === 'evenodd' ? winding % 2 === 1 : winding !== 0;
+        if (!inside) continue;
+        const x0_ = Math.max(0, Math.floor(crossings[i]!.x));
+        const x1_ = Math.min(this._width - 1, Math.ceil(crossings[i + 1]!.x));
         for (let x = x0_; x <= x1_; x++) {
           plotPixel(x, y);
         }
