@@ -21,9 +21,10 @@ import type { FlexDirection, FlexWrap, JustifyContent, AlignItems, AlignContent,
 import {
   GridFormattingContext,
   expandTrackList,
-  parseGridPlacement,
   parseGridTemplateAreas,
-  findAreaPlacement,
+  gridLineNames,
+  addAreaLineNames,
+  resolveGridAxis,
 } from './formatting/grid-context';
 import type { GridItem, GridPlacement, GridAxisAlign, GridSelfAlign } from './formatting/grid-context';
 import type { LineBox } from './formatting/types';
@@ -235,6 +236,12 @@ export function parseFlexShorthand(value: string): { grow: number; shrink: numbe
   if (nums.length === 0 && basis === null) return null;
   // Omitted: grow 1, shrink 1, basis 0% (so `flex: 1` shares space equally, `flex: 120px` grows).
   return { grow: nums[0] ?? 1, shrink: nums[1] ?? 1, basis: basis ?? '0%' };
+}
+
+/** `margin: auto` on a grid item's axis as a self-alignment: both auto → center, start auto → end. */
+function autoMarginAlign(style: ReadonlyMap<string, string>, startProp: string, endProp: string): string | undefined {
+  const a = style.get(startProp) === 'auto', b = style.get(endProp) === 'auto';
+  return a && b ? 'center' : a ? 'end' : b ? 'start' : undefined;
 }
 
 class LayoutEngine implements ILayoutEngine {
@@ -1736,24 +1743,35 @@ class LayoutEngine implements ILayoutEngine {
     const justifyContent = (style.get('justify-items') ?? 'stretch') as GridAxisAlign;
     const alignItems = (style.get('align-items') ?? 'stretch') as GridAxisAlign;
 
+    // grid-template: <rows> / <columns> when the longhands aren't set (it was ignored).
+    const [tplRows, tplCols] = (style.get('grid-template') ?? '').includes('/') ? style.get('grid-template')!.split('/').map((t: string) => t.trim()) : [];
     // Parse grid-template-columns: repeat()/minmax() expanded to plain tracks
-    const rawCols = style.get('grid-template-columns');
-    const columns = rawCols && rawCols !== 'none' ? expandTrackList(rawCols, availableWidth, colGap, fontSize) : [];
+    const rawCols = (v => (v && v !== 'none' ? v : tplCols))(style.get('grid-template-columns'));
+    const autoFitColumns: number[] = [];
+    const columns = rawCols && rawCols !== 'none' ? expandTrackList(rawCols, availableWidth, colGap, fontSize, autoFitColumns) : [];
 
     // Parse grid-template-rows
-    const rawRows = style.get('grid-template-rows');
+    const rawRows = (v => (v && v !== 'none' ? v : tplRows))(style.get('grid-template-rows'));
     const rows = rawRows && rawRows !== 'none' ? expandTrackList(rawRows, 0, rowGap, fontSize) : [];
 
     // Parse grid-template-areas
     const rawAreas = style.get('grid-template-areas');
     const templateAreas = rawAreas ? parseGridTemplateAreas(rawAreas) : { rows: [], columns: 0 };
 
-    // If no explicit columns, auto-fill based on area count or at least 1
+    // Areas without a column template get one column per area cell. Otherwise a grid with no
+    // template has only implicit tracks (grid-auto-columns / -rows, `auto`): an auto column
+    // stretches to the width unless justify-content says otherwise.
     if (columns.length === 0 && templateAreas.columns > 0) {
       for (let i = 0; i < templateAreas.columns; i++) columns.push('1fr');
     }
-    if (columns.length === 0) columns.push('1fr');
-    if (rows.length === 0) rows.push('auto');
+    if (rows.length === 0 && templateAreas.rows.length > 0) {
+      for (let i = 0; i < templateAreas.rows.length; i++) rows.push('auto');
+    }
+    // Line names for placement: explicit [names] and each area's -start/-end lines.
+    const colNames = gridLineNames(rawCols, availableWidth, colGap, fontSize);
+    const rowNames = gridLineNames(rawRows, 0, rowGap, fontSize);
+    addAreaLineNames(colNames, templateAreas, 'column');
+    addAreaLineNames(rowNames, templateAreas, 'row');
 
     // Container height
     let availableHeight: number | null = null;
@@ -1794,55 +1812,32 @@ class LayoutEngine implements ILayoutEngine {
       const rc = (prop: string, fallback: string): number =>
         this.resolveLength(childStyle.get(prop) ?? fallback, fontSize, availableWidth);
 
-      // Parse grid-column / grid-row / grid-area
-      // `auto` is the initial value, not a placement: a computed `grid-column: auto` made every
-      // `grid-area: name` item skip its template area and land in the first free cell.
-      const placementOf = (prop: string): string | undefined => { const v = childStyle.get(prop)?.trim(); return v && v !== 'auto' ? v : undefined; };
-      const rawGridArea = placementOf('grid-area');
-      const rawGridColumn = placementOf('grid-column');
-      const rawGridRow = placementOf('grid-row');
-
-      let colStart = -1, colEnd = -1, rowStart = -1, rowEnd = -1;
-      let colSpan: number | undefined, rowSpan: number | undefined;
-
-      if (rawGridArea) {
-        const parsed = parseGridPlacement(rawGridArea, false);
-        const parsedRow = parseGridPlacement(rawGridArea, true);
-        colStart = parsed.start;
-        colEnd = parsed.end;
-        rowStart = parsedRow.start;
-        rowEnd = parsedRow.end;
-      } else {
-        if (rawGridColumn) {
-          const parsed = parseGridPlacement(rawGridColumn, false);
-          colSpan = parsed.span;
-          colStart = parsed.start;
-          colEnd = parsed.end;
-        }
-        if (rawGridRow) {
-          const parsed = parseGridPlacement(rawGridRow, true);
-          rowSpan = parsed.span;
-          rowStart = parsed.start;
-          rowEnd = parsed.end;
-        }
+      // grid-area / grid-column / grid-row and their -start/-end longhands. `grid-area: name` is all
+      // four lines of that area (its -start/-end names); a single name in grid-column is both ends.
+      const v = (prop: string): string | undefined => { const x = childStyle.get(prop)?.trim(); return x && x !== 'auto' ? x : undefined; };
+      const halves = (raw: string | undefined): [string | undefined, string | undefined] => {
+        if (!raw) return [undefined, undefined];
+        const [a, b] = raw.split('/').map((t) => t.trim());
+        return [a, b ?? (a && /^[a-z_-][\w-]*$/i.test(a) && !/^span$/i.test(a) ? a : undefined)];
+      };
+      let [rowS, colS, rowE, colE] = [undefined, undefined, undefined, undefined] as (string | undefined)[];
+      const area = v('grid-area');
+      if (area) {
+        const parts = area.split('/').map((t) => t.trim());
+        const ident = (t: string | undefined) => !!t && /^[a-z_-][\w-]*$/i.test(t) && !/^span$/i.test(t);
+        rowS = parts[0];
+        colS = parts[1] ?? (ident(rowS) ? rowS : undefined);
+        rowE = parts[2] ?? (ident(rowS) ? rowS : undefined);
+        colE = parts[3] ?? (ident(colS) ? colS : undefined);
       }
-
-      // Try area-based placement
-      if (rawGridArea && !rawGridColumn && !rawGridRow) {
-        const areaPlacement = findAreaPlacement(rawGridArea, templateAreas);
-        if (areaPlacement) {
-          colStart = areaPlacement.colStart;
-          colEnd = areaPlacement.colEnd;
-          rowStart = areaPlacement.rowStart;
-          rowEnd = areaPlacement.rowEnd;
-        }
-      }
-
-      // Fallback: implicit placement
-      if (colStart <= 0) colStart = -1;
-      if (colEnd <= 0) colEnd = -1;
-      if (rowStart <= 0) rowStart = -1;
-      if (rowEnd <= 0) rowEnd = -1;
+      const [gcS, gcE] = halves(v('grid-column'));
+      const [grS, grE] = halves(v('grid-row'));
+      colS = v('grid-column-start') ?? gcS ?? colS; colE = v('grid-column-end') ?? gcE ?? colE;
+      rowS = v('grid-row-start') ?? grS ?? rowS; rowE = v('grid-row-end') ?? grE ?? rowE;
+      const colAxis = resolveGridAxis(colS, colE, colNames, columns.length);
+      const rowAxis = resolveGridAxis(rowS, rowE, rowNames, rows.length);
+      const colStart = colAxis.start, colEnd = colAxis.end, colSpan = colAxis.span;
+      const rowStart = rowAxis.start, rowEnd = rowAxis.end, rowSpan = rowAxis.span;
 
       // Check explicit width/height
       const rawW = childStyle.get('width');
@@ -1876,8 +1871,9 @@ class LayoutEngine implements ILayoutEngine {
         borderRight:  this.parseBorderWidth(childStyle.get('border-right-width') ?? '0'),
         borderBottom: this.parseBorderWidth(childStyle.get('border-bottom-width') ?? '0'),
         borderLeft:   this.parseBorderWidth(childStyle.get('border-left-width') ?? '0'),
-        alignSelf: (childStyle.get('align-self') ?? 'auto') as GridSelfAlign,
-        justifySelf: (childStyle.get('justify-self') ?? 'auto') as GridSelfAlign,
+        // Auto margins in a grid area take its free space (CSS Grid §11.2): `margin: auto` centres.
+        alignSelf: (autoMarginAlign(childStyle, 'margin-top', 'margin-bottom') ?? childStyle.get('align-self') ?? 'auto') as GridSelfAlign,
+        justifySelf: (autoMarginAlign(childStyle, 'margin-left', 'margin-right') ?? childStyle.get('justify-self') ?? 'auto') as GridSelfAlign,
         hasExplicitWidth: !!rawW && rawW !== 'auto',
         hasExplicitHeight: !!rawH && rawH !== 'auto',
       };
@@ -1897,6 +1893,23 @@ class LayoutEngine implements ILayoutEngine {
       justifyItems: justifyContent,
       alignItems,
       alignContent: style.get('align-content'),
+      justifyContent: style.get('justify-content'),
+      autoFlow: style.get('grid-auto-flow'),
+      autoColumns: style.get('grid-auto-columns'),
+      autoRows: style.get('grid-auto-rows'),
+      autoFitColumns: new Set(autoFitColumns),
+      // Content sizes for auto tracks: max-content width, and the height at the area's width.
+      measureWidth: (item) => {
+        const st = item.element.computedStyle ?? new Map<string, string>();
+        const frame = item.paddingLeft + item.paddingRight + item.borderLeft + item.borderRight;
+        const flex = ['flex', 'inline-flex'].includes(st.get('display') ?? '');
+        return this.measureContentWidth(item.element, 100000, this.resolveFontSize(st, fontSize), domTree, flex) + frame + item.marginLeft + item.marginRight;
+      },
+      measureHeight: (item, width) => {
+        this.measureLayout(item.element, () => this.layoutNode(item.element, 0, 0, Math.max(0, width), fontSize, domTree));
+        const b = this.layoutBoxes.get(item.element.domId);
+        return b ? b.height + b.marginTop + b.marginBottom : 0;
+      },
     });
 
     for (const item of gridItems) gridCtx.addItem(item);
