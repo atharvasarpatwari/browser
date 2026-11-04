@@ -107,7 +107,7 @@ class ToolbarView implements IToolbarView {
     this.container.appendChild(this.reloadBtn);
 
     const addressSlot = document.createElement('div');
-    addressSlot.className = 'address-bar-slot nova-addressbar';
+    addressSlot.className = 'address-bar-slot nova-addressbar address-bar';
     addressSlot.style.cssText = 'flex:1;min-width:0;';
     this.container.appendChild(addressSlot);
 
