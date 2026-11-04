@@ -409,10 +409,10 @@ describe('computeComputedStyles — Custom Properties', () => {
   });
 
   // ── var() with empty fallback ──
-  it('var() with empty fallback string', () => {
+  it('var() with empty fallback string acts as unset (invalid at computed-value time)', () => {
     const sheet = parse('div { color: var(--x, ); }');
     const c = computeComputedStyles(el('div'), sheet);
-    expect(c.get('color')).toBe('');
+    expect(c.get('color')).toBe('canvastext'); // inherited initial colour, not an empty value
   });
 
   // ── !important custom properties ──

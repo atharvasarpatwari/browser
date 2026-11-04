@@ -323,6 +323,9 @@ const SUPPORTED_KEYWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
  */
 function evaluateSupportsAtom(condition: string): boolean {
   const trimmed = condition.trim();
+  // selector(<complex-selector>): Nova parses the selectors pages test for (:has, :is, :where…).
+  // It was read as a declaration and failed, so `@supports selector(:has(a))` branches were skipped.
+  if (/^selector\(/i.test(trimmed)) return true;
   // Strip outer parentheses if present
   const inner = trimmed.startsWith('(') && trimmed.endsWith(')')
     ? trimmed.slice(1, -1).trim()
@@ -1088,6 +1091,84 @@ function expandListStyleShorthand(value: string): Map<string, string> {
 }
 
 /** Expands shorthand declarations into longhand equivalents. */
+const LENGTH_PROPS = new Set([
+  'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height', 'inline-size', 'block-size',
+  'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+  'top', 'right', 'bottom', 'left', 'gap', 'row-gap', 'column-gap', 'font-size', 'flex-basis',
+  'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width', 'margin', 'padding', 'inset',
+]);
+const LENGTH_TOKEN = /^(-?(\d+\.?\d*|\.\d+)(e-?\d+)?(px|em|rem|%|vw|vh|vmin|vmax|svh|lvh|dvh|svw|lvw|dvw|ch|ex|cap|ic|lh|rlh|pt|pc|in|cm|mm|q|cqw|cqh|cqi|cqb|cqmin|cqmax)?|auto|none|normal|inherit|initial|unset|revert|revert-layer|fit-content|min-content|max-content|stretch|thin|medium|thick|xx-small|x-small|small|large|x-large|xx-large|xxx-large|smaller|larger|content|math)$/i;
+
+/**
+ * Is `value` not a valid value for a length-type property? Values with var() can't be checked
+ * before substitution (they are valid at parse time); functions (calc, min, clamp, env…) pass.
+ */
+export function isInvalidLengthValue(prop: string, value: string): boolean {
+  if (!LENGTH_PROPS.has(prop)) return false;
+  const v = value.trim();
+  if (v === '' ) return true;
+  if (/var\(|env\(|attr\(/i.test(v)) return false;
+  return splitTopLevel(v, false).some((t) => !/^[a-z-]+\(/i.test(t) && !LENGTH_TOKEN.test(t));
+}
+
+/**
+ * A var() that substitutes to nothing makes the declaration invalid at computed-value time: it acts
+ * as `unset` (inherit or initial). The empty result was kept, so `color: var(--missing)` dropped the
+ * inherited colour.
+ */
+function invalidAtComputedTime(resolved: string, original: string): string {
+  return /var\(/i.test(original) && resolved.trim() === '' ? 'unset' : resolved;
+}
+
+/** Logical box shorthands → their physical start/end longhands (horizontal-tb, ltr). */
+const LOGICAL_PAIRS: Record<string, [string, string]> = {
+  'padding-inline': ['padding-left', 'padding-right'], 'padding-block': ['padding-top', 'padding-bottom'],
+  'margin-inline': ['margin-left', 'margin-right'], 'margin-block': ['margin-top', 'margin-bottom'],
+  'inset-inline': ['left', 'right'], 'inset-block': ['top', 'bottom'],
+  'border-inline-width': ['border-left-width', 'border-right-width'], 'border-block-width': ['border-top-width', 'border-bottom-width'],
+  'border-inline-style': ['border-left-style', 'border-right-style'], 'border-block-style': ['border-top-style', 'border-bottom-style'],
+  'border-inline-color': ['border-left-color', 'border-right-color'], 'border-block-color': ['border-top-color', 'border-bottom-color'],
+};
+
+/** Logical longhands → physical ones (horizontal-tb, ltr). */
+const LOGICAL_LONGHANDS: Record<string, string> = (() => {
+  const m: Record<string, string> = {
+    'inline-size': 'width', 'block-size': 'height', 'min-inline-size': 'min-width', 'max-inline-size': 'max-width',
+    'min-block-size': 'min-height', 'max-block-size': 'max-height',
+    'inset-inline-start': 'left', 'inset-inline-end': 'right', 'inset-block-start': 'top', 'inset-block-end': 'bottom',
+    'border-start-start-radius': 'border-top-left-radius', 'border-start-end-radius': 'border-top-right-radius',
+    'border-end-start-radius': 'border-bottom-left-radius', 'border-end-end-radius': 'border-bottom-right-radius',
+  };
+  const side: Record<string, string> = { 'inline-start': 'left', 'inline-end': 'right', 'block-start': 'top', 'block-end': 'bottom' };
+  for (const [l, ph] of Object.entries(side)) {
+    m[`padding-${l}`] = `padding-${ph}`;
+    m[`margin-${l}`] = `margin-${ph}`;
+    for (const part of ['width', 'style', 'color']) m[`border-${l}-${part}`] = `border-${ph}-${part}`;
+  }
+  return m;
+})();
+
+const BORDER_LOGICAL_SIDES: Record<string, string[]> = {
+  inline: ['left', 'right'], block: ['top', 'bottom'], 'inline-start': ['left'], 'inline-end': ['right'], 'block-start': ['top'], 'block-end': ['bottom'],
+};
+
+/** flex shorthand → [flex-grow, flex-shrink, flex-basis] longhands (CSS Flexbox §7.2). */
+function expandFlexShorthand(value: string): Array<[string, string]> | null {
+  const v = value.trim().toLowerCase();
+  const out = (g: string, sh: string, b: string): Array<[string, string]> => [['flex-grow', g], ['flex-shrink', sh], ['flex-basis', b]];
+  if (v === 'none') return out('0', '0', 'auto');
+  if (v === 'auto') return out('1', '1', 'auto');
+  if (v === 'initial') return out('0', '1', 'auto');
+  if (/var\(/.test(v)) return null;
+  const nums: string[] = []; let basis: string | null = null;
+  for (const t of v.split(/\s+/)) {
+    if (/^[\d.]+$/.test(t) && nums.length < 2) nums.push(t);
+    else basis = t;
+  }
+  if (nums.length === 0 && basis === null) return null;
+  return out(nums[0] ?? '1', nums[1] ?? '1', basis ?? (nums.length ? '0%' : 'auto'));
+}
+
 export function expandShorthands(
   declarations: readonly CssDeclaration[],
 ): CssDeclaration[] {
@@ -1149,6 +1230,31 @@ export function expandShorthands(
       const kind = prop.slice('place-'.length);
       const [align, justify = align] = decl.value.trim().split(/\s+/);
       if (align) expanded = new Map([[`align-${kind}`, align], [`justify-${kind}`, justify!]]);
+    } else if (prop === 'all') {
+      // all: unset | initial | inherit | revert resets every property but direction/unicode-bidi
+      // (CSS Cascade §3.2). It was unknown, so `button { all: unset }` resets kept the UA styles.
+      expanded = new Map(Object.keys(getAllPropertyDefinitions())
+        .filter((p) => p !== 'direction' && p !== 'unicode-bidi' && !p.startsWith('--'))
+        .map((p) => [p, decl.value.trim()] as [string, string]));
+    } else if (prop === 'flex') {
+      // flex: none | auto | <grow> <shrink>? || <basis>. Layout reads the shorthand itself; the
+      // longhands are for getComputedStyle and selectors' consumers (flex-shrink stayed 1 for none).
+      const f = expandFlexShorthand(decl.value);
+      if (f) expanded = new Map([['flex', decl.value], ...f]);
+    } else if (LOGICAL_PAIRS[prop]) {
+      // Logical shorthands for horizontal, left-to-right text: padding-inline = left/right,
+      // margin-block = top/bottom … They were unknown and dropped, so Tailwind 4's px-*/py-*/mx-*
+      // (padding-inline, margin-block …) and `margin-inline: auto` centring did nothing.
+      const [start, end] = LOGICAL_PAIRS[prop]!;
+      const parts = splitTopLevel(decl.value.trim(), false);
+      if (parts.length > 0) expanded = new Map([[start, parts[0]!], [end, parts[1] ?? parts[0]!]]);
+    } else if (LOGICAL_LONGHANDS[prop]) {
+      expanded = new Map([[LOGICAL_LONGHANDS[prop]!, decl.value]]);
+    } else if (/^border-(inline|block)(-start|-end)?$/.test(prop)) {
+      // border-inline-start: 1px solid … → border-left-*; border-block → top and bottom.
+      const sides = BORDER_LOGICAL_SIDES[prop.replace(/^border-/, '')]!;
+      const all = expandBorderShorthand(decl.value);
+      expanded = new Map([...all].filter(([k]) => sides.some((side) => k.startsWith(`border-${side}-`))));
     }
 
     if (expanded && expanded.size > 0) {
@@ -1430,6 +1536,10 @@ export function getUserAgentDefaults(
       styles.set('cursor', 'pointer');
       break;
 
+    case 'small':
+      styles.set('font-size', 'smaller'); // HTML §15.3.4; <small> was full size
+      break;
+
     case 'sup':
     case 'sub':
       // vertical-align and a smaller size (they were plain inline text on the baseline)
@@ -1507,6 +1617,10 @@ export function computeCascade(
     }
 
     for (const decl of rule.declarations) {
+      // An invalid value drops the declaration (CSS Syntax §8), so an earlier one in the rule or
+      // cascade still applies: `width: 100%; width: -webkit-fill-available` and typos used to win
+      // and lay out as 0.
+      if (isInvalidLengthValue(decl.property.toLowerCase(), decl.value)) continue;
       entries.push({
         property: decl.property.toLowerCase(),
         value: decl.value,
@@ -1600,6 +1714,7 @@ function parseInlineDeclarations(raw: string): CssDeclaration[] {
       important = true;
       value = value.replace(/!\s*important\s*$/, '').trim();
     }
+    if (isInvalidLengthValue(prop, value)) continue;
     declarations.push({ property: prop, value, important });
   }
   return declarations;
@@ -1755,7 +1870,7 @@ export function computeComputedStyles(
   // 4. Resolve var() in all declarations BEFORE shorthand expansion.
   const resolvedDeclarations: CssDeclaration[] = cascade.map((e) => ({
     property: e.property,
-    value: e.property.startsWith('--') ? e.value : resolveVarReferences(e.value, earlyCustomProps),
+    value: e.property.startsWith('--') ? e.value : invalidAtComputedTime(resolveVarReferences(e.value, earlyCustomProps), e.value),
     important: e.important,
   }));
 
@@ -1805,7 +1920,7 @@ export function computeComputedStyles(
     // ones; they used to be stored as-is, so layout and paint never saw their longhands.
     const inlineResolved = expandShorthands(inlineDecls.map((d) => ({
       property: d.property.toLowerCase(),
-      value: d.property.startsWith('--') ? d.value : resolveVarReferences(d.value, earlyCustomProps),
+      value: d.property.startsWith('--') ? d.value : invalidAtComputedTime(resolveVarReferences(d.value, earlyCustomProps), d.value),
       important: d.important,
     })));
     // Non-important inline styles apply first (override cascade but can be overridden by stylesheet !important)

@@ -13,7 +13,7 @@ import { getElementsByTagName } from './html-parser';
 import { CssParser as Css5Parser, computeSelectorSpecificity, parseMediaQueries } from './css5/parser';
 import { matchesSelector, querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll } from './css5/selector';
 import type { SelectableElement } from './css5/selector';
-import { computeComputedStyles, evaluateSupportsCondition, expandShorthands } from './css5/cascade';
+import { computeComputedStyles, evaluateSupportsCondition, expandShorthands, isInvalidLengthValue } from './css5/cascade';
 import type { StyleableElement } from './css5/cascade';
 import type { CssStylesheet as Css5Stylesheet, CssRule as Css5Rule, CssSelector, CssSpecificity as Css5Specificity, CssCompoundSelector, CssMediaQuery } from './css5/types';
 
@@ -274,6 +274,8 @@ class CssParser implements ICssParser {
       const declMap = new Map<string, string>();
       const important = new Set<string>();
       for (const decl of rule.declarations) {
+        // Invalid values are dropped, so the rule's earlier declaration of the property stays.
+        if (isInvalidLengthValue(decl.property.toLowerCase(), decl.value)) continue;
         declMap.set(decl.property, decl.value);
         if (decl.important) important.add(decl.property);
         else important.delete(decl.property);
