@@ -15,3 +15,8 @@ export type { IHistorySuggestionsProvider, HistoryEntry, HistoryQueryFn } from '
 
 export { SearchEngineManager, EngineSwitchProvider, BUILT_IN_ENGINES } from './search-engine';
 export type { ISearchEngineManager, SearchEngine, EngineEvent, EngineEventKind, EngineEventHandler } from './search-engine';
+
+export { parseOpenSearchXml, type OpenSearchDescription } from './opensearch-parser';
+
+export { InvertedIndexSearch } from '../search/inverted-index';
+export type { InvertedIndexEntry, IndexedSearchDB } from '../search/inverted-index';
