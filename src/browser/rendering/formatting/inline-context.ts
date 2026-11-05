@@ -223,8 +223,10 @@ export class InlineFormattingContext {
       const metrics = measurer.measure(seg.text, fontSize, ff, weight);
       const segWidth = metrics.width + spaced(seg.text) + (isWhitespace ? this.wordSpacing : 0);
 
-      // A word wider than the whole line breaks between characters when the style allows it.
-      if (this.breakWords && !isWhitespace && segWidth > this.getAvailableWidthAt(0) - this.currentLine.usedWidth
+      // A word wider than the whole line breaks between characters when the style allows it, and
+      // never under white-space: nowrap / pre (no soft wrap at all, CSS Text §5.1). It did: W3C's
+      // `* { overflow-wrap: break-word }` stacked each visually-hidden label one letter per line.
+      if (this.breakWords && !noWrap && !isWhitespace && segWidth > this.getAvailableWidthAt(0) - this.currentLine.usedWidth
         && (segWidth > this.getAvailableWidthAt(0) || this.currentLine.usedWidth === 0)) {
         this.pushBrokenWord(seg.text, fontSize, lineHeight, ff, weight);
         continue;

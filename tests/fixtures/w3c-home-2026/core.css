@@ -1,0 +1,4683 @@
+@charset "UTF-8";
+/*------------------------------------*\
+    #Apollo: core styles for all browsers
+\*------------------------------------*/
+/*------------------------------------*\
+    #Settings
+\*------------------------------------*/
+/*------------------------------------*\
+    #Breakpoints
+
+    The measurements presented here are for guidance only
+    and should be updated to reflect the design/content needs.
+\*------------------------------------*/
+/*------------------------------------*\
+    #Colors
+\*------------------------------------*/
+/**
+Base colors that can be used when prototyping. Taken from http://clrs.cc/
+
+1. We ideally avoid using pure white on pure black, because the contrast is
+so great that it creates the illusion that text is vibrating on screen.
+ */
+/* 1 */
+/* 1 */
+/**
+Theme colors.
+ */
+/**
+Sass variables.
+ */
+/**
+Social media colours that might be useful.
+See: https://brandcolors.net/
+ */
+/*------------------------------------*\
+    #Fonts
+\*------------------------------------*/
+@font-face {
+  font-display: fallback;
+  font-family: "Noto Sans";
+  font-style: normal;
+  font-weight: 400;
+  src: url("../fonts/notosans/notosans-regular.woff2") format("woff2"), url("../fonts/notosans/notosans-regular.woff") format("woff");
+}
+@font-face {
+  font-display: fallback;
+  font-family: "Noto Sans";
+  font-style: italic;
+  font-weight: 400;
+  src: url("../fonts/notosans/notosans-italic.woff2") format("woff2"), url("../fonts/notosans/notosans-italic.woff") format("woff");
+}
+@font-face {
+  font-display: fallback;
+  font-family: "Noto Sans";
+  font-style: normal;
+  font-weight: 600;
+  src: url("../fonts/notosans/notosans-bold.woff2") format("woff2"), url("../fonts/notosans/notosans-bold.woff") format("woff");
+}
+@font-face {
+  font-display: fallback;
+  font-family: "Noto Sans";
+  font-style: italic;
+  font-weight: 600;
+  src: url("../fonts/notosans/notosans-bolditalic.woff2") format("woff2"), url("../fonts/notosans/notosans-bolditalic.woff") format("woff");
+}
+/*------------------------------------*\
+    #Font sizes
+
+    Fluid type calculations generated using Utopia:
+    https://utopia.fyi/type/calculator/?c=320,15,1.125,1120,16,1.125,7,1,&s=0.75%7C0.5%7C0.25,1.5%7C2%7C3%7C4%7C6,s-l&g=s,l,xl,12
+
+    CSS custom property names have been adapted from Utopia to add namespacing, give explicit usage context and use kebab case.
+\*------------------------------------*/
+:root {
+  --w3c-text-01: clamp(0.8333rem, 0.8111rem + 0.1111vw, 0.8889rem);
+  --w3c-text-0: clamp(0.9375rem, 0.9125rem + 0.125vw, 1rem);
+  --w3c-text-1: clamp(1.0547rem, 1.0266rem + 0.1406vw, 1.125rem);
+  --w3c-text-2: clamp(1.1865rem, 1.1549rem + 0.1582vw, 1.2656rem);
+  --w3c-text-3: clamp(1.3348rem, 1.2992rem + 0.178vw, 1.4238rem);
+  --w3c-text-4: clamp(1.5017rem, 1.4616rem + 0.2002vw, 1.6018rem);
+  --w3c-text-5: clamp(1.6894rem, 1.6444rem + 0.2253vw, 1.802rem);
+  --w3c-text-6: clamp(1.9006rem, 1.8499rem + 0.2534vw, 2.0273rem);
+  --w3c-text-7: clamp(2.1382rem, 2.0811rem + 0.2851vw, 2.2807rem);
+}
+
+/*------------------------------------*\
+    #Typesetting
+\*------------------------------------*/
+/**
+Use https://www.cssfontstack.com/ and https://meowni.ca/font-style-matcher/ to pick
+system fonts that are reasonably close to any web fonts needed for the project.
+
+This improves performance, avoids Flash Of Invisible Text (FOIT) and minimises
+Flash of Unstyled Content (FOUC) - see https://helenvholmes.com/writing/type-is-your-right/
+
+Be sure to include fonts for both Mac OS and Windows. Use quote marks around
+fonts with white space in their name.
+
+When Font Face Observer has detected that the @font-face files are loaded, then we
+can safely use the web fonts instead of the system fonts.
+ */ /*------------------------------------*\
+    #Functions
+\*------------------------------------*/
+/*------------------------------------*\
+    #Maths functions
+\*------------------------------------*/
+/**
+ #Random number
+ http://xkcd.com/221/
+ */
+/**
+ #Power function
+ https://css-tricks.com/snippets/sass/power-function/
+ */
+/**
+ #Square root function
+ */
+/*------------------------------------*\
+    #CSS unit functions
+\*------------------------------------*/
+/**
+ #em
+ */
+/**
+ #rem
+ */
+/**
+ #px
+ */
+/**
+ #Return a number without a unit
+ */
+/**
+ #Remove any unit present to return a unitless number
+ */
+/*------------------------------------*\
+    #Mixins
+\*------------------------------------*/
+/*------------------------------------*\
+    #Media query
+\*------------------------------------*/
+/*------------------------------------*\
+    #Stack
+\*------------------------------------*/
+/**
+This mixin allows us to add vertical spacing between a container's direct children,
+much like the 'axiomatic owl' technique but limited to specific use cases.
+
+By applying Flexbox to the parent container, we can use auto margin on a specific
+child element. This way, we can choose to group elements inside the stack to the
+top/bottom of the vertical space, which is useful for card-like components.
+
+Use with a specific measure, or without for the default measure, e.g.
+
+main {
+	@include stack(4rem);
+}
+
+article {
+	@include stack;
+}
+ */
+/*------------------------------------*\
+    #Base
+\*------------------------------------*/
+/*------------------------------------*\
+    #Global CSS reset
+
+    Inspiration:
+    - https://piccalil.li/blog/a-more-modern-css-reset/
+    - https://www.joshwcomeau.com/css/custom-css-reset/
+    - https://github.com/jensimmons/cssremedy/blob/master/css/remedy.css
+\*------------------------------------*/
+/**
+Wildcard selector means these styles apply everywhere.
+1: Use a more intuitive box-sizing model
+2: Avoid text overflow
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box; /* 1 */
+  overflow-wrap: break-word; /* 2 */
+}
+
+/**
+HTML or :root element.
+1: Prevent layout shift if a classic scrollbar is invoked
+2: Prevent font size inflation with change of orientation
+3: Enable keyword animations
+ */
+html {
+  scrollbar-gutter: stable; /* 1 */
+  -webkit-text-size-adjust: none;
+     -moz-text-size-adjust: none;
+          text-size-adjust: none; /* 2 */
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    interpolate-size: allow-keywords; /* 3 */
+  }
+}
+/**
+Set core body defaults.
+1: Improve text rendering
+2: A minimum line-height of 1.5 is needed for accessibility.
+3: Supported by Safari - anything using `text-decoration: underline` will inherit this
+4: Not supported by Safari - anything using `text-decoration: underline` will inherit this
+ */
+body {
+  -moz-osx-font-smoothing: grayscale; /* 1 */
+  -webkit-font-smoothing: antialiased; /* 1 */
+  line-height: 1.5; /* 2 */
+  margin: 0;
+  min-block-size: 100vh;
+  -webkit-text-decoration-skip: auto;
+          text-decoration-skip: auto; /* 3 */
+  -webkit-text-decoration-skip: ink;
+          text-decoration-skip-ink: auto; /* 4 */
+  text-underline-offset: 0.25em;
+}
+
+/* Inherit our preferred font settings */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  letter-spacing: inherit;
+  word-spacing: inherit;
+}
+
+/* Reduce the line-height for specific elements (headings are managed in 30-base/_typography.scss) */
+optgroup,
+select,
+textarea {
+  line-height: 1.25;
+}
+
+figure {
+  margin: 1rem 0;
+}
+figure figcaption {
+  font-size: var(--w3c-text-01);
+}
+figure figcaption > * {
+  max-inline-size: 33.75rem;
+}
+
+/* Improve default styles for horizontal rule */
+hr {
+  block-size: 0;
+  border: 0;
+  border-block-start: 1px solid #cac9c9;
+  overflow: visible;
+}
+
+/**
+ Improve media defaults.
+ 1: Block display is usually what we want
+ 2: Responsive by default
+ 3: Removes strange space-below in case authors overwrite the display value
+ */
+audio,
+canvas,
+embed,
+iframe,
+img,
+object,
+svg,
+video {
+  display: block; /* 1 */
+  max-inline-size: 100%; /* 2 */
+  vertical-align: middle; /* 3 */
+}
+
+/* There's no good reason the audio element defaults to 300px */
+audio {
+  inline-size: 100%;
+}
+
+/* Audio without `[controls]` remains hidden by default */
+audio:not([controls]) {
+  display: none;
+}
+
+/* Remove iframe border */
+iframe {
+  border: 0;
+}
+
+/* Maintain intrinsic aspect ratios when `max-inline-size` is applied */
+canvas,
+img,
+svg,
+video {
+  block-size: auto;
+}
+
+/* Remove the unnecessary wrapping `picture`, while maintaining contents */
+picture {
+  display: contents;
+}
+
+/* Source elements have nothing to display, so hide them entirely */
+source {
+  display: none;
+}
+
+/* Don't allow SVGs in flex contexts to shrink */
+svg {
+  flex-shrink: 0;
+}
+
+video {
+  aspect-ratio: 16/9;
+}
+
+/* Anything that has been anchored to should have extra scroll margin */
+:target {
+  scroll-margin-block: 2ex;
+}
+
+/*------------------------------------*\
+    #Animation
+\*------------------------------------*/
+/*
+ * Respect the choices of users who do not want animations.
+ */
+@media screen and (prefers-reduced-motion: reduce), (update: slow) {
+  *,
+  ::before,
+  ::after {
+    animation-delay: -1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    background-attachment: initial !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0s !important;
+  }
+}
+/*------------------------------------*\
+    #Quotes
+\*------------------------------------*/
+blockquote {
+  padding: 0.625rem;
+  position: relative;
+}
+blockquote::before {
+  background-color: #cac9c9;
+  block-size: 100%;
+  content: "";
+  inline-size: 0.1875rem;
+  inset-block-start: 0;
+  inset-inline-start: -0.1875rem;
+  position: absolute;
+}
+blockquote > *:first-child {
+  margin-block-start: 0;
+}
+blockquote > *:last-child {
+  margin-block-end: 0;
+}
+blockquote cite {
+  color: #111;
+  font-size: var(--w3c-text-0);
+  font-style: normal;
+  font-weight: bold;
+}
+
+/*------------------------------------*\
+    #Body
+\*------------------------------------*/
+/**
+ Typographical styles for fonts are in 30-base/_typography.scss
+ */
+body {
+  background-color: #fff;
+  color: #111;
+  overflow-x: hidden;
+}
+
+/*------------------------------------*\
+    #Buttons
+
+    1. High contrast themes tend to eliminate background-color.
+    With no border set, we need to apply a transparent outline to
+    maintain the button shape. The negative outline-offset moves
+    the outline inside the perimeter so it behaves like a border.
+\*------------------------------------*/
+button,
+.button {
+  align-items: center;
+  background-color: #005a9c;
+  border: solid 2px #005a9c;
+  border-radius: 1.5rem;
+  color: #fff;
+  display: inline-flex;
+  font-size: var(--w3c-text-01);
+  font-weight: 600;
+  justify-content: center;
+  outline: 2px solid transparent; /* 1 */
+  outline-offset: -2px; /* 1 */
+  padding: 0.6875rem 1.5rem;
+}
+button:hover,
+.button:hover {
+  background-color: #002a56;
+  border-color: #002a56;
+}
+button:focus, button:active,
+.button:focus,
+.button:active {
+  color: #000;
+  background-color: #f9dc4a;
+  border-color: #000;
+}
+
+button:not([type=submit]) {
+  text-align: start;
+}
+
+/**
+Remove link styling from links styled as buttons.
+ */
+.button {
+  text-decoration: none;
+}
+
+.button--wide.button--wide {
+  inline-size: 100%;
+}
+
+.button--alt {
+  background-color: transparent;
+  color: #005a9c;
+}
+.button--alt:hover {
+  background-color: #cbe0fb;
+  color: #002a56;
+}
+.button--alt:focus, .button--alt:active {
+  background-color: #f9dc4a;
+  border-width: 3px;
+  color: #000;
+  padding: 0.625rem 1.4375rem;
+}
+
+.button--ghost {
+  background-color: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  color: #000;
+  font-weight: normal;
+  padding-inline: 0;
+}
+.button--ghost:hover {
+  background-color: transparent;
+  border-color: transparent;
+}
+
+.button[disabled],
+.button[disabled],
+.button.js-disabled {
+  background-color: #cac9c9;
+  border-color: #cac9c9;
+  box-shadow: none;
+  color: #303030;
+  cursor: not-allowed;
+}
+.button[disabled]:hover, .button[disabled]:focus, .button[disabled]:active,
+.button[disabled]:hover,
+.button[disabled]:focus,
+.button[disabled]:active,
+.button.js-disabled:hover,
+.button.js-disabled:focus,
+.button.js-disabled:active {
+  background-color: #cac9c9;
+  color: #303030;
+  outline: 0;
+}
+
+/*------------------------------------*\
+    #Focus
+\*------------------------------------*/
+:focus {
+  /**
+  Ideally we would specify the background-color here to cover all circumstances.
+  Unfortunately, this does not work at all well for Internet Explorer, so we can't.
+   */
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+/**
+Where focus is programmatically moved to a target element that is not interactive, we
+suppress the focus styles. See https://github.com/twbs/bootstrap/issues/29875#issuecomment-582648069
+ */
+main:focus,
+#main:focus,
+[tabindex="-1"]:focus {
+  outline: none;
+}
+
+/*------------------------------------*\
+    #Forms
+\*------------------------------------*/
+/**
+The default styling of <fieldset> and <legend> is a little odd, so we reset those styles here.
+To surround with a visible border and padding, make the <fieldset> a direct child of the `.l-box` layout.
+ */
+fieldset {
+  border: 0;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 0;
+}
+
+/* Remove legend padding */
+legend {
+  display: block;
+  font-size: var(--w3c-text-1);
+  font-weight: bold;
+  padding: 0;
+}
+
+/**
+Manage vertical spacing inside forms. Space is added above every element that is a direct
+child of a form, apart from the first instance. Space is also added evenly above every `.field`
+element that comes immediately after another `.field`. It doesn't matter if `.field` is a direct
+child of the parent form or part of a nested container.
+ */
+form > * + *,
+.field + .field,
+legend + .field {
+  margin-block-start: 1.75rem;
+}
+
+/**
+More spacing between field-groups
+ */
+.field-group + .field-group {
+  margin-top: 2.5rem;
+}
+
+/**
+Reduced spacing around <details>
+ */
+form details {
+  margin-block-start: 1rem;
+}
+form details + * {
+  margin-block-start: 1rem;
+}
+
+.field-group > *:first-child {
+  margin-block-start: 0;
+}
+
+.field-group__heading {
+  font-size: var(--w3c-text-3);
+}
+
+/**
+Where the `.l-box` layout is a direct child of a form and used to visually group a subset of
+fields, we also slightly increase its vertical spacing.
+ */
+form > .l-box:not(:first-child) {
+  margin-block: 2.5rem;
+}
+
+/* If `.l-box` layout is the last direct child of a form, remove the additional space after it. */
+form > .l-box:last-child {
+  margin-block-end: 0;
+}
+
+.field {
+  max-inline-size: 41.25rem;
+}
+
+/* A wrapper to allow fields to sit side-by-side horizontally, if desired */
+.input-group {
+  align-items: center;
+  display: flex;
+  gap: 1.875rem;
+}
+
+label,
+.field-label,
+.field-hint,
+.field-error-msg,
+.faux-label {
+  display: block;
+}
+
+label,
+.field-label,
+.faux-label {
+  margin-block-end: 0.25rem;
+}
+
+.faux-label {
+  font-weight: normal;
+}
+
+.field-label,
+.group-legend {
+  font-weight: bold;
+}
+
+.field-hint {
+  font-size: var(--w3c-text-01);
+  color: #545454;
+  margin-block: 0.25rem;
+  max-inline-size: 41.25rem;
+}
+
+.field-label + .field-hint,
+.group-legend + .field-hint {
+  margin-block-start: 0.25rem;
+}
+
+.required {
+  color: #545454;
+  font-weight: normal;
+}
+
+:where(input:not([type=checkbox], [type=radio], select), textarea) {
+  -webkit-appearance: none;
+     -moz-appearance: none;
+          appearance: none;
+  border: 2px solid;
+  border-radius: 0;
+  inline-size: 100%;
+  padding: 0.3125rem;
+}
+:where(input:not([type=checkbox], [type=radio], select), textarea):focus {
+  box-shadow: inset 0 0 0 2px;
+  outline: solid 3px #f9dc4a;
+  outline-offset: 0;
+}
+
+:where(input:not([type=checkbox], [type=radio], textarea), select) {
+  min-block-size: 2.9375rem;
+}
+
+[type=file] {
+  border-color: transparent;
+}
+[type=file]:focus {
+  border-color: currentColor;
+  box-shadow: inset 0 0 0 4px;
+  margin-inline: -0.3125rem;
+  outline: 3px solid #f9dc4a;
+  padding-inline: 0.3125rem;
+}
+
+[type=search]::-webkit-search-decoration,
+[type=search]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+          appearance: none;
+}
+
+select {
+  background-color: transparent;
+  border: 2px solid;
+  border-radius: 0;
+  inline-size: 100%;
+  padding: 0.3125rem;
+}
+select:focus {
+  box-shadow: inset 0 0 0 2px;
+  outline: solid 3px #f9dc4a;
+  outline-offset: 0;
+}
+
+/* Select with custom arrow icon */
+@supports (padding-inline-start: 1em) {
+  select {
+    -webkit-appearance: none;
+       -moz-appearance: none;
+            appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 512'%3E%3Cpath d='M143 352.3L7 216.3c-9.4-9.4-9.4-24.6 0-33.9l22.6-22.6c9.4-9.4 24.6-9.4 33.9 0l96.4 96.4 96.4-96.4c9.4-9.4 24.6-9.4 33.9 0l22.6 22.6c9.4 9.4 9.4 24.6 0 33.9l-136 136c-9.2 9.4-24.4 9.4-33.8 0z'/%3E%3C/svg%3E");
+    background-position: center right 0.625rem;
+    background-repeat: no-repeat;
+    background-size: 0.9375rem;
+    padding-inline-end: 2.125rem;
+  }
+  [dir=rtl] select {
+    background-position: center left 0.625rem;
+  }
+}
+textarea {
+  resize: vertical;
+}
+
+textarea:not([rows]) {
+  min-block-size: 10em;
+}
+
+/* Memorable dates (e.g. date of birth) */
+.memorable-date {
+  display: inline-block;
+  margin-block-start: 0;
+}
+
+.memorable-date + .memorable-date {
+  margin-inline-start: 1rem;
+}
+
+/**
+Radio/checkbox inputs
+ */
+.radio-item,
+.checkbox-item {
+  clear: left;
+  float: left;
+  margin-block-start: 0.25rem;
+  padding-inline-start: 2.125rem;
+  position: relative;
+}
+.radio-item::after,
+.checkbox-item::after {
+  clear: both;
+  content: "";
+  display: block;
+}
+
+[dir=rtl] .radio-item,
+[dir=rtl] .checkbox-item {
+  clear: right;
+  float: right;
+}
+
+.radio-item input,
+.checkbox-item input {
+  block-size: 2.75rem;
+  cursor: pointer;
+  inline-size: 2.75rem;
+  inset-block-start: -0.125rem;
+  inset-inline-start: -0.625rem;
+  margin: 0;
+  opacity: 0;
+  position: absolute;
+  z-index: 1;
+}
+
+.radio-item label,
+.checkbox-item label {
+  cursor: pointer;
+  display: inline-block;
+  margin-block: -0.125rem 0;
+  padding: 0.6875rem 0.9375rem 0.625rem 0.0625rem;
+  touch-action: manipulation;
+}
+.radio-item label::before, .radio-item label::after,
+.checkbox-item label::before,
+.checkbox-item label::after {
+  content: "";
+  position: absolute;
+}
+.radio-item label::before,
+.checkbox-item label::before {
+  background: transparent;
+  block-size: 1.5rem;
+  border: 2px solid;
+  inline-size: 1.5rem;
+  inset-block-start: 0.5rem;
+  inset-inline-start: 0;
+}
+
+[dir=rtl] .radio-item label,
+[dir=rtl] .checkbox-item label {
+  padding: 0.6875rem 0.0625rem 0.625rem 0.9375rem;
+}
+
+.radio-item label::before, .radio-item label::after {
+  border-radius: 50%;
+}
+.radio-item label::after {
+  background: currentColor;
+  block-size: 0;
+  border: 5px solid;
+  inline-size: 0;
+  inset-block-start: 0.9375rem;
+  inset-inline-start: 0.4375rem;
+  opacity: 0;
+}
+
+.checkbox-item label::after {
+  background: transparent;
+  block-size: 0.40625rem;
+  border: solid;
+  border-block-start-color: transparent;
+  border-width: 0 0 3px 3px;
+  inline-size: 0.75rem;
+  inset-block-start: 0.9375rem;
+  inset-inline-start: 0.375rem;
+  opacity: 0;
+  transform: rotate(-45deg);
+}
+
+.checkbox-group--cluster .checkbox-item {
+  clear: none;
+  margin-inline-end: 0.75rem;
+}
+
+.radio-item:hover input:not(:disabled) + label::before,
+.checkbox-item:hover input:not(:disabled) + label::before {
+  box-shadow: 0 0 0 4px #0073d8;
+}
+
+.radio-item input:focus + label::before,
+.checkbox-item input:focus + label::before {
+  border-width: 4px;
+  box-shadow: 0 0 0 4px #f9dc4a;
+}
+
+.radio-item:hover input:focus + label::before,
+.checkbox-item:hover input:focus + label::before {
+  box-shadow: 0 0 0 4px #f9dc4a;
+}
+
+.radio-item input:checked + label::after,
+.checkbox-item input:checked + label::after {
+  opacity: 1;
+}
+
+[type=radio]:disabled,
+[type=radio]:disabled + label [type=checkbox]:disabled,
+[type=checkbox]:disabled + label {
+  cursor: default;
+}
+
+[type=radio]:disabled + label,
+[type=checkbox]:disabled + label {
+  opacity: 0.5;
+}
+
+/**
+Segmented options. Can use either radio or checkbox inputs. The purpose is to
+show all available options outright, rather than hide them behind a <select>
+ */
+.segmented-group.l-switcher {
+  margin-block-start: 0;
+}
+.segmented-group.l-switcher > * > * {
+  max-inline-size: 100%;
+  min-inline-size: 33.333%;
+  position: relative;
+}
+.segmented-group.l-switcher label {
+  border: 2px solid;
+  cursor: pointer;
+  display: block;
+  margin: 0.125rem;
+}
+.segmented-group.l-switcher label:before, .segmented-group.l-switcher label:after {
+  content: "";
+  position: absolute;
+}
+.segmented-group.l-switcher label::before {
+  background: transparent;
+  block-size: 1.5rem;
+  inline-size: 1.5rem;
+  inset-block-start: 0.625rem;
+  inset-inline-start: 0.625rem;
+}
+.segmented-group.l-switcher label::after {
+  background: transparent;
+  block-size: 0.40625rem;
+  border: solid;
+  border-block-start-color: transparent;
+  border-width: 0 0 3px 3px;
+  inline-size: 0.75rem;
+  inset-block-start: 1.0625rem;
+  inset-inline-start: 1rem;
+  opacity: 0;
+  transform: rotate(-45deg);
+}
+.segmented-group.l-switcher input {
+  cursor: pointer;
+  block-size: 2.75rem;
+  inline-size: 2.75rem;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  margin: 0;
+  opacity: 0;
+  position: absolute;
+  z-index: 1;
+}
+.segmented-group.l-switcher .segmented-label {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  display: block;
+  padding: 0.625rem;
+  padding-inline-start: 2.75rem;
+}
+.segmented-group.l-switcher .segmented-label > * + * {
+  margin-block-start: 0.5em;
+}
+.segmented-group.l-switcher .segmented-label span {
+  display: block;
+}
+.segmented-group.l-switcher .segmented-label span:first-child {
+  font-weight: 600;
+}
+.segmented-group.l-switcher > * > *:hover label {
+  background-color: #cbe0fb;
+}
+.segmented-group.l-switcher input:focus + label {
+  border-color: #f9dc4a;
+  box-shadow: inset 0 0 0 4px;
+  outline: solid 2px #f9dc4a;
+}
+.segmented-group.l-switcher input:checked + label::after {
+  opacity: 1;
+}
+
+/**
+Fixed input widths
+ */
+.input-width-30 {
+  max-inline-size: 59ex;
+}
+
+.input-width-20 {
+  max-inline-size: 41ex;
+}
+
+.input-width-10 {
+  max-inline-size: 23ex;
+}
+
+.input-width-5 {
+  max-inline-size: 10.8ex;
+}
+
+.input-width-4 {
+  max-inline-size: 9ex;
+}
+
+.input-width-3 {
+  max-inline-size: 7.2ex;
+}
+
+.input-width-2 {
+  max-inline-size: 5.4ex;
+}
+
+/**
+Error styles
+ */
+[data-component=error-summary] li a, [data-component=error-summary] li .heading-anchor {
+  color: #a82615;
+  display: inline-block;
+  font-weight: bold;
+  padding-block: 0.625rem;
+}
+[data-component=error-summary] li a:hover, [data-component=error-summary] li .heading-anchor:hover, [data-component=error-summary] li a:visited, [data-component=error-summary] li .heading-anchor:visited {
+  color: #a82615;
+}
+[data-component=error-summary] li a:focus, [data-component=error-summary] li .heading-anchor:focus {
+  color: #000;
+}
+
+.field--error {
+  border-inline-start: solid 0.3125rem #a82615;
+  padding-inline-start: 0.9375rem;
+}
+.field--error input:not([type=file]),
+.field--error textarea:not(:focus) {
+  border-color: #a82615;
+}
+.field--error input:focus,
+.field--error textarea:focus {
+  border-color: inherit;
+}
+
+.field-error-msg {
+  color: #a82615;
+  font-weight: bold;
+  margin-block-start: 0.9375rem;
+}
+
+/**
+Progress bar
+ */
+.progress-list {
+  margin-block-end: 1.875rem;
+}
+@media screen and (min-width: 48em) {
+  .progress-list {
+    display: flex;
+    flex-wrap: wrap;
+  }
+}
+
+.progress-list li {
+  position: relative;
+}
+.progress-list li::after {
+  background-color: #545454;
+  block-size: 0.8125rem;
+  content: "";
+  inline-size: 0.1875rem;
+  inset-block-end: -1rem;
+  inset-inline-start: 1.1875rem;
+  position: absolute;
+}
+@media screen and (min-width: 48em) {
+  .progress-list li::after {
+    block-size: 0.1875rem;
+    inline-size: 100%;
+    inset-block-end: auto;
+    inset-block-start: 2rem;
+    inset-inline-start: 50%;
+    z-index: -1;
+  }
+}
+.progress-list li + li {
+  margin-block-start: 1.25rem;
+}
+@media screen and (min-width: 48em) {
+  .progress-list li + li {
+    margin-block-start: 0;
+  }
+}
+
+.progress-list li.complete::after {
+  background-color: #237978;
+}
+
+.progress-list li:last-child::after {
+  display: none;
+}
+
+.progress-step__inner {
+  align-items: center;
+  display: flex;
+}
+@media screen and (min-width: 48em) {
+  .progress-step__inner {
+    flex-direction: column;
+    padding-block-start: 0.625rem;
+    text-align: center;
+  }
+}
+.progress-step__inner > span {
+  font-size: var(--w3c-text-01);
+  padding: 0.625rem;
+}
+@media screen and (min-width: 48em) {
+  .progress-step__inner > span {
+    inline-size: 9.375rem;
+  }
+}
+
+.progress-step__marker {
+  align-items: center;
+  background-color: #fff;
+  block-size: 2.75rem;
+  border: solid 3px #545454;
+  border-radius: 50%;
+  display: flex;
+  inline-size: 2.75rem;
+  justify-content: center;
+}
+@media screen and (min-width: 48em) {
+  .progress-step__marker {
+    box-shadow: 0 0 0 0.625rem #fff;
+  }
+}
+
+.progress-step__marker.complete {
+  background-color: #237978;
+  border-color: #237978;
+  color: #fff;
+  position: relative;
+}
+.progress-step__marker.complete::before, .progress-step__marker.complete::after {
+  background-color: #237978;
+  content: "";
+  position: absolute;
+}
+.progress-step__marker.complete::before {
+  block-size: 2.375rem;
+  border-radius: 50%;
+  inline-size: 2.375rem;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+}
+.progress-step__marker.complete::after {
+  block-size: 0.5625rem;
+  border: solid;
+  border-block-start-color: transparent;
+  border-width: 0 0 3px 3px;
+  inline-size: 1.125rem;
+  inset-block-start: 0.8125rem;
+  inset-inline-start: 0.625rem;
+  transform: rotate(-45deg);
+}
+
+.progress-list a, .progress-list .heading-anchor {
+  color: #545454;
+}
+.progress-list a:visited, .progress-list .heading-anchor:visited {
+  color: #75336c;
+}
+.progress-list a:hover, .progress-list .heading-anchor:hover {
+  color: #002a56;
+}
+.progress-list a:focus, .progress-list .heading-anchor:focus {
+  box-shadow: 0 0 0 2px;
+  color: #000;
+  outline: solid 3px #f9dc4a;
+  outline-offset: 2px;
+  text-decoration: none;
+}
+.progress-list a:active, .progress-list .heading-anchor:active {
+  color: #000;
+}
+
+/*------------------------------------*\
+    #Hide and show items inclusively
+
+    See https://www.scottohara.me/blog/2017/04/14/inclusively-hidden.html
+\*------------------------------------*/
+/*
+ * Hide from everybody and remove from the document flow, using the hidden
+ * attribute.
+ *
+ * Use if a component should remain hidden regardless of CSS being
+ * available or not (the style below provides support for legacy browsers).
+ */
+[hidden] {
+  display: none !important;
+}
+
+/*
+ * Hide from everybody and remove from the document flow, using the %hidden
+ * placeholder (extend the placeholder with Sass to avoid it appearing
+ * repeatedly in your markup).
+ *
+ * Use if a component requires a basic show and hide interaction, and the
+ * content should become available were CSS to fail.
+ */
+/*
+ * Hide from everybody while maintaining layout, using the %invisible
+ * placeholder (extend the placeholder with Sass to avoid it appearing
+ * repeatedly in your markup).
+ *
+ * Use if a more complex transition is required, like when transitioning an
+ * off-screen navigation into the viewport. Best paired with other CSS
+ * properties that negate its position in the DOM e.g. `position: absolute;`
+ */
+/*
+ * Hide visually only - remains available to Assistive Technology -
+ * using the %visually-hidden placeholder (extend the placeholder with
+ * Sass to avoid it appearing repeatedly in your markup).
+ */
+.global-header [role=status], .visuallyhidden:not(:focus):not(:active), .skip-link:not(:focus):not(:active) {
+  block-size: 1px;
+  border: 0;
+  clip-path: inset(50%);
+  inline-size: 1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+}
+
+/*
+ *The :not portions of the following selector allow a means for any
+ * focusable element to become visible when focused/active by a user.
+ */
+/*
+ * Make sure that the siblings of hidden components do not cause the hidden
+ * component to take up any vertical space.
+ */
+.visuallyhidden + *, .skip-link + * {
+  margin-block-start: 0 !important;
+}
+
+br {
+  margin-block-start: 0;
+}
+
+/*
+ * Restore an element that has been visually hidden, using the %visually-hidden
+ * placeholder (extend the placeholder with Sass to avoid it appearing
+ * repeatedly in your markup).
+ */
+/*------------------------------------*\
+    #HTML elements
+\*------------------------------------*/
+dfn {
+  font-style: normal;
+  font-weight: 600;
+}
+
+b,
+strong,
+.bold {
+  font-weight: 600;
+}
+
+em,
+i {
+  font-style: italic;
+}
+
+small,
+.small,
+.small-caps {
+  font-size: var(--w3c-text-01);
+}
+
+.small-caps {
+  text-shadow: 0 0 0 #111;
+  text-transform: uppercase;
+}
+
+code,
+samp,
+pre {
+  font-family: Monaco, "Lucida Console", "Courier New", monospace;
+  -webkit-hyphens: none;
+          hyphens: none;
+  orphans: 3;
+  padding-inline: 0.1875rem;
+  page-break-before: avoid;
+  text-transform: none;
+  widows: 3;
+}
+
+pre :where(code, samp, kbd) {
+  padding: 0;
+}
+
+/*------------------------------------*\
+    #Icons
+\*------------------------------------*/
+svg {
+  fill: currentColor;
+}
+
+svg:not([class]), svg.heading-anchor {
+  inline-size: 100%;
+}
+
+/**
+SVG icons are sized relative to font size, thanks to the em unit.
+ */
+.icon {
+  block-size: 1em;
+  inline-size: 1em;
+  vertical-align: baseline;
+}
+
+.icon--larger {
+  block-size: 1.875rem;
+  inline-size: 1.875rem;
+}
+
+/**
+Use the `with-icon` class on the SVG's parent, if there
+is a need to specify the spacing between text and icon.
+Pay attention to whether the icon is before the text or after.
+ */
+.with-icon--before,
+.with-icon--after,
+.with-icon--larger {
+  align-items: baseline;
+  display: inline-flex;
+}
+.with-icon--before .icon,
+.with-icon--after .icon,
+.with-icon--larger .icon {
+  flex: 0 0 auto;
+}
+
+.with-icon--larger {
+  align-items: center;
+}
+
+.with-icon--before .icon {
+  margin-inline-end: 0.5rem;
+}
+
+.with-icon--after .icon {
+  margin-inline-start: 0.5rem;
+}
+
+/*------------------------------------*\
+    #Links
+
+    1. Remove the outline on focused links when they are also active/hovered.
+\*------------------------------------*/
+a:not([class]), .heading-anchor,
+a.with-icon--before,
+a.with-icon--after {
+  border: 0;
+  color: #005a9c;
+  cursor: pointer;
+  padding-inline: 0.125rem;
+}
+a:not([class]) svg, .heading-anchor svg,
+a.with-icon--before svg,
+a.with-icon--after svg {
+  fill: currentColor;
+}
+a:not([class]):visited, .heading-anchor:visited,
+a.with-icon--before:visited,
+a.with-icon--after:visited {
+  color: #75336c;
+}
+a:not([class]):hover, .heading-anchor:hover,
+a.with-icon--before:hover,
+a.with-icon--after:hover {
+  color: #002a56;
+  outline-width: 0; /* 1 */
+}
+a:not([class]):focus, .heading-anchor:focus,
+a.with-icon--before:focus,
+a.with-icon--after:focus {
+  background-color: #f9dc4a;
+  background-image: linear-gradient(to top, #000 3px, #f9dc4a 3px, #f9dc4a);
+  color: #000;
+  text-decoration: none;
+}
+a:not([class]):active, .heading-anchor:active,
+a.with-icon--before:active,
+a.with-icon--after:active {
+  color: #000;
+  outline-width: 0; /* 1 */
+}
+
+.heading-anchor {
+  color: #545454;
+  font-weight: normal;
+  opacity: 0.82;
+  text-underline-offset: auto;
+}
+.heading-anchor:visited {
+  color: #545454;
+}
+.heading-anchor:hover {
+  color: #545454;
+  opacity: 1;
+}
+.heading-anchor:focus {
+  color: #000;
+  opacity: 1;
+}
+
+/*------------------------------------*\
+    #Lists
+\*------------------------------------*/
+ul,
+ol {
+  margin-block: 1rem;
+  padding-inline-start: 2.4em;
+}
+ul li,
+ol li {
+  max-inline-size: 41.25rem;
+}
+ul li + li,
+ol li + li {
+  margin-block-start: 0.75rem;
+}
+
+ol.counter ::marker {
+  content: counters(list-item, ".") ". ";
+}
+
+/**
+Remove bullets/numbering from lists and padding on leading edge with the `.nomarkers-list` class.
+This may remove list semantics in some circumstances in older WebKit browsers.
+See https://www.scottohara.me/blog/2019/01/12/lists-and-safari.html
+If it's important that the number of items in a list is announced, add role="list" to the <ul>/<ol>
+ */
+.nomarkers-list {
+  list-style: none;
+}
+
+/**
+Remove padding from the leading edge of lists with the `.noindent-list` class.
+The extra specificity is to ensure this is not used as a utility class on other elems.
+ */
+:where(ul, ol).noindent-list {
+  padding-inline-start: 0;
+}
+
+/**
+Remove list bullets/numbering and completely zero all margins/padding with the `.clean-list`
+class, and on lists that are children of the <nav> element.
+This may remove list semantics in some circumstances in older WebKit browsers.
+See https://www.scottohara.me/blog/2019/01/12/lists-and-safari.html
+If it's important that the number of items in a list is announced, add role="list" to the <ul>/<ol>
+ */
+.clean-list,
+nav :is(ul, ol) {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.clean-list li,
+.clean-list ol,
+.clean-list ul,
+nav :is(ul, ol) li,
+nav :is(ul, ol) ol,
+nav :is(ul, ol) ul {
+  margin: 0;
+  padding: 0;
+}
+
+/**
+Description lists / Definition lists
+ */
+dl {
+  margin-block: 1rem;
+  max-inline-size: 41.25rem;
+}
+dl dt {
+  font-weight: bold;
+}
+dl dd {
+  margin-inline-start: 2.5rem;
+}
+dl dd + dt {
+  margin-block-start: 0.5em;
+}
+dl dt + dd,
+dl dd + dd {
+  margin-block-start: 0.25em;
+}
+
+dl.inline div {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+}
+dl.inline div dt, dl.inline div dd {
+  margin-inline-start: 0;
+}
+dl.inline div dt::after {
+  content: ": ";
+}
+dl.inline div dd:not(:last-child):after {
+  content: ", ";
+}
+
+@supports (grid-row-start: auto) {
+  dl.grid {
+    -moz-column-gap: 1rem;
+         column-gap: 1rem;
+    display: grid;
+    grid-template-columns: max-content;
+    grid-template-rows: 1fr;
+    row-gap: 1rem;
+  }
+  dl.grid dd + dt,
+  dl.grid dt + dd,
+  dl.grid dd + dd {
+    margin-block-start: 0;
+  }
+  dl.grid dt {
+    grid-column-start: 1;
+    grid-column-end: 2;
+  }
+  dl.grid dd {
+    grid-column-start: 2;
+    grid-column-end: 3;
+    margin-inline-start: 0;
+  }
+}
+
+/*------------------------------------*\
+    #Skip link
+\*------------------------------------*/
+.skip-link {
+  background-color: #f9dc4a;
+  border: solid 3px #000;
+  color: #000;
+  padding: 0.625em 0.9375em;
+  position: absolute;
+  text-decoration: none;
+}
+.skip-link:active, .skip-link:focus {
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  z-index: 999;
+}
+.skip-link:active span, .skip-link:focus span {
+  box-shadow: 0 -1px 0 0 inset;
+}
+
+/*------------------------------------*\
+    #Details and summary elements
+\*------------------------------------*/
+summary {
+  color: #005a9c;
+  cursor: pointer;
+  display: inline-block;
+  padding-block: 0.625rem;
+  padding-inline-start: 1.5625rem;
+  position: relative;
+}
+summary::before {
+  block-size: 0;
+  border-color: transparent;
+  border-inline-start-color: inherit;
+  border-style: solid;
+  border-width: 7px 0 7px 12.124px;
+  content: "";
+  display: block;
+  inline-size: 0;
+  inset-block: -0.0625rem 0;
+  inset-inline-start: 0;
+  margin: auto;
+  position: absolute;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+summary:hover {
+  color: #002a56;
+}
+summary span {
+  display: inline-block;
+  text-decoration: underline;
+}
+summary:focus {
+  background-color: #f9dc4a;
+  background-image: linear-gradient(to top, #000 3px, #f9dc4a 3px, #f9dc4a);
+  color: #000;
+}
+summary:focus span {
+  text-decoration: none;
+}
+
+details[open] > summary {
+  margin-block-end: 1rem;
+}
+
+[dir=rtl] summary::before {
+  border-width: 7px 12.124px 7px 0;
+}
+
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+[dir=rtl] details[open] > summary::before {
+  transform: rotate(-90deg);
+}
+
+/*------------------------------------*\
+    #Social links
+\*------------------------------------*/
+.social-links__item {
+  block-size: 3rem;
+  padding: 0.875rem;
+  inline-size: 3rem;
+}
+.social-links__item .icon {
+  height: 1.25rem;
+  width: 1.25rem;
+}
+.social-links__item:hover .icon {
+  color: #002a56;
+}
+
+/*------------------------------------*\
+    #Tables
+\*------------------------------------*/
+table {
+  border: 1px solid #cac9c9;
+  border-collapse: collapse;
+  margin-block: 1rem;
+  width: 100%;
+}
+
+.col-border tr :where(td, th) {
+  border-inline-end: 1px solid #cac9c9;
+}
+.col-border tr :where(td, th):last-child {
+  border-inline-end: none;
+}
+
+tr:nth-child(even) {
+  background-color: rgba(206, 205, 205, 0.5);
+}
+
+th,
+td,
+table caption {
+  padding: 0.75rem;
+  text-align: start;
+}
+
+table caption > *:first-child {
+  margin-block-start: 0;
+}
+table caption > *:last-child {
+  margin-block-end: 0;
+}
+
+td, th {
+  vertical-align: text-top;
+}
+
+thead th,
+tfoot th {
+  background-color: #002a56;
+  color: #fff;
+  vertical-align: bottom;
+}
+
+/**
+Responsive tables:
+https://adrianroselli.com/2020/11/under-engineered-responsive-tables.html
+ */
+@media screen {
+  .table-wrap {
+    border: 1px solid #cac9c9;
+    margin-block: 1rem;
+    max-inline-size: 100% !important;
+  }
+  .table-wrap[role][aria-labelledby][tabindex] {
+    overflow: auto;
+  }
+  .table-wrap table {
+    border: 0;
+    margin-block: 0;
+  }
+  .table-wrap:focus {
+    border-color: #000;
+    box-shadow: inset 0 0 0 4px;
+    outline: 3px solid #f9dc4a;
+  }
+}
+/*------------------------------------*\
+    #Typography
+\*------------------------------------*/
+body {
+  font-family: "Trebuchet MS", Geneva, sans-serif;
+  font-size: var(--w3c-text-0);
+  font-style: normal;
+  font-weight: 400;
+}
+
+p {
+  margin-block: 1rem;
+  max-inline-size: 41.25rem;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+}
+
+h1 {
+  margin-block-start: 0;
+}
+
+:where(h2, h3, h4, h5, h6) {
+  margin-block-end: 1rem;
+  margin-block-start: 2em;
+  max-inline-size: 41.25rem;
+}
+
+:where(h2, h3, h4, h5, h6) + :where(h3, h4, h5, h6) {
+  margin-block-start: 1em;
+}
+
+.text-xl {
+  font-size: var(--w3c-text-7);
+  line-height: 1.2;
+}
+
+.text-l {
+  font-size: var(--w3c-text-6);
+  line-height: 1.2;
+}
+
+:is(h1, .h1, .txt-venus) {
+  font-size: var(--w3c-text-5);
+  line-height: 1.2;
+}
+
+:is(h2, .h2, .txt-earth) {
+  font-size: var(--w3c-text-4);
+  line-height: 1.2;
+}
+
+:is(h3, .h3, .txt-mars) {
+  font-size: var(--w3c-text-3);
+  line-height: 1.2;
+}
+
+:is(h4, .h4, .txt-jupiter) {
+  font-size: var(--w3c-text-2);
+  line-height: 1.2;
+}
+
+:is(h5, .h5, .txt-saturn) {
+  font-size: var(--w3c-text-1);
+  line-height: 1.2;
+}
+
+:is(h6, .h6) {
+  font-size: var(--w3c-text-0);
+}
+
+.lead {
+  font-size: var(--w3c-text-2);
+  line-height: 1.4;
+  max-inline-size: 41.25rem;
+}
+
+:is(.text-sm, .txt-pluto, .txt-eris) {
+  font-size: var(--w3c-text-01);
+}
+
+/**
+When Font Face Observer has detected that the @font-face files are loaded, then we
+can safely use the web fonts instead of the system fonts.
+ */
+.fonts-loaded body {
+  font-family: "Noto Sans", "Trebuchet MS", Geneva, sans-serif;
+}
+
+/*------------------------------------*\
+    #Layouts
+\*------------------------------------*/
+/*------------------------------------*\
+    #Box layout primitive
+
+    From https://absolutely.every-layout.dev/layouts/box/
+
+    `.l-box` should have borders and/or padding on all sides, or
+    none at all. Otherwise it's not a box, but something more specific.
+\*------------------------------------*/
+.l-box {
+  border: 1px solid;
+  display: block;
+  padding: 1.5rem;
+}
+
+.l-box--no-padding {
+  padding: 0;
+}
+
+/**
+1. High contrast themes tend to eliminate background-color. If there is no
+border set on the box, we need to apply a transparent outline to maintain
+the box shape. The negative outline-offset moves the outline inside the
+perimeter so it behaves like a border and doesn't add to the overall size.
+ */
+.l-box--no-border {
+  border: none;
+  outline: 1px solid transparent; /* 1 */
+  outline-offset: -1px; /* 1 */
+}
+
+/*------------------------------------*\
+    #Center layout primitive
+
+    From https://absolutely.every-layout.dev/layouts/center/
+
+    `.l-center` creates a horizontally centered container.
+\*------------------------------------*/
+/**
+1. We use left and right padding to add some minimum space between the
+contents of `.l-center` and the edges of the parent element or viewport.
+To avoid making the content narrower than intended, we add an exception
+to our global box-sizing rule.
+ */
+.l-center.l-center {
+  box-sizing: content-box;
+  margin-inline: auto;
+  max-inline-size: 70rem;
+  padding-inline: 5vw;
+}
+
+/*------------------------------------*\
+    #Cluster layout primitive
+
+    From https://absolutely.every-layout.dev/layouts/cluster/
+
+    `.l-cluster` suits any groups of elements that differ in length and
+    are liable to wrap. Use the Cluster to align any groups of horizontally
+    laid out elements to the left or right, or in the center, with even
+    spacing between elements.
+\*------------------------------------*/
+/**
+Suppress horizontal scrolling caused by the negative margin
+in some circumstances.
+ */
+.l-cluster {
+  overflow: hidden;
+}
+
+/**
+We use flexbox to configure the elements into clusters without creating
+white space. We can control how we align items within the cluster,
+by using 'align-items` and `justify-content`.
+ */
+.l-cluster > * {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  margin: -0.625rem;
+}
+
+.l-cluster--vertical-align > * {
+  align-items: center;
+}
+
+/**
+We apply an even, symmetrical margin to the elements that we wish to space
+out, but halve it to to account for 'doubling up' at the edges.
+ */
+.l-cluster.l-cluster > * > * {
+  display: inline-block;
+  margin: 0.625rem;
+}
+
+/*------------------------------------*\
+    #Frame layout primitive
+
+    From https://absolutely.every-layout.dev/layouts/frame/
+
+    `.l-frame` is most useful for cropping media (images
+    and video) to a specific aspect ratio.
+
+    It is not recommended to apply the `.l-frame` class to the
+    <figure> element, as it will interfere with the <figcaption>.
+    Instead, place it on <picture> or a <div> inside of <figure>.
+\*------------------------------------*/
+.l-frame {
+  display: block;
+  overflow: hidden;
+  position: relative;
+}
+
+.l-frame > * {
+  align-items: center;
+  inset-block: 0;
+  inset-inline: 0;
+  display: flex;
+  justify-content: center;
+  position: absolute;
+}
+
+.l-frame > iframe,
+.l-frame > img,
+.l-frame > video {
+  block-size: 100%;
+  inline-size: 100%;
+}
+
+.l-frame > img,
+.l-frame > video {
+  -o-object-fit: cover;
+     object-fit: cover;
+}
+
+/* Common aspect ratios */
+.l-frame--16-9 {
+  padding-block-end: 56.25%;
+}
+
+.l-frame--3-2 {
+  padding-block-end: 66.67%;
+}
+
+.l-frame--4-3 {
+  padding-block-end: 75%;
+}
+
+.l-frame--square {
+  padding-block-end: 100%;
+}
+
+/*------------------------------------*\
+    #Sidebar layout primitive
+
+    From https://absolutely.every-layout.dev/layouts/sidebar/
+
+    `.l-sidebar` creates a container for a larger panel next to
+    a smaller - sidebar - panel.
+
+    When there is enough horizontal space for them to sit alongside
+    each other, they do so. Otherwise they stack vertically. The
+    point at which this happens is determined by setting a flex-basis
+    on the sidebar panel and a min-width on the other panel.
+
+    N.B: because this layout uses Flexbox, we can use the `order`
+    property on either `.not-sidebar` or `.sidebar` (depending upon
+    the source order of the HTML) to determine whether the sidebar
+    sits on the left or right side.
+\*------------------------------------*/
+/**
+Suppress horizontal scrolling caused by the negative margin
+in some circumstances.
+ */
+.l-sidebar {
+  overflow: hidden;
+}
+
+/**
+We target the intermediary wrapper and give it a negative margin
+to create a gutter between the `.sidebar` and `.not-sidebar`.
+ */
+.l-sidebar > * {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  margin: -0.75rem; /* 1 */
+}
+
+/**
+We apply an even, symmetrical margin to `.sidebar` and `.not-sidebar`,
+but halve it to to account for 'doubling up' at the edges.
+ */
+.l-sidebar > * > * {
+  margin: 0.75rem;
+}
+
+/**
+Flex-basis determines the ideal width of the `.sidebar`. This can be
+omitted to let the contents of `.sidebar` determine the width of
+`.sidebar` (e.g. an image with a specified max-width).
+ */
+.l-sidebar .sidebar {
+  flex-basis: 18.75rem;
+  flex-grow: 1;
+}
+
+/**
+Min-width determines the point at which `.sidebar` and `.not-sidebar`
+will sit side-by-side rather than vertically. This negates the use of
+a viewport media query.
+ */
+.l-sidebar .not-sidebar {
+  flex-basis: 0;
+  flex-grow: 999;
+  min-inline-size: calc(55% - 1.5rem);
+}
+
+.l-sidebar--expanded {
+  inline-size: 100%;
+}
+
+.l-sidebar .sidebar--compact {
+  flex-basis: 11.25rem;
+}
+
+/*------------------------------------*\
+    #Switcher layout primitive
+
+    Uses this to switch between vertical and horizontal layouts:
+    https://www.freecodecamp.org/news/the-fab-four-technique-to-create-responsive-emails-without-media-queries-baf11fdfa848/
+
+    `.l-switcher` switches a Flexbox context between a horizontal and a
+    vertical layout at a given, CONTAINER-BASED breakpoint, rather than
+    using viewport media queries.
+
+    The child elements in the horizontal configuration will be of equal
+	width.
+
+	To apply gutter spacing, apply padding to the flex items and an
+    equivalent negative margin to the flex container. This will double up,
+    so use half the intended value.
+
+\*------------------------------------*/
+.l-switcher {
+  overflow: hidden;
+}
+
+.l-switcher > * {
+  display: flex;
+  flex-flow: row wrap;
+}
+
+/**
+1. Determines the item width in the single column, vertical configuration
+
+2. Determines how many items will be in a row in the horizontal configuration
+
+3. The 690 value matches the desired breakpoint value. The 100% corresponds to
+the width of the columns' parent container. This calculation will create a
+value that's either bigger than the max-width or smaller than the min-width,
+so that either of these properties is applied instead.
+ */
+.l-switcher > * > * {
+  inline-size: calc(476100px - 69000%); /* 3 */
+  max-inline-size: 100%; /* 1 */
+  min-inline-size: 50%; /* 2 */
+}
+
+/*------------------------------------*\
+    #Core components
+\*------------------------------------*/
+/*------------------------------------*\
+    #Component
+
+    Extra vertical margin on anything with a class of `.component`
+\*------------------------------------*/
+.component {
+  margin-block: 5rem;
+}
+@media screen and (min-width: 48em) {
+  .component {
+    margin-block: 6.25rem;
+  }
+}
+
+/* Sometimes components are nested, so we remove the block margin on those instances */
+.component .component {
+  margin-block: 0;
+}
+
+/* Full width components tend to have a background colour, where we don't want white space in between */
+.component.u-full-width + .component.u-full-width {
+  margin-block-start: -5rem;
+}
+@media screen and (min-width: 48em) {
+  .component.u-full-width + .component.u-full-width {
+    margin-block-start: -6.25rem;
+  }
+}
+
+/* Let components determine their external spacing, without additions from internal children */
+.component > *:first-child {
+  margin-block-start: 0;
+}
+
+/*------------------------------------*\
+    #Avatars
+\*------------------------------------*/
+.avatar {
+  background-color: #fff;
+  block-size: 6.25rem;
+  border: solid 1px #005a9c;
+  border-radius: 50%;
+  inline-size: 6.25rem;
+  overflow: hidden;
+}
+.avatar img {
+  block-size: 100%;
+  inline-size: 100%;
+  -o-object-fit: cover;
+     object-fit: cover;
+}
+
+.avatar--med {
+  block-size: 3.125rem;
+  inline-size: 3.125rem;
+}
+.avatar--med img {
+  margin-block-start: 0;
+}
+
+.avatar--small {
+  block-size: 2rem;
+  inline-size: 2rem;
+}
+.avatar--small img {
+  margin-block-start: 0;
+}
+
+/*------------------------------------*\
+    #Global header core
+\*------------------------------------*/
+.no-js [data-trigger=account-menu],
+.no-js .account-menu {
+  display: none;
+}
+
+.global-header {
+  background-color: #fff;
+}
+
+.global-header .banner {
+  background-color: #cbe0fb;
+}
+
+.global-header .banner__inner {
+  align-items: center;
+  display: flex;
+}
+.global-header .banner__inner p {
+  font-size: var(--w3c-text-01);
+  margin-block: 0.5em;
+}
+.global-header .banner__inner a, .global-header .banner__inner .heading-anchor {
+  color: #002a56;
+}
+.global-header .banner__inner a:focus, .global-header .banner__inner .heading-anchor:focus {
+  color: #000;
+}
+
+#lang-nav {
+  background-color: #f8f8fb;
+}
+#lang-nav .l-cluster > * {
+  justify-content: flex-end;
+  margin: 0 -0.625rem;
+}
+#lang-nav .l-cluster.l-cluster > * > * {
+  margin: 0 0.625rem;
+}
+#lang-nav a, #lang-nav .heading-anchor {
+  color: #111;
+  display: block;
+  font-size: var(--w3c-text-01);
+  padding-block: 0.75rem;
+}
+
+/*------------------------------------*\
+    #Archive banner
+\*------------------------------------*/
+@media screen {
+  #archive-banner {
+    background-color: #f9dc4a;
+    padding-block: 1.25rem;
+  }
+  #archive-banner .centered {
+    box-sizing: content-box;
+    margin-inline: auto;
+    max-inline-size: 70rem;
+    overflow: hidden;
+    padding-inline: 5vw;
+  }
+  #archive-banner .centered > * {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin: -0.75rem;
+  }
+  #archive-banner .centered > * > * {
+    margin: 0.75rem;
+  }
+  #archive-banner .archive-banner__message {
+    flex-basis: 0;
+    flex-grow: 999;
+    min-inline-size: calc(80% - 1.5rem);
+  }
+  #archive-banner .archive-banner__message > * + * {
+    margin-block-start: 1rem;
+  }
+  #archive-banner .archive-banner__message > * {
+    max-inline-size: 41.25rem;
+  }
+  #archive-banner .archive-banner__message h2 {
+    display: block;
+    font-size: var(--w3c-text-1);
+  }
+  #archive-banner .archive-banner__message h3 {
+    font-size: var(--w3c-text-0);
+  }
+  #archive-banner .archive-banner__message h3 + * {
+    margin-block-start: 0;
+  }
+  #archive-banner a, #archive-banner .heading-anchor {
+    color: #024488;
+  }
+  #archive-banner a:visited, #archive-banner .heading-anchor:visited {
+    color: #024488;
+  }
+  #archive-banner a:focus, #archive-banner .heading-anchor:focus {
+    background-image: none;
+    color: #000;
+    outline: solid 2px #000;
+    outline-offset: 1px;
+    text-decoration: none;
+  }
+  #archive-banner .archive-banner__logo {
+    flex-basis: auto;
+    flex-grow: 1;
+    order: -1;
+  }
+  #archive-banner .archive-banner__logo > span {
+    display: block;
+    block-size: 2.75rem;
+    position: relative;
+    inline-size: 4.125rem;
+  }
+}
+@media screen and (min-width: 64em) {
+  #archive-banner .archive-banner__logo > span {
+    block-size: 3.25rem;
+    inline-size: 4.875rem;
+  }
+}
+@media print {
+  #archive-banner {
+    border: solid 2.25pt;
+    font-family: "Noto Sans", "Trebuchet MS", Geneva, sans-serif;
+    margin: 1cm;
+    padding: 8pt;
+    position: relative;
+  }
+  #archive-banner a:link,
+  #archive-banner a:visited,
+  #archive-banner a,
+  #archive-banner .heading-anchor {
+    color: #000;
+  }
+  #archive-banner a[href]::after, #archive-banner [href].heading-anchor::after {
+    content: " <" attr(href) "> ";
+  }
+  .archive-banner__message {
+    min-block-size: 40pt;
+    padding-inline-start: 62pt;
+  }
+  .archive-banner__message > * + * {
+    margin-block-start: 8pt;
+  }
+  .archive-banner__logo {
+    inset-block-start: 8pt;
+    inset-inline-start: 8pt;
+    position: absolute;
+  }
+}
+/*------------------------------------*\
+    #Logo
+\*------------------------------------*/
+.logo {
+  display: block;
+  position: relative;
+  width: clamp(3.75rem, 2.51rem + 6.198vw, 7.5rem);
+}
+
+.logo--member {
+  height: 5.25rem;
+  inline-size: 9.375rem;
+  padding-inline: 1.25rem;
+  position: relative;
+}
+.logo--member > img {
+  inset-block-end: 0;
+  inset-block-start: 0;
+  block-size: auto;
+  inline-size: auto;
+  inset-inline-end: 0;
+  inset-inline-start: 0;
+  margin: auto 0;
+  max-block-size: 100%;
+  max-inline-size: calc(100% - 40px);
+  position: absolute;
+}
+
+/*------------------------------------*\
+    #Navigation core
+\*------------------------------------*/
+#global-nav svg {
+  pointer-events: none;
+}
+
+#global-nav {
+  display: block;
+  padding-block: 1.625rem;
+}
+
+.global-nav__inner {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+}
+@media screen and (min-width: 80em) {
+  .global-nav__inner {
+    flex-wrap: nowrap;
+    position: relative;
+  }
+}
+
+.global-nav__inner > ul {
+  background-color: #fff;
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  inline-size: 100%;
+  padding-block-end: 2.8125rem;
+}
+@media screen and (min-width: 80em) {
+  .global-nav__inner > ul {
+    flex-basis: auto;
+    flex-wrap: nowrap;
+    margin-inline-start: 3em;
+    padding-block-end: 0;
+  }
+}
+
+@media screen and (min-width: 80em) {
+  li.top-nav-item + li.top-nav-item {
+    margin-inline-start: 0.5rem;
+  }
+}
+
+@media screen and (min-width: 80em) {
+  .global-nav__inner > ul > li:last-child {
+    margin-inline-start: auto;
+  }
+}
+
+.global-nav__inner .top-nav-item {
+  border-block-end: solid 1px #cac9c9;
+  flex-basis: 100%;
+}
+@media screen and (min-width: 80em) {
+  .global-nav__inner .top-nav-item {
+    border-block-end: none;
+    flex-basis: auto;
+  }
+}
+
+.nav-link {
+  color: #111;
+  display: block;
+  padding: 0.625rem 0;
+  position: relative;
+  text-decoration: none;
+}
+@media screen and (min-width: 80em) {
+  .nav-link {
+    display: inline-block;
+  }
+}
+
+.global-nav__inner .top-nav-item > .nav-link {
+  font-weight: 600;
+}
+
+.global-nav__inner .has-children > .nav-link {
+  align-items: center;
+  display: flex;
+}
+.global-nav__inner .has-children > .nav-link::after {
+  block-size: 0.4375rem;
+  border-color: black;
+  border-style: solid;
+  border-width: 0 0.125rem 0.125rem 0;
+  content: "";
+  inline-size: 0.4375rem;
+  margin-inline-start: 0.75rem;
+  visibility: hidden;
+}
+
+.logo-link:focus {
+  box-shadow: 0 0 0 3px #000;
+  outline: solid 3px #f9dc4a;
+  outline-offset: 3px;
+}
+@media screen and (min-width: 80em) {
+  .logo-link {
+    position: relative;
+  }
+  .logo-link::before {
+    background-color: #005a9c;
+    block-size: 0.1875rem;
+    content: "";
+    display: none;
+    inline-size: 100%;
+    inset-block-end: -0.1875rem;
+    inset-inline-start: 0;
+    position: absolute;
+  }
+  .logo-link:hover::before {
+    display: block;
+  }
+}
+
+.icon-link {
+  align-items: center;
+  color: #111;
+  display: flex;
+  min-block-size: 2.75rem;
+  text-decoration: none !important;
+}
+@media screen and (min-width: 80em) {
+  .icon-link {
+    block-size: 100%;
+    display: inline-flex;
+    justify-content: center;
+    min-inline-size: 2.75rem;
+  }
+}
+.icon-link::before {
+  inset-block-end: 0 !important;
+}
+.icon-link:visited, .icon-link:hover {
+  color: #111 !important;
+}
+.icon-link:focus {
+  background-color: #f9dc4a;
+  background-image: linear-gradient(to top, #000 3px, #f9dc4a 3px, #f9dc4a);
+  color: #000;
+}
+.icon-link .hide-at-max-width {
+  margin-inline-start: 0.625rem;
+}
+@media screen and (min-width: 80em) {
+  .icon-link .hide-at-max-width {
+    block-size: 1px;
+    border: 0;
+    clip: rect(0 0 0 0);
+    clip-path: inset(100%);
+    inline-size: 1px;
+    margin-inline-start: 0;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    white-space: nowrap;
+  }
+}
+
+.account-login {
+  flex-basis: 100%;
+  font-size: var(--w3c-text-01) !important;
+}
+@media screen and (min-width: 80em) {
+  .account-login {
+    flex-basis: auto;
+    padding-block: 0.625rem;
+  }
+}
+
+@media screen and (min-width: 80em) {
+  .global-nav__inner .top-nav-item > *:first-child {
+    block-size: 100%;
+    padding: 0.625rem 0.3125rem 0.4375rem !important;
+    position: relative;
+    white-space: nowrap;
+  }
+  .global-nav__inner .top-nav-item > *:first-child::before {
+    background-color: #005a9c;
+    block-size: 0.1875rem;
+    content: "";
+    display: none;
+    inline-size: 100%;
+    inset-block-end: -0.125rem;
+    inset-inline-start: 0;
+    position: absolute;
+  }
+  .global-nav__inner .top-nav-item > *:first-child:hover::before {
+    display: block;
+  }
+  .global-nav__inner .top-nav-item > *:first-child:focus {
+    background-color: #f9dc4a;
+    background-image: linear-gradient(to top, #000 3px, #f9dc4a 3px, #f9dc4a);
+    color: #000;
+  }
+  .global-nav__inner .top-nav-item > *:first-child:focus:hover::before {
+    display: none;
+  }
+}
+
+.global-nav__inner .nav__submenu {
+  display: none;
+}
+
+#archive-nav ul,
+#category-nav ul {
+  background-color: #fff;
+  block-size: 11.25rem;
+  border: solid 1px #cac9c9;
+  overflow: auto;
+}
+#archive-nav ul a, #archive-nav ul .heading-anchor,
+#category-nav ul a,
+#category-nav ul .heading-anchor {
+  display: block;
+  padding: 0.625rem;
+}
+
+/*------------------------------------*\
+    #Breadcrumbs
+    See: https://scottaohara.github.io/a11y_breadcrumbs/
+\*------------------------------------*/
+#breadcrumb {
+  padding-block: 0.625rem 0.9375rem;
+}
+#breadcrumb .l-cluster > * {
+  margin: 0 -0.3125rem;
+}
+#breadcrumb .l-cluster.l-cluster > * > * {
+  margin: 0;
+  margin-inline-start: 0.3125rem;
+  padding-inline-end: 0.9375rem;
+  position: relative;
+}
+
+.breadcrumbs li {
+  max-width: none;
+}
+
+.breadcrumbs a, .breadcrumbs .heading-anchor {
+  color: #111;
+  display: block;
+  font-size: var(--w3c-text-01);
+  padding-block: 0.6875rem;
+}
+.breadcrumbs a:visited, .breadcrumbs .heading-anchor:visited, .breadcrumbs a:hover, .breadcrumbs .heading-anchor:hover, .breadcrumbs a:active, .breadcrumbs .heading-anchor:active {
+  color: #111;
+}
+
+.breadcrumbs [aria-current] {
+  font-weight: 600;
+  text-decoration: none;
+}
+.breadcrumbs [aria-current]:hover, .breadcrumbs [aria-current]:focus {
+  outline-color: #111;
+}
+
+/**
+Separator chevron - see https://codepen.io/jonneal/pen/kptBs
+*/
+.breadcrumbs li:not(:last-child)::after {
+  block-size: 0.5em;
+  border-style: solid;
+  border-width: 0.1em 0.1em 0 0;
+  content: "";
+  display: block;
+  inline-size: 0.5em;
+  position: absolute;
+  right: 0.4em;
+  top: 50%;
+  transform: rotate(45deg) translateY(-50%);
+}
+
+[dir=rtl] .breadcrumbs li:not(:last-child)::after {
+  border-width: 0 0 0.1em 0.1em;
+  left: 0.1em;
+  right: auto;
+}
+
+/*------------------------------------*\
+    #Access control banner
+\*------------------------------------*/
+.banner.banner--access-control.acl-private, .banner.banner--access-control.acl-user {
+  background-color: #237978;
+  color: #fff;
+}
+.banner.banner--access-control.acl-private .icon, .banner.banner--access-control.acl-user .icon {
+  filter: invert(1);
+}
+
+.banner--access-control.acl-member {
+  background-color: #ddb0c8;
+  color: #000;
+}
+
+.banner--access-control.acl-team {
+  background-color: #ec7070;
+  color: #000;
+}
+
+/*------------------------------------*\
+    #Main
+\*------------------------------------*/
+/**
+1. We use left and right padding to add some minimum space between the
+contents of <main> and the edges of the parent element or viewport.
+To avoid making the content narrower than intended, we add an exception
+to our global box-sizing rule.
+ */
+main,
+#main {
+  box-sizing: content-box;
+  margin-inline: auto;
+  max-inline-size: 70rem;
+  padding-block: 0.5rem 3rem;
+  padding-inline: 5vw;
+  /* Remove bottom margin from last child of content area */
+}
+main > *:last-child,
+#main > *:last-child {
+  margin-block-end: 0;
+}
+@media screen and (min-width: 64em) {
+  main .content > article > *:last-child,
+  #main .content > article > *:last-child {
+    margin-block-end: 0;
+  }
+}
+
+/*------------------------------------*\
+    #Hero
+\*------------------------------------*/
+.hero {
+  background-color: #f8f8fb;
+}
+.hero .l-sidebar > *,
+.hero .l-sidebar > * > * {
+  margin: 0;
+}
+.hero .l-sidebar .sidebar {
+  flex-basis: 31.25rem;
+}
+.hero .l-sidebar .not-sidebar {
+  min-inline-size: 50%;
+  padding-block-end: 1.875rem;
+}
+@media screen and (min-width: 70em) {
+  .hero .l-sidebar .not-sidebar > * {
+    max-inline-size: 31.5rem;
+  }
+}
+.hero img {
+  margin-block-end: 2.5rem;
+  margin-inline: auto;
+}
+@media screen and (min-width: 48em) {
+  .hero img {
+    max-inline-size: 31.25rem;
+  }
+}
+
+.hero + * {
+  margin-block-start: 3.125rem;
+}
+
+.hero--video .sidebar__video {
+  margin-inline: auto;
+  max-inline-size: 31.25rem;
+  position: relative;
+}
+
+.hero--video video {
+  display: block;
+}
+
+.hero--listing {
+  background-color: #fff;
+  margin-block-end: 1.25rem;
+  padding-block-end: 2.5rem;
+}
+.hero--listing p {
+  max-inline-size: none;
+}
+.hero--listing + * {
+  margin-block-start: 0;
+}
+
+@supports (display: grid) {
+  .hero--listing .filters > div {
+    align-items: flex-start;
+    display: grid;
+    gap: 1.25rem;
+    grid-template-columns: repeat(auto-fit, minmax(clamp(min(100%, 16rem), 33%, 18.3125rem), 1fr));
+  }
+  .hero--listing .filters > div > fieldset,
+  .hero--listing .filters > div > .input-group-wrap {
+    align-self: end;
+  }
+  .hero--listing .filters .input-group .button {
+    align-self: center;
+  }
+}
+.hero--listing .filters .button--ghost {
+  padding-inline: 0.1875rem;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.hero--listing .filters .button--ghost:hover {
+  box-shadow: 0 0 4px 2px rgba(84, 84, 84, 0.25);
+}
+.hero--listing .filters .button--ghost:focus {
+  border-color: inherit;
+  box-shadow: inset 0 0 0 2px;
+  outline: solid 3px #f9dc4a;
+  outline-offset: 0;
+}
+
+.hero--listing * + .browse {
+  margin-block-start: 0.3125rem;
+}
+
+.hero--listing .browse {
+  margin: -0.625rem;
+  overflow: visible;
+}
+.hero--listing .browse > * {
+  display: flex;
+  flex-wrap: wrap;
+}
+.hero--listing .browse > * > * {
+  padding: 0.625rem;
+}
+.hero--listing .browse h2 {
+  font-size: var(--w3c-text-0);
+  font-weight: normal;
+}
+
+/*------------------------------------*\
+    #Translations
+\*------------------------------------*/
+.translations {
+  background-color: #f8f8fb;
+  font-size: var(--w3c-text-01);
+  padding: 0.625rem 1.25rem;
+}
+
+.translations .l-sidebar > * {
+  align-items: center;
+}
+
+.translations .l-sidebar .sidebar {
+  flex-basis: auto;
+}
+
+.translations .l-sidebar .not-sidebar {
+  min-inline-size: 70%;
+}
+
+.translations.l-cluster > * {
+  margin: 0 -0.625rem;
+}
+.translations.l-cluster > * > * {
+  margin: 0 0.625rem;
+}
+
+.translations + * {
+  margin-block-start: 1.875rem;
+}
+
+/*
+ * For the TR card, the language subheading is h5 for Family view and h3 for Search results view
+ */
+.translations h2,
+.translations h3,
+.translations h5,
+.translations .sidebar span {
+  font-size: var(--w3c-text-01);
+  font-weight: normal;
+  padding-block: 0.625rem;
+}
+
+.translations a, .translations .heading-anchor {
+  display: block;
+  padding-block: 0.625rem;
+}
+
+/*------------------------------------*\
+    #Table of contents (TOC)
+\*------------------------------------*/
+.toc + * {
+  margin-block-start: 1.875rem;
+}
+@media screen and (min-width: 70em) {
+  .toc + * {
+    margin-block-start: 5rem;
+  }
+}
+
+.toc h2 {
+  font-size: var(--w3c-text-0);
+  font-weight: normal;
+}
+
+.toc > ul {
+  border-inline-start: solid 3px #005a9c;
+}
+
+.toc ul {
+  padding-inline-start: 0.9375rem;
+}
+.toc ul ul {
+  list-style: circle inside;
+  margin-block-start: 0.75rem;
+  padding-inline-start: 1.875rem;
+}
+
+.toc li + li {
+  margin-block-start: 0.75rem;
+}
+
+.toc li a, .toc li .heading-anchor {
+  display: inline-block;
+}
+
+/*------------------------------------*\
+    #Quotes
+\*------------------------------------*/
+.component--quote {
+  color: #75336c;
+  font-size: var(--w3c-text-1);
+  font-weight: bold;
+  margin-inline-end: 0;
+  margin-inline-start: 0.625rem;
+  padding: 1.25rem;
+  position: relative;
+}
+.component--quote::before {
+  background-color: #75336c;
+  border-radius: 0.3125rem;
+  inline-size: 0.625rem;
+  inset-inline-start: -0.625rem;
+}
+.component--quote > * {
+  max-inline-size: 39.375rem;
+}
+
+/*------------------------------------*\
+    #Notes
+\*------------------------------------*/
+.note {
+  border-width: 5px;
+  margin-block-end: 1.875rem;
+  max-inline-size: 47rem;
+}
+.note > *:first-child {
+  margin-block-start: 0;
+}
+.note > *:last-child {
+  margin-block-end: 0;
+}
+
+.note--error {
+  border-color: #a82615;
+}
+
+.note--info {
+  border-color: #002a56;
+}
+
+.note--success {
+  border-color: #046704;
+}
+
+.note--warning {
+  border-color: #c28605;
+}
+
+/*------------------------------------*\
+    #Columns
+\*------------------------------------*/
+.component--columns {
+  overflow: hidden;
+}
+.component--columns :where(h2, h3, h4, h5, h6, p, li) {
+  max-inline-size: none;
+}
+
+@media screen and (min-width: 48em) {
+  .component--columns > ul {
+    display: flex;
+    flex-wrap: wrap;
+    margin: -1.5%;
+  }
+}
+.component--columns > ul li + li {
+  margin-block-start: 1rem;
+}
+@media screen and (min-width: 48em) {
+  .component--columns > ul li + li {
+    margin-block-start: 0;
+  }
+}
+
+@media screen and (min-width: 48em) {
+  .component--columns--images > ul > li {
+    flex: 1 0 33%;
+    max-inline-size: 50%;
+    padding: 1.5%;
+  }
+}
+@media screen and (min-width: 48em) {
+  .component--columns--images li:nth-last-child(n+4):nth-last-child(-n+4):first-child,
+  .component--columns--images li:nth-last-child(n+4):nth-last-child(-n+4):first-child ~ li {
+    flex-basis: 50%;
+  }
+}
+
+@media screen and (min-width: 48em) {
+  .component--columns--icons > ul > li {
+    flex: 1 0 50%;
+    max-inline-size: 50%;
+    padding: 1.5%;
+  }
+}
+@media screen and (min-width: 70em) {
+  .component--columns--icons > ul > li {
+    flex-basis: 25%;
+  }
+}
+@media screen and (min-width: 70em) {
+  .component--columns--icons li:nth-last-child(n+5), .component--columns--icons li:nth-last-child(n+5) ~ li {
+    flex-basis: 33%;
+  }
+}
+@media screen and (min-width: 70em) {
+  .component--columns--icons li:nth-last-child(n+7), .component--columns--icons li:nth-last-child(n+7) ~ li {
+    flex-basis: 25%;
+  }
+}
+
+/*------------------------------------*\
+    #Cards
+\*------------------------------------*/
+.card:not(.card--user, .card--post, .card--event) {
+  background-color: #fff;
+  block-size: 100%;
+  border-radius: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.card__text {
+  flex-grow: 1;
+  order: 1;
+  padding-block-start: 1rem;
+}
+
+.card__text > a:not([class]), .card__text > .heading-anchor {
+  align-self: flex-start;
+  padding-block: 0.625rem;
+}
+
+.card__heading {
+  font-size: var(--w3c-text-1);
+  margin-block-start: 0;
+}
+
+.card__image img {
+  border-radius: 0.25rem;
+}
+
+.card__link {
+  border: 0;
+  color: #111;
+  text-decoration: none;
+}
+.card__link:hover {
+  text-decoration: underline;
+}
+.card__link:focus {
+  background-color: #f9dc4a;
+  background-image: linear-gradient(to top, #000 3px, #f9dc4a 3px, #f9dc4a);
+  color: #000;
+  text-decoration: none;
+}
+
+/* Card variants */
+:where(.card--event, .card--member, .card--group) {
+  box-shadow: -1px 1px 4px 0 rgba(55, 70, 95, 0.12);
+}
+
+.card--event {
+  border-inline-start: solid 0.375rem;
+  padding: 1rem;
+}
+.card--event.conference {
+  border-color: #237978;
+}
+.card--event.meeting {
+  border-color: #1bc0d7;
+}
+.card--event.talk {
+  border-color: #002a56;
+}
+.card--event.workshop {
+  border-color: #e93737;
+}
+.card--event + .card--event {
+  margin-block-start: 1rem;
+}
+.card--event .card__text {
+  padding-block-start: 0;
+}
+.card--event .l-cluster > * {
+  align-items: center;
+  font-size: var(--w3c-text-01);
+}
+.card--event .card__image {
+  align-self: flex-start;
+  block-size: 6.25rem;
+  inline-size: 6.25rem;
+}
+@media screen and (min-width: 64em) {
+  .card--event .card__image {
+    block-size: 12.5rem;
+    inline-size: 12.5rem;
+  }
+}
+.card--event .card__image img {
+  border-radius: 0;
+}
+.card--event .date-location {
+  display: flex;
+  flex-wrap: nowrap;
+  font-size: var(--w3c-text-01);
+  max-inline-size: 18.75rem;
+}
+.card--event .date-location img {
+  inline-size: 1.125rem;
+  margin-inline-end: 0.75rem;
+}
+.card--event .date-location p:first-child {
+  margin-block-start: 0;
+}
+.card--event .date-location p:last-child {
+  margin-block-end: 0;
+}
+.card--event .date-location > div:first-child {
+  flex: 0 0 auto;
+}
+.card--event .date-location > div:last-child {
+  border-inline-start: solid 1px #cac9c9;
+  padding-inline-start: 0.75rem;
+}
+
+:nth-child(1 of .card--event) {
+  margin-block-start: 2.5rem;
+}
+
+.card--post {
+  margin-block-end: 1.875rem;
+}
+.card--post + .card--post {
+  border-block-start: solid 1px #cac9c9;
+}
+.card--post .sidebar {
+  flex-basis: auto;
+}
+.card--post .sidebar .l-frame {
+  block-size: 9.125rem;
+  inline-size: 12.5rem;
+}
+.card--post .sidebar .l-frame img {
+  border-radius: 0.25rem;
+}
+.card--post .not-sidebar {
+  min-inline-size: calc(70% - 1.5rem);
+}
+.card--post .not-sidebar > *:first-child {
+  margin-block-start: 2.5rem;
+}
+.card--post .not-sidebar > *:first-child a, .card--post .not-sidebar > *:first-child .heading-anchor {
+  color: #000;
+}
+.card--post .not-sidebar > *:first-child a .icon, .card--post .not-sidebar > *:first-child .heading-anchor .icon {
+  block-size: 0.8em;
+  inline-size: 0.8em;
+}
+.card--post .l-cluster > * {
+  align-items: center;
+}
+.card--post .l-cluster a, .card--post .l-cluster .heading-anchor {
+  display: inline-block;
+  padding: 0.75rem 0;
+}
+
+.card--group {
+  padding: 1rem;
+}
+.card--group + .card--group {
+  margin-block-start: 1rem;
+}
+.card--group .sidebar {
+  flex-basis: auto;
+}
+.card--group .not-sidebar {
+  min-inline-size: calc(70% - 1.5rem);
+}
+.card--group .card__text {
+  padding-block-start: 0;
+}
+.card--group dl {
+  font-size: var(--w3c-text-01);
+}
+.card--group dl dd {
+  margin-inline-start: 0;
+}
+
+.card--user {
+  padding-block: 2.5rem 1.875rem;
+}
+.card--user + .card--user {
+  border-block-start: solid 1px #cac9c9;
+}
+.card--user .sidebar {
+  flex-basis: auto;
+  order: -1;
+}
+.card--user .sidebar img {
+  inline-size: 6.25rem;
+}
+.card--user .not-sidebar {
+  min-inline-size: calc(70% - 1.5rem);
+}
+.card--user .not-sidebar > *:first-child {
+  margin-block-start: 0;
+}
+.card--user .card__heading {
+  font-size: var(--w3c-text-3);
+}
+.card--user .l-cluster > * {
+  align-items: center;
+}
+.card--user .l-cluster a, .card--user .l-cluster .heading-anchor {
+  align-items: center;
+  display: inline-flex;
+  padding: 0;
+}
+.card--user .groups .sidebar {
+  flex-basis: auto;
+}
+.card--user .groups .sidebar h3 {
+  font-size: var(--w3c-text-0);
+  font-weight: normal;
+  line-height: 1.5em;
+  margin-block-start: 0.625rem;
+}
+
+.card--member {
+  padding: 1rem;
+}
+.card--member + .card--member {
+  margin-block-start: 1rem;
+}
+.card--member .sidebar {
+  flex-basis: auto;
+}
+.card--member .not-sidebar {
+  min-inline-size: calc(70% - 1.5rem);
+}
+.card--member .not-sidebar h2 {
+  font-size: var(--w3c-text-1);
+}
+.card--member .logo--member {
+  margin-inline: auto;
+}
+.card--member .card__text {
+  padding-block-start: 0;
+}
+.card--member .card__text > * {
+  max-inline-size: 41.25rem;
+}
+.card--member .card__text > *:first-child {
+  margin-block-start: 0;
+}
+.card--member .card--user {
+  padding-block: 1.25rem 0.9375rem;
+}
+.card--member .card--user .avatar {
+  block-size: 4.375rem;
+  inline-size: 4.375rem;
+}
+.card--member .card--user h3 {
+  font-size: var(--w3c-text-0);
+}
+.card--member :nth-child(1 of .card--user) {
+  padding-block-start: 0.9375rem;
+}
+.card--member :nth-last-child(1 of .card--user) {
+  padding-block-end: 0;
+}
+
+.card--member:has(.card--user) .card__text > * {
+  max-inline-size: none;
+}
+
+:nth-child(1 of .card--member) {
+  margin-block-start: 2.5rem;
+}
+
+.l-sidebar.card.dense .not-sidebar * {
+  max-inline-size: none;
+}
+.l-sidebar.card.dense .not-sidebar :where(h2, h3, h4, h5, h6) {
+  font-size: var(--w3c-text-0);
+}
+
+/*------------------------------------*\
+    #Tag list
+\*------------------------------------*/
+.tag-list.tag-list {
+  margin: -0.625rem;
+}
+.tag-list.tag-list li {
+  margin: 0.625rem;
+}
+
+.tag {
+  background-color: rgba(206, 205, 205, 0.5);
+  background-clip: padding-box;
+  border: solid 2px rgba(206, 205, 205, 0.5);
+  border-radius: 0.25rem;
+  display: inline-block;
+  font-size: var(--w3c-text-01);
+  padding: 0.15625rem 0.3125rem 0.15625rem 0.3125rem;
+}
+
+/*
+Makes the tag links selectable if card link is stretched
+across entire card using pseudo element
+ */
+a.tag, .tag.heading-anchor {
+  position: relative;
+  text-decoration: underline;
+  z-index: 10;
+}
+
+/*------------------------------------*\
+    #Fifty-fifty
+\*------------------------------------*/
+@media screen and (min-width: 48em) {
+  .component--fifty-fifty {
+    align-items: flex-start;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+}
+
+@media screen and (min-width: 48em) {
+  .component--fifty-fifty__text {
+    flex-basis: 52%;
+  }
+}
+@media screen and (min-width: 64em) {
+  .component--fifty-fifty__text {
+    flex-basis: 45%;
+  }
+}
+@media screen and (min-width: 48em) {
+  .component--fifty-fifty__text > *:first-child {
+    margin-block-start: 0;
+  }
+}
+
+.component--fifty-fifty__text .l-box {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  margin-block-start: 1.875rem;
+}
+.component--fifty-fifty__text .l-box > * + * {
+  margin-block-start: 1rem;
+}
+.component--fifty-fifty__text .l-box a, .component--fifty-fifty__text .l-box .heading-anchor {
+  align-self: flex-start;
+}
+
+@media screen and (min-width: 48em) {
+  .component--fifty-fifty .image,
+  .component--fifty-fifty .illustration {
+    flex-basis: 45%;
+  }
+}
+
+.component--fifty-fifty .image img {
+  border-radius: 0.25rem;
+}
+
+.component--fifty-fifty .image .l-frame {
+  padding-block-end: 66.67%;
+}
+@media screen and (min-width: 48em) {
+  .component--fifty-fifty .image .l-frame {
+    padding-block-end: 100%;
+  }
+}
+
+.component--fifty-fifty .illustration .l-frame {
+  padding-block-end: 75%;
+}
+
+@media screen and (min-width: 48em) {
+  .component--fifty-fifty.reversed .component--fifty-fifty__text {
+    order: -1;
+  }
+}
+
+/*------------------------------------*\
+    #Evangelists
+\*------------------------------------*/
+@media screen and (min-width: 64em) {
+  .component--evangelists {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+}
+
+@media screen and (min-width: 64em) {
+  .component--evangelists__text {
+    flex-basis: 45%;
+  }
+}
+.component--evangelists__text h2 {
+  margin-block-start: 0;
+}
+
+.component--evangelists__list {
+  background-color: #002a56;
+  border-radius: 0.375rem;
+  color: #fff;
+  overflow: hidden;
+  padding-block-start: 1.5rem;
+}
+@media screen and (min-width: 64em) {
+  .component--evangelists__list {
+    flex-basis: 45%;
+  }
+}
+.component--evangelists__list h3 {
+  font-size: var(--w3c-text-1);
+  margin-block-start: 0;
+  padding-inline: 1.5rem;
+}
+.component--evangelists__list .l-box {
+  padding: 1.5rem;
+}
+.component--evangelists__list li + li {
+  border-block-start: solid 1px #649bc5;
+}
+.component--evangelists__list p {
+  margin-block: 0;
+}
+.component--evangelists__list p + p {
+  margin-block-start: 0.75em;
+}
+.component--evangelists__list .sidebar {
+  flex-basis: auto;
+}
+.component--evangelists__list .not-sidebar {
+  min-inline-size: calc(65% - 1.5rem);
+}
+.component--evangelists__list a, .component--evangelists__list .heading-anchor {
+  color: #fff;
+}
+.component--evangelists__list a:visited, .component--evangelists__list .heading-anchor:visited, .component--evangelists__list a:hover, .component--evangelists__list .heading-anchor:hover, .component--evangelists__list a:active, .component--evangelists__list .heading-anchor:active {
+  color: #fff;
+}
+.component--evangelists__list a:focus, .component--evangelists__list .heading-anchor:focus {
+  background-color: #f9dc4a;
+  background-image: linear-gradient(to top, #000 3px, #f9dc4a 3px, #f9dc4a);
+  color: #000;
+}
+
+/*------------------------------------*\
+    #Actitivy
+\*------------------------------------*/
+.component--activity {
+  background-color: #f8f8fb;
+  padding-block: 3.125rem;
+}
+
+@media screen and (min-width: 64em) {
+  .component--activity .component--columns--images li:nth-last-child(n+4):nth-last-child(-n+4):first-child,
+  .component--activity .component--columns--images li:nth-last-child(n+4):nth-last-child(-n+4):first-child ~ li {
+    flex-basis: 25%;
+  }
+}
+
+.component--activity .card {
+  background-color: #fff;
+  border-radius: 0.25rem;
+  box-shadow: -1px 1px 4px 0 rgba(55, 70, 95, 0.12);
+  overflow: hidden;
+}
+
+.component--activity .card__text {
+  padding: 1.25rem;
+}
+
+.component--activity .card__image img {
+  border-radius: 0;
+}
+
+/*------------------------------------*\
+    #Collapsible sections
+\*------------------------------------*/
+.component--collapsibles > div {
+  background-color: #fff;
+  border-radius: 0.375rem;
+  box-shadow: -0.0625rem 0.0625rem 0.25rem rgba(55, 70, 95, 0.12);
+  padding: 1.5625rem;
+}
+.component--collapsibles > div + div {
+  margin-top: 1rem;
+}
+
+h3[data-heading=collapsibles] {
+  font-size: var(--w3c-text-1);
+  line-height: 1.5;
+  margin-block-start: 0;
+  max-inline-size: none;
+}
+
+[data-heading=collapsibles] > * {
+  display: block;
+  font-size: var(--w3c-text-01);
+  font-weight: normal;
+}
+
+[data-heading=collapsibles] + * > * {
+  max-inline-size: 41.25rem;
+}
+
+/*------------------------------------*\
+    #Group list
+\*------------------------------------*/
+.component--group-list {
+  background-color: #f8f8fb;
+  margin-block: 0;
+  padding-block: 3.125rem;
+}
+
+.component--group-list__intro {
+  max-inline-size: 41.25rem;
+}
+.component--group-list__intro > *:first-child {
+  margin-block-start: 0;
+}
+
+/*------------------------------------*\
+    #Members grid
+\*------------------------------------*/
+.component--members {
+  background-color: #f8f8fb;
+  padding-block: 1.5625rem;
+}
+
+.component--members .l-center > h2,
+.component--members .l-center > p {
+  max-inline-size: 41.25rem;
+}
+
+.component--members__grid {
+  display: flex;
+  flex-wrap: wrap;
+  margin-block-end: 1rem;
+}
+@supports (display: grid) {
+  .component--members__grid {
+    display: grid;
+    grid-auto-rows: minmax(10.625rem, auto);
+    grid-gap: 1.25rem;
+    grid-template-columns: repeat(auto-fill, minmax(10.625rem, 1fr));
+  }
+}
+
+.component--members__grid figure {
+  align-items: center;
+  background-color: #fff;
+  display: flex;
+  justify-content: center;
+  margin-block-end: 1.25rem;
+  margin-inline: 0.625rem;
+  flex: 1 1 10.625rem;
+  position: relative;
+}
+@supports (display: grid) {
+  .component--members__grid figure {
+    margin: 0;
+  }
+}
+
+.component--members__grid figcaption {
+  font-size: var(--w3c-text-01);
+  font-weight: bold;
+  margin: 0.625rem;
+  text-align: center;
+}
+
+.component--members__grid .l-box {
+  max-inline-size: 10.625rem;
+}
+
+.component--members__grid + a, .component--members__grid + .heading-anchor {
+  align-self: flex-start;
+}
+
+.component--members__cta > * {
+  align-items: center;
+  margin-block-start: 1em;
+}
+
+.component--members__cta > * > *:not(a):not(.heading-anchor) {
+  flex-basis: 100%;
+}
+@media screen and (min-width: 48em) {
+  .component--members__cta > * > *:not(a):not(.heading-anchor) {
+    flex-basis: auto;
+  }
+}
+
+/*------------------------------------*\
+    #Slide
+\*------------------------------------*/
+@media screen and (min-width: 64em) {
+  .slide {
+    align-items: flex-start;
+    display: flex;
+    justify-content: space-between;
+    margin-block: 0;
+  }
+}
+
+.slide > * + * {
+  margin-top: 1rem;
+}
+@media screen and (min-width: 64em) {
+  .slide > * + * {
+    margin-top: 0;
+  }
+}
+
+@media screen and (min-width: 64em) {
+  .slide__quote,
+  .slide__cite {
+    flex-basis: 45%;
+  }
+}
+
+.slide__quote {
+  background: url("../images/quote-bg.png") no-repeat 0 0;
+  font-size: var(--w3c-text-2);
+  font-weight: bold;
+  margin-block: 0;
+  margin-inline-start: 2.1875rem;
+  padding-block-start: 0.9375rem;
+  position: relative;
+}
+.slide__quote::before {
+  background-color: #75336c;
+  block-size: 100%;
+  border-radius: 0.3125rem;
+  content: "";
+  inline-size: 0.25rem;
+  inset-block-start: 0;
+  inset-inline-start: -2.0625rem;
+  position: absolute;
+}
+.slide__quote > * {
+  max-inline-size: 41.25rem;
+}
+
+[dir=rtl] .slide__quote {
+  background-position-x: 100%;
+}
+
+.slide__cite {
+  font-size: var(--w3c-text-01);
+  padding-inline-start: 0.3125rem;
+}
+.slide__cite.l-sidebar .sidebar {
+  flex-basis: auto;
+}
+.slide__cite.l-sidebar .not-sidebar {
+  align-items: flex-start;
+  min-inline-size: calc(70% - 1.5rem);
+}
+.slide__cite.l-sidebar .not-sidebar p:first-child {
+  font-weight: bold;
+}
+
+.slide__logo {
+  background-color: #fff;
+  block-size: 7.5rem;
+  inline-size: 11.25rem;
+  padding: 1.5rem;
+  position: relative;
+}
+.slide__logo > img {
+  inset-block-end: 0;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  inset-inline-start: 0;
+  margin: auto;
+  max-inline-size: 100%;
+  position: absolute;
+}
+@supports ((-o-object-fit: contain) or (object-fit: contain)) {
+  .slide__logo > img {
+    block-size: 100%;
+    -o-object-fit: contain;
+       object-fit: contain;
+    position: static;
+  }
+}
+
+/*------------------------------------*\
+    #Slider core
+\*------------------------------------*/
+.component--slider {
+  background-color: #f8f8fb;
+  padding-block: 3.125rem;
+}
+.component--slider h2 {
+  font-size: var(--w3c-text-0);
+  font-weight: normal;
+  margin-block-start: 0;
+}
+.component--slider ul > li {
+  max-inline-size: none;
+}
+.component--slider ul > li + li {
+  margin-block-start: 2rem;
+}
+
+/*------------------------------------*\
+    #Crosslinks (You may also like)
+\*------------------------------------*/
+.crosslinks {
+  background-color: #002a56;
+  color: #fff;
+  padding-block: 3.125rem;
+}
+
+.crosslinks .component--columns {
+  margin-block: 0;
+}
+
+.crosslinks .component--columns__intro > *:first-child {
+  margin-block-start: 0;
+}
+.crosslinks .component--columns__intro h2 {
+  font-size: var(--w3c-text-3);
+}
+.crosslinks .component--columns__intro a, .crosslinks .component--columns__intro .heading-anchor,
+.crosslinks .component--columns__intro a:visited,
+.crosslinks .component--columns__intro a:hover,
+.crosslinks .component--columns__intro a:active {
+  color: #fff;
+}
+.crosslinks .component--columns__intro a:focus, .crosslinks .component--columns__intro .heading-anchor:focus {
+  color: #111;
+}
+
+@media screen and (min-width: 43.75em) {
+  .crosslinks .component--columns--images > ul {
+    display: flex;
+    flex-wrap: wrap;
+    margin: -1.5%;
+  }
+}
+@media screen and (min-width: 43.75em) {
+  .crosslinks .component--columns--images > ul > li {
+    flex: 1 0 50%;
+    max-inline-size: 50%;
+    padding: 1.5%;
+  }
+}
+
+@media screen and (min-width: 43.75em) {
+  .crosslinks .component--columns--images li:nth-last-child(n+3):nth-last-child(-n+3):first-child,
+  .crosslinks .component--columns--images li:nth-last-child(n+3):nth-last-child(-n+3):first-child ~ li {
+    flex-basis: 33%;
+  }
+}
+@media screen and (min-width: 64em) {
+  .crosslinks .component--columns--images li:nth-last-child(n+4):nth-last-child(-n+4):first-child,
+  .crosslinks .component--columns--images li:nth-last-child(n+4):nth-last-child(-n+4):first-child ~ li {
+    flex-basis: 25%;
+  }
+}
+
+.crosslinks .card {
+  background-color: #fff;
+  border-radius: 0.25rem;
+  color: #111;
+  overflow: hidden;
+}
+
+.crosslinks .card__text {
+  padding: 1.25rem;
+}
+
+.crosslinks .card__image img {
+  border-radius: 0;
+}
+
+/*------------------------------------*\
+    #Search
+\*------------------------------------*/
+input[type=search] {
+  max-inline-size: none;
+  position: relative;
+  z-index: 1;
+}
+
+.l-sidebar.search {
+  overflow: visible;
+}
+
+.l-sidebar.search > * {
+  margin: -0.75rem;
+}
+
+.l-sidebar.search > * > * {
+  margin: 0.75rem;
+}
+
+.l-sidebar.search form .sidebar {
+  flex-basis: auto;
+}
+
+.l-sidebar.search form .not-sidebar {
+  min-inline-size: 70%;
+}
+
+.l-sidebar.search input[type=search] {
+  max-inline-size: none;
+}
+
+@supports (padding-inline-start: 1em) {
+  input[type=search] {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs/%3E%3Cpath d='M505 442.7L405.3 343c-4.5-4.5-10.6-7-17-7H372c27.6-35.3 44-79.7 44-128C416 93.1 322.9 0 208 0S0 93.1 0 208s93.1 208 208 208c48.3 0 92.7-16.4 128-44v16.3c0 6.4 2.5 12.5 7 17l99.7 99.7c9.4 9.4 24.6 9.4 33.9 0l28.3-28.3c9.4-9.4 9.4-24.6.1-34zM208 336c-70.7 0-128-57.2-128-128 0-70.7 57.2-128 128-128 70.7 0 128 57.2 128 128 0 70.7-57.2 128-128 128z'/%3E%3C/svg%3E");
+    background-position: center left 0.5em;
+    background-repeat: no-repeat;
+    background-size: 1.25rem;
+    padding-inline-start: 2.5rem;
+  }
+  [dir=rtl] input[type=search] {
+    background-position: center right 0.5em;
+  }
+}
+/*------------------------------------*\
+    #Meta info
+\*------------------------------------*/
+.meta {
+  border-block: solid 1px #cac9c9;
+  margin-block-end: 3.125rem;
+  padding: 1.5rem 0;
+}
+.meta dl {
+  max-inline-size: none;
+}
+
+.meta + .component {
+  margin-block-start: 0;
+}
+
+/*------------------------------------*\
+    #Family/Series list
+\*------------------------------------*/
+.family-grouping {
+  padding-block-start: 1.75rem;
+}
+.family-grouping > *:first-child {
+  margin-block-start: 0;
+}
+
+/*------------------------------------*\
+    #Maturity levels
+\*------------------------------------*/
+.maturity-level {
+  background-color: rgba(206, 205, 205, 0.5);
+  border-radius: 0.25rem;
+  display: inline-block;
+  padding: 0.15625rem 0.3125rem;
+}
+
+.maturity-level--note {
+  background-color: transparent;
+}
+
+.maturity-level--highlighted {
+  background-color: #005a9c;
+  color: #fff;
+}
+
+/*------------------------------------*\
+    #Pagination
+\*------------------------------------*/
+.pagination {
+  margin-block-start: 2.5rem;
+}
+
+.l-cluster.pagination > * {
+  margin-block: 0;
+}
+
+.l-cluster.pagination > * > * {
+  margin-block: 0;
+}
+
+.pagination + * {
+  border-block-start: solid 1px #cac9c9;
+  margin-block-start: 2.0625rem;
+}
+
+@media screen and (min-width: 64em) {
+  .pagination__list {
+    justify-content: center;
+  }
+}
+.pagination__list a, .pagination__list .heading-anchor {
+  color: #000;
+  display: block;
+  font-size: var(--w3c-text-01);
+  text-decoration: none;
+  padding: 0.6875rem 1.125rem;
+}
+.pagination__list a:visited, .pagination__list .heading-anchor:visited {
+  color: #000;
+}
+.pagination__list a:focus, .pagination__list .heading-anchor:focus {
+  background-color: #f9dc4a;
+  background-image: linear-gradient(to top, #000 3px, #f9dc4a 3px, #f9dc4a);
+  color: #000;
+  text-decoration: none;
+}
+.pagination__list a[href]:hover, .pagination__list [href].heading-anchor:hover {
+  text-decoration: underline;
+}
+.pagination__list a[href][aria-current], .pagination__list [href][aria-current].heading-anchor {
+  background-color: #005a9c;
+  color: #fff;
+  font-weight: bold;
+}
+.pagination__list a[href][aria-current]:hover, .pagination__list [href][aria-current].heading-anchor:hover {
+  color: #fff;
+  text-decoration: none;
+}
+.pagination__list a[href][aria-current]:focus, .pagination__list [href][aria-current].heading-anchor:focus {
+  color: #000;
+}
+
+/*------------------------------------*\
+    #RSS feed
+\*------------------------------------*/
+.rss {
+  margin-block-start: 2.5rem;
+}
+.rss > *:first-child {
+  margin-block-start: 0;
+}
+.rss a, .rss .heading-anchor {
+  padding-block: 0.625rem;
+}
+
+/*------------------------------------*\
+    #Comments
+\*------------------------------------*/
+.comments {
+  background-color: #f8f8fb;
+  padding-block: 3.125rem;
+}
+.comments h2 {
+  font-size: var(--w3c-text-3);
+  margin-block-start: 0;
+}
+
+.comment-list {
+  padding-inline-start: 0;
+}
+.comment-list li {
+  max-inline-size: none;
+}
+.comment-list > li {
+  border-block-end: solid 1px #cac9c9;
+  padding-block-end: 3.125rem;
+}
+.comment-list > li + li {
+  margin-block-start: 1.25rem;
+}
+
+.l-sidebar.comment {
+  overflow: visible;
+}
+
+.l-sidebar.comment,
+.l-sidebar.comment-form-wrap {
+  overflow: visible;
+}
+.l-sidebar.comment .sidebar,
+.l-sidebar.comment-form-wrap .sidebar {
+  flex-basis: auto;
+  order: -1;
+}
+.l-sidebar.comment .sidebar img,
+.l-sidebar.comment-form-wrap .sidebar img {
+  inline-size: 3.125rem;
+}
+.l-sidebar.comment .not-sidebar,
+.l-sidebar.comment-form-wrap .not-sidebar {
+  min-inline-size: calc(80% - 1.5rem);
+}
+
+.reply-list.reply-list {
+  margin-inline-start: 4.375rem;
+  padding-inline-start: 1.875rem;
+  position: relative;
+}
+.reply-list.reply-list::before {
+  background-color: #005a9c;
+  block-size: 100%;
+  border-radius: 0.1875rem;
+  content: "";
+  inline-size: 0.1875rem;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  position: absolute;
+}
+.reply-list.reply-list > li {
+  border-block-start: solid 1px #cac9c9;
+}
+
+.reply-list .comment {
+  padding-block-start: 1.25rem;
+}
+
+.comment__author {
+  font-size: var(--w3c-text-0);
+  font-weight: bold;
+}
+
+.comment__body {
+  max-inline-size: 41.25rem;
+}
+
+[data-replylink] {
+  align-self: flex-start;
+  font-size: var(--w3c-text-01);
+  padding-block: 0.6875rem;
+}
+
+#respond > div:first-of-type {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+#comment-form {
+  max-inline-size: 41.25rem;
+}
+#comment-form .l-switcher {
+  overflow: visible;
+}
+#comment-form .l-switcher > * {
+  align-items: flex-end;
+  margin: -0.625rem;
+}
+#comment-form .l-switcher > * > * {
+  inline-size: calc(435600px - 66000%);
+  padding: 0.625rem;
+}
+
+/*------------------------------------*\
+    #Pre-footer items
+\*------------------------------------*/
+.pre-footer .l-switcher {
+  margin: -1.25rem;
+}
+
+.pre-footer .l-switcher > * > * {
+  inline-size: calc(846400px - 92000%);
+  margin-block-start: 2.5rem;
+  min-inline-size: 33.333%;
+  padding: 1.25rem;
+}
+
+.pre-footer .l-switcher > * > * > *:first-child {
+  margin-block-start: 0;
+}
+
+/*------------------------------------*\
+    #Global footer
+\*------------------------------------*/
+.global-footer {
+  border-block-start: solid 1px #cac9c9;
+  padding-block: 1.25rem 1.5625rem;
+}
+.global-footer a, .global-footer .heading-anchor,
+.global-footer .copyright {
+  font-size: var(--w3c-text-01);
+}
+.global-footer a, .global-footer .heading-anchor {
+  color: #111;
+}
+.global-footer a:visited, .global-footer .heading-anchor:visited, .global-footer a:hover, .global-footer .heading-anchor:hover, .global-footer a:active, .global-footer .heading-anchor:active {
+  color: #111;
+}
+
+.global-footer__links {
+  display: flex;
+  flex-wrap: wrap;
+}
+.global-footer__links > ul {
+  display: flex;
+  flex-wrap: wrap;
+}
+@media screen and (min-width: 64em) {
+  .global-footer__links > ul {
+    margin-inline-start: auto;
+  }
+}
+.global-footer__links .l-cluster > * {
+  margin: 0 -0.625rem;
+}
+.global-footer__links .l-cluster.l-cluster > * > * {
+  margin: 0 0.625rem;
+}
+.global-footer__links a:not([class]), .global-footer__links .heading-anchor {
+  display: block;
+  padding-block: 0.75rem;
+}
+.global-footer__links .with-icon--larger {
+  padding: 0.75rem;
+}
+.global-footer__links .with-icon--larger img {
+  block-size: 1.25rem;
+  inline-size: 1.25rem;
+}
+.global-footer__links .with-icon--larger:focus {
+  background-color: #f9dc4a;
+  background-image: linear-gradient(to top, #000 3px, #f9dc4a 3px, #f9dc4a);
+}
+
+/*------------------------------------*\
+    #Templates
+\*------------------------------------*/
+/*------------------------------------*\
+    #Default page
+\*------------------------------------*/
+.default .content {
+  max-inline-size: 47rem;
+}
+
+@supports (grid-column-gap: 8%) {
+  .default .content {
+    max-inline-size: none;
+  }
+  @media screen and (min-width: 64em) {
+    .default .content {
+      display: grid;
+      grid-column-gap: 7.857%;
+      grid-template-areas: "article related";
+      grid-template-columns: 67.143% 25%;
+    }
+  }
+  @media screen and (min-width: 64em) {
+    .default .content article {
+      grid-area: article;
+    }
+  }
+  @media screen and (min-width: 64em) {
+    .default .content .related {
+      grid-area: related;
+    }
+  }
+}
+.default .related {
+  border-block-start: solid 10px #005a9c;
+  padding-block-start: 1.25rem;
+}
+
+.related [aria-current] {
+  color: #111;
+  text-decoration: none;
+}
+
+@media screen and (min-width: 64em) {
+  .default .related__inner {
+    border-inline-start: solid 1px #cac9c9;
+    padding-inline: 1.25rem;
+  }
+}
+
+.default .related__inner > *:first-child {
+  margin-block-start: 0;
+}
+.default .related__inner h2 {
+  font-size: var(--w3c-text-2);
+}
+.default .related__inner li + li {
+  margin-block-start: 0.75rem;
+}
+.default .related__inner li a, .default .related__inner li .heading-anchor {
+  display: inline-block;
+}
+
+/*------------------------------------*\
+    #Event
+\*------------------------------------*/
+.event .content {
+  max-inline-size: 47rem;
+}
+
+.event .intro {
+  display: flex;
+  flex-direction: column;
+  margin-block-end: 1.25rem;
+  margin-inline-start: 1.875rem;
+  position: relative;
+}
+.event .intro::before {
+  block-size: 100%;
+  border-radius: 0.3125rem;
+  content: "";
+  inline-size: 0.3125rem;
+  inset-block-start: 0;
+  inset-inline-start: -1.75rem;
+  position: absolute;
+}
+.event .intro.conference::before {
+  background-color: #237978;
+}
+.event .intro.meeting::before {
+  background-color: #1bc0d7;
+}
+.event .intro.talk::before {
+  background-color: #002a56;
+}
+.event .intro.workshop::before {
+  background-color: #e93737;
+}
+.event .intro h1 {
+  margin-block-end: 0;
+}
+.event .intro h1 + * {
+  font-size: var(--w3c-text-3);
+  order: -1;
+}
+
+.event .meta dl {
+  margin-block-end: 0;
+}
+
+.event .calendar-link {
+  margin-block-end: 1.25rem;
+}
+
+/*------------------------------------*\
+    #Home page
+\*------------------------------------*/
+.home .hero {
+  background-color: #fff;
+}
+.home .component--members {
+  padding-block: 2.5rem;
+}
+.home .component--members h2 {
+  margin-block-start: 0;
+}
+.home .component--members__grid {
+  margin-block-start: 2.5rem;
+}
+
+/*------------------------------------*\
+    #Post template
+\*------------------------------------*/
+.post .content,
+.post .rss {
+  max-inline-size: 47rem;
+}
+
+@supports (grid-column-gap: 8%) {
+  .post .content {
+    max-inline-size: none;
+  }
+  @media screen and (min-width: 64em) {
+    .post .content {
+      display: grid;
+      grid-column-gap: 7.857%;
+      grid-template-columns: 67.143% 25%;
+      grid-template-areas: "article related";
+    }
+  }
+  @media screen and (min-width: 64em) {
+    .post .content article {
+      grid-area: article;
+    }
+  }
+  @media screen and (min-width: 64em) {
+    .post .content .related {
+      grid-area: related;
+    }
+  }
+}
+.post .related {
+  margin-block-end: 2.5rem;
+}
+
+.post .related__inner {
+  background-color: #f8f8fb;
+  padding: 1.75rem 1.25rem;
+}
+.post .related__inner > *:first-child {
+  margin-block-start: 0;
+}
+.post .related__inner h2 {
+  font-size: var(--w3c-text-1);
+}
+.post .related__inner h3 {
+  font-size: var(--w3c-text-0);
+}
+.post .related__inner a, .post .related__inner .heading-anchor {
+  color: #545454;
+}
+.post .related__inner a:focus, .post .related__inner .heading-anchor:focus {
+  color: #000;
+}
+
+.post .related__inner ul:not(:last-of-type) {
+  border-block-end: solid 1px #cac9c9;
+  padding-block-end: 1.5rem;
+}
+.post .related__inner ul:not(:last-of-type) + h3 {
+  margin-block-start: 1.5rem;
+}
+
+.post .related__inner li {
+  font-size: var(--w3c-text-01);
+}
+.post .related__inner li + li {
+  margin-block-start: 0.75rem;
+}
+
+.post .sub-head {
+  font-size: var(--w3c-text-01);
+  margin-block-end: 1.5rem;
+}
+.post .meta {
+  position: relative;
+}
+.post .meta dl {
+  margin-block-end: 0;
+}
+.post .meta dl dd:not(:only-of-type), .post .meta dl dt:not(:only-of-type) {
+  margin-block: 0;
+  padding-block: 0.375rem;
+}
+.post .meta dl dt:first-of-type,
+.post .meta dl dd:first-of-type {
+  padding-block-start: 0.5rem;
+}
+.post .meta dl dt {
+  float: left;
+  font-weight: normal;
+  margin-inline-end: 1em;
+}
+.post .meta dl dd.l-cluster > * {
+  margin: -0.25rem;
+}
+.post .meta dl dd.l-cluster > * > * {
+  margin: 0.25rem;
+}
+.post .skip-to-comments,
+.post .skip-to-comment-form {
+  color: #545454;
+  display: inline-block;
+  padding-block: 0.6875rem;
+  text-decoration: underline;
+}
+.post .skip-to-comments:visited,
+.post .skip-to-comment-form:visited {
+  color: #545454;
+}
+.post .skip-to-comments:focus,
+.post .skip-to-comment-form:focus {
+  background-color: #f9dc4a;
+  background-image: linear-gradient(to top, #000 3px, #f9dc4a 3px, #f9dc4a);
+  color: #000;
+  text-decoration: none;
+}
+@media screen and (min-width: 48em) {
+  .post .skip-to-comments {
+    position: absolute;
+    inset-block-start: 1.1875rem;
+    inset-inline-end: 0;
+  }
+}
+.post .rss {
+  border-block-start: solid 1px #cac9c9;
+  padding-block-start: 2.5rem;
+}
+
+[dir=rtl] .post .meta dl dt {
+  float: right;
+}
+
+.post__notes {
+  border-block-start: solid 1px #cac9c9;
+  margin-block-start: 3.75rem;
+  padding-block-start: 1.25rem;
+}
+.post__notes h3 {
+  font-size: var(--w3c-text-1);
+}
+
+/*------------------------------------*\
+    #Landing page
+\*------------------------------------*/
+.landing #breadcrumb,
+.ecosystem #breadcrumb {
+  background-color: #f8f8fb;
+}
+.landing main,
+.landing #main,
+.ecosystem main,
+.ecosystem #main {
+  padding-block-start: 0;
+}
+.landing .translations,
+.ecosystem .translations {
+  padding: 0;
+}
+.landing .translations .sidebar span,
+.ecosystem .translations .sidebar span {
+  padding-inline-end: 1em;
+}
+.landing .translations .l-sidebar .not-sidebar,
+.ecosystem .translations .l-sidebar .not-sidebar {
+  padding-block-end: 0;
+}
+.landing .component--image,
+.landing .component--video,
+.landing .component--quote,
+.ecosystem .component--image,
+.ecosystem .component--video,
+.ecosystem .component--quote {
+  max-inline-size: 44.4375rem;
+}
+.landing .component--quote,
+.ecosystem .component--quote {
+  max-inline-size: 43.1875rem;
+}
+
+/*------------------------------------*\
+    #Listing templates
+\*------------------------------------*/
+.listing main,
+.listing #main {
+  padding-block-start: 0;
+}
+
+.listing:not(.technical-reports) #breadcrumb {
+  background-color: #fff;
+}
+.listing:not(.technical-reports) main,
+.listing:not(.technical-reports) #main {
+  background-color: #f8f8fb;
+  box-shadow: 0 0 0 100vmax #f8f8fb;
+  clip-path: inset(0 -100vmax);
+}
+.listing:not(.technical-reports) :nth-child(1 of .card--event) {
+  margin-block-start: 2.5rem;
+}
+.listing:not(.technical-reports) :nth-last-child(1 of .card--post) {
+  margin-block-end: 0;
+}
+
+.archive-links h2 {
+  margin-block-start: 0;
+}
+
+/*------------------------------------*\
+    #Profile template
+\*------------------------------------*/
+.profile .content {
+  max-inline-size: 47rem;
+}
+
+@supports (grid-column-gap: 8%) {
+  .profile .content {
+    max-inline-size: none;
+  }
+  @media screen and (min-width: 64em) {
+    .profile .content {
+      display: grid;
+      grid-column-gap: 7.857%;
+      grid-template-areas: "title nav" "details nav";
+      grid-template-columns: 67.143% 25%;
+      grid-template-rows: auto 1fr;
+    }
+  }
+  @media screen and (min-width: 64em) {
+    .profile .content h1 {
+      grid-area: title;
+    }
+  }
+  @media screen and (min-width: 64em) {
+    .profile .content #profile-nav {
+      grid-area: nav;
+    }
+  }
+  @media screen and (min-width: 64em) {
+    .profile .content .details {
+      grid-area: details;
+    }
+  }
+}
+@media screen and (min-width: 64em) {
+  .profile .profile-nav__inner {
+    border-inline-start: solid 1px #cac9c9;
+    padding-block: 0.625rem;
+    padding-inline: 1.25rem;
+  }
+}
+.profile .profile-nav__inner [aria-current] {
+  font-weight: bold;
+}
+
+@media screen and (min-width: 64em) {
+  .profile [data-toggle=true] {
+    display: none;
+  }
+}
+.profile [data-toggle=true][aria-expanded=false] {
+  margin-block-end: 2.0625rem;
+}
+
+#profile-nav li + li {
+  margin-block-start: 0.75rem;
+}
+#profile-nav [aria-current] {
+  color: #111;
+  text-decoration: none;
+}
+
+/*------------------------------------*\
+    #Technical reports (TR)
+\*------------------------------------*/
+.technical-reports .wrap {
+  background-color: #fff;
+}
+.technical-reports .hero {
+  background-color: #fff;
+  margin-block-end: 1.25rem;
+  padding-block-end: 0;
+}
+.technical-reports .hero .l-box {
+  background-color: #f3f3f6;
+  border-radius: 0.25rem;
+}
+.technical-reports .hero .field {
+  max-inline-size: none;
+}
+.technical-reports .hero .field-hint {
+  color: #111;
+}
+.technical-reports .checkbox-item label::before,
+.technical-reports .radio-item label::before {
+  background-color: #fff;
+}
+.technical-reports .translation-list dt:has(span.visuallyhidden, span.skip-link)::after {
+  margin-inline-start: -0.25rem;
+}
+
+.tr-list__item {
+  border-block-end: 1px solid #cac9c9;
+  font-size: var(--w3c-text-01);
+  padding-block-end: 0.5rem;
+  padding-block-start: 1.25rem;
+}
+.tr-list__item > * {
+  max-inline-size: 51.25rem;
+}
+.tr-list__item + .tr-list__item {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 300px;
+}
+
+.tr-list__item__header {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: flex-start;
+  max-inline-size: none;
+}
+.tr-list__item__header > * + * {
+  margin-block-start: 1em;
+}
+.tr-list__item__header h3 {
+  font-size: var(--w3c-text-3);
+  margin-block-end: 0;
+  margin-block-start: 0.3125rem;
+  max-inline-size: none;
+}
+.tr-list__item__header h3 + * {
+  margin-block-start: 0;
+  order: -1;
+}
+
+.tr-list__item__header + * {
+  margin-block-start: 0.5em;
+}
+
+/*------------------------------------*\
+    #Utilities
+\*------------------------------------*/
+/*------------------------------------*\
+    #Alignment utilities
+\*------------------------------------*/
+.u-float-left {
+  float: left;
+}
+
+.u-float-right {
+  float: right;
+}
+
+.u-text-center {
+  text-align: center;
+}
+
+.u-text-left {
+  text-align: start;
+}
+
+.u-text-right {
+  text-align: end;
+}
+
+.u-text-vertical-lr {
+  writing-mode: vertical-lr;
+}
+
+.u-text-vertical-rl {
+  writing-mode: vertical-rl;
+}
+
+.u-block-left {
+  float: left;
+  margin-block-end: 1em;
+  margin-right: 1em;
+}
+
+.u-block-right {
+  float: right;
+  margin-block-end: 1em;
+  margin-left: 1em;
+}
+
+/**
+Change text-alignment at the "laptop" breakpoint,
+as defined in /10-settings/breakpoints
+
+1. Logical property allows text-direction to change with `ltr`
+ */
+@media screen and (min-width: 80em) {
+  .u-text-left-from-lap {
+    text-align: start;
+  }
+}
+
+@media screen and (min-width: 80em) {
+  .u-text-center-from-lap {
+    text-align: center;
+  }
+}
+
+@media screen and (min-width: 80em) {
+  .u-text-right-from-lap {
+    text-align: end;
+  }
+}
+
+/*------------------------------------*\
+    #Clearfix utility
+
+    https://css-tricks.com/snippets/css/clear-fix/
+
+    Extend the clearfix placeholder with Sass to avoid
+    having it appear over and over in your markup.
+\*------------------------------------*/
+/*------------------------------------*\
+    #Layout utilities
+\*------------------------------------*/
+/**
+For a full-viewport-width element inside a limited width parent.
+The parent must be exactly centered in the browser in order for this
+to work - see https://css-tricks.com/full-width-containers-limited-width-parents/
+ */
+.u-full-width {
+  inline-size: 100vw;
+  inset-inline: 50%;
+  margin-inline: -50vw;
+  position: relative;
+}
+
+/**
+To horizontally center a block-level item
+ */
+.u-center {
+  margin-inline: auto;
+  position: relative;
+}
+
+/*------------------------------------*\
+    #Margin utilities
+
+    Double specificity in classname avoids use of !important
+\*------------------------------------*/
+.u-no-margin.u-no-margin {
+  margin: 0;
+}
+
+.u-no-margin-top.u-no-margin-top {
+  margin-block-start: 0;
+}
+
+/*------------------------------------*\
+    #Color utilities
+
+    Double specificity in classname avoids use of !important
+\*------------------------------------*/
+/**
+ Utilities for "solid" background/border color with WCAG conforming content color
+ */
+.u-bg-active.u-bg-active {
+  background-color: #fc7750;
+  border-color: #fc7750;
+  color: #111;
+}
+
+.u-bg-category.u-bg-category {
+  background-color: #75336c;
+  border-color: #75336c;
+  color: #fff;
+}
+
+.u-bg-error.u-bg-error {
+  background-color: #a82615;
+  border-color: #a82615;
+  color: #fff;
+}
+
+.u-bg-info.u-bg-info {
+  background-color: #002a56;
+  border-color: #002a56;
+  color: #fff;
+}
+
+.u-bg-success.u-bg-success {
+  background-color: #046704;
+  border-color: #046704;
+  color: #fff;
+}
+
+.u-bg-warning.u-bg-warning {
+  background-color: #c28605;
+  border-color: #c28605;
+  color: #111;
+}
+
+/**
+ Utilities for border/content color with white background color
+ */
+.u-color-draft.u-color-draft {
+  background-color: #fff;
+  border-color: #111;
+  color: #111;
+}
+
+.u-color-error.u-color-error {
+  background-color: #fff;
+  border-color: #a82615;
+  color: #a82615;
+}
+
+.u-color-info.u-color-info {
+  background-color: #fff;
+  border-color: #002a56;
+  color: #002a56;
+}
+
+.u-color-success.u-color-success {
+  background-color: #fff;
+  border-color: #046704;
+  color: #046704;
+}
+
+.u-color-warning.u-color-warning {
+  background-color: #fff;
+  border-color: #c28605;
+  color: #111;
+}

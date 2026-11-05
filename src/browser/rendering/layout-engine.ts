@@ -527,13 +527,11 @@ class LayoutEngine implements ILayoutEngine {
         ? this.measureContentWidth(node, 1, fontSize, domTree, flex, true)
         : this.measureContentWidth(node, Math.max(0, availableWidth - fixedMargins - frame), fontSize, domTree, flex));
     } else if (specWidth && specWidth !== 'auto' && !this.cyclicPercentage(specWidth)) {
+      // A specified width is the width, wider than the containing block or not (it overflows; CSS
+      // 2.2 §10.3.3). It was capped at the available width, so W3C's full-bleed bands
+      // (`width: 100vw; margin: 0 -50vw; left: 50%`) stopped short of the right edge.
       const specified = resolve('width', '0');
-      if (boxSizing === 'border-box') {
-        borderWidthBox = Math.min(specified, availableWidth);
-      } else {
-        borderWidthBox = specified + paddingLeft + paddingRight + borderLeft + borderRight;
-        borderWidthBox = Math.min(borderWidthBox, availableWidth);
-      }
+      borderWidthBox = boxSizing === 'border-box' ? specified : specified + paddingLeft + paddingRight + borderLeft + borderRight;
     } else if (intrinsic.width != null) {
       // width attribute supplies the intrinsic width (box-sizing aware).
       const intrinsicBox = boxSizing === 'border-box'
@@ -2461,9 +2459,7 @@ class LayoutEngine implements ILayoutEngine {
     let innerWidth: number;
     if (!autoWidth && specWidth && specWidth !== 'auto') {
       const specified = resolve('width', '0');
-      innerWidth = boxSizing === 'border-box'
-        ? Math.min(specified, availableWidth) - padL - padR - borderL - borderR
-        : Math.min(specified, availableWidth);
+      innerWidth = boxSizing === 'border-box' ? specified - padL - padR - borderL - borderR : specified;
     } else if (intrinsic.width != null) {
       innerWidth = intrinsic.width;
     } else {
@@ -3076,7 +3072,12 @@ class LayoutEngine implements ILayoutEngine {
         specifiedContentHeight = 0; // computed from children
       }
 
-      const contentHeight = Math.max(specifiedContentHeight, childY - contentY);
+      // A specified height holds when the box clips its overflow; only a visible-overflow box keeps
+      // the grow-to-content allowance. Positioned boxes always grew, so the `height: 1px;
+      // overflow: hidden` visually-hidden labels (W3C's skip link, icon labels) were 300px columns.
+      const clips = /hidden|clip|scroll|auto/.test(style.get('overflow') ?? style.get('overflow-y') ?? 'visible');
+      const contentHeight = specHeight && specHeight !== 'auto' && clips
+        ? specifiedContentHeight : Math.max(specifiedContentHeight, childY - contentY);
       box.height = contentHeight + paddingTop + paddingBottom + borderTop + borderBottom;
       if (hasBottom && !hasTop) {
         // Anchored by its bottom: resolveOutOfFlow placed it before its height was known.
