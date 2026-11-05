@@ -382,12 +382,18 @@ async function main() {
   // #5 geolocation (v1.1)
   await check(5, 'geolocation prompts and returns a position', async () => {
     if (!isEmulator) return { skip: true, detail: 'needs `adb emu geo fix` (emulator only)' };
-    adb(['emu', 'geo', 'fix', '-122.0840', '37.4220']);
     await js(`window.__geo = null; navigator.geolocation.getCurrentPosition(
       (p) => { window.__geo = { lat: p.coords.latitude, lon: p.coords.longitude }; },
       (e) => { window.__geo = { err: e.code + ': ' + e.message }; }, { timeout: 25000, maximumAge: 0 }); 'started'`);
     const dlg = await answerPermission(() => true);
-    const geo = await poll(async () => js('window.__geo'), 25000, 1000);
+    // `geo fix` reaches only listeners that are already registered: while the
+    // GPS provider sits at ProviderRequest[OFF] it keeps no last-known location,
+    // so a fix sent before the prompt is answered is dropped. Inject it after the
+    // grant, and keep re-sending it while we wait for the position.
+    const geo = await poll(async () => {
+      adb(['emu', 'geo', 'fix', '-122.0840', '37.4220']);
+      return js('window.__geo');
+    }, 25000, 1000);
     const ok = !!geo && Math.abs((geo.lat ?? 0) - 37.422) < 0.01;
     return { ok, detail: `dialog=${dlg ? dlg.kind + (dlg.answered ? ' (allowed)' : ' (no button found)') : 'none'}; result=${JSON.stringify(geo)}` };
   });
