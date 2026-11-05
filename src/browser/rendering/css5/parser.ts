@@ -925,11 +925,18 @@ export class CssParser {
     while (this.pos < this.tokens.length && depth > 0) {
       const tok = this.current()!;
       if (tok.type === CssTokenType.ParenthesisOpen) { depth++; parts.push('('); }
-      else if (tok.type === CssTokenType.ParenthesisClose) {
+      else if (tok.type === CssTokenType.Function) {
+        // `not(` opens a parenthesis too. Not counting it ended `:where(:not(.q))` at the inner
+        // ')', so the argument was `:not(.q` and the outer ')' leaked into the rest of the
+        // selector: Wikipedia's `a:where(:not([role='button'])):focus-visible` matched every
+        // role=button link, and drew a 2px blue focus ring around its icon buttons.
+        depth++;
+        parts.push(tokenSource(tok));
+      } else if (tok.type === CssTokenType.ParenthesisClose) {
         depth--;
         if (depth > 0) parts.push(')');
       } else {
-        parts.push(tokensToText([tok]));
+        parts.push(tokenSource(tok));
       }
       this.pos++;
     }
@@ -2232,6 +2239,22 @@ export function compareSpecificity(a: CssSpecificity, b: CssSpecificity): number
 // ─────────────────────────────────────────────────────────────────────────────
 // UTILITY
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A token written back as CSS. Token values drop their punctuation (`not(` is "not", `#id` is
+ * "id", a string loses its quotes), so a pseudo-class argument rebuilt from raw values and parsed
+ * again lost its nested functions, ids and quoted values.
+ */
+function tokenSource(t: CssToken): string {
+  switch (t.type) {
+    case CssTokenType.Function: return t.value + '(';
+    case CssTokenType.Hash: return '#' + t.value;
+    case CssTokenType.AtKeyword: return '@' + t.value;
+    case CssTokenType.String: return JSON.stringify(t.value);
+    case CssTokenType.Url: return `url(${JSON.stringify(t.value)})`;
+    default: return t.value;
+  }
+}
 
 function tokensToText(tokens: CssToken[]): string {
   return tokens.map(t => t.value).join('');

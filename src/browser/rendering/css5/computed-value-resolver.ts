@@ -457,6 +457,21 @@ export function resolveComputedValue(
   if (prop === 'font-size') {
     const resolved = resolveFontSizeKeyword(v, ctx.parentFontSize);
     if (resolved) return resolved;
+    // The computed font-size is px (children's em and % resolve against it). rem and the other
+    // units were left as written, so a child's `0.75em` of a `1rem` parent read parseFloat("1rem")
+    // = 1 and became 0.75px: Wikipedia's citation markers ([1]) were invisible dots.
+    const m = /^(-?\d*\.?\d+)(rem|ex|ch|pt|pc|in|cm|mm|q|vw|vh|vmin|vmax)$/i.exec(v);
+    if (m) {
+      const n = parseFloat(m[1]!);
+      const unit = m[2]!.toLowerCase();
+      const vw = ctx.viewportWidth ?? 0, vh = ctx.viewportHeight ?? 0;
+      const per: Record<string, number> = {
+        rem: ctx.rootFontSize ?? 16, ex: ctx.parentFontSize / 2, ch: ctx.parentFontSize / 2,
+        pt: 4 / 3, pc: 16, in: 96, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6,
+        vw: vw / 100, vh: vh / 100, vmin: Math.min(vw, vh) / 100, vmax: Math.max(vw, vh) / 100,
+      };
+      return `${Math.round(n * per[unit]! * 100) / 100}px`;
+    }
   }
 
   // ── Font-weight ─────────────────────────────────────────────────────

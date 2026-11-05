@@ -83,9 +83,9 @@ export function handleInHead(ctx: TreeBuilderContext, token: Token): void {
       if (token.tagName === 'template') {
         if (ctx.isInTemplateScope('template')) {
           ctx.generateImpliedEndTagsThoroughly();
-          if (ctx.currentNode()?.tagName === 'template') {
-            ctx.popCurrentNode();
-          }
+          // Pop until the template itself is popped (§13.2.6.4.4): an unclosed element in it
+          // (`<template><div>x</template>`) used to keep the template open past its end tag.
+          ctx.popCurrentNodeUntil('template');
           ctx.activeFormattingClearUpToMarker();
           ctx.templateInsertionModes.pop();
           ctx.resetInsertionMode();

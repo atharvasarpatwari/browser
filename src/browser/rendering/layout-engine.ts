@@ -526,7 +526,7 @@ class LayoutEngine implements ILayoutEngine {
       borderWidthBox = frame + (specWidth!.trim() === 'min-content'
         ? this.measureContentWidth(node, 1, fontSize, domTree, flex, true)
         : this.measureContentWidth(node, Math.max(0, availableWidth - fixedMargins - frame), fontSize, domTree, flex));
-    } else if (specWidth && specWidth !== 'auto') {
+    } else if (specWidth && specWidth !== 'auto' && !this.cyclicPercentage(specWidth)) {
       const specified = resolve('width', '0');
       if (boxSizing === 'border-box') {
         borderWidthBox = Math.min(specified, availableWidth);
@@ -1514,7 +1514,10 @@ class LayoutEngine implements ILayoutEngine {
     // ── Resolve container flex properties ────────────────────────────────
     const direction = (style.get('flex-direction') ?? 'row') as FlexDirection;
     const wrap = (style.get('flex-wrap') ?? 'nowrap') as FlexWrap;
-    const justifyContent = (style.get('justify-content') ?? 'flex-start') as JustifyContent;
+    // While measuring a shrink-to-fit width, items are packed at the start, as text-align is: centred
+    // items reported where they were centred in the whole available width, so an `inline-flex;
+    // justify-content: center` button (Wikipedia's menu button, a 20px icon) measured 114px wide.
+    const justifyContent = (this.measuringShrinkToFit ? 'flex-start' : style.get('justify-content') ?? 'flex-start') as JustifyContent;
     const alignItems = (style.get('align-items') ?? 'stretch') as AlignItems;
     const alignContent = (style.get('align-content') ?? 'stretch') as AlignContent;
     const isHorizontal = isRowDirection(direction);
@@ -1618,14 +1621,42 @@ class LayoutEngine implements ILayoutEngine {
         item.flexBasis = this.resolveLength(basis, fontSize, availableWidth);
       } else {
         const rawMain = childStyle.get(isHorizontal ? 'width' : 'height');
-        if (rawMain && rawMain !== 'auto') item.flexBasis = rc(isHorizontal ? 'width' : 'height', '0');
+        if (rawMain && rawMain !== 'auto' && !(isHorizontal && this.cyclicPercentage(rawMain))) item.flexBasis = rc(isHorizontal ? 'width' : 'height', '0');
         else autoBasis = true;
       }
       // flex-basis:auto with width:auto is the item's max-content width (CSS Flexbox §9.2.3.E).
       // It was 0, so a text column next to a thumbnail (Wikipedia search results) was laid out
       // 0px wide, one word per line, and the results ran ~23,000px down the page.
       if (autoBasis && isHorizontal && item.flexBasis === 0) {
-        item.flexBasis = this.measureContentWidth(childEl, availableWidth, this.resolveFontSize(childStyle, fontSize), domTree);
+        // A flex container item is measured as one: measured as a block, its items stacked and the
+        // basis was the widest of them, not their sum (MDN's "Web / HTML" breadcrumbs, one letter wide).
+        item.flexBasis = this.measureContentWidth(childEl, availableWidth, this.resolveFontSize(childStyle, fontSize), domTree,
+          /^(inline-)?flex$/.test(childStyle.get('display') ?? ''));
+      }
+      // The main-axis min/max the flex algorithm clamps to (§9.7). min-width: auto is the content's
+      // min-content width for an item that doesn't scroll (§4.5), measured only if its line shrinks.
+      // ponytail: rows only; a column's min/max-height still applies after layout.
+      if (isHorizontal) {
+        const minW = (childStyle.get('min-width') ?? 'auto').trim();
+        const maxW = (childStyle.get('max-width') ?? 'none').trim();
+        if (minW !== 'auto' && !minW.includes('content')) item.minMainSize = rc('min-width', '0');
+        if (maxW !== 'none' && !maxW.includes('content')) item.maxMainSize = rc('max-width', '0');
+        const scrolls = /hidden|scroll|auto|clip/.test(childStyle.get('overflow-x') ?? childStyle.get('overflow') ?? 'visible');
+        // The flex algorithm works in border-box widths (the box is laid out at its main size and
+        // the next item placed after it). A content-box width, min/max and a measured content
+        // size left out padding and border: a `width: 100px; padding: 5px; border: 5px` item came
+        // out 100 wide, not 120, and its content was squeezed.
+        const frameW = item.paddingLeft + item.paddingRight + item.borderLeft + item.borderRight;
+        const contentBoxed = (childStyle.get('box-sizing') ?? 'content-box') !== 'border-box';
+        if (autoBasis || contentBoxed) item.flexBasis += frameW;
+        if (contentBoxed && item.minMainSize !== undefined) item.minMainSize += frameW;
+        if (contentBoxed && item.maxMainSize !== undefined) item.maxMainSize += frameW;
+        if (minW === 'auto' && !scrolls) {
+          const childFont = this.resolveFontSize(childStyle, fontSize);
+          const childIsFlex = /flex/.test(childStyle.get('display') ?? '');
+          let measured: number | undefined;
+          item.autoMinMainSize = () => (measured ??= this.measureContentWidth(childEl, 1, childFont, domTree, childIsFlex, true) + frameW);
+        }
       }
       // In a column it is the item's content height, laid out at the container's width.
       if (autoBasis && !isHorizontal) {
@@ -1700,8 +1731,10 @@ class LayoutEngine implements ILayoutEngine {
       const origStyle = item.element.computedStyle;
       const authored = origStyle?.get(mainSizeProp);
       if (origStyle && item.mainSize > 0) {
-        const contentBox = !isHorizontal && (origStyle.get('box-sizing') ?? 'content-box') === 'content-box';
-        const frame = contentBox ? item.paddingTop + item.paddingBottom + item.borderTop + item.borderBottom : 0;
+        const contentBox = (origStyle.get('box-sizing') ?? 'content-box') === 'content-box';
+        const frame = !contentBox ? 0 : isHorizontal
+          ? item.paddingLeft + item.paddingRight + item.borderLeft + item.borderRight
+          : item.paddingTop + item.paddingBottom + item.borderTop + item.borderBottom;
         origStyle.set(mainSizeProp, `${Math.max(0, item.mainSize - frame)}px`);
       }
 
@@ -2424,7 +2457,7 @@ class LayoutEngine implements ILayoutEngine {
 
     const specWidth = elStyle.get('width');
     const intrinsic = this.resolveIntrinsicSize(el);
-    const autoWidth = !(specWidth && specWidth !== 'auto') && intrinsic.width == null;
+    const autoWidth = (!(specWidth && specWidth !== 'auto') || this.cyclicPercentage(specWidth)) && intrinsic.width == null;
     let innerWidth: number;
     if (!autoWidth && specWidth && specWidth !== 'auto') {
       const specified = resolve('width', '0');
@@ -2463,7 +2496,6 @@ class LayoutEngine implements ILayoutEngine {
         : innerDisplay === 'inline-grid'
           ? this.layoutGridContainer(el, childX, childY, width, elFontSize, domTree)
           : this.layoutBlockChildren(el, childX, childY, width, elFontSize, domTree));
-    let childBottom: number;
     if (autoWidth) {
       // Shrink-to-fit (CSS 2.2 §10.3.9): measure the content with text-align off (centred text
       // would report where it was centred, not how wide it is), then lay it out at that width so
@@ -2475,10 +2507,19 @@ class LayoutEngine implements ILayoutEngine {
       // the measured extent is the answer. Capping it at the available width squeezed a nowrap
       // button in a narrow cell to its border (Wikipedia's Search button was 8px wide).
       innerWidth = Math.max(0, extent - childX);
-      childBottom = layoutContent(innerWidth);
-    } else {
-      childBottom = layoutContent(innerWidth);
     }
+    // min-width / max-width (CSS 2.2 §10.4). Never applied to inline-blocks: Wikipedia's and MDN's
+    // `min-width: 44px` icon buttons were as narrow as their 20px icon.
+    {
+      const frameW = padL + padR + borderL + borderR;
+      const toContent = (v: number): number => (boxSizing === 'border-box' ? v - frameW : v);
+      const maxW = elStyle.get('max-width');
+      if (maxW && maxW !== 'none' && !maxW.includes('content')) innerWidth = Math.min(innerWidth, toContent(resolve('max-width', '0')));
+      const minW = elStyle.get('min-width');
+      if (minW && minW !== 'auto' && !minW.includes('content')) innerWidth = Math.max(innerWidth, toContent(resolve('min-width', '0')));
+      innerWidth = Math.max(0, innerWidth);
+    }
+    const childBottom = layoutContent(innerWidth);
 
     // A percentage of an auto-height parent is auto. It resolved against the available width, so
     // MDN's sidebar toggle (`height: 100%` inside a 32px flex header) was 1016px tall.
@@ -2551,6 +2592,17 @@ class LayoutEngine implements ILayoutEngine {
   }
 
   /** Runs a layout only to measure it: returns the content extent and undoes its side effects. */
+  /**
+   * A percentage width met while measuring a shrink-to-fit or intrinsic width: it would depend on
+   * the size being worked out, so it counts as auto there (CSS Sizing 3 §5.2.1, cyclic
+   * percentages) and resolves in the real layout. It resolved against the measuring width, so
+   * MDN's `button { width: 100% }` made its header toggle measure 1016px and squeezed the
+   * breadcrumbs beside it to one letter per line.
+   */
+  private cyclicPercentage(width: string | undefined): boolean {
+    return this.measuringShrinkToFit && !!width && width.includes('%');
+  }
+
   private measureLayout(el: DomElement, layout: () => unknown): number {
     const positionsMark = this.elementPositions.length;
     const pendingMark = this.pendingInlineBlocks.length;
@@ -2586,7 +2638,11 @@ class LayoutEngine implements ILayoutEngine {
       const style = node.computedStyle;
       const width = style?.get('width');
       const fills = (width === undefined || width === 'auto') && FILLS_LINE.has(style?.get('display') ?? 'inline');
-      if (!fills) return Math.max(right, b.x + b.width);
+      // Its right margin is part of the content's extent (an auto margin isn't: it takes free space).
+      // Left out, MDN's breadcrumb chevron (`margin-inline: .25rem`) measured 4px short, the list
+      // shrank its first item and "Web" broke between letters.
+      const mr = style?.get('margin-right') === 'auto' ? 0 : Math.max(0, b.marginRight);
+      if (!fills) return Math.max(right, b.x + b.width + mr);
       return right > 0 ? right + b.paddingRight + b.borderRight : b.x + b.paddingLeft + b.borderLeft + b.paddingRight + b.borderRight;
     };
     return visit(el);

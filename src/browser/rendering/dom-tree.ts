@@ -3,6 +3,7 @@ import type { HtmlDocument, HtmlElement, HtmlNode } from './html-parser';
 import { NodeType } from './html-parser';
 import { querySelector as css5QuerySelector, querySelectorAll as css5QuerySelectorAll, type SelectableElement } from './css5/selector';
 import { CssParser as Css5Parser } from './css5/parser';
+import { getInheritedProperties } from './css5/property-definitions';
 
 type DomNodeType = 'document' | 'element' | 'text' | 'comment';
 
@@ -51,8 +52,14 @@ function boxChildren(node: DomNode): readonly DomNode[] {
   }
   // A display:contents element is replaced by its children (CSS Display §2.5). It was laid out as
   // one box, so the items of a flex or grid wrapped in it became a single item.
-  let kids: readonly DomNode[] = node.children;
+  // Declarative shadow DOM: a host whose first element is `<template shadowrootmode>` renders that
+  // template's content (its shadow tree), not its own children (HTML §4.12.3); `<slot>`s in it show
+  // the host children assigned to them.
+  const shadow = shadowTemplateOf(el);
+  let kids: readonly DomNode[] = shadow ? shadow.children : node.children;
+  if (kids.some(isSlot)) kids = kids.flatMap((c) => (isSlot(c) ? slotted(c as DomElement) : [c]));
   if (kids.some(isContents)) kids = kids.flatMap((c) => (isContents(c) ? boxChildren(c) : [c]));
+  if (isFlexOrGrid(el) && kids.some(isVisibleText)) kids = wrapTextRuns(el, kids);
   if (!el.pseudoBefore && !el.pseudoAfter) return kids;
   const out: DomNode[] = [];
   if (el.pseudoBefore) out.push(el.pseudoBefore);
@@ -62,6 +69,90 @@ function boxChildren(node: DomNode): readonly DomNode[] {
 }
 
 const isContents = (n: DomNode): boolean => n.nodeType === 'element' && (n as DomElement).computedStyle?.get('display') === 'contents';
+
+/** The `<template shadowrootmode>` that gives `el` a declarative shadow root, if any. */
+function shadowTemplateOf(el: DomElement): DomElement | null {
+  for (const c of el.children ?? []) {
+    if (c.nodeType !== 'element') continue;
+    const t = c as DomElement;
+    if (t.tagName?.toLowerCase() === 'template' && (t.attributes?.has('shadowrootmode') || t.attributes?.has('shadowroot'))) return t;
+    if (!/^(style|script|link|meta)$/i.test(t.tagName ?? '')) return null;
+  }
+  return null;
+}
+
+const isSlot = (n: DomNode): boolean => n.nodeType === 'element' && (n as DomElement).tagName?.toLowerCase() === 'slot';
+
+/**
+ * What a `<slot>` renders (it is display: contents): the host's children assigned to it, by
+ * `slot="name"` or, for the default slot, the children without one; else its fallback content.
+ */
+function slotted(slot: DomElement): readonly DomNode[] {
+  let template: DomElement | null = null;
+  for (let p = slot.parent as DomElement | null; p; p = p.parent as DomElement | null) {
+    if (p.nodeType === 'element' && shadowTemplateOf(p.parent as DomElement ?? ({} as DomElement)) === p) { template = p; break; }
+  }
+  const host = template?.parent as DomElement | null | undefined;
+  if (!template || !host) return slot.children;
+  const name = slot.attributes.get('name') ?? '';
+  const assigned = host.children.filter((c) => c !== template && (c.nodeType === 'element'
+    ? ((c as DomElement).attributes.get('slot') ?? '') === name
+    : name === '' && c.nodeType === 'text'));
+  return assigned.length > 0 ? assigned : slot.children;
+}
+
+const isFlexOrGrid = (el: DomElement): boolean => /^(inline-)?(flex|grid)$/.test(el.computedStyle?.get('display') ?? '');
+const isVisibleText = (n: DomNode): boolean => n.nodeType === 'text' && /\S/.test((n as DomTextNode).text ?? '');
+
+const anonItems = new WeakMap<DomNode, DomElement>();
+const anonStyles = new WeakMap<ReadonlyMap<string, string>, Map<string, string>>();
+
+/**
+ * Each run of text directly inside a flex or grid container is wrapped in an anonymous block item
+ * that inherits the container's style (CSS Flexbox §4, Grid §6); whitespace-only runs are dropped.
+ * Flex and grid layout took element children only, so `<a style="display:flex">Label</a>` (pill
+ * buttons, nav links, IANA's breadcrumb) painted no text at all.
+ */
+function wrapTextRuns(container: DomElement, kids: readonly DomNode[]): DomNode[] {
+  const out: DomNode[] = [];
+  let run: DomNode[] = [];
+  const flush = (): void => {
+    if (run.some(isVisibleText)) {
+      const first = run[0]!;
+      let item = anonItems.get(first);
+      if (!item) {
+        item = {
+          domId: `${first.domId}::anon`, nodeType: 'element', parent: container, children: [], tagName: '::anonymous', attributes: new Map(),
+          computedStyle: null, usedStyle: null, layoutBox: null, imageData: null, naturalWidth: 0, naturalHeight: 0,
+          loadingState: 'none', willChange: null, _dirtyStyle: false, _dirtyLayout: true, _dirtyPaint: true,
+        } as unknown as DomElement;
+        anonItems.set(first, item);
+      }
+      (item as { children: DomNode[] }).children = run;
+      const cs = container.computedStyle;
+      if (cs) {
+        let style = anonStyles.get(cs);
+        if (!style) {
+          style = new Map();
+          for (const p of getInheritedProperties()) { const v = cs.get(p); if (v !== undefined) style.set(p, v); }
+          for (const [k, v] of cs) if (k.startsWith('--')) style.set(k, v);
+          style.set('display', 'block');
+          anonStyles.set(cs, style);
+        }
+        item.computedStyle = style;
+      }
+      out.push(item);
+    }
+    run = [];
+  };
+  for (const c of kids) {
+    if (c.nodeType === 'text') { run.push(c); continue; }
+    flush();
+    out.push(c);
+  }
+  flush();
+  return out;
+}
 
 /**
  * Every node under `node` for dirty-flag walks: all DOM children (boxed or not) and the generated

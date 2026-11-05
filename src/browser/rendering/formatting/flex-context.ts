@@ -40,6 +40,11 @@ export interface FlexItem {
   hasDefiniteCrossSize: boolean;
   /** Which margins are `auto`: on the main axis they absorb the line's free space (§8.1). */
   autoMargins?: { left: boolean; right: boolean; top: boolean; bottom: boolean };
+  /** min-width / max-width on the main axis, when set (§9.7 clamps to them). */
+  minMainSize?: number;
+  maxMainSize?: number;
+  /** The automatic minimum (`min-width: auto`, §4.5): its min-content width, measured only if the line shrinks. */
+  autoMinMainSize?: () => number;
 }
 
 export interface FlexLine {
@@ -346,46 +351,58 @@ export class FlexFormattingContext {
   private resolveLineMainSizes(line: FlexLine): void {
     const { direction, mainAxisGap, availableMainSize } = this.options;
 
-    let totalFlexBasis = 0;
+    // Resolving flexible lengths (CSS Flexbox §9.7): distribute the free space, clamp each item to
+    // its min/max main size, freeze the ones that hit a limit and distribute again. Items used to
+    // be sized without their min/max (MDN's 44px icon button was laid out 20px wide, Wikipedia's
+    // logo box with `min-width: 10em` shrank, and the next item was placed over them), and
+    // shrinking took the same amount from every item instead of in proportion to its basis.
     let totalMainMargins = 0;
-    let totalFlexGrow = 0;
-    let totalFlexShrink = 0;
-
-    for (const item of line.items) {
-      totalFlexBasis += item.flexBasis;
-      totalMainMargins += mainMarginStart(item, direction) + mainMarginEnd(item, direction);
-      totalFlexGrow += item.flexGrow;
-      totalFlexShrink += item.flexShrink;
-    }
-
+    for (const item of line.items) totalMainMargins += mainMarginStart(item, direction) + mainMarginEnd(item, direction);
     const totalGaps = Math.max(0, line.items.length - 1) * mainAxisGap;
-    const totalAllocated = totalFlexBasis + totalMainMargins + totalGaps;
-    const freeSpace = availableMainSize - totalAllocated;
-
-    if (freeSpace > 0 && totalFlexGrow > 0) {
-      // Distribute positive free space proportionally via flex-grow
-      for (const item of line.items) {
-        item.mainSize = item.flexBasis
-          + (item.flexGrow / totalFlexGrow) * freeSpace;
-      }
-    } else if (freeSpace < 0 && totalFlexShrink > 0) {
-      // Shrink items proportionally via flex-shrink
-      const shrinkTotal = -freeSpace;
-      for (const item of line.items) {
-        const shrinkAmount = (item.flexShrink / totalFlexShrink) * shrinkTotal;
-        item.mainSize = Math.max(0, item.flexBasis - shrinkAmount);
-      }
-    } else {
-      // No free space or no flex factors: use basis
-      for (const item of line.items) {
-        item.mainSize = item.flexBasis;
+    const room = availableMainSize - totalMainMargins - totalGaps;
+    const growing = line.items.reduce((sum, it) => sum + it.flexBasis, 0) < room;
+    const minOf = (it: FlexItem): number => {
+      if (it.minMainSize !== undefined) return it.minMainSize;
+      if (growing || !it.autoMinMainSize) return 0;
+      return Math.min(it.autoMinMainSize(), it.flexBasis);
+    };
+    const maxOf = (it: FlexItem): number => it.maxMainSize ?? Infinity;
+    const frozen = new Set<FlexItem>();
+    for (const it of line.items) {
+      it.mainSize = it.flexBasis;
+      const factor = growing ? it.flexGrow : it.flexShrink;
+      // An inflexible item is sized at once at its hypothetical size: the basis within min/max.
+      if (factor === 0 || (growing && it.flexBasis > maxOf(it)) || (!growing && it.flexBasis < minOf(it))) {
+        it.mainSize = Math.max(minOf(it), Math.min(maxOf(it), it.flexBasis));
+        frozen.add(it);
       }
     }
-
-    // Clamp to 0
-    for (const item of line.items) {
-      if (item.mainSize < 0) item.mainSize = 0;
+    for (let round = 0; round < line.items.length + 1 && frozen.size < line.items.length; round++) {
+      const used = line.items.reduce((sum, it) => sum + (frozen.has(it) ? it.mainSize : it.flexBasis), 0);
+      const free = room - used;
+      const open = line.items.filter((it) => !frozen.has(it));
+      if (growing) {
+        const total = open.reduce((sum, it) => sum + it.flexGrow, 0);
+        for (const it of open) it.mainSize = it.flexBasis + (total > 0 && free > 0 ? free * it.flexGrow / total : 0);
+      } else {
+        const total = open.reduce((sum, it) => sum + it.flexShrink * it.flexBasis, 0);
+        for (const it of open) it.mainSize = it.flexBasis - (total > 0 && free < 0 ? -free * it.flexShrink * it.flexBasis / total : 0);
+      }
+      let violation = 0;
+      const clamped = new Map<FlexItem, number>();
+      for (const it of open) {
+        const v = Math.max(minOf(it), Math.min(maxOf(it), it.mainSize));
+        violation += v - it.mainSize;
+        clamped.set(it, v);
+      }
+      for (const it of open) {
+        const v = clamped.get(it)!;
+        if (violation === 0 || (violation > 0 && v > it.mainSize) || (violation < 0 && v < it.mainSize)) frozen.add(it);
+        it.mainSize = v;
+      }
+      if (violation === 0) break;
     }
+    for (const it of line.items) if (it.mainSize < 0) it.mainSize = 0;
 
     // Compute line main size (including gaps for free-space calculations)
     line.mainSize = 0;
