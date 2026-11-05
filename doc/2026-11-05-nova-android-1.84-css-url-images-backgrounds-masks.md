@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-05
 **Session:** "keep improving the nova app and note the changes and update E:\nova_1\doc\analytics.html" (the tablet was connected mid-round)
-**Status:** Completed (1.84 installed on the tablet; live check pending: the tablet went to sleep on its lock screen)
+**Status:** Completed (1.84 installed and checked live on the tablet once it was reconnected and awake)
 
 ---
 
@@ -75,7 +75,13 @@ Building it exposed five more root causes on the path from a stylesheet or `styl
 - The sanitizer splits with `splitOnSemicolon`, so a blocked declaration goes whole.
 
 ## Not changed (recorded)
-- **Live check of 1.84 icons on MDN and Wikipedia:** pending; the tablet went to sleep on its lock screen, which I don't touch.
+- **Live check (tablet, 1.84):**
+  - **MDN:** the filter button shows its funnel icon (a mask image).
+  - **Wikipedia:** the header's menu, search and user icons draw (mask images). "As of 2026, the most used" stays on one line (1.82), and the figure floats right with text beside it (1.81).
+- **New on live Wikipedia, open:**
+  - a row of small blue-outlined icon boxes under "Article / Talk" (the page-tools icons);
+  - the "W" wordmark partly behind the search box;
+  - tiny blue dots where citation superscripts ([1]) should be.
 - **Which layers are covered:** only the first `url()` layer of a background is painted. A mask covers the element's own background only, not its borders or children.
 - **Image refresh:** CSS images load after the initial layout only. Elements shown later keep what they had.
 - **From 1.83, still open:** cyclic percentage widths, and the `lh` unit.
@@ -111,5 +117,6 @@ npx eslint src/ tests/             → 0 errors (1005 warnings)
 Saved pages old vs new, offline (10 pages × 412/1070) → 20/20 pixel-identical
 gradlew :app:testDebugUnitTest :app:assembleRelease → exit 0
 apksigner verify Nova-1.84.apk     → verified; versionCode 85, versionName 1.84
-adb install -r Nova-1.84.apk       → Success (versionName 1.84); screen asleep + lock screen → live check pending
+adb install -r Nova-1.84.apk       → Success (versionName 1.84)
+Tablet reconnected, awake: MDN live → funnel icon drawn; Wikipedia live → header menu/search/user icons drawn
 ```
