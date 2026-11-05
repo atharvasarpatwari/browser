@@ -2126,7 +2126,11 @@ export function computeComputedStyles(
   // height was a line tall.
   const pos = computed.get('position');
   const fl = computed.get('float');
-  if (pos === 'absolute' || pos === 'fixed' || (fl !== undefined && fl !== 'none')) {
+  // A flex or grid item is blockified too (CSS Display §2.7, Flexbox §4). A `<span>` item stayed
+  // inline, so its height was ignored: Python docs' 2px hamburger bar was a 24×20 black square.
+  // ponytail: the parent is the DOM parent; a display:contents parent's own parent isn't checked.
+  const itemOf = /^(inline-)?(flex|grid)$/.test(parentComputed?.get('display') ?? '');
+  if (itemOf || pos === 'absolute' || pos === 'fixed' || (fl !== undefined && fl !== 'none')) {
     const d = computed.get('display') ?? 'inline';
     const blockified = BLOCKIFY[d];
     if (blockified) computed.set('display', blockified);

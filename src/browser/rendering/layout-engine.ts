@@ -2954,6 +2954,14 @@ class LayoutEngine implements ILayoutEngine {
 
     if (display === 'none') return;
 
+    // Percentages and the shrink-to-fit room come from the containing block (CSS 2.2 §10.1): the
+    // viewport when there is none, else the positioned ancestor's padding box. They came from
+    // wherever the box sat in the flow, so Python docs' `position: fixed; width: 100%` mobile bar
+    // was its parent's 380px, not the 412px viewport.
+    const cbLayout = containingBlock ? this.layoutBoxes.get(containingBlock.domId) : undefined;
+    availableWidth = !containingBlock ? this.config.viewportWidth
+      : cbLayout && cbLayout.width > 0 ? Math.max(0, cbLayout.width - cbLayout.borderLeft - cbLayout.borderRight) : availableWidth;
+
     const resolve = (prop: string, fallback: string): number =>
       this.resolveLength(style.get(prop) ?? fallback, fontSize, availableWidth);
 
