@@ -28,9 +28,13 @@ object UrlInputResolver {
     /** Bare IPv4 with optional port and path. e.g. "192.168.1.1:8080" */
     private val IPV4_RE = Regex("^(\\d{1,3}\\.){3}\\d{1,3}(:\\d{1,5})?(/[^\\s]*)?$")
 
-    /** Single-label hostname with optional port/path/query/fragment. */
+    /**
+     * Single-label hostname, only with a port or a path ("router:8080", "intranet/", "wiki/Page").
+     * A lone word ("gmail", "weather") is a search, as in mainstream browsers: it used to become
+     * https://gmail, a host that doesn't exist, so typing a site's name led nowhere.
+     */
     private val SINGLE_LABEL_HOSTNAME_RE =
-        Regex("^[a-zA-Z][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](:\\d{1,5})?(/[^\\s/][^\\s]*)?(\\?[^\\s]*)?(#[^\\s]*)?$")
+        Regex("^[a-zA-Z][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]((:\\d{1,5})(/[^\\s]*)?|/[^\\s]*)(\\?[^\\s]*)?(#[^\\s]*)?$")
 
     /** Any scheme prefix, including scheme-only forms. e.g. "https://", "about:" */
     private val SCHEME_RE = Regex("^[a-zA-Z][a-zA-Z0-9+\\-.]*:")

@@ -337,6 +337,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
      * no-op, so the same instance is never destroyed twice.
      */
     fun releaseWebView() {
+        compatView?.let { cv ->
+            compatView = null
+            runCatching { (cv.parent as? android.view.ViewGroup)?.removeView(cv) }
+            runCatching { cv.destroy() }
+            compatGeneration.value++ // a renderer crash takes both WebViews; a fresh one reloads the page
+        }
         val view = webView ?: return
         webView = null
         engineReady = false // a new WebView must boot the engine again before links can open
@@ -355,12 +361,15 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     /** Pauses the engine WebView (JS timers, video) when the app leaves the foreground. */
     fun pause() {
         webView?.onPause()
+        compatView?.onPause()
+        runCatching { android.webkit.CookieManager.getInstance().flush() } // keep compatibility-mode sign-ins
         cookies.flush() // persist login cookies before the process can be killed
     }
 
     /** Resumes the engine WebView when the app returns to the foreground. */
     fun resume() {
         webView?.onResume()
+        compatView?.onResume()
     }
 
     /**
@@ -371,6 +380,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     @Suppress("DEPRECATION")
     fun trimMemory() {
         webView?.freeMemory()
+        compatView?.freeMemory()
     }
 
     val activeTab: Tab?
@@ -409,7 +419,27 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
         engineReady = true
         pendingExternalUrl?.let { pendingExternalUrl = null; openInNewTab(it) }
+
+        val active = activeTab
+        // The typed address stays on screen with a progress bar until the engine reports the load.
+        if (navigatingTo.value != null) {
+            snapshotsSinceNavigate++
+            if (active == null || active.loading || active.error != null || active.url == navigatingTo.value || snapshotsSinceNavigate > 3) {
+                navigatingTo.value = null
+            }
+        }
+        // A compatibility page whose tab was closed goes with it.
+        compat.value?.let { c -> if (c.tabId != null && tabs.none { it.id == c.tabId }) closeCompat() }
+        // An engine page that reached a compatibility site (a link or redirect to Gmail) switches
+        // over; the engine steps back so its page under the compatibility view isn't that site.
+        if (active != null && !incognito.value && !compatActive && needsCompat(active.url) && (active.id to active.url) !in leftCompat) {
+            openCompat(active.url)
+            callEngine("window.novaNative && window.novaNative.back();")
+        }
     }
+
+    /** Tab+address pairs whose compatibility page the user backed out of: not reopened automatically. */
+    private val leftCompat = mutableSetOf<Pair<String, String>>()
 
     /** Parses the full bookmark list pushed from listBookmarksExternal() (browser-window.ts). */
     fun applyBookmarksSnapshot(json: String) {
@@ -526,23 +556,53 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun navigate(url: String) {
         val resolved = resolveInput(url)
         if (resolved.isEmpty()) return
+        // Gmail and Google's other signed-in apps need a full JavaScript engine: they open in
+        // compatibility mode (the system WebView) in this tab. Incognito stays in Nova's engine,
+        // whose cookie jar keeps private sessions apart; the system WebView's cookies are shared.
+        if (!incognito.value && needsCompat(resolved)) {
+            openCompat(resolved)
+            return
+        }
+        if (compatActive) closeCompat()
         addressBarText.value = resolved
+        // Shown at once (address and progress bar): the engine's own state push comes later, and
+        // until it did, pressing Go looked like nothing happened.
+        navigatingTo.value = resolved
+        snapshotsSinceNavigate = 0
         callEngine("window.novaNative && window.novaNative.navigate(${jsString(resolved)});")
     }
 
+    /** The address being opened, shown in the bar with a progress bar until the engine reports it. */
+    var navigatingTo = mutableStateOf<String?>(null)
+        private set
+    private var snapshotsSinceNavigate = 0
+
+    /** Back is possible in the compatibility page, out of it (to the engine page below), or in the engine. */
+    val backEnabled: Boolean get() = compatActive || canGoBack.value
+
     fun goBack() {
+        if (compatActive) {
+            val view = compatView
+            if (compat.value?.canGoBack == true && view != null) view.goBack()
+            else { activeTab?.let { leftCompat.add(it.id to it.url) }; closeCompat() }
+            return
+        }
         callEngine("window.novaNative && window.novaNative.back();")
     }
 
     fun goForward() {
+        if (compatActive) { compatView?.goForward(); return }
         callEngine("window.novaNative && window.novaNative.forward();")
     }
 
     fun reload() {
+        if (compatActive) { compatView?.reload(); return }
         callEngine("window.novaNative && window.novaNative.reload();")
     }
 
     fun stop() {
+        if (compatActive) { compatView?.stopLoading(); return }
+        navigatingTo.value = null
         callEngine("window.novaNative && window.novaNative.stop();")
     }
 
@@ -636,6 +696,110 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         if (cookies) this.cookies.clearAll()
         if (downloads) clearCompletedDownloads()
     }
+
+    // ── Compatibility mode (system WebView for sites Nova's engine can't run; see CompatSites) ──
+
+    /** The page shown in compatibility mode, and the tab it belongs to. */
+    data class CompatPage(val tabId: String?, val url: String, val title: String, val progress: Int, val canGoBack: Boolean)
+
+    /** Non-null while a tab shows a compatibility-mode page. */
+    var compat = mutableStateOf<CompatPage?>(null)
+        private set
+
+    private var compatView: WebView? = null
+
+    /** True when the active tab shows its compatibility-mode page. */
+    val compatActive: Boolean get() = compat.value?.let { it.tabId == activeTabId.value } ?: false
+
+    fun needsCompat(url: String): Boolean = CompatSites.needsCompat(url, settings.compatOn, settings.compatOff)
+
+    fun staysInCompat(url: String, isRedirect: Boolean): Boolean =
+        CompatSites.staysInCompat(url, isRedirect, settings.compatOn, settings.compatOff)
+
+    /** Shows [url] in compatibility mode in the active tab (the view loads it once attached). */
+    fun openCompat(url: String) {
+        navigatingTo.value = null
+        compat.value = CompatPage(activeTabId.value, url, "", 0, false)
+        compatView?.loadUrl(url)
+    }
+
+    /** Leaves compatibility mode: the tab shows its Nova engine page again. */
+    fun closeCompat() {
+        compatView?.stopLoading()
+        compat.value = null // CompatWebView leaves the composition and its view is destroyed (onRelease)
+    }
+
+    fun detachCompatView(view: WebView) {
+        if (compatView === view) compatView = null
+    }
+
+    /** A link in a compatibility-mode page to an ordinary site: Nova's engine opens it in this tab. */
+    fun leaveCompatTo(url: String) {
+        closeCompat()
+        navigate(url)
+    }
+
+    fun attachCompatView(view: WebView) {
+        compatView = view
+        compat.value?.let { if (view.url != it.url) view.loadUrl(it.url) }
+    }
+
+    /** Page state pushed by CompatWebView's clients. */
+    fun onCompatState(url: String?, title: String?, progress: Int?, canGoBack: Boolean) {
+        val page = compat.value ?: return
+        compat.value = page.copy(
+            url = url?.takeIf { it.isNotBlank() && it != "about:blank" } ?: page.url,
+            title = title ?: page.title,
+            progress = progress ?: page.progress,
+            canGoBack = canGoBack,
+        )
+    }
+
+    /** The compatibility WebView's renderer died: drop the page; the tab shows its engine page. */
+    fun onCompatRendererGone() {
+        val view = compatView
+        compatView = null
+        compat.value = null
+        runCatching { (view?.parent as? android.view.ViewGroup)?.removeView(view) }
+        runCatching { view?.destroy() }
+        compatGeneration.value++
+    }
+
+    /** Bumped when the compatibility WebView must be rebuilt. */
+    var compatGeneration = mutableStateOf(0)
+        private set
+
+    /** Downloads from a compatibility-mode page carry its sign-in cookies (the system WebView's jar). */
+    fun startCompatDownload(url: String, contentDisposition: String?, mimeType: String?, userAgent: String?) {
+        val headers = buildMap {
+            runCatching { android.webkit.CookieManager.getInstance().getCookie(url) }.getOrNull()?.let { put("Cookie", it) }
+            userAgent?.let { put("User-Agent", it) }
+        }
+        downloader.start(url, parseDispositionFilename(contentDisposition), mimeType, compat.value?.url, headers)
+    }
+
+    /** Menu toggle: moves the current site into or out of compatibility mode, and remembers it. */
+    fun toggleCompatForCurrentSite() {
+        if (compatActive) {
+            val url = compat.value?.url ?: return
+            CompatSites.hostOf(url)?.let { host ->
+                settings.compatOn = settings.compatOn - host
+                settings.compatOff = settings.compatOff + host
+            }
+            closeCompat()
+            navigate(url)
+        } else {
+            val url = activeTab?.url ?: return
+            val host = CompatSites.hostOf(url) ?: return
+            settings.compatOff = settings.compatOff - host
+            settings.compatOn = settings.compatOn + host
+            openCompat(url)
+        }
+    }
+
+    /** Address-bar suggestions for [text] (see AddressSuggestions). */
+    fun suggestionsFor(text: String): List<AddressSuggestion> =
+        AddressSuggestions.suggest(text, history.toList(), bookmarks.toList(), searchEngine.value.template)
 
     /** True for the engine's start pages, which the native New Tab page covers. */
     fun isNewTabUrl(url: String): Boolean = url.isBlank() || url == homeUrl.value || url.startsWith("about:")

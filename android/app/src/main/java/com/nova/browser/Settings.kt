@@ -21,7 +21,19 @@ class NovaSettings(private val prefs: SharedPreferences) {
         get() = SearchEngine.fromId(prefs.getString(KEY_SEARCH_ENGINE, null))
         set(value) { prefs.edit().putString(KEY_SEARCH_ENGINE, value.name).apply() }
 
+    /** Sites the user switched into compatibility mode (see CompatSites). */
+    var compatOn: Set<String>
+        get() = prefs.getStringSet(KEY_COMPAT_ON, null)?.toSet() ?: emptySet()
+        set(value) { prefs.edit().putStringSet(KEY_COMPAT_ON, value).apply() }
+
+    /** Default compatibility sites the user switched back to Nova's engine. */
+    var compatOff: Set<String>
+        get() = prefs.getStringSet(KEY_COMPAT_OFF, null)?.toSet() ?: emptySet()
+        set(value) { prefs.edit().putStringSet(KEY_COMPAT_OFF, value).apply() }
+
     private companion object {
         const val KEY_SEARCH_ENGINE = "searchEngine"
+        const val KEY_COMPAT_ON = "compatOn"
+        const val KEY_COMPAT_OFF = "compatOff"
     }
 }

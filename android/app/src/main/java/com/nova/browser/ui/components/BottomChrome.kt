@@ -2,6 +2,7 @@ package com.nova.browser.ui.components
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -11,6 +12,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
@@ -32,8 +36,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nova.browser.AddressSuggestion
 import com.nova.browser.ui.theme.IncognitoContent
 import com.nova.browser.ui.theme.IncognitoSurface
 import com.nova.browser.ui.theme.SuccessGreen
@@ -57,6 +63,8 @@ fun BottomChrome(
     menuContent: @Composable ColumnScope.(close: () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
     showUrl: Boolean = true,
+    /** Rows shown above the bar while typing (AddressSuggestions); the first is what Go does. */
+    suggestions: (String) -> List<AddressSuggestion> = { emptyList() },
 ) {
     var editing by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf(TextFieldValue("")) }
@@ -88,6 +96,16 @@ fun BottomChrome(
         modifier = modifier,
     ) {
         Column {
+            if (editing && draft.text.isNotBlank()) {
+                val rows = remember(draft.text) { suggestions(draft.text) }
+                rows.forEach { s ->
+                    SuggestionRow(s, content) {
+                        onSubmit(s.url)
+                        stopEditing()
+                    }
+                }
+                if (rows.isNotEmpty()) HorizontalDivider()
+            }
             if (isLoading) {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth().height(2.dp),
@@ -205,6 +223,42 @@ fun BottomChrome(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SuggestionRow(s: AddressSuggestion, content: Color, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .semantics { contentDescription = "Suggestion: ${s.title}" },
+    ) {
+        Icon(
+            imageVector = when (s.kind) {
+                AddressSuggestion.Kind.GO -> Icons.Filled.Public
+                AddressSuggestion.Kind.SEARCH -> Icons.Filled.Search
+                AddressSuggestion.Kind.BOOKMARK -> Icons.Filled.Star
+                AddressSuggestion.Kind.HISTORY -> Icons.Filled.History
+            },
+            contentDescription = null,
+            tint = content.copy(alpha = 0.7f),
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            val label = when (s.kind) {
+                AddressSuggestion.Kind.GO -> s.title
+                AddressSuggestion.Kind.SEARCH -> "Search for “${s.title}”"
+                else -> s.title
+            }
+            Text(label, color = content, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (s.kind == AddressSuggestion.Kind.BOOKMARK || s.kind == AddressSuggestion.Kind.HISTORY) {
+                Text(displayUrl(s.url), color = content.copy(alpha = 0.6f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

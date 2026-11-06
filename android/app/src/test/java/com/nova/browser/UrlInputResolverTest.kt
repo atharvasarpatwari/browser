@@ -51,16 +51,19 @@ class UrlInputResolverTest {
     }
 
     @Test
-    fun `single-label hostnames navigate`() {
-        assertEquals("https://www", UrlInputResolver.resolve("www", ddg))
-        assertEquals("https://intranet", UrlInputResolver.resolve("intranet", ddg))
+    fun `single-label hostnames with a port or path navigate`() {
+        assertEquals("https://intranet/", UrlInputResolver.resolve("intranet/", ddg))
+        assertEquals("https://wiki/Main_Page", UrlInputResolver.resolve("wiki/Main_Page", ddg))
         assertEquals("https://www:3000/api", UrlInputResolver.resolve("www:3000/api", ddg))
         assertEquals("https://router:8080", UrlInputResolver.resolve("router:8080", ddg))
     }
 
     @Test
-    fun `bare word is treated as a single-label host`() {
-        assertEquals("https://hello", UrlInputResolver.resolve("hello", ddg))
+    fun `a lone word is a search, not a host`() {
+        assertEquals("https://duckduckgo.com/?q=hello", UrlInputResolver.resolve("hello", ddg))
+        assertEquals("https://duckduckgo.com/?q=gmail", UrlInputResolver.resolve("gmail", ddg))
+        assertEquals("https://duckduckgo.com/?q=www", UrlInputResolver.resolve("www", ddg))
+        assertEquals("https://localhost", UrlInputResolver.resolve("localhost", ddg)) // still a host
     }
 
     // ── Explicit-scheme pass-through (idempotent) ──────────────────────────

@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nova.browser.BrowserViewModel
 import com.nova.browser.ui.components.*
@@ -27,7 +28,12 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
     var showDownloads by remember { mutableStateOf(false) }
     val activeTab = viewModel.activeTab
     val context = LocalContext.current
-    val onNewTabPage = activeTab == null || (activeTab.error == null && viewModel.isNewTabUrl(activeTab.url))
+    val compat = viewModel.compat.value
+    val compatActive = viewModel.compatActive
+    val onNewTabPage = !compatActive && (activeTab == null || (activeTab.error == null && viewModel.isNewTabUrl(activeTab.url)))
+    // The page actually on screen: the compatibility-mode page, or the engine tab.
+    val pageUrl = if (compatActive) compat!!.url else activeTab?.url
+    val pageTitle = if (compatActive) compat!!.title.ifBlank { compat.url } else activeTab?.title ?: ""
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -72,7 +78,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
         NewTabShortcut.SETTINGS -> overlay = Overlay.SETTINGS
     }
 
-    BackHandler(enabled = overlay == Overlay.NONE && viewModel.canGoBack.value) {
+    BackHandler(enabled = overlay == Overlay.NONE && viewModel.backEnabled) {
         viewModel.goBack()
     }
 
@@ -90,12 +96,14 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     )
                 }
                 BottomChrome(
-                    url = activeTab?.url ?: "",
-                    showUrl = !onNewTabPage,
-                    isLoading = activeTab?.loading ?: false,
+                    // After pressing Go the typed address shows at once; after redirects, the final one.
+                    url = if (compatActive) compat!!.url else viewModel.navigatingTo.value ?: activeTab?.url ?: "",
+                    showUrl = !onNewTabPage || viewModel.navigatingTo.value != null,
+                    isLoading = if (compatActive) compat!!.progress < 100 else (activeTab?.loading ?: false) || viewModel.navigatingTo.value != null,
                     incognito = viewModel.incognito.value,
                     tabCount = viewModel.tabs.size,
-                    canGoBack = viewModel.canGoBack.value,
+                    canGoBack = viewModel.backEnabled,
+                    suggestions = viewModel::suggestionsFor,
                     onBack = { viewModel.goBack() },
                     onSubmit = { viewModel.navigate(it) },
                     onReload = { viewModel.reload() },
@@ -105,7 +113,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                         MenuEntry("Forward", Icons.AutoMirrored.Filled.ArrowForward, enabled = viewModel.canGoForward.value) { close(); viewModel.goForward() }
                         MenuEntry("New tab", Icons.Filled.Add) { close(); viewModel.setIncognito(false); viewModel.newTab() }
                         MenuEntry("New incognito tab", Icons.Filled.VisibilityOff) { close(); viewModel.setIncognito(true); viewModel.newTab() }
-                        if (!onNewTabPage && activeTab != null) {
+                        if (!onNewTabPage && activeTab != null && !compatActive) {
                             val bookmarked = viewModel.isBookmarked(activeTab.url)
                             MenuEntry(if (bookmarked) "Remove bookmark" else "Add bookmark", if (bookmarked) Icons.Filled.Star else Icons.Filled.StarBorder) {
                                 close(); viewModel.toggleBookmark()
@@ -115,11 +123,19 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                         MenuEntry("Bookmarks", Icons.Filled.Star) { close(); libraryTab = LibraryTab.BOOKMARKS }
                         MenuEntry("History", Icons.Filled.History) { close(); libraryTab = LibraryTab.HISTORY }
                         MenuEntry("Downloads", Icons.Filled.Download) { close(); openDownloads() }
-                        if (!onNewTabPage && activeTab != null) {
+                        if (!onNewTabPage && pageUrl != null) {
                             HorizontalDivider()
-                            MenuEntry("Find in page", Icons.Filled.Search) { close(); viewModel.openFind() }
-                            MenuEntry("Share page", Icons.Filled.Share) { close(); viewModel.shareUrl(activeTab.title, activeTab.url) }
-                            MenuEntry("Copy link", Icons.Filled.ContentCopy) { close(); viewModel.copyToClipboard("URL", activeTab.url) }
+                            if (!compatActive) MenuEntry("Find in page", Icons.Filled.Search) { close(); viewModel.openFind() }
+                            MenuEntry("Share page", Icons.Filled.Share) { close(); viewModel.shareUrl(pageTitle, pageUrl) }
+                            MenuEntry("Copy link", Icons.Filled.ContentCopy) { close(); viewModel.copyToClipboard("URL", pageUrl) }
+                            // Sites Nova's engine can't run (Gmail…) open in the system WebView; this moves
+                            // the current site in or out of that mode, and remembers the choice.
+                            if (!viewModel.incognito.value && (compatActive || pageUrl.startsWith("http"))) {
+                                MenuEntry(
+                                    if (compatActive) "Compatibility mode: on" else "Compatibility mode: off",
+                                    if (compatActive) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
+                                ) { close(); viewModel.toggleCompatForCurrentSite() }
+                            }
                         }
                         HorizontalDivider()
                         MenuEntry("Settings", Icons.Filled.Settings) { close(); overlay = Overlay.SETTINGS }
@@ -134,6 +150,16 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                 key(viewModel.engineGeneration.value) {
                     EngineWebView(viewModel = viewModel, modifier = Modifier.fillMaxSize())
                 }
+                // Compatibility mode covers the engine while its tab is active; on other tabs it is
+                // kept (hidden, zero-size) so switching back doesn't reload Gmail.
+                if (compat != null) {
+                    key(viewModel.compatGeneration.value) {
+                        CompatWebView(
+                            viewModel = viewModel,
+                            modifier = if (compatActive) Modifier.fillMaxSize() else Modifier.size(0.dp),
+                        )
+                    }
+                }
                 if (onNewTabPage) {
                     NewTabPage(
                         history = viewModel.history,
@@ -143,7 +169,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                         onShortcut = ::openShortcut,
                     )
                 }
-                activeTab?.error?.let { error ->
+                if (!compatActive) activeTab?.error?.let { error ->
                     ErrorPage(error = error, onRetry = { viewModel.reload() })
                 }
             }
