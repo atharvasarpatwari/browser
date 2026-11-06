@@ -25,7 +25,7 @@ import type {
   CssKeyframesRule,
 } from './types';
 
-import { splitOnSemicolon } from './parser';
+import { cssPropName, splitOnSemicolon } from './parser';
 import { matchesSelectorList, matchesSelectorListForPseudo, selectorPseudoElement } from './selector';
 import { getPreferredColorScheme } from '../color-scheme';
 import { controlUaDefaults } from '../form-controls';
@@ -1185,7 +1185,7 @@ export function expandShorthands(
   const order = 0;
 
   for (const decl of declarations) {
-    const prop = decl.property.toLowerCase();
+    const prop = cssPropName(decl.property);
     let expanded: Map<string, string> | null = null;
 
     if (prop === 'margin') {
@@ -1738,7 +1738,7 @@ export function computeCascade(
       // and lay out as 0.
       if (isInvalidLengthValue(decl.property.toLowerCase(), decl.value)) continue;
       entries.push({
-        property: decl.property.toLowerCase(),
+        property: cssPropName(decl.property),
         value: decl.value,
         important: decl.important,
         specificity: specificityWeight(rule.specificity),
@@ -1823,7 +1823,7 @@ function parseInlineDeclarations(raw: string): CssDeclaration[] {
   for (const part of parts) {
     const colon = part.indexOf(':');
     if (colon === -1) continue;
-    const prop = part.slice(0, colon).trim().toLowerCase();
+    const prop = cssPropName(part.slice(0, colon).trim());
     let value = part.slice(colon + 1).trim();
     if (!prop || !value) continue;
     let important = false;
@@ -2041,14 +2041,14 @@ export function computeComputedStyles(
     // Inline shorthands (style="margin: 0 auto; background: red") are expanded like stylesheet
     // ones; they used to be stored as-is, so layout and paint never saw their longhands.
     const inlineResolved = expandShorthands(inlineDecls.map((d) => ({
-      property: d.property.toLowerCase(),
+      property: cssPropName(d.property),
       value: d.property.startsWith('--') ? d.value : invalidAtComputedTime(resolveVarReferences(d.value, earlyCustomProps), d.value),
       important: d.important,
     })));
     // Non-important inline styles apply first (override cascade but can be overridden by stylesheet !important)
     for (const decl of inlineResolved) {
       if (!decl.important) {
-        computed.set(decl.property.toLowerCase(), decl.value);
+        computed.set(cssPropName(decl.property), decl.value);
       }
     }
     // Re-apply stylesheet !important declarations that should beat non-important inline.
@@ -2060,7 +2060,7 @@ export function computeComputedStyles(
     // Finally, inline !important wins over everything.
     for (const decl of inlineResolved) {
       if (decl.important) {
-        computed.set(decl.property.toLowerCase(), decl.value);
+        computed.set(cssPropName(decl.property), decl.value);
       }
     }
   }

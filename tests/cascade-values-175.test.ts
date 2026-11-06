@@ -40,6 +40,11 @@ const CASES: Array<[string, string, string, (q: Q) => unknown]> = [
   ['line-height number inherits as factor', '#p{font-size:10px;line-height:2} #a{font-size:20px}', '<div id="p"><div id="a">x</div></div>', (q) => q.h('a') === 40 || q.h('a')],
   // custom properties
   ['var basic', ':root{--w:123px} #a{width:var(--w);height:5px}', '<div id="a"></div>', (q) => q.w('a') === 123 || q.w('a')],
+  // 1.92: custom property names are case-sensitive; they were lowercased, so Google's
+  // var(--bbQxAb) found nothing (footer links white on the tablet, black offline).
+  ['var mixed-case name', ':root{--bbQxAb:rgb(78,80,89)} #a{color:var(--bbQxAb)}', '<span id="a">x</span>', (q) => rgb(q.cs('a', 'color')) === 'rgb(78,80,89)' || q.cs('a', 'color')],
+  ['var names differing only in case stay distinct', ':root{--W:50px;--w:20px} #a{width:var(--W);height:5px}', '<div id="a"></div>', (q) => q.w('a') === 50 || q.w('a')],
+  ['var mixed-case inline', '#a{width:var(--Wd);height:5px}', '<div id="a" style="--Wd:44px"></div>', (q) => q.w('a') === 44 || q.w('a')],
   ['var fallback', '#a{width:var(--nope, 77px);height:5px}', '<div id="a"></div>', (q) => q.w('a') === 77 || q.w('a')],
   ['var nested fallback', '#a{width:var(--x, var(--y, 66px));height:5px}', '<div id="a"></div>', (q) => q.w('a') === 66 || q.w('a')],
   ['var inherits', '#p{--c:rgb(0,128,0)} #a{color:var(--c)}', '<div id="p"><span id="a">x</span></div>', (q) => rgb(q.cs('a', 'color')) === 'rgb(0,128,0)' || q.cs('a', 'color')],

@@ -514,7 +514,7 @@ export class CssParser {
     for (const part of parts) {
       const colon = part.indexOf(':');
       if (colon === -1) continue;
-      const prop = part.slice(0, colon).trim().toLowerCase();
+      const prop = cssPropName(part.slice(0, colon).trim());
       let value = part.slice(colon + 1).trim();
 
       if (!prop || !value) continue;
@@ -761,7 +761,7 @@ export class CssParser {
       const colon = declText.indexOf(':');
       if (colon === -1) continue;
 
-      const prop = declText.slice(0, colon).trim().toLowerCase();
+      const prop = cssPropName(declText.slice(0, colon).trim());
       let value = declText.slice(colon + 1).trim();
 
       if (!prop || !value) continue;
@@ -1651,7 +1651,7 @@ function consumeDeclarationsFromText(raw: string): CssDeclaration[] {
   for (const part of parts) {
     const colon = part.indexOf(':');
     if (colon === -1) continue;
-    const prop = part.slice(0, colon).trim().toLowerCase();
+    const prop = cssPropName(part.slice(0, colon).trim());
     let value = part.slice(colon + 1).trim();
 
     if (!prop || !value) continue;
@@ -2261,6 +2261,13 @@ function tokensToText(tokens: CssToken[]): string {
 }
 
 import { tokenizeCss } from './tokenizer';
+
+/**
+ * A declaration's property name as the cascade keys it. Property names are ASCII
+ * case-insensitive, but custom properties (`--name`) are case-sensitive (CSS Variables §2):
+ * Google's `--bbQxAb` was stored as `--bbqxab`, so `var(--bbQxAb)` found nothing.
+ */
+export const cssPropName = (p: string): string => (p.startsWith('--') ? p : p.toLowerCase());
 
 function tokenizeClean(css: string): CssToken[] {
   return tokenizeCss(css).filter((t: CssToken) =>

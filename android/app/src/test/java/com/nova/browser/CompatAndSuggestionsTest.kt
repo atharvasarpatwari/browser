@@ -42,6 +42,15 @@ class CompatAndSuggestionsTest {
     }
 
     @Test
+    fun scriptBuiltSitesOpenInCompatibilityModeUnlessSwitchedOff() {
+        for (url in listOf("https://www.youtube.com/", "https://m.youtube.com/watch?v=x", "https://reddit.com", "https://www.reddit.com/r/android")) {
+            assertTrue(url, CompatSites.needsCompat(url))
+        }
+        assertFalse(CompatSites.needsCompat("https://m.youtube.com/", userOff = setOf("m.youtube.com")))
+        assertFalse(CompatSites.needsCompat("https://notreddit.com/"))
+    }
+
+    @Test
     fun userChoicesSwitchSitesInAndOut() {
         assertTrue(CompatSites.needsCompat("https://app.example.com/x", userOn = setOf("example.com")))
         assertFalse(CompatSites.needsCompat("https://mail.google.com/", userOff = setOf("mail.google.com")))

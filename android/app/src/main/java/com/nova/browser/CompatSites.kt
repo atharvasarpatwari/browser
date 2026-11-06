@@ -13,11 +13,14 @@ import java.net.URI
  */
 object CompatSites {
 
-    /** Google's signed-in apps: they need a full JavaScript engine to work at all. */
+    /** Sites that need a full JavaScript engine to work at all: Google's signed-in apps, YouTube, Reddit. */
     val DEFAULT_HOSTS: Set<String> = setOf(
         "gmail.com", "mail.google.com", "accounts.google.com", "myaccount.google.com",
         "docs.google.com", "drive.google.com", "calendar.google.com", "meet.google.com",
         "keep.google.com", "photos.google.com", "contacts.google.com", "chat.google.com",
+        // Single-page apps whose content is built by script: on the tablet (1.91) YouTube stayed on
+        // grey placeholder boxes and Reddit showed only its loading logo. The menu can switch them back.
+        "youtube.com", "reddit.com",
     )
 
     /**
