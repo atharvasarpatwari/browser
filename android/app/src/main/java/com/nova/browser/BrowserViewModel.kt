@@ -603,13 +603,14 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             val view = compatView
             if (compat.value?.canGoBack == true && view != null) { view.goBack(); return }
             closeCompat()
-            // Backing out of compatibility mode onto an engine page that is that same site (a tab
-            // opened straight onto Gmail): show the new-tab page rather than the half-run site.
-            // ponytail: not engine back(): its history is window-wide, so it could land on another tab's page.
+            // Backing out of compatibility mode onto an engine page that is that same site: Back goes
+            // past it in this tab's own history (per tab since 1.90), or to the new-tab page when the
+            // tab was opened straight onto Gmail.
             val tab = activeTab
             if (tab != null && needsCompat(tab.url)) {
                 leftCompat.add(tab.id to tab.url)
-                callEngine("window.novaNative && window.novaNative.navigate(${jsString(homeUrl.value)});")
+                if (canGoBack.value) callEngine("window.novaNative && window.novaNative.back();")
+                else callEngine("window.novaNative && window.novaNative.navigate(${jsString(homeUrl.value)});")
             }
             return
         }

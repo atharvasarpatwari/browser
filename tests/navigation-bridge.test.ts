@@ -718,3 +718,83 @@ describe('NavigationBridge', () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-tab back/forward history (1.90)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('NavigationBridge: each tab keeps its own back/forward history', () => {
+  const sync = async (bridge: { syncFromActiveTab(): void }): Promise<void> => {
+    bridge.syncFromActiveTab();
+    await new Promise((r) => setTimeout(r, 0)); // the bridge starts the navigation without awaiting it
+  };
+
+  async function setup() {
+    const { NavigationController } = await import('../src/browser/navigation/navigation-controller');
+    const { UrlParser } = await import('../src/browser/navigation/url-parser');
+    const { TabManager } = await import('../src/browser/tabs/tab-manager');
+    const nav = new NavigationController(new UrlParser());
+    const tabs = new TabManager();
+    const toolbar = createMockToolbar();
+    const bridge = new NavigationBridge(nav, tabs, createMockAddressBar() as any, toolbar as any, null);
+    return { nav, tabs, bridge, toolbar };
+  }
+
+  it('Back in a tab goes to that tab\'s previous page, never another tab\'s', async () => {
+    const { nav, tabs, bridge } = await setup();
+    const a = tabs.createTab('https://a.test/1');
+    await sync(bridge);
+    await bridge.navigate('https://a.test/2');
+    expect(nav.canGoBack()).toBe(true);
+
+    const b = tabs.createTab('https://b.test/1'); // a new tab (an outside link)
+    await sync(bridge);
+    expect(nav.getCurrentEntry()?.url).toBe('https://b.test/1');
+    expect(nav.canGoBack()).toBe(false); // was true: Back led to a.test/2
+
+    tabs.activateTab(a.id);
+    await sync(bridge);
+    expect(nav.getCurrentEntry()?.url).toBe('https://a.test/2');
+    expect(nav.canGoBack()).toBe(true);
+    nav.back();
+    expect(nav.getCurrentEntry()?.url).toBe('https://a.test/1');
+
+    tabs.activateTab(b.id);
+    await sync(bridge);
+    expect(nav.getCurrentEntry()?.url).toBe('https://b.test/1');
+    expect(nav.historyLength).toBe(1);
+  });
+
+  it('switching tabs does not grow either tab\'s history', async () => {
+    const { nav, tabs, bridge } = await setup();
+    const a = tabs.createTab('https://a.test/');
+    await sync(bridge);
+    const b = tabs.createTab('https://b.test/');
+    await sync(bridge);
+    for (let i = 0; i < 3; i++) {
+      tabs.activateTab(a.id); await sync(bridge);
+      tabs.activateTab(b.id); await sync(bridge);
+    }
+    expect(nav.historyLength).toBe(1);
+    tabs.activateTab(a.id); await sync(bridge);
+    expect(nav.historyLength).toBe(1);
+  });
+
+  it('a redirected page keeps its final address, so switching back does not push it again', async () => {
+    const { nav, tabs, bridge } = await setup();
+    const a = tabs.createTab('https://a.test/');
+    await sync(bridge);
+    await bridge.navigate('https://iana.test/');
+    nav.commitRedirectedUrl('https://www.iana.test/'); // the server redirected
+    expect(a.url).toBe('https://www.iana.test/'); // was the typed https://iana.test/
+
+    const b = tabs.createTab('https://b.test/');
+    await sync(bridge);
+    tabs.activateTab(a.id);
+    await sync(bridge);
+    expect(nav.historyLength).toBe(2); // was 3: iana.test pushed on top of www.iana.test
+    nav.back();
+    expect(nav.getCurrentEntry()?.url).toBe('https://a.test/');
+    void b;
+  });
+});

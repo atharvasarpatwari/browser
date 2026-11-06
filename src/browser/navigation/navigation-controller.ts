@@ -107,6 +107,12 @@ enum NavigationType {
  * A single immutable entry in the navigation history stack.
  * Scroll position is stored so it can be restored on back/forward.
  */
+/** One tab's back/forward stack (NavigationController.exportHistory / importHistory). */
+interface NavigationHistoryState {
+  readonly entries: readonly NavigationEntry[];
+  readonly cursor: number;
+}
+
 interface NavigationEntry {
   /** Opaque unique identifier. */
   readonly id: string;
@@ -341,6 +347,13 @@ interface INavigationController {
   setDeferredCompletion(enabled: boolean): void;
 
   // ── History state ──────────────────────────────────────────────────────────
+  /**
+   * The back/forward stack, to save when its tab is switched away from. Optional so simple test
+   * doubles need not implement it.
+   */
+  exportHistory?(): NavigationHistoryState;
+  /** Loads a tab's saved stack (empty for a new tab). Emits nothing and loads no page. */
+  importHistory?(state: NavigationHistoryState): void;
   getCurrentEntry(): NavigationEntry | null;
   canGoBack(): boolean;
   canGoForward(): boolean;
@@ -488,6 +501,16 @@ class NavigationStack {
   /** Read-only snapshot — useful for HistoryService serialisation. */
   snapshot(): readonly NavigationEntry[] {
     return Object.freeze([...this.entries]);
+  }
+
+  /** Replaces the whole stack (a tab's saved back/forward history). */
+  load(entries: readonly NavigationEntry[], cursor: number): void {
+    this.entries.splice(0, this.entries.length, ...entries);
+    this.cursor = entries.length === 0 ? -1 : Math.max(0, Math.min(cursor, entries.length - 1));
+  }
+
+  get position(): number {
+    return this.cursor;
   }
 }
 
@@ -981,6 +1004,14 @@ class NavigationController implements INavigationController {
 
   // ── History queries ────────────────────────────────────────────────────────
 
+  exportHistory(): NavigationHistoryState {
+    return { entries: this.stack.snapshot(), cursor: this.stack.position };
+  }
+
+  importHistory(state: NavigationHistoryState): void {
+    this.stack.load(state.entries, state.cursor);
+  }
+
   getCurrentEntry(): NavigationEntry | null {
     return this.stack.current();
   }
@@ -1213,6 +1244,7 @@ export {
 };
 
 export type {
+  NavigationHistoryState,
   INavigationController,
   INavigationGuard,
   PostData,

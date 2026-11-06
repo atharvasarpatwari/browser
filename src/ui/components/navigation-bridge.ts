@@ -273,6 +273,10 @@ class NavigationBridge implements INavigationBridge {
           // navigate()'s own result path used to clear it, so after a reload the tab
           // (and the Android chrome, which reads it) stayed "loading" forever.
           this.tabs.activeTab?.setLoading(false);
+          // The tab keeps the final address (after redirects), the one its history entry holds.
+          // It kept the typed one (iana.org for www.iana.org): the Android address bar showed the
+          // wrong host, and switching back to the tab pushed it again, so Back reloaded the page.
+          if (this.tabs.activeTab && /^https?:/i.test(e.entry.url)) this.tabs.activeTab.setUrl(e.entry.url);
           // The page's <title> arrives with completion; tabs used to keep the host name.
           if (this.tabs.activeTab && /^https?:/i.test(e.entry.url)) this.tabs.activeTab.setTitle(this._titleFor(e.entry));
           this._syncToolbarState();
@@ -281,6 +285,7 @@ class NavigationBridge implements INavigationBridge {
 
         case 'urlRedirected':
           this._currentUrl = e.url;
+          if (this.tabs.activeTab && /^https?:/i.test(e.url)) this.tabs.activeTab.setUrl(e.url);
           const wasNavigating = this._navigating;
           this._navigating = true;
           this.addressBar.setValue(e.url);
@@ -548,10 +553,25 @@ class NavigationBridge implements INavigationBridge {
       return;
     }
 
+    // Each tab keeps its own back/forward history. There is one NavigationController for the
+    // window, so its stack is saved for the tab being left and the incoming tab's is loaded.
+    // Without this, switching tabs pushed the new tab's page onto the one shared stack, and Back
+    // then went to the other tab's page (an outside Gmail link's tab showed the previous tab).
+    const switched = this.historyTabId !== tab.id;
+    // The first tab synced keeps the stack the controller already holds.
+    if (switched && this.historyTabId !== null && this.nav.exportHistory && this.nav.importHistory) {
+      this.tabStacks.set(this.historyTabId, this.nav.exportHistory());
+      const open = new Set(this.tabs.tabs.map((t) => t.id));
+      for (const id of [...this.tabStacks.keys()]) if (!open.has(id)) this.tabStacks.delete(id); // closed tabs
+      this.nav.importHistory(this.tabStacks.get(tab.id) ?? { entries: [], cursor: -1 });
+    }
+    this.historyTabId = tab.id;
+
     this._currentUrl = tab.url;
     this.addressBar.setValue(tab.url);
-    this.toolbar.setCanGoBack(tab.canGoBack());
-    this.toolbar.setCanGoForward(tab.canGoForward());
+    const perTab = !!(this.nav.exportHistory && this.nav.importHistory); // the controller now holds this tab's stack
+    this.toolbar.setCanGoBack(perTab ? this.nav.canGoBack() : tab.canGoBack());
+    this.toolbar.setCanGoForward(perTab ? this.nav.canGoForward() : tab.canGoForward());
     this.toolbar.setLoading(tab.loading);
     this._setLoading(tab.loading);
     this._updateSecureState(tab.url);
@@ -562,13 +582,29 @@ class NavigationBridge implements INavigationBridge {
       this.statusBar?.setStatus(tab.loading ? 'Loading...' : 'Done');
     }
 
-    // Sync the shared NavigationController to the active tab's URL so that
-    // back/forward operate on the correct tab's history going forward.
+    // Show the tab's page. A tab with saved history reloads its current entry in place (Replace),
+    // so its back/forward stack stays as it was; a new tab's first page starts its history.
     const currentEntry = this.nav.getCurrentEntry();
     if (tab.url && currentEntry?.url !== tab.url) {
-      this.nav.navigate(tab.url);
+      // Activating a tab syncs twice (the tabActivated event, then the caller): the second call ran
+      // before the first navigation landed and pushed the same page again, so every tab switch
+      // added two history entries. One navigation per page in flight.
+      if (this.syncNavigating !== tab.url) {
+        const url = tab.url;
+        this.syncNavigating = url;
+        void Promise.resolve(this.nav.navigate(url)).finally(() => { if (this.syncNavigating === url) this.syncNavigating = null; });
+      }
+    } else if (tab.url && switched && currentEntry) {
+      void this.nav.navigateTo({ url: tab.url, type: NavigationType.Replace, userInitiated: false });
     }
   }
+
+  /** A page syncFromActiveTab has started loading and that hasn't landed yet. */
+  private syncNavigating: string | null = null;
+
+  /** The tab whose history the NavigationController holds; other tabs' stacks are saved here. */
+  private historyTabId: string | null = null;
+  private readonly tabStacks = new Map<string, ReturnType<NonNullable<INavigationController['exportHistory']>>>();
 
   // ── Events ─────────────────────────────────────────────────────────────────
 
