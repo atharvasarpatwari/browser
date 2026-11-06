@@ -201,6 +201,8 @@ interface IBrowserWindowPage extends IDisposable {
   listHistoryExternal(maxResults?: number): Promise<ReadonlyArray<{ id: string; title: string; url: string; visitedAt: number }>>;
   removeHistoryEntryExternal(id: string): Promise<void>;
   clearHistoryExternal(): Promise<void>;
+  /** Records a visit made outside the engine (Android compatibility mode). */
+  addHistoryEntryExternal(url: string, title: string): Promise<void>;
 }
 
 class BrowserWindowPage implements IBrowserWindowPage {
@@ -2205,6 +2207,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   async clearHistoryExternal(): Promise<void> {
     await this.historyService?.deleteAll();
+  }
+
+  async addHistoryEntryExternal(url: string, title: string): Promise<void> {
+    if (!/^https?:\/\//i.test(url) || this.isIncognito()) return; // web pages only; incognito records nothing
+    await this.historyService?.addVisit(url, title || url);
   }
 
   setTrackerBlocker(blocker: ITrackerBlocker): void {

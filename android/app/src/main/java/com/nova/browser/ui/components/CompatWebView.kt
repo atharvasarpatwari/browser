@@ -80,7 +80,10 @@ fun CompatWebView(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
                     }
 
                     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) { push(url = url, progress = 5) }
-                    override fun onPageFinished(view: WebView, url: String?) { push(url = url, progress = 100) }
+                    override fun onPageFinished(view: WebView, url: String?) {
+                        push(url = url, progress = 100)
+                        viewModel.onCompatPageFinished(url, view.title)
+                    }
                     override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) { push(url = url) }
 
                     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
@@ -122,6 +125,10 @@ fun CompatWebView(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
                         resultMsg.sendToTarget()
                         return true
                     }
+                }
+
+                setFindListener { activeMatchOrdinal, numberOfMatches, isDoneCounting ->
+                    if (isDoneCounting) viewModel.onCompatFindResult(activeMatchOrdinal, numberOfMatches)
                 }
 
                 setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->

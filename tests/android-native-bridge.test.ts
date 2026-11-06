@@ -630,6 +630,7 @@ describe('android-native-bridge', () => {
       listHistoryExternal: async (_max?: number) => [],
       removeHistoryEntryExternal: async (_id: string) => {},
       clearHistoryExternal: async () => {},
+      addHistoryEntryExternal: async (_url: string, _title: string) => {},
       setIncognitoExternal: (_enabled: boolean) => {},
       isIncognito: () => false,
       resolveContextTarget: (_x: number, _y: number) => null,
@@ -752,6 +753,32 @@ describe('android-native-bridge', () => {
     window.novaNative!.clearHistory();
     await Promise.resolve();
     expect(cleared).toBe(true);
+  });
+
+  it('window.novaNative.addHistoryEntry records a compatibility-mode visit and pushes history', async () => {
+    const pushes: string[] = [];
+    (window as any).NovaStateBridge = { onStateChanged: () => {}, onBookmarksChanged: () => {}, onHistoryChanged: (j: string) => pushes.push(j) };
+    let added: [string, string] | null = null;
+    installAndroidNativeBridge(makeFakePage({ addHistoryEntryExternal: async (url: string, title: string) => { added = [url, title]; } }));
+    window.novaNative!.addHistoryEntry('https://mail.google.com/mail/u/0/', 'Inbox - Gmail');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(added).toEqual(['https://mail.google.com/mail/u/0/', 'Inbox - Gmail']);
+    expect(pushes.length).toBeGreaterThan(0);
+  });
+
+  it('addHistoryEntryExternal adds web visits to the real HistoryService, never in incognito', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const p = new BrowserWindowPage({ hideChromeUI: true });
+    await p.mount(host);
+    p.setHistoryService(new HistoryService());
+    await p.addHistoryEntryExternal('https://mail.google.com/mail/u/0/', 'Inbox - Gmail');
+    await p.addHistoryEntryExternal('about:blank', 'blank');
+    const list = await p.listHistoryExternal();
+    expect(list.map((h) => h.url)).toEqual(['https://mail.google.com/mail/u/0/']);
+    expect(list[0]!.title).toBe('Inbox - Gmail');
+    await p.unmount();
+    host.remove();
   });
 
   it('window.novaNative.download forwards a download request to the native host', async () => {

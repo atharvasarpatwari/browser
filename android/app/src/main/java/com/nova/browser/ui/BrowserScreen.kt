@@ -113,8 +113,8 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                         MenuEntry("Forward", Icons.AutoMirrored.Filled.ArrowForward, enabled = viewModel.canGoForward.value) { close(); viewModel.goForward() }
                         MenuEntry("New tab", Icons.Filled.Add) { close(); viewModel.setIncognito(false); viewModel.newTab() }
                         MenuEntry("New incognito tab", Icons.Filled.VisibilityOff) { close(); viewModel.setIncognito(true); viewModel.newTab() }
-                        if (!onNewTabPage && activeTab != null && !compatActive) {
-                            val bookmarked = viewModel.isBookmarked(activeTab.url)
+                        if (!onNewTabPage && pageUrl != null) {
+                            val bookmarked = viewModel.isBookmarked(pageUrl)
                             MenuEntry(if (bookmarked) "Remove bookmark" else "Add bookmark", if (bookmarked) Icons.Filled.Star else Icons.Filled.StarBorder) {
                                 close(); viewModel.toggleBookmark()
                             }
@@ -125,7 +125,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                         MenuEntry("Downloads", Icons.Filled.Download) { close(); openDownloads() }
                         if (!onNewTabPage && pageUrl != null) {
                             HorizontalDivider()
-                            if (!compatActive) MenuEntry("Find in page", Icons.Filled.Search) { close(); viewModel.openFind() }
+                            MenuEntry("Find in page", Icons.Filled.Search) { close(); viewModel.openFind() }
                             MenuEntry("Share page", Icons.Filled.Share) { close(); viewModel.shareUrl(pageTitle, pageUrl) }
                             MenuEntry("Copy link", Icons.Filled.ContentCopy) { close(); viewModel.copyToClipboard("URL", pageUrl) }
                             // Sites Nova's engine can't run (Gmail…) open in the system WebView; this moves
@@ -177,7 +177,10 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
 
         when (overlay) {
             Overlay.TABS -> TabSwitcher(
-                tabs = viewModel.tabs,
+                // A tab in compatibility mode shows that page's title and address.
+                tabs = viewModel.tabs.map { t ->
+                    compat?.takeIf { it.tabId == t.id }?.let { c -> t.copy(title = c.title.ifBlank { c.url }, url = c.url) } ?: t
+                },
                 activeTabId = viewModel.activeTabId.value,
                 incognito = viewModel.incognito.value,
                 onSelect = viewModel::selectTab,

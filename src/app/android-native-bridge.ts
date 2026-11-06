@@ -45,6 +45,8 @@ declare global {
       removeHistoryEntry: (id: string) => void;
       clearHistory: () => void;
       refreshHistory: () => void;
+      /** Record a visit shown outside the engine (compatibility mode) in Nova's history. */
+      addHistoryEntry: (url: string, title: string) => void;
       /** Ask the native host to start a download. `optionsJson` is optional: `{filename?, mimeType?, referrer?}`. */
       download: (url: string, optionsJson?: string) => void;
       /** Open a URL in a fresh engine tab (used by context-menu / target=_blank flows). */
@@ -89,6 +91,7 @@ export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
     removeHistoryEntry: (id: string) => { void page.removeHistoryEntryExternal(id); },
     clearHistory: () => { void page.clearHistoryExternal(); },
     refreshHistory: () => { void pushHistory(); },
+    addHistoryEntry: (url: string, title: string) => { void page.addHistoryEntryExternal(url, title).then(() => pushHistory()); },
     download: (url: string, optionsJson?: string) => {
       let options: Record<string, unknown> = {};
       if (optionsJson) {

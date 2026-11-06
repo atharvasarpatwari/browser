@@ -430,11 +430,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
         // A compatibility page whose tab was closed goes with it.
         compat.value?.let { c -> if (c.tabId != null && tabs.none { it.id == c.tabId }) closeCompat() }
-        // An engine page that reached a compatibility site (a link or redirect to Gmail) switches
-        // over; the engine steps back so its page under the compatibility view isn't that site.
+        // An engine page that reached a compatibility site (a link, a redirect, an outside link to
+        // Gmail) switches over. The engine only stops loading the page it can't run: stepping it
+        // back here moved the tab to another tab's page, because the engine keeps one back/forward
+        // history for the whole window (an outside Gmail link opened as "www.gmai").
         if (active != null && !incognito.value && !compatActive && needsCompat(active.url) && (active.id to active.url) !in leftCompat) {
             openCompat(active.url)
-            callEngine("window.novaNative && window.novaNative.back();")
+            callEngine("window.novaNative && window.novaNative.stop();")
         }
     }
 
@@ -535,16 +537,32 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun find(query: String) {
         findState.value = FindState(query, findState.value?.total ?: 0, findState.value?.index ?: -1)
+        // A compatibility page is searched by the system WebView (its result arrives through the
+        // find listener CompatWebView installs, see onCompatFindResult).
+        if (compatActive) { compatView?.findAllAsync(query); return }
         callEngineForString("window.novaNative && window.novaNative.find(${jsString(query)})") { applyFindResult(it) }
     }
 
-    fun findNext() = callEngineForString("window.novaNative && window.novaNative.findNext()") { applyFindResult(it) }
+    fun findNext() {
+        if (compatActive) { compatView?.findNext(true); return }
+        callEngineForString("window.novaNative && window.novaNative.findNext()") { applyFindResult(it) }
+    }
 
-    fun findPrevious() = callEngineForString("window.novaNative && window.novaNative.findPrevious()") { applyFindResult(it) }
+    fun findPrevious() {
+        if (compatActive) { compatView?.findNext(false); return }
+        callEngineForString("window.novaNative && window.novaNative.findPrevious()") { applyFindResult(it) }
+    }
 
     fun closeFind() {
         findState.value = null
+        compatView?.clearMatches()
         callEngine("window.novaNative && window.novaNative.clearFind();")
+    }
+
+    /** WebView.FindListener result for a compatibility page. */
+    fun onCompatFindResult(activeMatchOrdinal: Int, numberOfMatches: Int) {
+        val current = findState.value ?: return
+        findState.value = current.copy(total = numberOfMatches, index = if (numberOfMatches == 0) -1 else activeMatchOrdinal)
     }
 
     private fun applyFindResult(json: String?) {
@@ -583,8 +601,16 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun goBack() {
         if (compatActive) {
             val view = compatView
-            if (compat.value?.canGoBack == true && view != null) view.goBack()
-            else { activeTab?.let { leftCompat.add(it.id to it.url) }; closeCompat() }
+            if (compat.value?.canGoBack == true && view != null) { view.goBack(); return }
+            closeCompat()
+            // Backing out of compatibility mode onto an engine page that is that same site (a tab
+            // opened straight onto Gmail): show the new-tab page rather than the half-run site.
+            // ponytail: not engine back(): its history is window-wide, so it could land on another tab's page.
+            val tab = activeTab
+            if (tab != null && needsCompat(tab.url)) {
+                leftCompat.add(tab.id to tab.url)
+                callEngine("window.novaNative && window.novaNative.navigate(${jsString(homeUrl.value)});")
+            }
             return
         }
         callEngine("window.novaNative && window.novaNative.back();")
@@ -642,13 +668,15 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /** Toggles a bookmark for the active tab through the engine's real BookmarkService. */
+    /** Toggles a bookmark for the page on screen (the compatibility page, else the engine tab). */
     fun toggleBookmark() {
-        val tab = activeTab ?: return
-        val existing = bookmarks.firstOrNull { it.url == tab.url }
+        val (title, url) = compat.value?.takeIf { compatActive }?.let { it.title.ifBlank { it.url } to it.url }
+            ?: activeTab?.let { it.title to it.url } ?: return
+        val existing = bookmarks.firstOrNull { it.url == url }
         if (existing != null) {
             callEngine("window.novaNative && window.novaNative.removeBookmark(${jsString(existing.id)});")
         } else {
-            callEngine("window.novaNative && window.novaNative.addBookmark(${jsString(tab.title)}, ${jsString(tab.url)});")
+            callEngine("window.novaNative && window.novaNative.addBookmark(${jsString(title)}, ${jsString(url)});")
         }
     }
 
@@ -692,8 +720,17 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     /** Settings → Clear browsing data. */
     fun clearBrowsingData(history: Boolean, cookies: Boolean, downloads: Boolean) {
-        if (history) clearHistory()
-        if (cookies) this.cookies.clearAll()
+        if (history) { clearHistory(); compatView?.clearHistory() }
+        if (cookies) {
+            this.cookies.clearAll()
+            // Compatibility-mode sign-ins (Gmail…) live in the system WebView's own stores.
+            runCatching {
+                android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                android.webkit.CookieManager.getInstance().flush()
+                android.webkit.WebStorage.getInstance().deleteAllData()
+            }
+            if (compat.value != null) closeCompat()
+        }
         if (downloads) clearCompletedDownloads()
     }
 
@@ -753,6 +790,16 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             progress = progress ?: page.progress,
             canGoBack = canGoBack,
         )
+    }
+
+    /** The last compatibility page recorded in history (a page firing onPageFinished twice is one visit). */
+    private var lastCompatVisit: String? = null
+
+    /** A compatibility page finished loading: it goes into Nova's history like any other page. */
+    fun onCompatPageFinished(url: String?, title: String?) {
+        if (url.isNullOrBlank() || !url.startsWith("http") || incognito.value || url == lastCompatVisit) return
+        lastCompatVisit = url
+        callEngine("window.novaNative && window.novaNative.addHistoryEntry && window.novaNative.addHistoryEntry(${jsString(url)}, ${jsString(title ?: url)});")
     }
 
     /** The compatibility WebView's renderer died: drop the page; the tab shows its engine page. */
