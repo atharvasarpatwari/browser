@@ -28,7 +28,7 @@ private const val TAG = "NovaCompat"
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun CompatWebView(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
+fun CompatWebView(viewModel: BrowserViewModel, visible: Boolean, modifier: Modifier = Modifier) {
     AndroidView(
         modifier = modifier,
         factory = { context ->
@@ -139,7 +139,10 @@ fun CompatWebView(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
                 viewModel.attachCompatView(this)
             }
         },
-        update = { /* the ViewModel drives navigation (loadUrl/goBack/reload) directly */ },
+        // The ViewModel drives navigation (loadUrl/goBack/reload) directly. Off its tab the view is
+        // zero-size *and* invisible: the system WebView can draw into its own surface layer, and a
+        // zero-size view left its last frame (Gmail) on top of the other tab's page.
+        update = { it.visibility = if (visible) android.view.View.VISIBLE else android.view.View.INVISIBLE },
         // Leaving compatibility mode removes the view: destroy it, or every Gmail visit leaks a WebView.
         onRelease = { view ->
             viewModel.detachCompatView(view)

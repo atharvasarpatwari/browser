@@ -1661,6 +1661,16 @@ class LayoutEngine implements ILayoutEngine {
         this.measureLayout(childEl, () => this.layoutNode(childEl, 0, 0, availableWidth, fontSize, domTree));
         item.flexBasis = this.layoutBoxes.get(childEl.domId)?.height ?? 0;
       }
+      // min-height: auto is the content height in a column (§4.5), so `flex: 1 1 0` items in an
+      // auto-height column are as tall as their content. They were 0 tall: IANA's home panels
+      // stacked their headings on one another and their lists spilled over the footer.
+      // ponytail: skipped for items with a definite height (min(content, height) per spec).
+      if (!isHorizontal && (childStyle.get('min-height') ?? 'auto').trim() === 'auto'
+          && !/hidden|scroll|auto|clip/.test(childStyle.get('overflow-y') ?? childStyle.get('overflow') ?? 'visible')
+          && ((childStyle.get('height') ?? 'auto') === 'auto')) {
+        if (!autoBasis) this.measureLayout(childEl, () => this.layoutNode(childEl, 0, 0, availableWidth, fontSize, domTree));
+        item.minMainSize = Math.max(item.minMainSize ?? 0, autoBasis ? item.flexBasis : this.layoutBoxes.get(childEl.domId)?.height ?? 0);
+      }
 
       // Check if item has explicit cross size
       const crossSizePropItem = isHorizontal ? 'height' : 'width';
@@ -1678,7 +1688,7 @@ class LayoutEngine implements ILayoutEngine {
     if (flexItems.length === 0) return isHorizontal ? contentY : contentY + (columnMainSize ?? 0);
 
     if (!isHorizontal && columnMainSize === null) {
-      columnMainSize = flexItems.reduce((s, it) => s + it.flexBasis + it.marginTop + it.marginBottom, 0) + (flexItems.length - 1) * mainAxisGap;
+      columnMainSize = flexItems.reduce((s, it) => s + Math.max(it.flexBasis, it.minMainSize ?? 0) + it.marginTop + it.marginBottom, 0) + (flexItems.length - 1) * mainAxisGap;
     }
 
     // ── Create flex context and resolve main sizes ──────────────────────

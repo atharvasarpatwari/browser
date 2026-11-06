@@ -42,6 +42,10 @@ const CASES: Array<[string, string, (b: (id: string) => B) => boolean]> = [
   ['margin:auto centres', d('c', 'display:flex;width:600px;height:100px', d('a', 'width:100px;height:20px;margin:auto')), (b) => b('a').x === 250 && b('a').y === 40],
   ['column direction', d('c', 'display:flex;flex-direction:column', d('a', 'height:30px') + d('b', 'height:30px')), (b) => b('b').y === 30 && b('a').width === 600 && b('a').height === 30 && b('c').height === 60],
   ['column flex:1 fills height', d('c', 'display:flex;flex-direction:column;height:200px', d('a', 'height:50px') + d('b', 'flex:1')), (b) => b('b').height === 150],
+  // 1.91: min-height:auto is the content height, so flex:1 1 0 items in an auto-height column grow
+  // to their content (IANA's home panels were 0 tall and overlapped).
+  ['column flex:1 1 0 items keep content height', d('c', 'display:flex;flex-direction:column', d('a', 'flex:1 1 0', 'A<br>A') + d('b', 'flex:1 1 0', 'B')), (b) => b('a').height === 40 && b('b').y === 40 && b('b').height === 20 && b('c').height === 60],
+  ['column overflow:hidden item may shrink below content', d('c', 'display:flex;flex-direction:column;height:10px', d('a', 'flex:1 1 0;overflow:hidden', 'A<br>A<br>A')), (b) => b('a').height === 10],
   ['column-reverse', d('c', 'display:flex;flex-direction:column-reverse', d('a', 'height:30px') + d('b', 'height:30px')), (b) => b('b').y === 0 && b('a').y === 30 && b('c').height === 60],
   ['column justify center', d('c', 'display:flex;flex-direction:column;justify-content:center;height:100px', d('a', 'height:20px')), (b) => b('a').y === 40],
   ['column align-items center', d('c', 'display:flex;flex-direction:column;align-items:center', d('a', 'width:100px;height:20px')), (b) => b('a').x === 250 && b('c').height === 20],

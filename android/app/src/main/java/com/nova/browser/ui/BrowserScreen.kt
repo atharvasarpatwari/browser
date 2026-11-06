@@ -156,6 +156,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     key(viewModel.compatGeneration.value) {
                         CompatWebView(
                             viewModel = viewModel,
+                            visible = compatActive,
                             modifier = if (compatActive) Modifier.fillMaxSize() else Modifier.size(0.dp),
                         )
                     }
