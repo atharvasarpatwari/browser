@@ -84,6 +84,7 @@ fun CompatWebView(viewModel: BrowserViewModel, visible: Boolean, modifier: Modif
                     /** Ad networks get an empty answer: Nova's engine ad blocker never sees this view's requests. */
                     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                         if (request.isForMainFrame || !AdHosts.isAd(request.url.toString())) return null
+                        Log.i(TAG, "Blocked ad request: ${request.url.host}${request.url.path.orEmpty().take(60)}")
                         return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
                     }
 
@@ -106,6 +107,13 @@ fun CompatWebView(viewModel: BrowserViewModel, visible: Boolean, modifier: Modif
                 }
 
                 webChromeClient = object : WebChromeClient() {
+                    /** The ad blocker's page script reports what it hid and skipped ("[nova-ad] …"). */
+                    override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                        val text = message.message()
+                        if (text.startsWith("[nova-ad]")) Log.i(TAG, text)
+                        return super.onConsoleMessage(message)
+                    }
+
                     override fun onProgressChanged(view: WebView, newProgress: Int) { push(progress = newProgress) }
                     override fun onReceivedTitle(view: WebView, title: String?) { push(title = title) }
 

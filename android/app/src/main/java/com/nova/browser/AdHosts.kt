@@ -60,15 +60,26 @@ object AdHosts {
 
     /** Script that adds [HIDING_CSS] to the page once (it stays across in-page navigation). */
     val HIDING_SCRIPT: String by lazy {
-        "(function(){if(document.getElementById('nova-ad-hiding'))return;" +
-        "var s=document.createElement('style');s.id='nova-ad-hiding';" +
-        "s.textContent=${org.json.JSONObject.quote(HIDING_CSS)};" +
-        "(document.head||document.documentElement).appendChild(s);" +
-        // YouTube video ads: while the player shows one, press Skip and jump the ad to its end.
+        "(function(){" +
+        "if(!document.getElementById('nova-ad-hiding')){var s=document.createElement('style');s.id='nova-ad-hiding';" +
+        "s.textContent=${org.json.JSONObject.quote(HIDING_CSS)};(document.head||document.documentElement).appendChild(s);}" +
+        // How many ad slots the style hides on this page (logged by CompatWebView as evidence).
+        "try{var n=document.querySelectorAll(${org.json.JSONObject.quote(HIDING_CSS.substringBefore('{'))}).length;" +
+        "if(n)console.log('[nova-ad] hid '+n+' ad slot(s) on '+location.hostname);}catch(e){}" +
+        // YouTube video ads: while the player shows one, mute it, press Skip and jump it to its end
+        // (or play it at 16x when its length isn't known yet).
         "if(location.hostname.indexOf('youtube.com')>=0&&!window.__novaAdSkip){window.__novaAdSkip=setInterval(function(){" +
-        "var b=document.querySelector('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button');if(b)b.click();" +
-        "var p=document.querySelector('.ad-showing');var v=p&&p.querySelector('video');" +
-        "if(v&&isFinite(v.duration)&&v.duration>0)v.currentTime=v.duration;},400);}" +
+        // Any of the player's ad markers means an ad is playing (m.youtube.com doesn't always use .ad-showing).
+        "var ad=document.querySelector('.ad-showing,.ad-interrupting,.ytp-ad-player-overlay,.ytp-ad-player-overlay-layout," +
+        ".ytp-ad-text,.ytp-ad-preview-container,.ytp-ad-skip-button-container,.ytp-skip-ad,.ytm-ad-overlay');" +
+        // Only a marker that is on screen counts, so a leftover hidden one never skips the real video.
+        "if(!ad||!ad.getClientRects().length){window.__novaAdSeen=false;return;}" +
+        "var b=document.querySelector('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button,.ytp-ad-skip-button-container button');" +
+        "if(b)b.click();" +
+        "var v=(ad.closest&&ad.closest('.html5-video-player')||document).querySelector('video');" +
+        "if(v){v.muted=true;if(isFinite(v.duration)&&v.duration>0)v.currentTime=v.duration;else v.playbackRate=16;}" +
+        "if(!window.__novaAdSeen){window.__novaAdSeen=true;console.log('[nova-ad] removed a video ad ('+(v&&isFinite(v.duration)?Math.round(v.duration)+' s':'length unknown')+(b?', pressed Skip':'')+')');}" +
+        "},250);}" +
         "})();"
     }
 }
