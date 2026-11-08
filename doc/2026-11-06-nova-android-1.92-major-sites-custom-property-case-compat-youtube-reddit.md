@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-06
 **Session:** "try all the main websites on the device"
-**Status:** In Progress. 4 of 20 sites were run before the tablet disconnected; the other 16 wait for it to reconnect.
+**Status:** Completed. 4 of 20 sites were run here before the tablet disconnected; the full 20-site runs are in the 1.93 and 1.96 change logs.
 
 ---
 
