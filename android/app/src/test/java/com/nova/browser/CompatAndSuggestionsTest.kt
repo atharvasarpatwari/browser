@@ -82,7 +82,8 @@ class CompatAndSuggestionsTest {
     fun trackersAreToldApartFromAds() {
         for (url in listOf("https://www.google-analytics.com/g/collect?v=2", "https://www.googletagmanager.com/gtag/js?id=G-123",
             "https://www.facebook.com/tr?id=1&ev=PageView", "https://static.hotjar.com/c/hotjar.js", "https://sb.scorecardresearch.com/b",
-            "https://m.youtube.com/ptracking?x=1", "https://bat.bing.com/action/0", "https://api.segment.io/v1/t")) {
+            "https://m.youtube.com/ptracking?x=1", "https://bat.bing.com/action/0", "https://api.segment.io/v1/t",
+            "https://static.cloudflareinsights.com/beacon.min.js")) {
             assertEquals(url, AdHosts.Kind.TRACKER, AdHosts.classify(url))
         }
         assertEquals(AdHosts.Kind.AD, AdHosts.classify("https://www.googletagmanager.com/gtag/js?id=AW-123"))

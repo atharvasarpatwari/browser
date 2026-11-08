@@ -108,4 +108,9 @@ describe('network ad blocking', () => {
     await expect(target.fetch('https://example.org/')).resolves.toBeInstanceOf(Response);
     expect(seen).toEqual(['ad:false', 'tracker:true', 'ad:true']);
   });
+
+  it('the tracker list stops Cloudflare Web Analytics (programiz loaded it on the tablet)', async () => {
+    const { TrackerBlocker } = await import('../src/browser/security/tracker-blocker');
+    expect(new TrackerBlocker().shouldBlock('https://static.cloudflareinsights.com/beacon.min.js/v8').blocked).toBe(true);
+  });
 });

@@ -36,7 +36,7 @@ object AdHosts {
 
     /** Analytics, session recording, social pixels, measurement and fingerprinting services. */
     private val TRACKER_HOSTS: Set<String> = setOf(
-        "google-analytics.com", "analytics.google.com", "googletagmanager.com", "stats.g.doubleclick.net",
+        "google-analytics.com", "analytics.google.com", "cloudflareinsights.com", "googletagmanager.com", "stats.g.doubleclick.net",
         "scorecardresearch.com", "quantserve.com", "moatads.com", "doubleverify.com", "adsafeprotected.com",
         "chartbeat.com", "chartbeat.net", "parsely.com", "comscore.com", "omtrdc.net", "demdex.net", "krxd.net",
         "bluekai.com", "hotjar.com", "hotjar.io", "clarity.ms", "fullstory.com", "mouseflow.com", "crazyegg.com",

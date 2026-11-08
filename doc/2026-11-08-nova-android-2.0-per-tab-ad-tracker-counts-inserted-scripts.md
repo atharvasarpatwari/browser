@@ -2,9 +2,9 @@
 
 **Date:** 2026-11-08
 **Session:** "i want to know how many ads have been blocked in the specific tab keep a count of it and also block the trackers and keep a count of them too"
-**Status:**
-- 1.99 is installed and verified on the realme tablet (RMX5264).
-- 2.0 is built and tested (all automated tests), but not installed: realme's install prompt timed out twice without approval.
+**Status:** Completed.
+- 1.99 and 2.0 were verified on the realme tablet (RMX5264).
+- 2.01 adds Cloudflare Web Analytics to the tracker lists and was verified on the OnePlus Pad Go (OPD2305).
 
 ---
 
@@ -72,6 +72,11 @@ programiz.com, an engine page whose ads are injected by script, showed no count.
 **Problem:** `//pagead2.googlesyndication.com/...` was returned unchanged, which is not an address `fetch` can use.
 **Change:** it now resolves against the page, taking its scheme.
 
+### 6. A tracker the lists missed (2.01)
+**Files:** `src/browser/security/tracker-blocker.ts`, `android/.../AdHosts.kt`
+**Problem:** on 2.0, programiz.com counted 2 ads and 0 trackers, but the request log showed `static.cloudflareinsights.com` (Cloudflare Web Analytics' beacon) going out.
+**Change:** `cloudflareinsights.com` was added to both tracker lists, engine and compatibility mode. On 2.01 the beacon no longer appears in the request log and counts as a tracker.
+
 ## Files Modified
 | File | Change |
 |------|--------|
@@ -90,7 +95,8 @@ programiz.com, an engine page whose ads are injected by script, showed no count.
 | `tests/android-native-bridge.test.ts` | per-tab counting test |
 | `tests/page-scripts-stop-192.test.ts` | inserted scripts, onload and `//` test |
 | `android/.../CompatAndSuggestionsTest.kt` | tracker classification test |
-| `android/app/build.gradle` | 1.98 (99) → 2.0 (101) |
+| `src/browser/security/tracker-blocker.ts` | Cloudflare Web Analytics rule (#6) |
+| `android/app/build.gradle` | 1.98 (99) → 2.01 (102) |
 
 ## Test Results
 ```
@@ -103,5 +109,13 @@ realme RMX5264, 1.99:
   YouTube (Gangnam Style) in a new tab → shield "6"; dialog "Ads: 4, Trackers: 2"; log: 4 "Blocked ad", 2 "Blocked tracker"
     (doc/img/2026-11-08-nova-1.99-shield-count-youtube.png, doc/img/2026-11-08-nova-1.99-blocked-breakdown.png)
   programiz.com in a new tab → no shield (ad scripts injected by script, never requested → #3, #4 in 2.0)
-2.0 install: realme's install check timed out twice (no approval); pending
+2.0 install: realme's install check timed out twice, then was approved
+realme RMX5264, 2.0: programiz.com → shield "2"; dialog "Ads: 2, Trackers: 0"; cloudflareinsights still fetched → #6
+npx vitest run (2.01)              → 11457 passed; 1 failed = DnsResolver "localhost" (2 s timeout under full-suite load;
+                                     passed 2/2 alone; uses the computer's real DNS, unrelated)
+OnePlus Pad Go (OPD2305), 2.01 (1.96 → 2.01, no install prompt):
+  programiz.com → shield "2"; dialog "Ads: 1, Trackers: 1" (the beacon blocked; absent from the request log)
+    (doc/img/2026-11-09-nova-2.01-programiz-breakdown.png)
+  YouTube (See You Again) in a new tab → shield "5" = log 3 ads + 2 trackers; video plays, no ad
+    (doc/img/2026-11-09-nova-2.01-youtube-tab-count.png)
 ```

@@ -131,6 +131,7 @@ const DEFAULT_RULES: BlockRule[] = [
   { domain: 'tremorhub.com', category: 'ad', description: 'Tremor Video Ads' },
   { domain: 'spotx.tv', category: 'ad', description: 'SpotX Video Ads' },
   { domain: 'google-analytics.com', category: 'tracker', description: 'Google Analytics' },
+  { domain: 'cloudflareinsights.com', category: 'analytics', description: 'Cloudflare Web Analytics beacon' },
   { domain: 'googletagmanager.com', category: 'tracker', description: 'Google Tag Manager' },
   { domain: 'analytics.google.com', category: 'tracker', description: 'Google Analytics' },
   { domain: 'facebook.com/tr', category: 'tracker', description: 'Facebook Pixel' },
