@@ -85,4 +85,34 @@ describe('leaving a page stops its scripts', () => {
     expect(domTree.getElementById('o')!.attributes.get('data-r')).toBe('a.jsb.jsa.jsc.js'); // run in document order
     r.dispose();
   });
+
+  // 1.99: scripts a page inserts after load were never fetched (ad/analytics/widget loaders).
+  it('runs scripts the page inserts, fires their load event, and resolves protocol-relative addresses', async () => {
+    const requested: string[] = [];
+    const loadScript = vi.fn(async (url: string) => {
+      requested.push(url);
+      return url.endsWith('/lib.js') ? "document.getElementById('o').setAttribute('data-lib', 'ran');" : '';
+    });
+    const domTree = new DomTree();
+    const r = new PageRenderer({ htmlParser: new HtmlParser(), domTree, cssParser: new CssParser(), layoutEngine: new LayoutEngine(), paintEngine: new PaintEngine(), svgDecode: async () => null,
+      resourceLoader: { loadResource: vi.fn(), loadBatch: vi.fn(), loadStylesheet: vi.fn().mockResolvedValue(''), loadScript, loadImage: vi.fn(), getPriority: vi.fn(), setMaxConcurrent: vi.fn(), on: vi.fn(), off: vi.fn(), dispose: vi.fn() },
+      prioritizer: { submit: vi.fn(), submitBatch: vi.fn(), submitPreload: vi.fn(), submitPrefetch: vi.fn(), submitPreconnect: vi.fn(), clear: vi.fn(), dispose: vi.fn() } } as never);
+    r.setViewport(400, 300, 1);
+    const body = `<html><body><p id="o"></p><script>
+      var s = document.createElement('script'); s.src = '/lib.js';
+      s.onload = function () { document.getElementById('o').setAttribute('data-loaded', 'yes'); };
+      document.body.appendChild(s);
+      var a = document.createElement('script'); a.src = '//ads.example/ad.js'; document.body.appendChild(a);
+      var i = document.createElement('script'); i.textContent = "document.getElementById('o').setAttribute('data-inline', 'ran');"; document.body.appendChild(i);
+      var j = document.createElement('script'); j.type = 'application/json'; j.textContent = '{"x":1}'; document.body.appendChild(j);
+    </script></body></html>`;
+    await r.render({ url: 'https://site.example/page', statusCode: 200, contentType: 'text/html', headers: new Map(), loadedAt: 0, body } as never, new AbortController().signal);
+    await sleep(30);
+    const o = domTree.getElementById('o')!;
+    expect(requested).toEqual(['https://site.example/lib.js', 'https://ads.example/ad.js']); // //host takes the page's https:
+    expect(o.attributes.get('data-lib')).toBe('ran');
+    expect(o.attributes.get('data-loaded')).toBe('yes');
+    expect(o.attributes.get('data-inline')).toBe('ran');
+    r.dispose();
+  });
 });

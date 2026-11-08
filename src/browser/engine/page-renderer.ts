@@ -591,6 +591,55 @@ class PageRenderer implements IPageRenderer, IDisposable {
   }
   /** The current page's script event loop (null for pages without scripts). */
   private pageEventLoop: JsEventLoop | null = null;
+
+  /** The shown page's script context, for scripts it inserts after load (runInsertedScripts). */
+  private insertedScripts: {
+    loop: JsEventLoop;
+    env: ReturnType<typeof createGlobalEnv>;
+    doc: DomDocument;
+    handled: Set<DomElement>;
+    allowed: (src: string) => string | null;
+  } | null = null;
+
+  /**
+   * Runs `<script>` elements the page added after loading. Only the parsed document's scripts ran:
+   * a script inserted by another (`document.createElement('script')`, the way ad, analytics and
+   * widget loaders work) was never fetched, so programiz's ad scripts were never even requested.
+   * External ones go through the same security/CSP checks and the network blockers (which count
+   * blocked ads and trackers); each fires `load` (or `error`) on its element, as loaders expect.
+   */
+  private runInsertedScripts(): void {
+    const ctx = this.insertedScripts;
+    if (!ctx || ctx.loop !== this.pageEventLoop || this.disposed) return;
+    const { domTree, htmlParser } = this.deps;
+    const run = (source: string, what: string): void => {
+      const result = ctx.loop.runWithInterpreter(() => runJS(source, { document: ctx.doc, domTree, eventLoop: ctx.loop, globalEnv: ctx.env, htmlParser }));
+      if (result.error) console.error(`[ScriptEngine] Error executing ${what}: ${result.error.message}`);
+    };
+    for (const el of domTree.getElementsByTagName('script')) {
+      if (ctx.handled.has(el)) continue;
+      ctx.handled.add(el);
+      const type = (el.attributes.get('type') ?? '').trim().toLowerCase();
+      if (type && !/javascript|ecmascript/.test(type)) continue; // JSON, templates, modules
+      const src = el.attributes.get('src');
+      if (src === undefined) {
+        let source = '';
+        for (const child of el.children) if (child.nodeType === 'text') source += (child as unknown as { text: string }).text;
+        if (source.trim()) run(source, 'inserted inline script');
+        continue;
+      }
+      const url = ctx.allowed(src);
+      const fire = (type: 'load' | 'error'): void => { if (ctx.loop === this.pageEventLoop) this.dispatchPageEvent(el, type); };
+      if (!url) { fire('error'); continue; }
+      this.deps.resourceLoader.loadScript(url).then((source) => {
+        if (ctx.loop !== this.pageEventLoop || this.disposed) return;
+        if (!source) { fire('error'); return; }
+        run(source, `inserted script ${url}`);
+        fire('load');
+        this.requestReflow();
+      }, () => fire('error'));
+    }
+  }
   private _lastStylesheet: Css5Stylesheet | null = null;
 
   /**
@@ -683,6 +732,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
       this.deps.storageDir, this.deps.corsEngine,
       () => ({ ...this.viewport, dpr: this.dpr }),
     );
+
+    // Scripts the page adds later (injected ad/analytics loaders, lazy widgets) run from here on.
+    this.insertedScripts = { loop: eventLoop, env, doc, handled: new Set(scripts), allowed: (src) => allowedScriptUrl(src) };
 
     type Entry = { source: string; inline: boolean; nonce?: string; url?: string };
     const blockingScripts: Entry[] = [];
@@ -835,6 +887,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       );
       if (ready.error) console.error(`[ScriptEngine] Error in a DOMContentLoaded/load listener: ${ready.error.message}`);
     }
+    if (!signal.aborted) this.runInsertedScripts();
     if (skipped > 0) {
       console.warn(`[ScriptEngine] Page script budget (${PAGE_SCRIPT_BUDGET_MS} ms) used up; skipped ${skipped} script(s) on ${baseUrl}`);
     }
@@ -844,7 +897,9 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Simple URL resolution — resolves a relative URL against a base.
    */
   private static resolveUrl(relative: string, base: string): string {
-    if (relative.startsWith('http://') || relative.startsWith('https://') || relative.startsWith('//')) {
+    // A protocol-relative `//host/path` takes the page's scheme (it was returned as is, an address
+    // fetch can't use: programiz's AdSense script `//pagead2.googlesyndication.com/...`).
+    if (relative.startsWith('http://') || relative.startsWith('https://')) {
       return relative;
     }
     try {
@@ -1222,12 +1277,13 @@ class PageRenderer implements IPageRenderer, IDisposable {
         if (loop.pendingCount === 0 || loop.timeUntilNext() > 0) break;
       }
     });
-    if (mutations() !== before) this.requestReflow();
+    if (mutations() !== before) { this.runInsertedScripts(); this.requestReflow(); }
     this.schedulePagePump();
   }
 
   /** Stops the shown page's scripts: its timers, animation frames and queued callbacks never run again. */
   stopPageScripts(): void {
+    this.insertedScripts = null;
     this.pageEventLoop?.clear();
     this.pageEventLoop = null;
     if (this.pumpTimer) clearTimeout(this.pumpTimer);

@@ -403,11 +403,15 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 active = t.getBoolean("active"),
                 pinned = t.getBoolean("pinned"),
                 loading = t.optBoolean("loading", false),
-                error = parsePageError(t)
+                error = parsePageError(t),
+                adsBlocked = t.optJSONObject("blocked")?.optInt("ads", 0) ?: 0,
+                trackersBlocked = t.optJSONObject("blocked")?.optInt("trackers", 0) ?: 0,
             )
         }
         tabs.clear()
         tabs.addAll(parsed)
+        val openIds = parsed.map { it.id }.toSet()
+        compatBlocked.keys.filter { it !in openIds }.forEach { compatBlocked.remove(it) } // closed tabs
         activeTabId.value = if (obj.isNull("activeTabId")) null else obj.optString("activeTabId")
         addressBarText.value = obj.optString("addressValue", addressBarText.value)
         canGoBack.value = obj.optBoolean("canGoBack", false)
@@ -739,6 +743,31 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     /** The page shown in compatibility mode, and the tab it belongs to. */
     data class CompatPage(val tabId: String?, val url: String, val title: String, val progress: Int, val canGoBack: Boolean)
+
+    // ── Blocked ads and trackers per tab ──────────────────────────────────────
+
+    /** Requests compatibility mode blocked, per tab (the engine's own counts arrive in the snapshot). */
+    private val compatBlocked = androidx.compose.runtime.mutableStateMapOf<String, com.nova.browser.model.BlockedCounts>()
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** Counts a request the compatibility WebView blocked (called on the WebView's network thread). */
+    fun recordCompatBlocked(kind: AdHosts.Kind) {
+        mainHandler.post {
+            val tabId = compat.value?.tabId ?: return@post
+            val c = compatBlocked[tabId] ?: com.nova.browser.model.BlockedCounts(0, 0)
+            compatBlocked[tabId] = if (kind == AdHosts.Kind.AD) c.copy(ads = c.ads + 1) else c.copy(trackers = c.trackers + 1)
+        }
+    }
+
+    /** Ads and trackers blocked in [tabId] so far: Nova's engine and compatibility mode together. */
+    fun blockedFor(tabId: String?): com.nova.browser.model.BlockedCounts {
+        val tab = tabs.firstOrNull { it.id == tabId }
+        val c = tabId?.let { compatBlocked[it] }
+        return com.nova.browser.model.BlockedCounts(
+            ads = (tab?.adsBlocked ?: 0) + (c?.ads ?: 0),
+            trackers = (tab?.trackersBlocked ?: 0) + (c?.trackers ?: 0),
+        )
+    }
 
     /** Non-null while a tab shows a compatibility-mode page. */
     var compat = mutableStateOf<CompatPage?>(null)

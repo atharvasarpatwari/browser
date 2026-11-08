@@ -94,4 +94,18 @@ describe('network ad blocking', () => {
     expect(b.shouldBlock('https://duckduckgo.com/y.js?ad_domain=shoes.example').blocked).toBe(true);
     expect(b.shouldBlock('https://www.google.com/search?q=shoes').blocked).toBe(false);
   });
+
+  // 1.99: per-tab counts. The wrapper reports what it stopped and which list stopped it.
+  it('reports ad-list and tracker-list stops with their kind', async () => {
+    const target = { fetch: vi.fn(ok) as unknown as typeof fetch };
+    const seen: string[] = [];
+    const trackers = { shouldBlock: (u: string) => u.includes('analytics.example') ? { blocked: true, category: 'analytics' }
+      : u.includes('adserver.example') ? { blocked: true, category: 'ad' } : { blocked: false } };
+    installNetworkAdBlocking(new AdBlocker(), undefined, target, { trackers, onBlocked: (k, _u, byList) => seen.push(`${k}:${byList}`) });
+    await expect(target.fetch('https://securepubads.g.doubleclick.net/gpt.js')).rejects.toThrow(/ad blocker/);
+    await expect(target.fetch('https://analytics.example/collect')).rejects.toThrow(/tracker blocker/); // page beacons are blocked too
+    await expect(target.fetch('https://adserver.example/x')).rejects.toThrow(/ad blocker/);
+    await expect(target.fetch('https://example.org/')).resolves.toBeInstanceOf(Response);
+    expect(seen).toEqual(['ad:false', 'tracker:true', 'ad:true']);
+  });
 });

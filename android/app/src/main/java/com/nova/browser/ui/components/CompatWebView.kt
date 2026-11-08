@@ -81,10 +81,13 @@ fun CompatWebView(viewModel: BrowserViewModel, visible: Boolean, modifier: Modif
                         return true
                     }
 
-                    /** Ad networks get an empty answer: Nova's engine ad blocker never sees this view's requests. */
+                    /** Ad networks and trackers get an empty answer (Nova's engine blockers never see this view's requests); each is counted for the tab. */
                     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                        if (request.isForMainFrame || !AdHosts.isAd(request.url.toString())) return null
-                        Log.i(TAG, "Blocked ad request: ${request.url.host}${request.url.path.orEmpty().take(60)}")
+                        if (request.isForMainFrame) return null
+                        val kind = AdHosts.classify(request.url.toString()) ?: return null
+                        val what = if (kind == AdHosts.Kind.AD) "ad" else "tracker"
+                        Log.i(TAG, "Blocked $what request: ${request.url.host}${request.url.path.orEmpty().take(60)}")
+                        viewModel.recordCompatBlocked(kind)
                         return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
                     }
 

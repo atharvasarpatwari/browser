@@ -44,6 +44,29 @@ describe('BrowserWindowPage — native chrome bridge', () => {
     container.remove();
   });
 
+  // 1.99: blocked ads and trackers are counted per tab and pushed in the chrome state.
+  it('counts blocked ads and trackers against the tab on screen, separately per tab', async () => {
+    vi.useFakeTimers();
+    try {
+      page = new BrowserWindowPage({ hideChromeUI: true });
+      await page.mount(container);
+      const a = page.getChromeState().activeTabId!;
+      const pushes: number[] = [];
+      page.onChromeState((s) => pushes.push(s.tabs.find((t) => t.id === a)!.blocked.ads));
+      page.recordBlocked('ad'); page.recordBlocked('ad'); page.recordBlocked('tracker');
+      vi.advanceTimersByTime(300);
+      expect(pushes).toEqual([2]); // one push for the burst
+      const b = page.createTab('about:blank');
+      page.activateTabExternal(b);
+      page.recordBlocked('tracker');
+      const state = page.getChromeState();
+      expect(state.tabs.find((t) => t.id === a)!.blocked).toEqual({ ads: 2, trackers: 1 });
+      expect(state.tabs.find((t) => t.id === b)!.blocked).toEqual({ ads: 0, trackers: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('hideChromeUI hides the toolbar/tab-bar DOM but keeps them mounted', async () => {
     page = new BrowserWindowPage({ hideChromeUI: true });
     await page.mount(container);

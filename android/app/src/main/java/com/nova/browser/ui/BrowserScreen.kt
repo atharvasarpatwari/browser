@@ -24,6 +24,7 @@ private enum class Overlay { NONE, TABS, SETTINGS }
 @Composable
 fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
     var overlay by remember { mutableStateOf(Overlay.NONE) }
+    var showBlocked by remember { mutableStateOf(false) }
     var libraryTab by remember { mutableStateOf<LibraryTab?>(null) }
     var showDownloads by remember { mutableStateOf(false) }
     val activeTab = viewModel.activeTab
@@ -104,6 +105,8 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     tabCount = viewModel.tabs.size,
                     canGoBack = viewModel.backEnabled,
                     suggestions = viewModel::suggestionsFor,
+                    blockedCount = viewModel.blockedFor(viewModel.activeTabId.value).total,
+                    onShowBlocked = { showBlocked = true },
                     onBack = { viewModel.goBack() },
                     onSubmit = { viewModel.navigate(it) },
                     onReload = { viewModel.reload() },
@@ -111,6 +114,8 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     onShowTabs = { overlay = Overlay.TABS },
                     menuContent = { close ->
                         MenuEntry("Forward", Icons.AutoMirrored.Filled.ArrowForward, enabled = viewModel.canGoForward.value) { close(); viewModel.goForward() }
+                        val blocked = viewModel.blockedFor(viewModel.activeTabId.value)
+                        MenuEntry("Blocked here: ${blocked.ads} ads · ${blocked.trackers} trackers", Icons.Filled.Shield) { close(); showBlocked = true }
                         MenuEntry("New tab", Icons.Filled.Add) { close(); viewModel.setIncognito(false); viewModel.newTab() }
                         MenuEntry("New incognito tab", Icons.Filled.VisibilityOff) { close(); viewModel.setIncognito(true); viewModel.newTab() }
                         if (!onNewTabPage && pageUrl != null) {
@@ -174,6 +179,23 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     ErrorPage(error = error, onRetry = { viewModel.reload() })
                 }
             }
+        }
+
+        if (showBlocked) {
+            val blocked = viewModel.blockedFor(viewModel.activeTabId.value)
+            AlertDialog(
+                onDismissRequest = { showBlocked = false },
+                icon = { Icon(Icons.Filled.Shield, contentDescription = null) },
+                title = { Text("Blocked in this tab") },
+                text = {
+                    Text(
+                        "Ads: ${blocked.ads}\nTrackers: ${blocked.trackers}\n\n" +
+                            "Counted since this tab was opened. Ads are ad networks and ad slots; trackers are " +
+                            "analytics, session recording and social pixels."
+                    )
+                },
+                confirmButton = { TextButton(onClick = { showBlocked = false }) { Text("OK") } },
+            )
         }
 
         when (overlay) {

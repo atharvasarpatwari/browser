@@ -94,6 +94,19 @@ function invokeDomListeners(
     if (entry.once) entry.__marked = true;
     if (eventFlags(event).__stopPropagation) { stopped = true; break; }
   }
+  // The node's `on<type>` handler (el.onclick = …, script.onload = …) runs with its listeners in
+  // the target/bubble phases (HTML §8.1.8.1). Only addEventListener listeners ever ran, so a
+  // script loader's onload, an image's onerror and every onclick property did nothing.
+  if (!isCapture && !stopped && !eventFlags(event).__stopImmediate) {
+    const target = event.properties.get('currentTarget')?.value;
+    const handler = target && typeof target === 'object' ? (target as JSObject).properties.get(`on${eventType}`)?.value : undefined;
+    if (handler && typeof handler === 'object' && ('closure' in handler || 'nativeFn' in handler)) {
+      try {
+        if (callJSFunction(handler as JSFunction, target ?? null, [event]) === false) eventFlags(event).__defaultPrevented = true;
+      } catch { /* swallow handler errors, like listeners */ }
+      if (eventFlags(event).__stopPropagation) stopped = true;
+    }
+  }
   return stopped;
 }
 

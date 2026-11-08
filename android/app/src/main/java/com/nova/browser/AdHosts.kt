@@ -3,46 +3,70 @@ package com.nova.browser
 import java.net.URI
 
 /**
- * Ad blocking for compatibility mode. Those pages are shown by the system WebView, which Nova's
- * engine ad blocker (src/browser/security/ad-blocker.ts) never sees, so Reddit and YouTube showed
- * their ads. Requests to ad-network hosts are answered empty, and [HIDING_CSS] hides the ad
- * slots sites serve from their own servers.
+ * Ad and tracker blocking for compatibility mode. Those pages are shown by the system WebView, which
+ * Nova's engine blockers (src/browser/security/ad-blocker.ts, tracker-blocker.ts) never see, so
+ * Reddit and YouTube showed their ads. Requests to ad networks and trackers are answered empty
+ * ([classify]), and [HIDING_CSS] hides the ad slots sites serve from their own servers.
  */
 object AdHosts {
 
-    // ponytail: a short list of the big ad networks, not a full filter list (EasyList); grow it as sites need.
-    private val HOSTS: Set<String> = setOf(
+    /** What a blocked request was, for the per-tab counts. */
+    enum class Kind { AD, TRACKER }
+
+    // ponytail: short lists of the big ad networks and trackers, not full filter lists
+    // (EasyList / EasyPrivacy); grow them as sites need.
+    private val AD_HOSTS: Set<String> = setOf(
         "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.com",
         "googletagservices.com", "pagead2.googlesyndication.com", "imasdk.googleapis.com",
         "amazon-adsystem.com", "adnxs.com", "criteo.com", "criteo.net", "taboola.com", "outbrain.com",
         "pubmatic.com", "rubiconproject.com", "openx.net", "casalemedia.com", "indexww.com",
-        "smartadserver.com", "adsrvr.org", "moatads.com", "scorecardresearch.com", "quantserve.com",
-        "media.net", "sharethrough.com", "33across.com", "yieldmo.com", "teads.tv", "adform.net",
-        "ads-twitter.com", "ads.linkedin.com", "advertising.com", "adroll.com", "zedo.com",
+        "smartadserver.com", "adsrvr.org", "media.net", "sharethrough.com", "33across.com", "yieldmo.com",
+        "teads.tv", "adform.net", "ads-twitter.com", "ads.linkedin.com", "advertising.com", "adroll.com", "zedo.com",
         "ads.reddit.com", "alb.reddit.com", "redditstatic.com/ads",
-        // More ad networks and ad servers.
         "googletagmanager.com/gtag/js?id=AW-", "2mdn.net", "adcolony.com", "applovin.com", "unityads.unity3d.com",
         "inmobi.com", "mopub.com", "vungle.com", "chartboost.com", "ironsrc.com", "bidswitch.net", "contextweb.com",
         "lijit.com", "sovrn.com", "gumgum.com", "triplelift.com", "spotxchange.com", "springserve.com", "adskeeper.co.uk",
         "mgid.com", "revcontent.com", "propellerads.com", "popads.net", "popcash.net", "exoclick.com", "adsterra.com",
         "hilltopads.net", "trafficjunky.net", "juicyads.com", "yandex.ru/ads", "an.yandex.ru", "ads.yahoo.com",
-        "gemini.yahoo.com", "ads.pubmatic.com", "bat.bing.com", "c.amazon-adsystem.com", "aax.amazon-adsystem.com",
-        "facebook.com/tr?", "facebook.com/tr/", "connect.facebook.net/signals", "ads.tiktok.com", "analytics.tiktok.com",
+        "gemini.yahoo.com", "ads.pubmatic.com", "c.amazon-adsystem.com", "aax.amazon-adsystem.com", "ads.tiktok.com",
         // Ad endpoints on the sites themselves (YouTube's ad requests, search ad clicks).
-        "youtube.com/pagead", "youtube.com/api/stats/ads", "youtube.com/ptracking", "youtube.com/get_midroll_info",
+        "youtube.com/pagead", "youtube.com/api/stats/ads", "youtube.com/get_midroll_info",
         "google.com/aclk", "bing.com/aclk", "duckduckgo.com/y.js",
     )
 
-    /** True when [url] goes to an ad network (the host or any subdomain of a listed one). */
-    fun isAd(url: String): Boolean {
-        val uri = runCatching { URI(url) }.getOrNull() ?: return false
-        val host = uri.host?.lowercase() ?: return false
+    /** Analytics, session recording, social pixels, measurement and fingerprinting services. */
+    private val TRACKER_HOSTS: Set<String> = setOf(
+        "google-analytics.com", "analytics.google.com", "googletagmanager.com", "stats.g.doubleclick.net",
+        "scorecardresearch.com", "quantserve.com", "moatads.com", "doubleverify.com", "adsafeprotected.com",
+        "chartbeat.com", "chartbeat.net", "parsely.com", "comscore.com", "omtrdc.net", "demdex.net", "krxd.net",
+        "bluekai.com", "hotjar.com", "hotjar.io", "clarity.ms", "fullstory.com", "mouseflow.com", "crazyegg.com",
+        "segment.io", "cdn.segment.com", "api.segment.io", "mixpanel.com", "amplitude.com", "heap.io", "heapanalytics.com",
+        "nr-data.net", "newrelic.com/nr-", "bat.bing.com", "connect.facebook.net", "facebook.com/tr?", "facebook.com/tr/",
+        "analytics.tiktok.com", "analytics.twitter.com", "static.ads-twitter.com", "px.ads.linkedin.com", "snap.licdn.com",
+        "appsflyer.com", "adjust.com", "kochava.com", "branch.io/v1/", "mc.yandex.ru", "yandex.ru/metrika",
+        "youtube.com/ptracking", "youtube.com/api/stats/atr", "reddit.com/static/pixel", "events.redditmedia.com",
+        "pixel.reddit.com",
+    )
+
+    private fun matchesAny(list: Set<String>, host: String, hostAndPath: String): Boolean = list.any { site ->
+        if (site.contains('/')) hostAndPath.startsWith(site) || hostAndPath.contains(".$site")
+        else host == site || host.endsWith(".$site")
+    }
+
+    /** Whether [url] goes to an ad network or ad endpoint, a tracker, or neither (null). */
+    fun classify(url: String): Kind? {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return null
+        val host = uri.host?.lowercase() ?: return null
         val hostAndPath = host + (uri.rawPath ?: "") + (uri.rawQuery?.let { "?$it" } ?: "")
-        return HOSTS.any { site ->
-            if (site.contains('/')) hostAndPath.startsWith(site) || hostAndPath.contains(".$site")
-            else host == site || host.endsWith(".$site")
+        return when {
+            matchesAny(AD_HOSTS, host, hostAndPath) -> Kind.AD
+            matchesAny(TRACKER_HOSTS, host, hostAndPath) -> Kind.TRACKER
+            else -> null
         }
     }
+
+    /** True when [url] goes to an ad network or ad endpoint. */
+    fun isAd(url: String): Boolean = classify(url) == Kind.AD
 
     /** Ad slots served by the sites themselves (Reddit's promoted posts, YouTube's ad renderers). */
     const val HIDING_CSS: String =

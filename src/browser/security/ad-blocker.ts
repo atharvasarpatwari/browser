@@ -1290,23 +1290,47 @@ function adHidingCss(blocker: Pick<IAdBlocker, 'enabled'>, pageUrl?: string): st
   return `${selectors.join(',')}{display:none !important}`;
 }
 
+/** What a blocked request was: an ad, or a tracker (analytics, social widgets, fingerprinting…). */
+type BlockedKind = 'ad' | 'tracker';
+
+interface NetworkBlockingOptions {
+  /** The tracker list, checked after the ad rules (the ResourceLoader used to be its only user). */
+  readonly trackers?: { shouldBlock(url: string): { blocked: boolean; category?: string } };
+  /**
+   * Called for every request stopped, with what it was and whether the tracker list stopped it
+   * (that list reports its own stops as 'requestBlocked' events, so a counter skips those).
+   */
+  readonly onBlocked?: (kind: BlockedKind, url: string, byTrackerList: boolean) => void;
+}
+
 /**
  * Puts the ad blocker in front of every request the engine makes. It used to check only the
  * address of the page being opened (a navigation middleware), so the ads inside pages (their
  * scripts, images and iframes, and the page's own fetch/XHR calls) always loaded.
  * Wraps `fetch` (FetchHttpClient and XHR call it per request) and hands the same wrapper to the
  * page fetch() binding via `setPageFetch`. A blocked request fails like a network error, as it
- * does in other browsers. Returns a function that removes the wrapper.
+ * does in other browsers. With `trackers` the tracker list is checked too, and `onBlocked` hears
+ * of every stop. Returns a function that removes the wrapper.
  */
 function installNetworkAdBlocking(
   blocker: Pick<IAdBlocker, 'shouldBlock'>,
   setPageFetch?: (fn: typeof fetch) => void,
   target: { fetch: typeof fetch } = globalThis,
+  options: NetworkBlockingOptions = {},
 ): () => void {
   const base = target.fetch;
   const blocking = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (blocker.shouldBlock(url).blocked) return Promise.reject(new TypeError(`Blocked by the ad blocker: ${url}`));
+    let kind: BlockedKind | null = blocker.shouldBlock(url).blocked ? 'ad' : null;
+    let byTrackerList = false;
+    if (!kind && options.trackers) {
+      const t = options.trackers.shouldBlock(url);
+      if (t.blocked) { kind = t.category === 'ad' ? 'ad' : 'tracker'; byTrackerList = true; }
+    }
+    if (kind) {
+      options.onBlocked?.(kind, url, byTrackerList);
+      return Promise.reject(new TypeError(`Blocked by the ${kind === 'ad' ? 'ad' : 'tracker'} blocker: ${url}`));
+    }
     return base.call(target, input, init);
   }) as typeof fetch;
   target.fetch = blocking;
@@ -1328,6 +1352,8 @@ export {
   ALL_AD_CATEGORIES,
 };
 export type {
+  BlockedKind,
+  NetworkBlockingOptions,
   IAdBlocker,
   AdCategory,
   AdFilterRule,

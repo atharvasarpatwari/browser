@@ -15,8 +15,16 @@ data class Tab(
     val pinned: Boolean,
     val loading: Boolean,
     /** Load error from the last failed navigation, null when the tab is healthy. */
-    val error: PageError?
+    val error: PageError?,
+    /** Ads and trackers Nova's engine blocked in this tab since it was opened (snapshot `blocked`). */
+    val adsBlocked: Int = 0,
+    val trackersBlocked: Int = 0,
 )
+
+/** Ads and trackers blocked in one tab: the engine's and compatibility mode's together. */
+data class BlockedCounts(val ads: Int, val trackers: Int) {
+    val total: Int get() = ads + trackers
+}
 
 /**
  * Mirrors the per-tab `error` object pushed in ChromeStateSnapshot (code /

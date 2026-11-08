@@ -865,7 +865,18 @@ class ApplicationBootstrap {
     const adBlocker = this.container.resolve<IAdBlocker>(Tokens.AdBlocker);
     // ...and in front of every request the engine sends (ad scripts, images, iframes, page fetch/XHR).
     this.uninstallAdBlocking?.();
-    this.uninstallAdBlocking = installNetworkAdBlocking(adBlocker, setPlatformFetch);
+    // Trackers are checked here too (page fetch/XHR beacons bypassed the loader's check). Every stop
+    // is counted against the tab on screen: ad-list stops from here, tracker-list stops (here or in
+    // the ResourceLoader) from the tracker blocker's own requestBlocked events.
+    const trackerBlocker = this.container.resolve<ITrackerBlocker>(Tokens.TrackerBlocker);
+    this.uninstallAdBlocking = installNetworkAdBlocking(adBlocker, setPlatformFetch, globalThis, {
+      trackers: trackerBlocker,
+      onBlocked: (kind, _url, byTrackerList) => { if (!byTrackerList) page.recordBlocked(kind); },
+    });
+    trackerBlocker.on('requestBlocked', (e) => {
+      const category = (e as { blocked?: { category?: string } }).blocked?.category;
+      page.recordBlocked(category === 'ad' ? 'ad' : 'tracker');
+    });
     engine.addMiddleware(async (session) => {
       const check = adBlocker.shouldBlock(session.entry.url);
       if (check.blocked) {

@@ -4,6 +4,7 @@ import com.nova.browser.model.Bookmark
 import com.nova.browser.model.HistoryEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -57,7 +58,7 @@ class CompatAndSuggestionsTest {
         for (url in listOf("https://securepubads.g.doubleclick.net/tag/js/gpt.js", "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js",
             "https://c.amazon-adsystem.com/aax2/apstag.js", "https://alb.reddit.com/i.gif", "https://www.redditstatic.com/ads/pixel.js",
             "https://www.youtube.com/pagead/viewthroughconversion/1", "https://m.youtube.com/api/stats/ads?ver=2", "https://www.google.com/aclk?sa=l",
-            "https://www.googletagmanager.com/gtag/js?id=AW-123", "https://www.facebook.com/tr?id=1&ev=PageView")) {
+            "https://www.googletagmanager.com/gtag/js?id=AW-123")) {
             assertTrue(url, AdHosts.isAd(url))
         }
         for (url in listOf("https://www.reddit.com/", "https://www.redditstatic.com/shreddit/en-US/app.js", "https://m.youtube.com/",
@@ -75,6 +76,19 @@ class CompatAndSuggestionsTest {
         assertFalse(CompatSites.needsCompat("https://www.google.com/searchengines"))
         assertFalse(CompatSites.needsCompat("https://notgoogle.com/search?q=x"))
         assertFalse(CompatSites.needsCompat("https://www.google.com/search?q=x", userOff = setOf("google.com")))
+    }
+
+    @Test
+    fun trackersAreToldApartFromAds() {
+        for (url in listOf("https://www.google-analytics.com/g/collect?v=2", "https://www.googletagmanager.com/gtag/js?id=G-123",
+            "https://www.facebook.com/tr?id=1&ev=PageView", "https://static.hotjar.com/c/hotjar.js", "https://sb.scorecardresearch.com/b",
+            "https://m.youtube.com/ptracking?x=1", "https://bat.bing.com/action/0", "https://api.segment.io/v1/t")) {
+            assertEquals(url, AdHosts.Kind.TRACKER, AdHosts.classify(url))
+        }
+        assertEquals(AdHosts.Kind.AD, AdHosts.classify("https://www.googletagmanager.com/gtag/js?id=AW-123"))
+        assertEquals(AdHosts.Kind.AD, AdHosts.classify("https://googleads.g.doubleclick.net/pagead/id"))
+        assertNull(AdHosts.classify("https://m.youtube.com/watch?v=abc"))
+        assertNull(AdHosts.classify("https://www.reddit.com/"))
     }
 
     @Test

@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -65,6 +66,9 @@ fun BottomChrome(
     showUrl: Boolean = true,
     /** Rows shown above the bar while typing (AddressSuggestions); the first is what Go does. */
     suggestions: (String) -> List<AddressSuggestion> = { emptyList() },
+    /** Ads and trackers blocked in this tab; a shield with the number shows when it is above 0. */
+    blockedCount: Int = 0,
+    onShowBlocked: () -> Unit = {},
 ) {
     var editing by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf(TextFieldValue("")) }
@@ -184,6 +188,26 @@ fun BottomChrome(
                     if (editing && draft.text.isNotEmpty()) {
                         IconButton(onClick = { draft = TextFieldValue("") }, modifier = Modifier.size(36.dp)) {
                             Icon(Icons.Filled.Close, contentDescription = "Clear", tint = content, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    if (!editing && showUrl && blockedCount > 0) {
+                        // Shield with this tab's blocked ads + trackers; a tap shows the breakdown.
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(onClick = onShowBlocked)
+                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                                .semantics { contentDescription = "$blockedCount ads and trackers blocked" },
+                        ) {
+                            Icon(Icons.Filled.Shield, contentDescription = null, tint = SuccessGreen, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                if (blockedCount > 999) "999+" else blockedCount.toString(),
+                                color = content.copy(alpha = 0.85f),
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                            )
                         }
                     }
                     if (!editing && showUrl) {

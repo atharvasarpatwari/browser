@@ -115,6 +115,8 @@ interface ChromeStateSnapshot {
     readonly loading: boolean;
     /** Load error from the last failed navigation, null when the tab is healthy. */
     readonly error: { readonly code: string; readonly description: string; readonly url: string } | null;
+    /** Ads and trackers the blockers stopped in this tab since it was opened. */
+    readonly blocked: { readonly ads: number; readonly trackers: number };
   }>;
   readonly activeTabId: string | null;
   readonly addressValue: string;
@@ -171,6 +173,8 @@ interface IBrowserWindowPage extends IDisposable {
   offChromeState(handler: (snapshot: ChromeStateSnapshot) => void): void;
   /** Pull-based: get the current state without waiting for the next change. */
   getChromeState(): ChromeStateSnapshot;
+  /** Counts a request the ad or tracker blocker stopped against the tab on screen. */
+  recordBlocked(kind: 'ad' | 'tracker'): void;
   createTab(url?: string): string;
   closeTab(tabId: string): boolean;
   activateTabExternal(tabId: string): boolean;
@@ -260,6 +264,9 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   /** Per-tab load errors (keyed by tab id) recorded from navigationFailed bridge events. */
   private readonly tabErrors = new Map<string, { code: string; description: string; url: string }>();
+  /** Per-tab counts of blocked ads and trackers (recordBlocked), kept while the tab is open. */
+  private readonly tabBlocked = new Map<string, { ads: number; trackers: number }>();
+  private blockedPushTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Engine-bus handlers (unregistered on re-set so a long-lived page leaks no subscriptions). */
   private readonly engineLoadErrorHandler = (event: EngineEvent): void => {
@@ -1458,6 +1465,16 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.chromeStateHandlers.delete(handler);
   }
 
+  recordBlocked(kind: 'ad' | 'tracker'): void {
+    const id = this.tabManager?.activeTabId;
+    if (!id) return;
+    const counts = this.tabBlocked.get(id) ?? { ads: 0, trackers: 0 };
+    if (kind === 'ad') counts.ads++; else counts.trackers++;
+    this.tabBlocked.set(id, counts);
+    // A page can block dozens of requests in a burst: one state push for all of them.
+    this.blockedPushTimer ??= setTimeout(() => { this.blockedPushTimer = null; this.emitChromeState(); }, 250);
+  }
+
   getChromeState(): ChromeStateSnapshot {
     const activeTabId = this.tabManager?.activeTabId ?? null;
     const currentTabs = this.tabManager?.tabs ?? [];
@@ -1469,7 +1486,12 @@ class BrowserWindowPage implements IBrowserWindowPage {
       pinned: t.pinned,
       loading: t.loading,
       error: this.tabErrors.get(t.id) ?? null,
+      blocked: { ...(this.tabBlocked.get(t.id) ?? { ads: 0, trackers: 0 }) },
     }));
+    if (this.tabBlocked.size > 0) {
+      const open = new Set(currentTabs.map((t) => t.id));
+      for (const id of [...this.tabBlocked.keys()]) if (!open.has(id)) this.tabBlocked.delete(id); // closed tabs
+    }
     // Drop error entries for tabs that no longer exist (keeps the map bounded).
     if (this.tabErrors.size > 0) {
       const ids = new Set(currentTabs.map((t) => t.id));
