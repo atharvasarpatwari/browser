@@ -44,7 +44,6 @@ export class EventLoop {
 
   schedule(fn: () => void, delay: number, recurring: boolean = false): number {
     const id = this.nextTaskId++;
-    this.onWake?.();
 
     // WHATWG HTML § 8.6 — Timer clamping: after 5 nested timer firings,
     // the minimum delay is clamped to 4ms.
@@ -63,6 +62,9 @@ export class EventLoop {
     };
     this.tasks.push(task);
     this.timers.set(id, task);
+    // After the task is queued: the host asks timeUntilNext() and, woken before the push, found
+    // nothing to do, so a page whose only async work was setTimeout/setInterval never ran it.
+    this.onWake?.();
     return id;
   }
 

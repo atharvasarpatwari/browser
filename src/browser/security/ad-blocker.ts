@@ -117,6 +117,9 @@ type AdBlockerEventHandler = (event: AdBlockerEvent) => void;
 const AD_FILTER_RULES: AdFilterRule[] = [
   // ── Google Ads ecosystem ──
   { pattern: 'doubleclick.net', category: 'banner', description: 'Google DoubleClick' },
+  { pattern: 'google.com/aclk', category: 'banner', description: 'Google search ad click' },
+  { pattern: 'bing.com/aclk', category: 'banner', description: 'Bing search ad click' },
+  { pattern: 'duckduckgo.com/y.js', category: 'banner', description: 'DuckDuckGo search ad click' },
   { pattern: 'googlesyndication.com', category: 'banner', description: 'Google Syndication' },
   { pattern: 'googleadservices.com', category: 'banner', description: 'Google Ad Services' },
   { pattern: 'pagead2.googlesyndication.com', category: 'banner', description: 'Google AdSense' },
@@ -1256,9 +1259,35 @@ const SAFE_HIDING_SELECTORS: readonly string[] = [
   '[id^="taboola-"]', '.trc_related_container', '.OUTBRAIN', '[data-widget-id^="AR_"]',
 ];
 
-/** The CSS that hides ad elements while the blocker is on ('' when it is off). */
-function adHidingCss(blocker: Pick<IAdBlocker, 'enabled'>): string {
-  return blocker.enabled ? `${SAFE_HIDING_SELECTORS.join(',')}{display:none !important}` : '';
+/**
+ * Sponsored results on search pages. Search engines serve these from their own servers inside the
+ * results, so no network rule removes them; each site's selectors only apply on that site (Bing's
+ * `.ads` would be far too broad elsewhere).
+ */
+const SITE_HIDING_SELECTORS: ReadonlyArray<readonly [site: string, selectors: readonly string[]]> = [
+  ['google.', ['#tads', '#tadsb', '#bottomads', 'div[data-text-ad]', '.uEierd', 'div[aria-label="Ads"]',
+    '.commercial-unit-mobile-top', '.commercial-unit-mobile-bottom', '.cu-container', '.pla-unit-container', '#atvcap']],
+  ['bing.com', ['li.b_ad', '.b_adTop', '.b_adBottom', '.b_adLastChild', '#b_ads_magazine_container', '.sb_adsWv2', '#b_results .ads']],
+  ['duckduckgo.com', ['.result--ad', '[data-testid="ad"]', 'li[data-layout="ad"]', '.badge--ad', '#ads']],
+  ['search.yahoo.com', ['.searchCenterTopAds', '.searchCenterBottomAds', '.searchRightTopAds', '.searchRightBottomAds']],
+  ['youtube.com', ['ytm-promoted-sparkles-web-renderer', 'ytm-promoted-video-renderer', 'ytm-companion-ad-renderer',
+    'ad-slot-renderer', 'ytm-ad-slot-renderer', '.ytp-ad-overlay-container']],
+];
+
+function hostMatches(host: string, site: string): boolean {
+  // "google." matches every Google country domain (google.com, google.co.in…).
+  if (site.endsWith('.')) return host === site.slice(0, -1) || host.startsWith(site) || host.includes(`.${site}`);
+  return host === site || host.endsWith(`.${site}`);
+}
+
+/** The CSS that hides ad elements on [pageUrl] while the blocker is on ('' when it is off). */
+function adHidingCss(blocker: Pick<IAdBlocker, 'enabled'>, pageUrl?: string): string {
+  if (!blocker.enabled) return '';
+  let host = '';
+  try { host = pageUrl ? new URL(pageUrl).hostname.toLowerCase() : ''; } catch { /* not a URL */ }
+  const selectors = [...SAFE_HIDING_SELECTORS];
+  for (const [site, list] of SITE_HIDING_SELECTORS) if (host && hostMatches(host, site)) selectors.push(...list);
+  return `${selectors.join(',')}{display:none !important}`;
 }
 
 /**
@@ -1289,6 +1318,7 @@ export {
   installNetworkAdBlocking,
   adHidingCss,
   SAFE_HIDING_SELECTORS,
+  SITE_HIDING_SELECTORS,
   AdBlocker,
   AD_FILTER_RULES,
   AD_ELEMENT_SELECTORS,

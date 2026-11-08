@@ -20,13 +20,24 @@ object AdHosts {
         "media.net", "sharethrough.com", "33across.com", "yieldmo.com", "teads.tv", "adform.net",
         "ads-twitter.com", "ads.linkedin.com", "advertising.com", "adroll.com", "zedo.com",
         "ads.reddit.com", "alb.reddit.com", "redditstatic.com/ads",
+        // More ad networks and ad servers.
+        "googletagmanager.com/gtag/js?id=AW-", "2mdn.net", "adcolony.com", "applovin.com", "unityads.unity3d.com",
+        "inmobi.com", "mopub.com", "vungle.com", "chartboost.com", "ironsrc.com", "bidswitch.net", "contextweb.com",
+        "lijit.com", "sovrn.com", "gumgum.com", "triplelift.com", "spotxchange.com", "springserve.com", "adskeeper.co.uk",
+        "mgid.com", "revcontent.com", "propellerads.com", "popads.net", "popcash.net", "exoclick.com", "adsterra.com",
+        "hilltopads.net", "trafficjunky.net", "juicyads.com", "yandex.ru/ads", "an.yandex.ru", "ads.yahoo.com",
+        "gemini.yahoo.com", "ads.pubmatic.com", "bat.bing.com", "c.amazon-adsystem.com", "aax.amazon-adsystem.com",
+        "facebook.com/tr?", "facebook.com/tr/", "connect.facebook.net/signals", "ads.tiktok.com", "analytics.tiktok.com",
+        // Ad endpoints on the sites themselves (YouTube's ad requests, search ad clicks).
+        "youtube.com/pagead", "youtube.com/api/stats/ads", "youtube.com/ptracking", "youtube.com/get_midroll_info",
+        "google.com/aclk", "bing.com/aclk", "duckduckgo.com/y.js",
     )
 
     /** True when [url] goes to an ad network (the host or any subdomain of a listed one). */
     fun isAd(url: String): Boolean {
         val uri = runCatching { URI(url) }.getOrNull() ?: return false
         val host = uri.host?.lowercase() ?: return false
-        val hostAndPath = host + (uri.rawPath ?: "")
+        val hostAndPath = host + (uri.rawPath ?: "") + (uri.rawQuery?.let { "?$it" } ?: "")
         return HOSTS.any { site ->
             if (site.contains('/')) hostAndPath.startsWith(site) || hostAndPath.contains(".$site")
             else host == site || host.endsWith(".$site")
@@ -39,7 +50,12 @@ object AdHosts {
         "[data-testid=\"promoted-post\"],.promotedlink," +
         "ytm-promoted-sparkles-web-renderer,ytm-promoted-video-renderer,ytm-companion-ad-renderer," +
         "ad-slot-renderer,ytm-ad-slot-renderer,.ytp-ad-overlay-container," +
-        "ins.adsbygoogle,[data-ad-client],[id^=\"google_ads_iframe\"],amp-ad" +
+        "ins.adsbygoogle,[data-ad-client],[id^=\"google_ads_iframe\"],amp-ad," +
+        // Sponsored search results (Google, Bing, DuckDuckGo) and YouTube's feed/player ad slots.
+        "#tads,#tadsb,#bottomads,div[data-text-ad],.uEierd,div[aria-label=\"Ads\"],.commercial-unit-mobile-top," +
+        "li.b_ad,.b_adTop,.b_adBottom,.result--ad,[data-testid=\"ad\"],li[data-layout=\"ad\"]," +
+        "ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,ytd-promoted-sparkles-web-renderer,ytm-promoted-sparkles-text-search-renderer," +
+        ".ytp-ad-module .ytp-ad-image-overlay,ytd-banner-promo-renderer,ytm-companion-slot" +
         "{display:none !important}"
 
     /** Script that adds [HIDING_CSS] to the page once (it stays across in-page navigation). */
@@ -47,6 +63,12 @@ object AdHosts {
         "(function(){if(document.getElementById('nova-ad-hiding'))return;" +
         "var s=document.createElement('style');s.id='nova-ad-hiding';" +
         "s.textContent=${org.json.JSONObject.quote(HIDING_CSS)};" +
-        "(document.head||document.documentElement).appendChild(s);})();"
+        "(document.head||document.documentElement).appendChild(s);" +
+        // YouTube video ads: while the player shows one, press Skip and jump the ad to its end.
+        "if(location.hostname.indexOf('youtube.com')>=0&&!window.__novaAdSkip){window.__novaAdSkip=setInterval(function(){" +
+        "var b=document.querySelector('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button');if(b)b.click();" +
+        "var p=document.querySelector('.ad-showing');var v=p&&p.querySelector('video');" +
+        "if(v&&isFinite(v.duration)&&v.duration>0)v.currentTime=v.duration;},400);}" +
+        "})();"
     }
 }

@@ -103,7 +103,7 @@ interface PageRendererDependencies {
   /** Optional callback invoked once per page load, after the document is parsed, scripted, laid out and painted. */
   readonly onDocumentReady?: (url: string, doc: DomDocument) => void;
   /** Extra CSS applied after the page's own (the ad blocker's element hiding); '' for none. */
-  readonly userStylesheet?: () => string;
+  readonly userStylesheet?: (pageUrl: string) => string;
   /** Rasterizes standalone SVG markup (inline `<svg>`); default: the platform image decoder. */
   readonly svgDecode?: SvgDecode;
 }
@@ -270,7 +270,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     lap('html');
     const rules = [
       ...await this.loadExternalStylesheets(cssParser.extractStylesFromDocument(htmlDoc), result.url, signal),
-      ...this.userRules(),
+      ...this.userRules(result.url),
     ];
     lap('css');
     this._lastRules = rules;
@@ -581,8 +581,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
   private userCssRules: readonly CssRule[] = [];
 
   /** The user stylesheet's rules, parsed once per distinct text. */
-  private userRules(): readonly CssRule[] {
-    const css = this.deps.userStylesheet?.() ?? '';
+  private userRules(pageUrl: string): readonly CssRule[] {
+    const css = this.deps.userStylesheet?.(pageUrl) ?? '';
     if (css !== this.userCss) {
       this.userCss = css;
       this.userCssRules = css.trim() ? this.deps.cssParser.parseStylesheet(css).rules : [];
@@ -684,10 +684,30 @@ class PageRenderer implements IPageRenderer, IDisposable {
       () => ({ ...this.viewport, dpr: this.dpr }),
     );
 
-    type Entry = { source: string; inline: boolean; nonce?: string };
+    type Entry = { source: string; inline: boolean; nonce?: string; url?: string };
     const blockingScripts: Entry[] = [];
     const deferScripts: Entry[] = [];
     const asyncScripts: Entry[] = [];
+
+    // Start every allowed external script's download at once (each URL once), then take them in
+    // document order below. Awaiting each download before starting the next made a page's script
+    // fetches strictly sequential: Netflix spent 22 s and BBC 6 s of "scripts" waiting on the network.
+    const allowedScriptUrl = (src: string): string | null => {
+      const fullUrl = PageRenderer.resolveUrl(src, baseUrl);
+      if (this.deps.securityLayer && !this.deps.securityLayer.checkSubresource(baseUrl, fullUrl, 'script').allowed) return null;
+      if (scriptEnforcer && !scriptEnforcer.checkExternalScript(fullUrl, origin, baseUrl).allowed) return null;
+      return fullUrl;
+    };
+    const downloads = new Map<string, Promise<string>>();
+    for (const script of scripts) {
+      const src = script.attributes.get('src');
+      const url = src === undefined ? null : allowedScriptUrl(src);
+      if (url && !downloads.has(url)) {
+        const download = resourceLoader.loadScript(url);
+        download.catch(() => { /* reported where it is awaited */ });
+        downloads.set(url, download);
+      }
+    }
 
     // Categorize scripts
     for (const script of scripts) {
@@ -723,7 +743,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
         }
 
         try {
-          const source = await resourceLoader.loadScript(fullUrl);
+          const source = await (downloads.get(fullUrl) ?? resourceLoader.loadScript(fullUrl));
 
           if (security) {
             const integrity = script.attributes.get('integrity');
@@ -738,7 +758,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
             }
           }
 
-          const entry: Entry = { source, inline: false };
+          const entry: Entry = { source, inline: false, url: fullUrl };
           if (isAsync) {
             asyncScripts.push(entry);
           } else if (isDefer) {
@@ -781,7 +801,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
           return;
         }
       }
+      const started = Date.now();
       const result = runJS(entry.source, { document: doc, domTree, eventLoop, globalEnv: env, htmlParser: this.deps.htmlParser });
+      const took = Date.now() - started;
+      if (took > 500) console.warn(`[ScriptEngine] Slow ${kind} script: ${took} ms, ${entry.source.length} chars, ${entry.url ?? 'inline'}`);
       if (result.error) {
         console.error(`[ScriptEngine] Error executing ${kind} script: ${result.error.message}`);
       }
@@ -789,9 +812,17 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 1. Blocking scripts in document order, 2. defer scripts (after the DOM is
     //    parsed), 3. async scripts (best-effort: already downloaded by now).
-    for (const entry of blockingScripts) { if (signal.aborted) return; run(entry, 'blocking'); }
-    for (const entry of deferScripts) { if (signal.aborted) return; run(entry, 'defer'); }
-    for (const entry of asyncScripts) { if (signal.aborted) return; run(entry, 'async'); }
+    // Between scripts the thread is handed back (a macrotask), so a newly typed address can abort
+    // the page: running them back to back held the thread through the whole set, and on the
+    // tablet a page typed during GitHub's scripts waited a minute to start.
+    const yieldThread = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+    for (const [list, kind] of [[blockingScripts, 'blocking'], [deferScripts, 'defer'], [asyncScripts, 'async']] as const) {
+      for (const entry of list) {
+        await yieldThread();
+        if (signal.aborted) return;
+        run(entry, kind);
+      }
+    }
     // 4. DOMContentLoaded, then load. Neither was ever fired, so scripts that wire their UI there
     //    (httpforever's theme and colour buttons) registered no handlers and taps did nothing.
     // ponytail: load fires with DOMContentLoaded, before images finish; it should wait for them.

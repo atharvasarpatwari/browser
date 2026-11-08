@@ -13,7 +13,7 @@ import java.net.URI
  */
 object CompatSites {
 
-    /** Sites that need a full JavaScript engine to work at all: Google's signed-in apps, YouTube, Reddit. */
+    /** Sites that need a full JavaScript engine to work at all: Google's signed-in apps and the big script-built sites. */
     val DEFAULT_HOSTS: Set<String> = setOf(
         "gmail.com", "mail.google.com", "accounts.google.com", "myaccount.google.com",
         "docs.google.com", "drive.google.com", "calendar.google.com", "meet.google.com",
@@ -21,6 +21,9 @@ object CompatSites {
         // Single-page apps whose content is built by script: on the tablet (1.91) YouTube stayed on
         // grey placeholder boxes and Reddit showed only its loading logo. The menu can switch them back.
         "youtube.com", "reddit.com",
+        // Also script-built (1.93 run on the OnePlus Pad): Facebook served its bare fallback page,
+        // Instagram and Amazon stayed blank, LinkedIn came out unstyled, X's form overlapped.
+        "facebook.com", "instagram.com", "amazon.in", "amazon.com", "linkedin.com", "x.com", "twitter.com",
     )
 
     /**
@@ -45,7 +48,18 @@ object CompatSites {
     fun needsCompat(url: String, userOn: Set<String> = emptySet(), userOff: Set<String> = emptySet()): Boolean {
         val host = hostOf(url) ?: return false
         if (userOff.any { matches(host, it) }) return false
-        return DEFAULT_HOSTS.any { matches(host, it) } || userOn.any { matches(host, it) }
+        return DEFAULT_HOSTS.any { matches(host, it) } || userOn.any { matches(host, it) } || isGoogleSearch(host, url)
+    }
+
+    /**
+     * Google's results pages (google.com/search, google.co.in/search…). Google answers the Android
+     * WebView with a script-built results page ("enablejs") that Nova's engine can't run, so a search
+     * from the address bar showed nothing. Google's home page and the results' links stay in Nova.
+     */
+    private fun isGoogleSearch(host: String, url: String): Boolean {
+        if (!(host.startsWith("google.") || host.contains(".google."))) return false
+        val path = runCatching { URI(url.trim()).rawPath }.getOrNull() ?: return false
+        return path == "/search"
     }
 
     /**

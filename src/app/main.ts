@@ -930,7 +930,7 @@ class ApplicationBootstrap {
       securityLayer,
       onFrameRendered: () => engine.notifyPageRepainted(),
       onDocumentReady: (url, doc) => page.onPageDocumentReady(url, doc),
-      userStylesheet: () => adHidingCss(adBlocker),
+      userStylesheet: (pageUrl) => adHidingCss(adBlocker, pageUrl),
     });
     engine.setPageRenderer(pageRenderer);
 

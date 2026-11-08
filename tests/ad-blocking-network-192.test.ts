@@ -3,7 +3,7 @@
  * (scripts, images, iframes, fetch/XHR to ad networks) always loaded.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { AdBlocker, adHidingCss, installNetworkAdBlocking } from '../src/browser/security/ad-blocker';
+import { AdBlocker, adHidingCss, installNetworkAdBlocking, SITE_HIDING_SELECTORS } from '../src/browser/security/ad-blocker';
 import { DomTree } from '../src/browser/rendering/dom-tree';
 import { HtmlParser } from '../src/browser/rendering/html-parser';
 import { CssParser } from '../src/browser/rendering/css-parser';
@@ -57,5 +57,41 @@ describe('network ad blocking', () => {
     await render();
     expect(cs('ad')).toBe('block');
     r.dispose();
+  });
+
+  // 1.94: sponsored search results are served inside the results page, so only hiding removes them.
+  it('sponsored search results are hidden on Google, Bing and DuckDuckGo; organic results stay', async () => {
+    const blocker = new AdBlocker();
+    const domTree = new DomTree();
+    const r = new PageRenderer({ htmlParser: new HtmlParser(), domTree, cssParser: new CssParser(), layoutEngine: new LayoutEngine(), paintEngine: new PaintEngine(), svgDecode: async () => null,
+      resourceLoader: { loadResource: vi.fn(), loadBatch: vi.fn(), loadStylesheet: vi.fn().mockResolvedValue(''), loadScript: vi.fn().mockResolvedValue(''), loadImage: vi.fn(), getPriority: vi.fn(), setMaxConcurrent: vi.fn(), on: vi.fn(), off: vi.fn(), dispose: vi.fn() },
+      prioritizer: { submit: vi.fn(), submitBatch: vi.fn(), submitPreload: vi.fn(), submitPrefetch: vi.fn(), submitPreconnect: vi.fn(), clear: vi.fn(), dispose: vi.fn() },
+      userStylesheet: (url: string) => adHidingCss(blocker, url) } as never);
+    r.setViewport(400, 800, 1);
+    const cs = (id: string) => domTree.getElementById(id)!.computedStyle?.get('display');
+    const page = (url: string, body: string) => r.render({ url, statusCode: 200, contentType: 'text/html', headers: new Map(), loadedAt: 0, body: `<html><body>${body}</body></html>` } as never, new AbortController().signal);
+
+    await page('https://www.google.co.in/search?q=shoes', '<div id="tads"><div id="g-ad">Sponsored</div></div><div id="g-org" class="g">result</div>');
+    expect(cs('tads')).toBe('none');
+    expect(cs('g-org')).toBe('block');
+    await page('https://www.bing.com/search?q=shoes', '<ol id="b_results"><li id="b-ad" class="b_ad">ad</li><li id="b-org" class="b_algo">result</li></ol>');
+    expect(cs('b-ad')).toBe('none');
+    expect(cs('b-org')).not.toBe('none');
+    await page('https://duckduckgo.com/?q=shoes', '<div id="d-ad" class="result result--ad">ad</div><div id="d-org" class="result">result</div>');
+    expect(cs('d-ad')).toBe('none');
+    expect(cs('d-org')).toBe('block');
+    // Site selectors stay on their site: a news page with class "ads" or id "tads" is not touched.
+    await page('https://news.example/', '<div id="tads">tads</div><div id="x" class="ads">x</div>');
+    expect(cs('tads')).toBe('block');
+    expect(SITE_HIDING_SELECTORS.length).toBeGreaterThan(3);
+    r.dispose();
+  });
+
+  it('search ad click-through links are blocked', () => {
+    const b = new AdBlocker();
+    expect(b.shouldBlock('https://www.google.com/aclk?sa=l&ai=abc').blocked).toBe(true);
+    expect(b.shouldBlock('https://www.bing.com/aclk?ld=e8').blocked).toBe(true);
+    expect(b.shouldBlock('https://duckduckgo.com/y.js?ad_domain=shoes.example').blocked).toBe(true);
+    expect(b.shouldBlock('https://www.google.com/search?q=shoes').blocked).toBe(false);
   });
 });
