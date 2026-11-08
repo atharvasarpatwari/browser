@@ -136,6 +136,8 @@ interface IPageRenderer {
   repaintElement?(el: DomElement): void;
   /** The rendered document's <title> text (whitespace collapsed), or '' when it has none. */
   getDocumentTitle?(): string;
+  /** Stops the shown page's scripts (timers, animation frames, queued callbacks): it is being left. */
+  stopPageScripts?(): void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -470,8 +472,11 @@ class BrowserEngine implements IBrowserEngine, ISharedService {
   ): Promise<void> {
     const { entry } = event;
 
-    // Abort any previously running load.
+    // Abort any previously running load, and stop the page being left. Its timers kept running
+    // until the next page's scripts started: on the tablet, CNN's timers navigated GitHub and
+    // Netflix to CNN article paths and kept the engine busy, so later pages took over a minute.
     this._session?.abortController.abort();
+    this.renderer.stopPageScripts?.();
 
     const session: PageLoadSession = {
       id:              `pls-${(++this.sessionSeq).toString(36)}`,

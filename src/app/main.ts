@@ -97,7 +97,8 @@ import { PermissionManager } from '../browser/security/permission-manager';
 import type { IPermissionManager } from '../browser/security/permission-manager';
 import { TrackerBlocker } from '../browser/security/tracker-blocker';
 import type { ITrackerBlocker } from '../browser/security/tracker-blocker';
-import { AdBlocker } from '../browser/security/ad-blocker';
+import { AdBlocker, adHidingCss, installNetworkAdBlocking } from '../browser/security/ad-blocker';
+import { setPlatformFetch } from '../browser/js/fetch-api';
 import type { IAdBlocker } from '../browser/security/ad-blocker';
 import { ThirdPartySecurityManager, extractOrigin } from '../browser/security/third-party-security';
 import type { IThirdPartySecurityManager } from '../browser/security/third-party-security';
@@ -323,6 +324,8 @@ class ApplicationBootstrap {
   private readonly container: IServiceContainer;
   private shell: IAppShell | null = null;
   private running = false;
+  /** Removes the network ad-blocking fetch wrapper (installed by the engine bootstrap). */
+  private uninstallAdBlocking: (() => void) | null = null;
 
   constructor(env: Record<string, string | undefined> = getProcessEnv()) {
     this.config = new ConfigLoader(env).load();
@@ -369,6 +372,8 @@ class ApplicationBootstrap {
 
     this.container.dispose();
     clearMutationObservers();
+    this.uninstallAdBlocking?.();
+    this.uninstallAdBlocking = null;
     this.running = false;
     this.log('Stopped');
   }
@@ -858,6 +863,9 @@ class ApplicationBootstrap {
 
     // Add ad blocking middleware
     const adBlocker = this.container.resolve<IAdBlocker>(Tokens.AdBlocker);
+    // ...and in front of every request the engine sends (ad scripts, images, iframes, page fetch/XHR).
+    this.uninstallAdBlocking?.();
+    this.uninstallAdBlocking = installNetworkAdBlocking(adBlocker, setPlatformFetch);
     engine.addMiddleware(async (session) => {
       const check = adBlocker.shouldBlock(session.entry.url);
       if (check.blocked) {
@@ -922,6 +930,7 @@ class ApplicationBootstrap {
       securityLayer,
       onFrameRendered: () => engine.notifyPageRepainted(),
       onDocumentReady: (url, doc) => page.onPageDocumentReady(url, doc),
+      userStylesheet: () => adHidingCss(adBlocker),
     });
     engine.setPageRenderer(pageRenderer);
 

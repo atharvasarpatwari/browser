@@ -102,6 +102,8 @@ interface PageRendererDependencies {
   readonly onFrameRendered?: () => void;
   /** Optional callback invoked once per page load, after the document is parsed, scripted, laid out and painted. */
   readonly onDocumentReady?: (url: string, doc: DomDocument) => void;
+  /** Extra CSS applied after the page's own (the ad blocker's element hiding); '' for none. */
+  readonly userStylesheet?: () => string;
   /** Rasterizes standalone SVG markup (inline `<svg>`); default: the platform image decoder. */
   readonly svgDecode?: SvgDecode;
 }
@@ -266,7 +268,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 4. Extract and compute CSS styles (fetching <link rel=stylesheet> sheets first)
     lap('html');
-    const rules = await this.loadExternalStylesheets(cssParser.extractStylesFromDocument(htmlDoc), result.url, signal);
+    const rules = [
+      ...await this.loadExternalStylesheets(cssParser.extractStylesFromDocument(htmlDoc), result.url, signal),
+      ...this.userRules(),
+    ];
     lap('css');
     this._lastRules = rules;
     this.applyComputedStyles(rules);
@@ -572,6 +577,18 @@ class PageRenderer implements IPageRenderer, IDisposable {
   }
 
   private _lastRules: readonly CssRule[] = [];
+  private userCss = '';
+  private userCssRules: readonly CssRule[] = [];
+
+  /** The user stylesheet's rules, parsed once per distinct text. */
+  private userRules(): readonly CssRule[] {
+    const css = this.deps.userStylesheet?.() ?? '';
+    if (css !== this.userCss) {
+      this.userCss = css;
+      this.userCssRules = css.trim() ? this.deps.cssParser.parseStylesheet(css).rules : [];
+    }
+    return this.userCssRules;
+  }
   /** The current page's script event loop (null for pages without scripts). */
   private pageEventLoop: JsEventLoop | null = null;
   private _lastStylesheet: Css5Stylesheet | null = null;
@@ -1176,6 +1193,15 @@ class PageRenderer implements IPageRenderer, IDisposable {
     });
     if (mutations() !== before) this.requestReflow();
     this.schedulePagePump();
+  }
+
+  /** Stops the shown page's scripts: its timers, animation frames and queued callbacks never run again. */
+  stopPageScripts(): void {
+    this.pageEventLoop?.clear();
+    this.pageEventLoop = null;
+    if (this.pumpTimer) clearTimeout(this.pumpTimer);
+    this.pumpTimer = null;
+    this.pumpAt = Infinity;
   }
 
   /** Redraw one element whose look changed outside layout (a form control's checked state). */

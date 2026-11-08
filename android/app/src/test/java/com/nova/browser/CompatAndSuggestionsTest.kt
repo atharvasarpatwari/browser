@@ -51,6 +51,18 @@ class CompatAndSuggestionsTest {
     }
 
     @Test
+    fun compatibilityModeBlocksAdNetworksButNotTheSitesThemselves() {
+        for (url in listOf("https://securepubads.g.doubleclick.net/tag/js/gpt.js", "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js",
+            "https://c.amazon-adsystem.com/aax2/apstag.js", "https://alb.reddit.com/i.gif", "https://www.redditstatic.com/ads/pixel.js")) {
+            assertTrue(url, AdHosts.isAd(url))
+        }
+        for (url in listOf("https://www.reddit.com/", "https://www.redditstatic.com/shreddit/en-US/app.js", "https://m.youtube.com/",
+            "https://accounts.google.com/v3/signin", "https://notdoubleclick.net/x", "https://www.google.com/search?q=doubleclick.net", "not a url")) {
+            assertFalse(url, AdHosts.isAd(url))
+        }
+    }
+
+    @Test
     fun userChoicesSwitchSitesInAndOut() {
         assertTrue(CompatSites.needsCompat("https://app.example.com/x", userOn = setOf("example.com")))
         assertFalse(CompatSites.needsCompat("https://mail.google.com/", userOff = setOf("mail.google.com")))

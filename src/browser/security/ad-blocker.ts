@@ -1240,7 +1240,55 @@ class AdBlocker implements IAdBlocker {
   }
 }
 
+/**
+ * Element-hiding selectors safe to apply to every page: each matches only ad markup (AdSense,
+ * Google Publisher Tags, ad-network iframes, content-recommendation widgets). AD_ELEMENT_SELECTORS
+ * is far broader (`[class*="banner"]`, `[id*="ad_"]` matches "thread_", `[id*="cookie"]`…) and
+ * would hide real page content.
+ */
+const SAFE_HIDING_SELECTORS: readonly string[] = [
+  'ins.adsbygoogle', '.adsbygoogle', '[data-ad-client]', '[data-ad-slot]', '[data-ad-layout-key]',
+  'div[data-google-query-id]', '[id^="google_ads_iframe"]', '[id^="aswift_"]', '.google-auto-placed',
+  'amp-ad', 'amp-embed[type="ad"]', 'div[data-dfp-id]',
+  'iframe[src*="doubleclick.net"]', 'iframe[src*="googlesyndication.com"]', 'iframe[src*="adnxs.com"]',
+  'iframe[src*="amazon-adsystem.com"]', 'iframe[src*="taboola.com"]', 'iframe[src*="outbrain.com"]',
+  'iframe[src*="criteo."]', 'iframe[src*="pubmatic.com"]', 'iframe[src*="rubiconproject.com"]',
+  '[id^="taboola-"]', '.trc_related_container', '.OUTBRAIN', '[data-widget-id^="AR_"]',
+];
+
+/** The CSS that hides ad elements while the blocker is on ('' when it is off). */
+function adHidingCss(blocker: Pick<IAdBlocker, 'enabled'>): string {
+  return blocker.enabled ? `${SAFE_HIDING_SELECTORS.join(',')}{display:none !important}` : '';
+}
+
+/**
+ * Puts the ad blocker in front of every request the engine makes. It used to check only the
+ * address of the page being opened (a navigation middleware), so the ads inside pages (their
+ * scripts, images and iframes, and the page's own fetch/XHR calls) always loaded.
+ * Wraps `fetch` (FetchHttpClient and XHR call it per request) and hands the same wrapper to the
+ * page fetch() binding via `setPageFetch`. A blocked request fails like a network error, as it
+ * does in other browsers. Returns a function that removes the wrapper.
+ */
+function installNetworkAdBlocking(
+  blocker: Pick<IAdBlocker, 'shouldBlock'>,
+  setPageFetch?: (fn: typeof fetch) => void,
+  target: { fetch: typeof fetch } = globalThis,
+): () => void {
+  const base = target.fetch;
+  const blocking = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (blocker.shouldBlock(url).blocked) return Promise.reject(new TypeError(`Blocked by the ad blocker: ${url}`));
+    return base.call(target, input, init);
+  }) as typeof fetch;
+  target.fetch = blocking;
+  setPageFetch?.(blocking);
+  return () => { if (target.fetch === blocking) target.fetch = base; setPageFetch?.(base.bind(target)); };
+}
+
 export {
+  installNetworkAdBlocking,
+  adHidingCss,
+  SAFE_HIDING_SELECTORS,
   AdBlocker,
   AD_FILTER_RULES,
   AD_ELEMENT_SELECTORS,

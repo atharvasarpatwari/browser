@@ -10,12 +10,14 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import com.nova.browser.AdHosts
 import com.nova.browser.BrowserViewModel
 
 private const val TAG = "NovaCompat"
@@ -79,12 +81,22 @@ fun CompatWebView(viewModel: BrowserViewModel, visible: Boolean, modifier: Modif
                         return true
                     }
 
+                    /** Ad networks get an empty answer: Nova's engine ad blocker never sees this view's requests. */
+                    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                        if (request.isForMainFrame || !AdHosts.isAd(request.url.toString())) return null
+                        return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
+                    }
+
                     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) { push(url = url, progress = 5) }
                     override fun onPageFinished(view: WebView, url: String?) {
                         push(url = url, progress = 100)
+                        view.evaluateJavascript(AdHosts.HIDING_SCRIPT, null) // ad slots the site serves itself
                         viewModel.onCompatPageFinished(url, view.title)
                     }
-                    override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) { push(url = url) }
+                    override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+                        push(url = url)
+                        view.evaluateJavascript(AdHosts.HIDING_SCRIPT, null) // in-page navigation (Reddit, YouTube)
+                    }
 
                     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                         Log.e(TAG, "Compatibility renderer gone (didCrash=${detail.didCrash()})")
