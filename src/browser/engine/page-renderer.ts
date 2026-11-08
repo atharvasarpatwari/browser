@@ -521,6 +521,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
     this.counters = new Map();
     this.applyStylesRecursive(doc.children, rootStyleables, stylesheet, null, containerWidth, containerHeight, domTree);
     this.counters = null;
+    // Every element was just styled: clear the style-dirty flags the parser creates nodes with.
+    // They stayed set, so the first frame after any load (an image decoding) restyled the whole
+    // page again, one element at a time: 4,097 elements and ~26 of 63 s on CNN.
+    for (const n of doc.children) domTree.clearSubtreeDirty(n, 'style');
   }
 
   /**

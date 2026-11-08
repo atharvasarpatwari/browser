@@ -590,7 +590,10 @@ class DomTree implements IDomTree {
   }
 
   setComputedStyle(element: DomElement, style: ReadonlyMap<string, string>): void {
-    element.computedStyle = new Map(style);
+    // Kept as given (the style pass builds a fresh map per element and never changes it after):
+    // the copy cost a full pass over every property again per element, ~1,800 custom properties
+    // each on CNN, and broke the per-parent custom-property cache the children look up.
+    element.computedStyle = style instanceof Map ? style as Map<string, string> : new Map(style);
     this.record({ type: 'styleChanged', targetDomId: element.domId, data: {} }, null);
   }
 

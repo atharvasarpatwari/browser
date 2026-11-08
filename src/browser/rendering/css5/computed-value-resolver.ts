@@ -747,6 +747,9 @@ export function resolveAllComputedValues(
   }
   for (const [prop, value] of computed) {
     if (prop === 'font-size') continue;
+    // Custom properties keep their tokens (resolveComputedValue returns them as is). Skipped here:
+    // CNN's 1,782 inherited ones made this ~9 million calls per page.
+    if (prop.charCodeAt(0) === 45 && prop.charCodeAt(1) === 45) continue;
     const resolved = resolveComputedValue(prop, value, ctx);
     if (resolved !== value) {
       computed.set(prop, resolved);

@@ -323,20 +323,26 @@ class LayoutEngine implements ILayoutEngine {
     // that actually change. Otherwise the first incremental frame would treat
     // the whole tree as dirty and clear the paint-dirty flags of async-loaded
     // content (e.g. images) before paintIncremental could re-rasterize them.
-    this.clearLayoutDirty(document);
+    this.clearLayoutDirty(document, domTree);
   }
 
-  private clearLayoutDirty(document: DomDocument): void {
-    const stack: DomNode[] = document.bodyElement
-      ? [document.bodyElement]
-      : [...document.children];
+  /**
+   * Through the DOM tree's own subtree walk, which includes the ::before/::after boxes. This walked
+   * `children` only, so every generated box stayed layout-dirty after a full layout and the next
+   * frame laid it out on its own at its parent's origin (a summary's ▸ at x=0). A needless full
+   * restyle on the first frame used to rebuild those boxes and hide it.
+   */
+  private clearLayoutDirty(document: DomDocument, domTree?: IDomTree): void {
+    const roots: readonly DomNode[] = document.bodyElement ? [document.bodyElement] : document.children;
+    if (domTree) {
+      for (const root of roots) domTree.clearSubtreeDirty(root, 'layout');
+      return;
+    }
+    const stack: DomNode[] = [...roots]; // no tree given (standalone layout): DOM children only
     while (stack.length > 0) {
       const n = stack.pop()!;
-      if (n.nodeType === 'element') {
-        const el = n as DomElement;
-        el._dirtyLayout = false;
-        for (const c of el.children) stack.push(c);
-      }
+      n._dirtyLayout = false;
+      for (const c of n.children) stack.push(c);
     }
   }
 

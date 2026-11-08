@@ -239,14 +239,15 @@ export class LazyLoader {
     const imgW = w > 0 ? w : (box ? Math.round(box.width) : 100);
     const imgH = h > 0 ? h : (box ? Math.round(box.height) : 100);
 
-    // Set placeholder immediately for visual feedback
-    const placeholder = this.generateImageData(src, imgW, imgH);
-    el.imageData = placeholder;
     el.naturalWidth = imgW;
     el.naturalHeight = imgH;
 
-    // If no resource loader available, use placeholder
+    // Without a loader (tests, headless use) a synthetic placeholder stands in. With one, nothing
+    // is drawn until the image decodes: the placeholder (a full-size checkerboard filled pixel by
+    // pixel) cost ~1.4 s of a CNN render and stayed on screen for every image that failed, as the
+    // coloured checkered bars seen on LinkedIn.
     if (!this.resourceLoader || !this.decoder) {
+      el.imageData = this.generateImageData(src, imgW, imgH);
       el.loadingState = 'loaded';
       el._dirtyPaint = true;
       this.emit({ type: 'load', target: el });
@@ -264,10 +265,7 @@ export class LazyLoader {
       const result = await this.resourceLoader!.loadImage(resolvedUrl);
 
       if (result.error || !result.bodyBinary) {
-        // Keep placeholder — mark as loaded
-        el.loadingState = 'loaded';
-        el._dirtyPaint = true;
-        this.emit({ type: 'load', target: el });
+        this.fail(el);
         return;
       }
 
@@ -291,16 +289,18 @@ export class LazyLoader {
         }
       }
 
-      // Unsupported format or decode failure — keep placeholder
-      el.loadingState = 'loaded';
-      el._dirtyPaint = true;
-      this.emit({ type: 'load', target: el });
+      this.fail(el); // unsupported format or decode failure
     } catch {
-      // Network or decode error — keep placeholder
-      el.loadingState = 'loaded';
-      el._dirtyPaint = true;
-      this.emit({ type: 'load', target: el });
+      this.fail(el); // network or decode error
     }
+  }
+
+  /** A failed image draws nothing and reports `error` (it reported `load` over a placeholder). */
+  private fail(el: DomElement): void {
+    el.imageData = null;
+    el.loadingState = 'error';
+    el._dirtyPaint = true;
+    this.emit({ type: 'error', target: el });
   }
 
   private resolveUrl(src: string): string {

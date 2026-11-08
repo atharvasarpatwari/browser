@@ -1945,6 +1945,68 @@ export function computePseudoElementStyles(
   return style;
 }
 
+/**
+ * The custom properties (--*) of a computed style, collected once per map. Every child scanned its
+ * parent's whole computed style for them, three times: on CNN (1,782 custom properties inherited
+ * into every element's style) that was millions of map visits per page.
+ */
+/** Custom properties an element sees: read one by one (var()), or all at once (toMap). */
+interface CustomPropSource {
+  get(name: string): string | undefined;
+  toMap(): ReadonlyMap<string, string>;
+}
+
+/**
+ * An element's custom properties: its own declarations over its parent's, without copying the
+ * parent's. Each element copied all inherited ones before resolving var(): on CNN (1,782 custom
+ * properties) that copy was ~6 of ~31 s of style computation. `toMap()` flattens once and is
+ * shared by every child that needs the full list.
+ */
+class CustomPropScope implements CustomPropSource {
+  private readonly own = new Map<string, string>();
+  private removed: Set<string> | null = null;
+  private flat: Map<string, string> | null = null;
+  constructor(private readonly parent: CustomPropSource | null) {}
+  get(name: string): string | undefined {
+    const v = this.own.get(name);
+    if (v !== undefined) return v;
+    if (this.removed?.has(name)) return undefined;
+    return this.parent?.get(name);
+  }
+  set(name: string, value: string): void {
+    this.own.set(name, value);
+    this.removed?.delete(name);
+    this.flat = null;
+  }
+  delete(name: string): void {
+    this.own.delete(name);
+    (this.removed ??= new Set()).add(name);
+    this.flat = null;
+  }
+  toMap(): ReadonlyMap<string, string> {
+    if (!this.flat) {
+      const m = new Map<string, string>(this.parent?.toMap() ?? undefined);
+      if (this.removed) for (const k of this.removed) m.delete(k);
+      for (const [k, v] of this.own) m.set(k, v);
+      this.flat = m;
+    }
+    return this.flat;
+  }
+}
+
+const customPropsCache = new WeakMap<Map<string, string>, CustomPropSource>();
+function customPropsOf(computed: Map<string, string>): CustomPropSource {
+  let customs = customPropsCache.get(computed);
+  if (!customs) {
+    // A style not built here (or by an older pass): scan it once.
+    const map = new Map<string, string>();
+    for (const [prop, val] of computed) if (prop.charCodeAt(0) === 45 && prop.charCodeAt(1) === 45) map.set(prop, val);
+    customs = { get: (name) => map.get(name), toMap: () => map };
+    customPropsCache.set(computed, customs);
+  }
+  return customs;
+}
+
 export function computeComputedStyles(
   element: StyleableElement,
   stylesheet: CssStylesheet,
@@ -1966,35 +2028,45 @@ export function computeComputedStyles(
 
   // 3. Build custom properties map early (parent + local --* declarations + inline --*)
   //    so we can resolve var() BEFORE shorthand expansion.
-  const earlyCustomProps = new Map<string, string>();
-  // Inherit from parent first.
-  if (parentComputed) {
-    for (const [prop, val] of parentComputed) {
-      if (prop.startsWith('--')) earlyCustomProps.set(prop, val);
-    }
-  }
+  // Inherit from parent first (its custom properties, collected once per parent map).
+  const parentCustoms = parentComputed ? customPropsOf(parentComputed) : null;
+  const earlyCustomProps = new CustomPropScope(parentCustoms);
+  const varScope = earlyCustomProps as unknown as ReadonlyMap<string, string>; // var() only reads .get
+  // A CSS-wide keyword on a custom property (CSS Variables §2.2): `initial` makes it invalid, so
+  // var() takes its fallback; inherit/unset/revert keep the parent's value. The keyword itself was
+  // substituted: `--w: initial; width: var(--w, 7px)` became `width: initial` (auto).
+  const setCustom = (prop: string, value: string): void => {
+    const k = value.trim().toLowerCase();
+    if (k === 'initial') earlyCustomProps.delete(prop);
+    else if (k === 'inherit' || k === 'unset' || k === 'revert' || k === 'revert-layer') {
+      const inherited = parentCustoms?.get(prop);
+      if (inherited === undefined) earlyCustomProps.delete(prop); else earlyCustomProps.set(prop, inherited);
+    } else earlyCustomProps.set(prop, value);
+  };
   // Apply local --* declarations in cascade order (later wins).
   for (const e of cascade) {
-    if (e.property.startsWith('--')) earlyCustomProps.set(e.property, e.value);
+    if (e.property.startsWith('--')) setCustom(e.property, e.value);
   }
   // Also include inline style --* declarations (they override cascade).
   const styleAttr = pseudo ? undefined : element.attributes.get('style'); // inline style is the element's own
   const inlineDecls = styleAttr ? parseInlineDeclarations(styleAttr) : [];
   for (const d of inlineDecls) {
-    if (d.property.startsWith('--')) earlyCustomProps.set(d.property, d.value);
+    if (d.property.startsWith('--')) setCustom(d.property, d.value);
   }
 
   // 4. Resolve var() in all declarations BEFORE shorthand expansion.
   const resolvedDeclarations: CssDeclaration[] = cascade.map((e) => ({
     property: e.property,
-    value: e.property.startsWith('--') ? e.value : invalidAtComputedTime(resolveVarReferences(e.value, earlyCustomProps), e.value),
+    value: e.property.startsWith('--') ? e.value : invalidAtComputedTime(resolveVarReferences(e.value, varScope), e.value),
     important: e.important,
   }));
 
   // 5. Expand shorthands (var() already resolved, so multi-token values work).
   const longhand = expandShorthands(resolvedDeclarations);
 
-  const computed = new Map<string, string>();
+  // Starts from the inherited custom properties (a native map copy; local --* declarations below
+  // replace theirs). They were added one by one after the cascade: ~1,800 has/set per element on CNN.
+  const computed = new Map<string, string>(parentCustoms?.toMap() ?? undefined);
 
   // Apply user-agent defaults first. A ::before/::after box gets none of its host's (they made
   // `div::before` a block with the div's margins and `li::before` a second list item).
@@ -2042,7 +2114,7 @@ export function computeComputedStyles(
     // ones; they used to be stored as-is, so layout and paint never saw their longhands.
     const inlineResolved = expandShorthands(inlineDecls.map((d) => ({
       property: cssPropName(d.property),
-      value: d.property.startsWith('--') ? d.value : invalidAtComputedTime(resolveVarReferences(d.value, earlyCustomProps), d.value),
+      value: d.property.startsWith('--') ? d.value : invalidAtComputedTime(resolveVarReferences(d.value, varScope), d.value),
       important: d.important,
     })));
     // Non-important inline styles apply first (override cascade but can be overridden by stylesheet !important)
@@ -2078,25 +2150,21 @@ export function computeComputedStyles(
   // 7. Inheritance from parent (also inherits custom properties).
   applyInheritance(element, computed, parentComputed ?? null);
 
-  // Also inherit custom properties (--*) from parent if not set locally.
-  if (parentComputed) {
-    for (const [prop, val] of parentComputed) {
-      if (prop.startsWith('--') && !computed.has(prop)) {
-        computed.set(prop, val);
-      }
-    }
-  }
 
   // 8. Set initial values for properties still unset.
   setInitialValues(computed);
 
-  // 9. Collect custom properties for computed value resolution (var() in inherited values).
-  const customProps = new Map<string, string>();
-  for (const [prop, val] of computed) {
-    if (prop.startsWith('--')) {
-      customProps.set(prop, val);
-    }
-  }
+  // 9. Custom properties for computed value resolution (var() in inherited values): the inherited
+  //    ones plus this element's own, as they came out of the keyword pass (`--x: initial` …).
+  //    Rebuilt from a scan of the whole computed style for every element before.
+  const customProps = earlyCustomProps;
+  const ownCustom = (prop: string): void => {
+    const v = computed.get(prop);
+    if (v === undefined) customProps.delete(prop); else setCustom(prop, v); // computed keeps the keyword as written
+  };
+  for (const e of cascade) if (e.property.startsWith('--')) ownCustom(e.property);
+  for (const d of inlineDecls) if (d.property.startsWith('--')) ownCustom(d.property);
+  customPropsCache.set(computed, customProps); // this element's children inherit exactly these
 
   // 10. Resolve computed values (named colors → hex, font-size keywords → px, etc.)
   //     var() is already resolved at this point.
@@ -2106,7 +2174,7 @@ export function computeComputedStyles(
   // First pass: resolve color to get the resolved currentcolor value.
   const colorVal = computed.get('color');
   if (colorVal !== undefined) {
-    computed.set('color', resolveComputedValue('color', colorVal, { parentFontSize, parentFontWeight, customProperties: customProps }));
+    computed.set('color', resolveComputedValue('color', colorVal, { parentFontSize, parentFontWeight, customProperties: varScope }));
   }
   const currentColor = computed.get('color') ?? 'canvastext';
 
@@ -2115,7 +2183,7 @@ export function computeComputedStyles(
   // with rem = the parent's size (httpforever's clamp(2.2rem, 6vw, 3rem) logo was 12 px wide).
   if (!parentComputed) rootFontSizePx = 16; // the root's own rem is the initial font size
   const resCtx: ResolutionContext = {
-    parentFontSize, parentFontWeight, currentColor, customProperties: customProps,
+    parentFontSize, parentFontWeight, currentColor, customProperties: varScope,
     viewportWidth: vp.width, viewportHeight: vp.height, rootFontSize: rootFontSizePx,
   };
   resolveAllComputedValues(computed, resCtx);
