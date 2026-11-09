@@ -16,7 +16,7 @@ After 2.02, the profile of CNN's real page still put about 4 s of its ~6 s of la
 
 ## Root Cause
 
-### Each flex container re-measured every level beneath it
+### 1. Each flex container re-measured every level beneath it
 **File:** `src/browser/rendering/layout-engine.ts` (`measureContentWidth`)
 **Problem:** layout time doubled with each level of flex nesting.
 **Root cause:**
