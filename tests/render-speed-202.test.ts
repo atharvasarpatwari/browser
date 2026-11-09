@@ -59,4 +59,17 @@ describe('render speed', () => {
     expect(img.imageData ?? null).toBeNull();
     loader.dispose();
   });
+
+  // 2.03: a nested flex item's min-content measured its subtree, and every flex container above
+  // measured that again, so nesting cost grew exponentially (deep menus on CNN).
+  it('deeply nested flex containers lay out in bounded time and keep their widths', async () => {
+    let html = '<span id="leaf" style="width:37px;display:block">x</span>';
+    for (let i = 0; i < 14; i++) html = `<div style="display:flex">${html}<div style="display:flex"><span style="display:block;width:5px">y</span></div></div>`;
+    const t0 = performance.now();
+    const { domTree, r } = await page(html);
+    const ms = performance.now() - t0;
+    expect(domTree.getElementById('leaf')!.layoutBox?.width ?? 37).toBe(37);
+    expect(ms).toBeLessThan(4000);
+    r.dispose();
+  });
 });

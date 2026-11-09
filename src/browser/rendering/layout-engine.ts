@@ -299,6 +299,7 @@ class LayoutEngine implements ILayoutEngine {
     this.rootFontSize = this.documentRootFontSize(document);
     setPositioningRootFontSize(this.rootFontSize);
     this.layoutBoxes.clear();
+    this.measureCache.clear();
     this.elementPositions.length = 0;
     this.positionedQueue.length = 0;
     this.multiColumnContexts.clear();
@@ -352,6 +353,7 @@ class LayoutEngine implements ILayoutEngine {
    */
   layoutIncremental(document: DomDocument, domTree: IDomTree, config?: Partial<LayoutConfig>): DamageTracker {
     if (config) this.config = { ...this.config, ...config };
+    this.measureCache.clear(); // the DOM or styles changed since the last pass
     this.rootFontSize = this.documentRootFontSize(document);
     setPositioningRootFontSize(this.rootFontSize);
     const damage = new DamageTracker();
@@ -2571,8 +2573,24 @@ class LayoutEngine implements ILayoutEngine {
    * Width an element's content wants when laid out in `availableWidth` (its max-content width,
    * capped there), by a throwaway layout at a local origin that is then rolled back.
    */
+  /**
+   * Content widths already measured in this layout pass, by element and arguments. A nested flex
+   * item's min-content measured its whole subtree, and each flex container above it measured that
+   * again, so deep menus on CNN were laid out dozens of times over (4 of 19 s of layout).
+   */
+  private measureCache = new Map<string, number>();
+
   private measureContentWidth(el: DomElement, availableWidth: number, fontSize: number, domTree?: IDomTree, flex = false, uncapped = false): number {
     if (skipsChildLayout(el)) return 0;
+    const cacheKey = `${el.domId}|${availableWidth}|${fontSize}|${flex ? 1 : 0}${uncapped ? 1 : 0}`;
+    const known = this.measureCache.get(cacheKey);
+    if (known !== undefined) return known;
+    const measured = this.measureContentWidthUncached(el, availableWidth, fontSize, domTree, flex, uncapped);
+    this.measureCache.set(cacheKey, measured);
+    return measured;
+  }
+
+  private measureContentWidthUncached(el: DomElement, availableWidth: number, fontSize: number, domTree?: IDomTree, flex = false, uncapped = false): number {
     const prevBox = this.layoutBoxes.get(el.domId);
     this.layoutBoxes.set(el.domId, {
       x: 0, y: 0, width: availableWidth, height: 0,
