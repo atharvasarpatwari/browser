@@ -312,6 +312,8 @@ interface IDomTree extends IDisposable {
   getMutations(): readonly DomMutation[];
   /** Number of mutations recorded so far (cheap; getMutations copies the list). */
   readonly mutationCount?: number;
+  /** Nodes removed so far (a removal can shift `:nth-child`/`+` matches of later siblings). */
+  readonly removalCount?: number;
   /** Listen to DOM changes with the nodes themselves (MutationObserver). Returns an unsubscribe. */
   onMutation?(listener: (change: DomChange) => void): () => void;
   clearMutations(): void;
@@ -396,8 +398,10 @@ class DomTree implements IDomTree {
   private readonly mutations: DomMutation[] = [];
   private readonly changeListeners = new Set<(change: DomChange) => void>();
   private _mutationCount = 0;
+  private _removalCount = 0;
 
   get mutationCount(): number { return this._mutationCount; }
+  get removalCount(): number { return this._removalCount; }
 
   onMutation(listener: (change: DomChange) => void): () => void {
     this.changeListeners.add(listener);
@@ -530,6 +534,7 @@ class DomTree implements IDomTree {
         this.idIndex.delete(id);
       }
     }
+    this._removalCount++;
     this.record({ type: 'nodeRemoved', targetDomId: parent.domId, data: { childId: child.domId } }, { type: 'childList', target: parent, removed: child });
   }
 

@@ -137,6 +137,13 @@ function selectorFacts(el: DomElement): { hasText: boolean; checked: boolean | u
   };
 }
 
+/** Same entries, without copying the maps (a spread of ~1,800 custom properties per element). */
+function sameStyle(a: ReadonlyMap<string, string>, b: ReadonlyMap<string, string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, v] of b) if (a.get(k) !== v) return false;
+  return true;
+}
+
 class PageRenderer implements IPageRenderer, IDisposable {
   private readonly deps: PageRendererDependencies;
   /** Layout viewport in CSS px. Desktop keeps the 1920×1080 default; the Android shell sets the phone's size. */
@@ -268,14 +275,22 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 4. Extract and compute CSS styles (fetching <link rel=stylesheet> sheets first)
     lap('html');
+    // External sheets first, then the page's <style> rules, then the user stylesheet: the order
+    // rulesFromDomStyles gives after scripts. extractStylesFromDocument lists <style> rules before
+    // the links, so a page's own <style> lost to a later-listed linked sheet until a script ran
+    // and the second style pass reordered them.
+    const loaded = await this.loadExternalStylesheets(cssParser.extractStylesFromDocument(htmlDoc), result.url, signal);
     const rules = [
-      ...await this.loadExternalStylesheets(cssParser.extractStylesFromDocument(htmlDoc), result.url, signal),
+      ...loaded.filter((r) => r.source === 'external'),
+      ...loaded.filter((r) => r.source !== 'external'),
       ...this.userRules(result.url),
     ];
     lap('css');
     this._lastRules = rules;
     this.applyComputedStyles(rules);
     lap('style');
+    const styleSignature = this.styleSignature();
+    const removalsBefore = domTree.removalCount;
 
     // 5. Execute scripts: inline synchronously, external fetched via ResourceLoader.
     //    Paint the script-free page first, so a slow script never delays seeing it;
@@ -291,8 +306,15 @@ class PageRenderer implements IPageRenderer, IDisposable {
       lap('scripts');
       // Re-read <style> from the live DOM: scripts add and edit stylesheets (example.com's s.js
       // inserts its p+p/svg rules). Re-applying the pre-script rules ignored all of that.
-      this._lastRules = this.rulesFromDomStyles(rules);
-      this.applyComputedStyles(this._lastRules);
+      // When the scripts left every <style> as it was and removed no node, only what they touched
+      // (new or changed elements, and the siblings after them) is restyled, with the stylesheet
+      // already built. Restyling the whole page again took 12 s on CNN on the tablet.
+      if (removalsBefore !== undefined && domTree.removalCount === removalsBefore && this.styleSignature() === styleSignature) {
+        this.restyleDirtyElements();
+      } else {
+        this._lastRules = this.rulesFromDomStyles(rules);
+        this.applyComputedStyles(this._lastRules);
+      }
       lap('style2');
     }
 
@@ -432,8 +454,10 @@ class PageRenderer implements IPageRenderer, IDisposable {
       const css = el.children.map((c) => (c.nodeType === 'text' ? (c as { text?: string }).text ?? '' : '')).join('');
       return css.trim() ? cssParser.parseStylesheet(css).rules : [];
     });
-    // External sheets first: <link>s normally precede the page's own <style> in <head>.
-    return [...original.filter((r) => r.source === 'external'), ...fromStyles];
+    // External sheets first: <link>s normally precede the page's own <style> in <head>. The user
+    // stylesheet (the ad blocker's element hiding) stays last: it was dropped here, so after any
+    // page with scripts the sponsored slots it hides came back.
+    return [...original.filter((r) => r.source === 'external'), ...fromStyles, ...this.userCssRules];
   }
 
   /**
@@ -506,8 +530,11 @@ class PageRenderer implements IPageRenderer, IDisposable {
     if (!doc) return;
 
     // Build a CSS5 stylesheet from legacy CssRule[] (reparse selectors once).
-    const stylesheet = this.buildCss5Stylesheet(cssParser, rules);
+    const stylesheet = this._lastStylesheet && this._stylesheetRules === rules
+      ? this._lastStylesheet
+      : this.buildCss5Stylesheet(cssParser, rules);
     this._lastStylesheet = stylesheet;
+    this._stylesheetRules = rules;
 
     // Determine container dimensions for percentage-based used-style resolution.
     const bodyEl = doc.bodyElement;
@@ -543,10 +570,14 @@ class PageRenderer implements IPageRenderer, IDisposable {
     const dirtyNodes = this.collectDirtyNodes(doc);
     if (dirtyNodes.length === 0) return;
 
-    // Build a fresh stylesheet (rules may have changed).
+    // The stylesheet built for these rules, unless the rules changed (a rebuilt one has no rule
+    // index, which the cascade builds once per stylesheet).
     const legacyParser = cssParser;
-    const stylesheet = this.buildCss5Stylesheet(legacyParser, this._lastRules);
+    const stylesheet = this._lastStylesheet && this._stylesheetRules === this._lastRules
+      ? this._lastStylesheet
+      : this.buildCss5Stylesheet(legacyParser, this._lastRules);
     this._lastStylesheet = stylesheet;
+    this._stylesheetRules = this._lastRules;
 
     for (const el of dirtyNodes) {
       const parentComputed = el.parent?.nodeType === 'element'
@@ -566,7 +597,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       // A changed style needs layout and paint again: the element kept its cached paint commands,
       // so `el.style.background = …` from a click handler never showed (seen on the tablet).
       const previous = el.computedStyle;
-      if (!previous || previous.size !== computed.size || [...computed].some(([k, v]) => previous.get(k) !== v)) {
+      if (!previous || !sameStyle(previous, computed)) {
         domTree.markDirty(el, 'layout'); // and its ancestors, so incremental layout reaches it
         el._dirtyPaint = true;
       }
@@ -581,6 +612,47 @@ class PageRenderer implements IPageRenderer, IDisposable {
   }
 
   private _lastRules: readonly CssRule[] = [];
+  /** The rules `_lastStylesheet` was built from (the stylesheet is reused while they are the same). */
+  private _stylesheetRules: readonly CssRule[] | null = null;
+
+  /** The page's <style> text, cheaply: lengths and a hash. Equal before and after scripts = no new CSS. */
+  private styleSignature(): string {
+    let hash = 0x811c9dc5;
+    let length = 0;
+    const styles = this.deps.domTree.getElementsByTagName('style');
+    for (const el of styles) {
+      for (const c of el.children) {
+        const text = c.nodeType === 'text' ? (c as { text?: string }).text ?? '' : '';
+        length += text.length;
+        for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+      }
+      length += 1; // a style element boundary
+    }
+    return `${styles.length}:${length}:${hash >>> 0}`;
+  }
+
+  /**
+   * Restyles the elements marked style-dirty (what scripts created or changed). A dirty element
+   * also marks its later siblings: a new node can change `+`, `~` and `:nth-child` matches there.
+   */
+  private restyleDirtyElements(): void {
+    const { domTree } = this.deps;
+    const doc = domTree.getDocument();
+    if (!doc) return;
+    for (const el of this.collectDirtyNodes(doc)) {
+      const parent = el.parent;
+      if (parent && parent.nodeType === 'element' && (parent as DomElement)._dirtyStyle) continue; // its subtree is marked already
+      domTree.markStyleDirtyFrom?.(el);
+    }
+    // When most of the page is dirty (CNN's scripts touch nearly all of it) the full pass is
+    // cheaper than restyling element by element: it still reuses the stylesheet and its rule index.
+    const dirty = this.collectDirtyNodes(doc).length;
+    let total = 0;
+    const count = (nodes: readonly DomNode[]): void => { for (const n of nodes) if (n.nodeType === 'element') { total++; count((n as DomElement).children); } };
+    count(doc.children);
+    if (total > 0 && dirty / total > 0.4) this.applyComputedStyles(this._lastRules);
+    else this.recalcStylesIncremental();
+  }
   private userCss = '';
   private userCssRules: readonly CssRule[] = [];
 

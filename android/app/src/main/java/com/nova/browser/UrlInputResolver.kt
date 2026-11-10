@@ -81,6 +81,26 @@ object UrlInputResolver {
      * `encodeURIComponent()` character set (NOT `application/x-www-form-urlencoded`,
      * which would encode spaces as "+").
      */
+    /**
+     * The address handed to the engine. A host typed without a scheme ("httpforever.com") is
+     * resolved to https://, but the engine only falls back to http:// for sites without HTTPS when
+     * it upgraded an http:// address itself, so such a site never opened. Like "HTTPS-first" in
+     * mainstream browsers, a scheme-less typed host goes in as http:// and the engine upgrades it
+     * to https:// and falls back if that fails. An explicit https:// (typed or from a link), a
+     * search and every other address are passed unchanged.
+     */
+    fun engineAddress(typed: String, resolved: String): String {
+        val t = typed.trim()
+        return if (resolved.startsWith("https://") && resolved == "https://$t" && !SCHEME_RE.containsMatchIn(t) && !isLocal(t)) {
+            "http://" + resolved.removePrefix("https://")
+        } else {
+            resolved
+        }
+    }
+
+    /** localhost and IP addresses are never upgraded to https by the engine. */
+    private fun isLocal(t: String): Boolean = LOCALHOST_RE.matches(t) || IPV4_RE.matches(t)
+
     fun buildSearchUrl(query: String, searchTemplate: String): String {
         val encoded = encodeURIComponent(sanitize(query))
         return if (searchTemplate.contains("%s")) searchTemplate.replace("%s", encoded) else searchTemplate

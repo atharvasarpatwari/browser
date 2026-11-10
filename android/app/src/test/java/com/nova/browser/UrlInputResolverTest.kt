@@ -142,4 +142,18 @@ class UrlInputResolverTest {
         assertEquals("https://duckduckgo.com/?q=how%20to%20code", UrlInputResolver.buildSearchUrl("how to code", ddg))
         assertEquals("https://duckduckgo.com/?q=%E2%9C%93", UrlInputResolver.buildSearchUrl("\u2713", ddg))
     }
+
+    @Test
+    fun aHostTypedWithoutASchemeGoesToTheEngineAsHttpSoItCanFallBack() {
+        val template = "https://www.google.com/search?q=%s"
+        fun engine(typed: String) = UrlInputResolver.engineAddress(typed, UrlInputResolver.resolve(typed, template))
+        assertEquals("http://httpforever.com", engine("httpforever.com"))
+        assertEquals("http://example.org/a/b?x=1", engine("  example.org/a/b?x=1 "))
+        // unchanged: explicit schemes, searches, local addresses, built-in pages
+        assertEquals("https://example.com", engine("https://example.com"))
+        assertEquals("http://example.com", engine("http://example.com"))
+        assertEquals("https://www.google.com/search?q=buy%20shoes", engine("buy shoes"))
+        assertEquals("https://localhost:4000/app", engine("localhost:4000/app"))
+        assertEquals("https://192.168.1.1:8080", engine("192.168.1.1:8080"))
+    }
 }

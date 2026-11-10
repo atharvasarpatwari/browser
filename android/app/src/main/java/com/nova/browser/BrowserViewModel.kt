@@ -591,7 +591,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         // until it did, pressing Go looked like nothing happened.
         navigatingTo.value = resolved
         snapshotsSinceNavigate = 0
-        callEngine("window.novaNative && window.novaNative.navigate(${jsString(resolved)});")
+        // A host typed without a scheme: the engine tries https and falls back to http (HTTPS-first).
+        callEngine("window.novaNative && window.novaNative.navigate(${jsString(UrlInputResolver.engineAddress(url, resolved))});")
     }
 
     /** The address being opened, shown in the bar with a progress bar until the engine reports it. */
