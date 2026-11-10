@@ -46,6 +46,10 @@ const CASES: Array<[string, string, (b: (id: string) => B) => boolean]> = [
   // to their content (IANA's home panels were 0 tall and overlapped).
   ['column flex:1 1 0 items keep content height', d('c', 'display:flex;flex-direction:column', d('a', 'flex:1 1 0', 'A<br>A') + d('b', 'flex:1 1 0', 'B')), (b) => b('a').height === 40 && b('b').y === 40 && b('b').height === 20 && b('c').height === 60],
   ['column overflow:hidden item may shrink below content', d('c', 'display:flex;flex-direction:column;height:10px', d('a', 'flex:1 1 0;overflow:hidden', 'A<br>A<br>A')), (b) => b('a').height === 10],
+  // 2.04: a zero main/cross size was skipped, so collapsed flex boxes kept their content height.
+  ['height:0 column: an overflow:hidden item collapses to 0', d('c', 'display:flex;flex-direction:column;height:0', d('a', 'flex:1 1 0;overflow:hidden', 'A<br>A')), (b) => b('c').height === 0 && b('a').height === 0],
+  ['height:0 row: items stretch to the container height of 0, not their content', d('c', 'display:flex;height:0;overflow:hidden', d('a', '', 'A<br>A')), (b) => b('c').height === 0 && b('a').height === 0],
+  ['a 50px column still splits between two flex:1 items', d('c', 'display:flex;flex-direction:column;height:50px', d('a', 'flex:1 1 0;overflow:hidden', 'A<br>A<br>A') + d('b', 'flex:1 1 0;overflow:hidden', 'B<br>B<br>B')), (b) => b('a').height === 25 && b('b').height === 25],
   ['column-reverse', d('c', 'display:flex;flex-direction:column-reverse', d('a', 'height:30px') + d('b', 'height:30px')), (b) => b('b').y === 0 && b('a').y === 30 && b('c').height === 60],
   ['column justify center', d('c', 'display:flex;flex-direction:column;justify-content:center;height:100px', d('a', 'height:20px')), (b) => b('a').y === 40],
   ['column align-items center', d('c', 'display:flex;flex-direction:column;align-items:center', d('a', 'width:100px;height:20px')), (b) => b('a').x === 250 && b('c').height === 20],

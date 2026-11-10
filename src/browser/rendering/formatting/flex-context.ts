@@ -238,8 +238,11 @@ export class FlexFormattingContext {
     // When align-content is stretch (default) and the container has a definite
     // cross size, stretch each line to fill it so that align-items: stretch/
     // flex-end/center work against the full container height.
+    // A single-line container's line is as tall as the container's definite cross size, also 0
+    // (CSS Flexbox §9.4): a `height: 0` row (a collapsed bar, an accordion header) kept its
+    // items at their content height because 0 was excluded here.
     if (alignContent === 'stretch' && availableCrossSize !== null
-        && availableCrossSize > 0 && lines.length > 0) {
+        && (availableCrossSize > 0 || lines.length === 1) && lines.length > 0) {
       const lineShare = availableCrossSize / lines.length;
       for (const line of lines) {
         line.crossSize = lineShare;

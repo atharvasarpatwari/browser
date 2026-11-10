@@ -1746,7 +1746,10 @@ class LayoutEngine implements ILayoutEngine {
       // re-layout at another width kept the old size as if it were authored.
       const origStyle = item.element.computedStyle;
       const authored = origStyle?.get(mainSizeProp);
-      if (origStyle && item.mainSize > 0) {
+      // A zero main size applies too: an `overflow: hidden` item in a `height: 0` column, or an
+      // accordion panel (`flex: 1 1 0` in a collapsed container), was laid out at its content
+      // height instead of collapsing (the override was skipped for 0).
+      if (origStyle && item.mainSize >= 0) {
         const contentBox = (origStyle.get('box-sizing') ?? 'content-box') === 'content-box';
         const frame = !contentBox ? 0 : isHorizontal
           ? item.paddingLeft + item.paddingRight + item.borderLeft + item.borderRight
