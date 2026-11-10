@@ -93,6 +93,46 @@ class CompatAndSuggestionsTest {
     }
 
     @Test
+    fun adBlockTestHostsAreCovered() {
+        // Every host the public test (adblock.turtlecute.org) tries, except its own site.
+        val hosts = """
+            ad.doubleclick.net adc3-launch.adcolony.com adfox.yandex.ru adfstat.yandex.ru adm.hotjar.com
+            ads-api.tiktok.com ads-api.twitter.com ads-sg.tiktok.com ads.linkedin.com ads.pinterest.com
+            ads.tiktok.com ads.yahoo.com ads.youtube.com ads30.adcolony.com adserver.unityads.unity3d.com
+            adservice.google.com adsfs.oppomobile.com adtago.s3.amazonaws.com adtech.yahooinc.com advice-ads.s3.amazonaws.com
+            adx.ads.oppomobile.com afs.googlesyndication.com an.facebook.com analytics-api.samsunghealthcn.com analytics-sg.tiktok.com
+            analytics.google.com analytics.pointdrive.linkedin.com analytics.query.yahoo.com analytics.s3.amazonaws.com analytics.tiktok.com
+            analytics.yahoo.com analyticsengine.s3.amazonaws.com api-adservices.apple.com api.ad.xiaomi.com api.bugsnag.com
+            api.luckyorange.com api.mouseflow.com app.bugsnag.com app.getsentry.com appmetrica.yandex.ru
+            auction.unityads.unity3d.com bdapi-ads.realmemobile.com bdapi-in-ads.realmemobile.com books-analytics-events.apple.com browser.sentry-cdn.com
+            business-api.tiktok.com careers.hotjar.com cdn-test.mouseflow.com cdn.luckyorange.com cdn.mouseflow.com
+            ck.ads.oppomobile.com claritybt.freshmarketer.com click.googleanalytics.com click.oneplus.cn config.unityads.unity3d.com
+            cs.luckyorange.net data.ads.oppomobile.com data.mistat.india.xiaomi.com data.mistat.rus.xiaomi.com data.mistat.xiaomi.com
+            events.reddit.com events.redditmedia.com events3alt.adcolony.com extmaps-api.yandex.net freshmarketer.com
+            fwtracks.freshmarketer.com gemini.yahoo.com geo.yahoo.com google-analytics.com grs.hicloud.com
+            gtm.mouseflow.com iadsdk.apple.com identify.hotjar.com insights.hotjar.com iot-eu-logser.realme.com
+            iot-logser.realme.com log.byteoversea.com log.fc.yahoo.com log.pinterest.com logbak.hicloud.com
+            logservice.hicloud.com logservice1.hicloud.com luckyorange.com m.doubleclick.net media.net
+            mediavisor.doubleclick.net metrics.data.hicloud.com metrics.icloud.com metrics.mzstatic.com metrics2.data.hicloud.com
+            metrika.yandex.ru mouseflow.com nmetrics.samsung.com notes-analytics-events.apple.com notify.bugsnag.com
+            o2.mouseflow.com offerwall.yandex.net pagead2.googleadservices.com pagead2.googlesyndication.com partnerads.ysm.yahoo.com
+            pixel.facebook.com realtime.luckyorange.com samsung-com.112.2o7.net samsungads.com script.hotjar.com
+            sdkconfig.ad.intl.xiaomi.com sdkconfig.ad.xiaomi.com sessions.bugsnag.com settings.luckyorange.net smetrics.samsung.com
+            ssl.google-analytics.com static.ads-twitter.com static.doubleclick.net static.media.net stats.g.doubleclick.net
+            stats.wp.com surveys.hotjar.com tools.mouseflow.com tracking.rus.miui.com trk.pinterest.com
+            udcm.yahoo.com upload.luckyorange.net w1.luckyorange.com wd.adcolony.com weather-analytics-events.apple.com
+            webview.unityads.unity3d.com
+        """.trim().split(Regex("\\s+"))
+        val missed = hosts.filter { AdHosts.classify("https://$it/x") == null }
+        assertEquals("not blocked: $missed", emptyList<String>(), missed)
+        // Ordinary pages of the same companies stay reachable.
+        for (url in listOf("https://www.yahoo.com/", "https://www.apple.com/", "https://www.samsung.com/", "https://yandex.ru/search",
+            "https://www.pinterest.com/", "https://www.tiktok.com/", "https://s3.amazonaws.com/bucket/file", "https://www.xiaomi.com/")) {
+            assertNull(url, AdHosts.classify(url))
+        }
+    }
+
+    @Test
     fun userChoicesSwitchSitesInAndOut() {
         assertTrue(CompatSites.needsCompat("https://app.example.com/x", userOn = setOf("example.com")))
         assertFalse(CompatSites.needsCompat("https://mail.google.com/", userOff = setOf("mail.google.com")))

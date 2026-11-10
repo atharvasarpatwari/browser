@@ -23,6 +23,19 @@ import com.nova.browser.BrowserViewModel
 private const val TAG = "NovaCompat"
 
 /**
+ * The answer to a blocked request: it fails like a network error, so the page's fetch rejects and
+ * its script/image fires `error`. An empty 200 answer told the page the request had worked (ad
+ * scripts ran their "loaded" paths; an ad-block test scored every intercepted request as not
+ * blocked). No content type is given on purpose: the WebView then reads the body to work the type
+ * out before it sends any response headers, and that read is where this fails. With a type, the
+ * headers went out first and the page still saw a response (so did a null body).
+ */
+private fun blockedResponse(): WebResourceResponse = WebResourceResponse(null, null, object : java.io.InputStream() {
+    override fun read(): Int = throw java.io.IOException("Blocked by Nova")
+    override fun read(b: ByteArray, off: Int, len: Int): Int = throw java.io.IOException("Blocked by Nova")
+})
+
+/**
  * Compatibility mode: the page is shown by Android's system WebView (Chromium) instead of Nova's
  * engine. Used for sites the engine can't run, such as Gmail and Google sign-in (CompatSites).
  * The address bar, back, reload, stop, downloads and file uploads drive this view while it is up;
@@ -88,7 +101,7 @@ fun CompatWebView(viewModel: BrowserViewModel, visible: Boolean, modifier: Modif
                         val what = if (kind == AdHosts.Kind.AD) "ad" else "tracker"
                         Log.i(TAG, "Blocked $what request: ${request.url.host}${request.url.path.orEmpty().take(60)}")
                         viewModel.recordCompatBlocked(kind)
-                        return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
+                        return blockedResponse()
                     }
 
                     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) { push(url = url, progress = 5) }

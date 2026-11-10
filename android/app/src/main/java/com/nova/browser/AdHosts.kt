@@ -32,6 +32,12 @@ object AdHosts {
         // Ad endpoints on the sites themselves (YouTube's ad requests, search ad clicks).
         "youtube.com/pagead", "youtube.com/api/stats/ads", "youtube.com/get_midroll_info",
         "google.com/aclk", "bing.com/aclk", "duckduckgo.com/y.js",
+        // From an ad-block test run on the tablet (2.06 scored 8%): ad servers of platforms and phone makers.
+        "adfox.yandex.ru", "offerwall.yandex.net", "ads-api.tiktok.com", "ads-sg.tiktok.com", "business-api.tiktok.com",
+        "ads-api.twitter.com", "ads.pinterest.com", "ads.youtube.com", "an.facebook.com", "adtech.yahooinc.com",
+        "partnerads.ysm.yahoo.com", "api-adservices.apple.com", "iadsdk.apple.com", "samsungads.com",
+        "ads.oppomobile.com", "adsfs.oppomobile.com", "api.ad.xiaomi.com", "sdkconfig.ad.xiaomi.com", "sdkconfig.ad.intl.xiaomi.com",
+        "bdapi-ads.realmemobile.com", "bdapi-in-ads.realmemobile.com", "adtago.s3.amazonaws.com", "advice-ads.s3.amazonaws.com",
     )
 
     /** Analytics, session recording, social pixels, measurement and fingerprinting services. */
@@ -46,6 +52,19 @@ object AdHosts {
         "appsflyer.com", "adjust.com", "kochava.com", "branch.io/v1/", "mc.yandex.ru", "yandex.ru/metrika",
         "youtube.com/ptracking", "youtube.com/api/stats/atr", "reddit.com/static/pixel", "events.redditmedia.com",
         "pixel.reddit.com",
+        // From the same test: error/session reporting, analytics endpoints, phone-maker telemetry.
+        "bugsnag.com", "app.getsentry.com", "browser.sentry-cdn.com", "luckyorange.com", "luckyorange.net", "freshmarketer.com",
+        "adfstat.yandex.ru", "appmetrica.yandex.ru", "metrika.yandex.ru", "extmaps-api.yandex.net",
+        "analytics-sg.tiktok.com", "log.byteoversea.com", "analytics.pointdrive.linkedin.com", "events.reddit.com",
+        "analytics.yahoo.com", "analytics.query.yahoo.com", "geo.yahoo.com", "log.fc.yahoo.com", "udcm.yahoo.com",
+        "log.pinterest.com", "trk.pinterest.com", "pixel.facebook.com", "stats.wp.com", "click.googleanalytics.com",
+        "analytics.s3.amazonaws.com", "analyticsengine.s3.amazonaws.com", "2o7.net",
+        "books-analytics-events.apple.com", "notes-analytics-events.apple.com", "weather-analytics-events.apple.com",
+        "metrics.icloud.com", "metrics.mzstatic.com", "nmetrics.samsung.com", "smetrics.samsung.com",
+        "analytics-api.samsunghealthcn.com", "data.mistat.xiaomi.com", "data.mistat.india.xiaomi.com", "data.mistat.rus.xiaomi.com",
+        "tracking.rus.miui.com", "click.oneplus.cn", "iot-logser.realme.com", "iot-eu-logser.realme.com",
+        "grs.hicloud.com", "logbak.hicloud.com", "logservice.hicloud.com", "logservice1.hicloud.com",
+        "metrics.data.hicloud.com", "metrics2.data.hicloud.com",
     )
 
     private fun matchesAny(list: Set<String>, host: String, hostAndPath: String): Boolean = list.any { site ->
