@@ -23,12 +23,9 @@ import com.nova.browser.BrowserViewModel
 private const val TAG = "NovaCompat"
 
 /**
- * The answer to a blocked request: it fails like a network error, so the page's fetch rejects and
- * its script/image fires `error`. An empty 200 answer told the page the request had worked (ad
- * scripts ran their "loaded" paths; an ad-block test scored every intercepted request as not
- * blocked). No content type is given on purpose: the WebView then reads the body to work the type
- * out before it sends any response headers, and that read is where this fails. With a type, the
- * headers went out first and the page still saw a response (so did a null body).
+ * The answer to a blocked request: no content, and a body that fails if it is read. Measured on
+ * the tablet, a page's `fetch` still resolves with this answer (as it did with an empty 200 and
+ * with a null body), so AdHosts.BLOCK_SCRIPT makes blocked fetches reject on the page side.
  */
 private fun blockedResponse(): WebResourceResponse = WebResourceResponse(null, null, object : java.io.InputStream() {
     override fun read(): Int = throw java.io.IOException("Blocked by Nova")
@@ -75,6 +72,10 @@ fun CompatWebView(viewModel: BrowserViewModel, visible: Boolean, modifier: Modif
                     viewModel.onCompatState(url ?: this.url, title ?: this.title, progress, canGoBack())
                 }
 
+                // Blocked fetches reject in the page (every frame), before any of its scripts run.
+                val documentStartBlock = androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)
+                if (documentStartBlock) androidx.webkit.WebViewCompat.addDocumentStartJavaScript(this, AdHosts.BLOCK_SCRIPT, setOf("*"))
+
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         val url = request.url.toString()
@@ -104,7 +105,11 @@ fun CompatWebView(viewModel: BrowserViewModel, visible: Boolean, modifier: Modif
                         return blockedResponse()
                     }
 
-                    override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) { push(url = url, progress = 5) }
+                    override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                        push(url = url, progress = 5)
+                        // Old WebViews without document-start scripts: best effort, may run after the page's first scripts.
+                        if (!documentStartBlock) view.evaluateJavascript(AdHosts.BLOCK_SCRIPT, null)
+                    }
                     override fun onPageFinished(view: WebView, url: String?) {
                         push(url = url, progress = 100)
                         view.evaluateJavascript(AdHosts.HIDING_SCRIPT, null) // ad slots the site serves itself

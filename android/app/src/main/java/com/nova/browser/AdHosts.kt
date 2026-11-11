@@ -87,6 +87,26 @@ object AdHosts {
     /** True when [url] goes to an ad network or ad endpoint. */
     fun isAd(url: String): Boolean = classify(url) == Kind.AD
 
+    /**
+     * Script run before a page's own scripts: `fetch` to a blocked host rejects, as it does behind
+     * any ad blocker. The answer [classify] gives a request natively still reaches the page as a
+     * response, so a page (or an ad-block test) saw every blocked fetch as a success. The request
+     * is still made, so the native side blocks and counts it; only its result is turned into a
+     * failure. Same matching rule as [matchesAny].
+     */
+    val BLOCK_SCRIPT: String by lazy {
+        val list = (AD_HOSTS + TRACKER_HOSTS).joinToString(",") { "\"$it\"" } // no entry holds a quote or backslash
+        "(function(){if(window.__novaBlock||!window.fetch)return;window.__novaBlock=1;var L=[$list];" +
+        "function bad(u){try{var x=new URL(u,location.href);if(x.protocol!=='http:'&&x.protocol!=='https:')return false;" +
+        "var h=x.hostname.toLowerCase(),p=h+x.pathname+x.search;" +
+        "for(var i=0;i<L.length;i++){var s=L[i];" +
+        "if(s.indexOf('/')>=0?(p.indexOf(s)===0||p.indexOf('.'+s)>=0):(h===s||h.slice(-s.length-1)==='.'+s))return true;}" +
+        "}catch(e){}return false;}" +
+        "var f=window.fetch;window.fetch=function(i){var u=i&&i.url?i.url:String(i);var r=f.apply(this,arguments);" +
+        "return bad(u)?r.then(function(){throw new TypeError('Failed to fetch');}):r;};" +
+        "window.__novaBad=bad;})();"
+    }
+
     /** Ad slots served by the sites themselves (Reddit's promoted posts, YouTube's ad renderers). */
     const val HIDING_CSS: String =
         "shreddit-ad-post,shreddit-dynamic-ad-link,shreddit-comments-page-ad,shreddit-sidebar-ad," +

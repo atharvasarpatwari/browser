@@ -93,6 +93,13 @@ class CompatAndSuggestionsTest {
     }
 
     @Test
+    fun blockScriptIsWrittenForTheNodeCheck() {
+        // android/scripts/check-block-script.mjs runs this script in Node against the same hosts.
+        assertTrue(AdHosts.BLOCK_SCRIPT.contains("\"doubleclick.net\""))
+        java.io.File("build").apply { mkdirs() }.resolve("nova-block.js").writeText(AdHosts.BLOCK_SCRIPT)
+    }
+
+    @Test
     fun adBlockTestHostsAreCovered() {
         // Every host the public test (adblock.turtlecute.org) tries, except its own site.
         val hosts = """
