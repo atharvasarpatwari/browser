@@ -135,6 +135,8 @@ export function resolvePromise(promise: JSObject, x: JSValue, eventLoop: EventLo
       const xState = getState(xObj);
       if (xState.state === 'pending') {
         // Chain: x is a pending promise — enqueue a microtask to check again
+        const sink = createPromiseObj(eventLoop);
+        promiseEventLoops.set(sink, eventLoop);
         const reaction: PromiseReaction = {
           onFulfilled: createNativeFunction('onFulfilled', (_this, args) => {
             resolvePromise(promise, args[0], eventLoop);
@@ -144,8 +146,13 @@ export function resolvePromise(promise: JSObject, x: JSValue, eventLoop: EventLo
             rejectPromise(promise, args[0]);
             return undefined;
           }),
-          promise,
+          // A promise of its own for the reaction machinery to settle with the handlers' return
+          // value: using `promise` here settled it a second time, with undefined.
+          promise: sink,
         };
+        // Without its upstream the reaction was dropped when x settled, so a promise resolved
+        // with a pending promise (`.then(() => fetch(…))`, `.finally()`) stayed pending for ever.
+        reactionUpstreams.set(reaction, xObj);
         xState.reactions.push(reaction);
       } else if (xState.state === 'fulfilled') {
         resolvePromise(promise, xState.result, eventLoop);
@@ -348,13 +355,22 @@ function createPromiseProtoFinally(eventLoop: EventLoop): JSFunction {
     const onFinally = args[0];
     const thenFn = createPromiseProtoThen(eventLoop);
 
-    // Wrap onFinally to preserve value/re-throw
-    const wrapper = createNativeFunction('wrapper', (_th, _a) => {
+    // onFinally runs either way, then the original outcome goes on: the value, or the rejection.
+    // Both paths used to resolve with onFinally's result, so `fetch(u).finally(cleanup)` turned a
+    // failed request into a success and `await` never threw.
+    const after = (settle: () => JSValue) => createNativeFunction('finallyThen', () => {
       const result = callJSFunction(onFinally as JSFunction, undefined, []);
-      return promiseResolveValue(eventLoop, result);
+      return callJSFunction(thenFn, promiseResolveValue(eventLoop, result), [createNativeFunction('settle', settle)]);
     });
+    const onFulfilled = createNativeFunction('finallyValue', (_th, a) => callJSFunction(after(() => a[0]), undefined, []));
+    const onRejected = createNativeFunction('finallyReason', (_th, a) => callJSFunction(after(() => {
+      const rejected = createPromiseObj(eventLoop);
+      promiseEventLoops.set(rejected, eventLoop);
+      rejectPromise(rejected, a[0]);
+      return rejected;
+    }), undefined, []));
 
-    return callJSFunction(thenFn, _this, [wrapper, wrapper]);
+    return callJSFunction(thenFn, _this, [onFulfilled, onRejected]);
   });
 }
 

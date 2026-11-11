@@ -16,6 +16,15 @@ export interface Task {
   interval?: number;
 }
 
+/**
+ * A page error thrown from a timer, microtask or animation frame. These were swallowed without a
+ * trace, so a page that stopped working there gave no sign of why. Browsers log them too.
+ */
+export function reportUncaught(where: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : toString((err as { value?: JSValue })?.value ?? (err as JSValue));
+  console.warn(`[ScriptEngine] Uncaught error in a ${where}: ${message}`);
+}
+
 export class EventLoop {
   private nextTaskId = 1;
   private tasks: Task[] = [];
@@ -130,8 +139,8 @@ export class EventLoop {
         const fn = this.nextTickQueue.shift()!;
         try {
           fn();
-        } catch {
-          // swallow
+        } catch (err) {
+          reportUncaught('microtask', err);
         }
         count++;
       }
@@ -140,8 +149,8 @@ export class EventLoop {
         const fn = this.microtaskQueue.shift()!;
         try {
           fn();
-        } catch {
-          // swallow
+        } catch (err) {
+          reportUncaught('microtask', err);
         }
         count++;
       }
@@ -181,8 +190,8 @@ export class EventLoop {
       try {
         this._enterTimerNesting();
         task.fn();
-      } catch {
-        // swallow timer callback errors
+      } catch (err) {
+        reportUncaught('timer', err);
       } finally {
         this._exitTimerNesting();
       }
@@ -200,8 +209,8 @@ export class EventLoop {
       for (const { cb } of cbs) {
         try {
           cb();
-        } catch {
-          // swallow
+        } catch (err) {
+          reportUncaught('animation frame', err);
         }
       }
       this.drainMicrotasks();

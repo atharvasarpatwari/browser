@@ -203,6 +203,17 @@ export class Environment {
   }
 
   /**
+   * `var name` without a value: creates the binding (undefined) in the nearest function scope
+   * unless it is already there. Used to hoist a function's vars at call time and for `var x;`,
+   * which must not reset a parameter or an earlier assignment.
+   */
+  hoistVar(name: string): void {
+    let scope: Environment = this; // eslint-disable-line @typescript-eslint/no-this-alias
+    while (!scope.isFunctionScope() && scope.parent) scope = scope.parent;
+    if (!scope.bindings.has(name)) scope.bindings.set(name, { value: undefined, kind: 'var' });
+  }
+
+  /**
    * Initialize a let/const binding (clears TDZ).
    * Called when the declaration statement is actually executed.
    */
@@ -418,6 +429,9 @@ export function getType(val: JSValue): string {
       if (obj.type === 'class') return 'function';
     }
     if ('closure' in val) return 'function';
+    // Host classes built as callable objects (AbortController, Headers, Request, Response) said
+    // 'object', so `typeof AbortController === 'function'` feature checks failed.
+    if ((val as { callable?: boolean }).callable && (val as { nativeFn?: unknown }).nativeFn) return 'function';
     return 'object';
   }
   if (typeof val === 'function') return 'function';

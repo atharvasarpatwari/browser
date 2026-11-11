@@ -6,7 +6,7 @@ import {
   createObject, createArray, createFunction, createNativeFunction,
   isBreakSignal, isContinueSignal, isReturnSignal, isThrowSignal, isAwaitSignal,
   type BreakSignal, type ContinueSignal, type ReturnSignal, type ThrowSignal, type AwaitSignal,
-  setGlobalCaller, callJSFunction, JSError, functionPrototypeObject, objectPrototypeMember, constructorPrototype,
+  setGlobalCaller, getGlobalCaller, callJSFunction, JSError, functionPrototypeObject, objectPrototypeMember, constructorPrototype,
 } from './values';
 import { GarbageCollector, getGC } from './gc';
 import { createPromiseConstructor, wrapAsyncResult, isPromiseObject, isPromiseFulfilled, isPromiseRejected, isPromisePending, getPromiseResult, createPromiseObj, fulfillPromise, rejectPromise, resolvePromise } from './promise';
@@ -402,6 +402,9 @@ export class Interpreter {
   run(program: AST.Program): JSValue {
     this.executionStartTime = Date.now();
     this.opCount = 0;
+    // run() nests (eval, new Function, a script run from a callback): put back the caller that was
+    // there, or the outer script's next callback fails with "No JS interpreter registered".
+    const prevCaller = getGlobalCaller();
     setGlobalCaller(this);
     try {
       // If VM mode is enabled, try compiling and running through bytecode VM
@@ -429,7 +432,7 @@ export class Interpreter {
       this.eventLoop?.drainMicrotasks();
       return result as JSValue;
     } finally {
-      setGlobalCaller(null);
+      setGlobalCaller(prevCaller);
     }
   }
 
@@ -597,6 +600,8 @@ export class Interpreter {
         }
         const value = decl.init ? this.evalExpr(decl.init, env) : undefined;
         this.destructPattern(decl.id, value, env, stmt.kind);
+      } else if (!decl.init && decl.id.type === 'Identifier') {
+        env.hoistVar(decl.id.name); // `var x;` declares, it does not assign undefined
       } else {
         const value = decl.init ? this.evalExpr(decl.init, env) : undefined;
         this.destructPattern(decl.id, value, env, stmt.kind);
@@ -605,10 +610,58 @@ export class Interpreter {
   }
 
   /**
+   * The names a function body declares with `var`, anywhere in it but not inside nested functions.
+   * They exist (undefined) from the start of the call. Without this, an assignment that came before
+   * the declaration went to an outer variable of the same name: a11y-dialog's
+   * `function o(t,e){return o=(e||document).querySelectorAll(t),…;var o}` replaced itself with a
+   * node list on its first call, and its second call failed with "o is not a function".
+   */
+  private varNames(body: AST.Statement[]): string[] {
+    const cached = (body as { __vars?: string[] }).__vars;
+    if (cached) return cached;
+    const names = new Set<string>();
+    const pattern = (p: unknown): void => {
+      const n = p as { type?: string; name?: string; left?: unknown; argument?: unknown; elements?: unknown[]; properties?: Array<{ value?: unknown; argument?: unknown }> } | null;
+      if (!n) return;
+      if (n.type === 'Identifier' && n.name) names.add(n.name);
+      else if (n.type === 'AssignmentPattern') pattern(n.left);
+      else if (n.type === 'RestElement') pattern(n.argument);
+      else if (n.type === 'ArrayPattern') n.elements?.forEach(pattern);
+      else if (n.type === 'ObjectPattern') n.properties?.forEach((q) => pattern(q.value ?? q.argument));
+    };
+    const visit = (s: unknown): void => {
+      const n = s as { type?: string; kind?: string; declarations?: Array<{ id: unknown }>; body?: unknown; consequent?: unknown; alternate?: unknown; init?: unknown; left?: unknown;
+        block?: unknown; handler?: { body?: unknown } | null; finalizer?: unknown; cases?: Array<{ consequent?: unknown[] }> } | null;
+      if (!n || typeof n !== 'object') return;
+      if (Array.isArray(n)) { n.forEach(visit); return; }
+      switch (n.type) {
+        case 'VariableDeclaration': if (n.kind === 'var') n.declarations?.forEach((d) => pattern(d.id)); break;
+        case 'BlockStatement': case 'LabeledStatement': case 'WhileStatement': case 'DoWhileStatement': visit(n.body); break;
+        case 'IfStatement': visit(n.consequent); visit(n.alternate); break;
+        case 'ForStatement': visit(n.init); visit(n.body); break;
+        case 'ForInStatement': case 'ForOfStatement': visit(n.left); visit(n.body); break;
+        case 'TryStatement': visit(n.block); visit(n.handler?.body); visit(n.finalizer); break;
+        case 'SwitchStatement': n.cases?.forEach((c) => visit(c.consequent)); break;
+        default: break; // expressions and nested functions/classes declare nothing here
+      }
+    };
+    visit(body);
+    const list = [...names];
+    Object.defineProperty(body, '__vars', { value: list, enumerable: false });
+    return list;
+  }
+
+  /**
    * Bind call arguments to parameters: plain names, defaults (evaluated in the call scope, so they
    * can use earlier params), destructuring and rest. Only plain names used to work.
    */
   private bindParams(fn: JSFunction, callEnv: Environment, args: JSValue[]): void {
+    this.bindParamValues(fn, callEnv, args);
+    const body = fn.body as { type?: string; body?: AST.Statement[] } | undefined;
+    if (body?.type === 'BlockStatement' && body.body) for (const name of this.varNames(body.body)) callEnv.hoistVar(name);
+  }
+
+  private bindParamValues(fn: JSFunction, callEnv: Environment, args: JSValue[]): void {
     const patterns = fn.paramPatterns as AST.FunctionExpression['params'] | undefined;
     if (!patterns) {
       fn.params.forEach((p, i) => callEnv.setLocal(p, args[i]));

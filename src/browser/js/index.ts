@@ -567,6 +567,9 @@ export function createGlobalEnv(
       const desc = args[2];
       if (typeof obj !== 'object' || obj === null) return obj;
       const jsObj = obj as JSObject;
+      // Functions carry no property map until they need one (as in assignment). Webpack's
+      // `require.n` defines a getter on a function, which threw and killed the whole bundle.
+      if (!jsObj.properties) (jsObj as { properties: Map<string, unknown> }).properties = new Map();
       if (typeof desc === 'object' && desc !== null) {
         const d = desc as JSObject;
         const val = d.properties.get('value');
@@ -2561,6 +2564,9 @@ export function createGlobalEnv(
 
     const ioObj = createObject(null);
     const observed = new Set<string>();
+    // The page's own element objects by id: entries had no `target`, so the usual
+    // `entry.target.classList.add(…)` (lazy loading, scroll-in animations) threw.
+    const targets = new Map<string, JSObject>();
 
     const nativeIO = new IntersectionObserver(
       (entries) => {
@@ -2570,6 +2576,7 @@ export function createGlobalEnv(
             eObj.properties.set('isIntersecting', { value: entry.isIntersecting, writable: false, enumerable: true, configurable: false });
             eObj.properties.set('intersectionRatio', { value: entry.intersectionRatio, writable: false, enumerable: true, configurable: false });
             eObj.properties.set('time', { value: entry.time, writable: false, enumerable: true, configurable: false });
+            eObj.properties.set('target', { value: targets.get(entry.target.domId) ?? null, writable: false, enumerable: true, configurable: false });
             return eObj;
           }));
           callJSFunction(callback as JSFunction, ioObj, [entryArr, ioObj]);
@@ -2583,6 +2590,7 @@ export function createGlobalEnv(
         const wrapped = a[0] as JSObject;
         if (wrapped && typeof wrapped === 'object' && '__domNode' in wrapped) {
           const el = (wrapped as unknown as { __domNode: DomElement }).__domNode as DomElement;
+          targets.set(el.domId, wrapped);
           nativeIO.observe(el);
           observed.add(el.domId);
         }
@@ -2596,12 +2604,13 @@ export function createGlobalEnv(
           const el = (wrapped as unknown as { __domNode: DomElement }).__domNode as DomElement;
           nativeIO.unobserve(el);
           observed.delete(el.domId);
+          targets.delete(el.domId);
         }
       }),
       writable: true, enumerable: true, configurable: true,
     });
     ioObj.properties.set('disconnect', {
-      value: createNativeFunction('disconnect', () => { nativeIO.disconnect(); observed.clear(); }),
+      value: createNativeFunction('disconnect', () => { nativeIO.disconnect(); observed.clear(); targets.clear(); }),
       writable: true, enumerable: true, configurable: true,
     });
     ioObj.properties.set('takeRecords', {

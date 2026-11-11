@@ -791,7 +791,12 @@ class PageRenderer implements IPageRenderer, IDisposable {
   ): Promise<void> {
     const { domTree, resourceLoader, scriptEnforcer } = this.deps;
     this.pageEventLoop = null; // never dispatch into the previous page's scripts
-    const scripts = domTree.getElementsByTagName('script');
+    // Data blocks (`type="application/ld+json"`, templates, import maps) are not scripts: they were
+    // being run as JavaScript (and fetched, when they had a src). Modules still run as classic scripts.
+    const scripts = domTree.getElementsByTagName('script').filter((el) => {
+      const type = (el.attributes.get('type') ?? '').trim().toLowerCase();
+      return !type || /javascript|ecmascript|^module$/.test(type);
+    });
     if (scripts.length === 0) return;
 
     // Canonical page origin for CSP lookups and CORS checks (scheme://host[:port]).

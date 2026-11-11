@@ -16,6 +16,7 @@ import { Path2D } from '../rendering/canvas/canvas-path';
 import { isEventHandlerAttribute, isUrlAttribute, isBlockedUrlScheme } from '../security/blocked-url-schemes';
 import { getScriptCookieProvider } from '../networking/cookie-service';
 import { HtmlParser } from '../rendering/html-parser';
+import { reportUncaught } from './event-loop';
 import { controlKind, controlValue, setControlValue, controlChecked, formOf } from '../rendering/form-controls';
 import { wrapNativeTypedArray } from './typed-arrays';
 import { splitOnSemicolon } from '../rendering/css5/parser';
@@ -90,7 +91,7 @@ function invokeDomListeners(
         ? entry.thisArg
         : event.properties.get('currentTarget')?.value ?? event.properties.get('target')?.value;
       callJSFunction(entry.fn, wrapper ?? null, [event]);
-    } catch { /* swallow handler errors */ }
+    } catch (err) { reportUncaught(`${eventType} listener`, err); } // the other listeners still run
     if (entry.once) entry.__marked = true;
     if (eventFlags(event).__stopPropagation) { stopped = true; break; }
   }
@@ -103,7 +104,7 @@ function invokeDomListeners(
     if (handler && typeof handler === 'object' && ('closure' in handler || 'nativeFn' in handler)) {
       try {
         if (callJSFunction(handler as JSFunction, target ?? null, [event]) === false) eventFlags(event).__defaultPrevented = true;
-      } catch { /* swallow handler errors, like listeners */ }
+      } catch (err) { reportUncaught(`on${eventType} handler`, err); }
       if (eventFlags(event).__stopPropagation) stopped = true;
     }
   }
