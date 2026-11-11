@@ -96,6 +96,11 @@ class CompatAndSuggestionsTest {
     fun blockScriptIsWrittenForTheNodeCheck() {
         // android/scripts/check-block-script.mjs runs this script in Node against the same hosts.
         assertTrue(AdHosts.BLOCK_SCRIPT.contains("\"doubleclick.net\""))
+        // Ad scripts served by the site itself, by name.
+        assertEquals(AdHosts.Kind.AD, AdHosts.classify("https://example.org/js/widget/ads.js"))
+        assertEquals(AdHosts.Kind.AD, AdHosts.classify("https://example.org/js/pagead.js?v=2"))
+        assertNull(AdHosts.classify("https://example.org/js/uploads.js"))
+        assertNull(AdHosts.classify("https://example.org/roads.js"))
         java.io.File("build").apply { mkdirs() }.resolve("nova-block.js").writeText(AdHosts.BLOCK_SCRIPT)
     }
 

@@ -77,7 +77,10 @@ object AdHosts {
         val uri = runCatching { URI(url) }.getOrNull() ?: return null
         val host = uri.host?.lowercase() ?: return null
         val hostAndPath = host + (uri.rawPath ?: "") + (uri.rawQuery?.let { "?$it" } ?: "")
+        val path = uri.rawPath ?: ""
         return when {
+            // Ad scripts a site serves from its own host under the usual names (generic filter-list rules).
+            path.endsWith("/ads.js") || path.endsWith("/pagead.js") -> Kind.AD
             matchesAny(AD_HOSTS, host, hostAndPath) -> Kind.AD
             matchesAny(TRACKER_HOSTS, host, hostAndPath) -> Kind.TRACKER
             else -> null
@@ -98,7 +101,7 @@ object AdHosts {
         val list = (AD_HOSTS + TRACKER_HOSTS).joinToString(",") { "\"$it\"" } // no entry holds a quote or backslash
         "(function(){if(window.__novaBlock||!window.fetch)return;window.__novaBlock=1;var L=[$list];" +
         "function bad(u){try{var x=new URL(u,location.href);if(x.protocol!=='http:'&&x.protocol!=='https:')return false;" +
-        "var h=x.hostname.toLowerCase(),p=h+x.pathname+x.search;" +
+        "var h=x.hostname.toLowerCase(),p=h+x.pathname+x.search;if(/[/](ads|pagead)[.]js${'$'}/.test(x.pathname))return true;" +
         "for(var i=0;i<L.length;i++){var s=L[i];" +
         "if(s.indexOf('/')>=0?(p.indexOf(s)===0||p.indexOf('.'+s)>=0):(h===s||h.slice(-s.length-1)==='.'+s))return true;}" +
         "}catch(e){}return false;}" +
@@ -118,7 +121,9 @@ object AdHosts {
         "#tads,#tadsb,#bottomads,div[data-text-ad],.uEierd,div[aria-label=\"Ads\"],.commercial-unit-mobile-top," +
         "li.b_ad,.b_adTop,.b_adBottom,.result--ad,[data-testid=\"ad\"],li[data-layout=\"ad\"]," +
         "ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,ytd-promoted-sparkles-web-renderer,ytm-promoted-sparkles-text-search-renderer," +
-        ".ytp-ad-module .ytp-ad-image-overlay,ytd-banner-promo-renderer,ytm-companion-slot" +
+        ".ytp-ad-module .ytp-ad-image-overlay,ytd-banner-promo-renderer,ytm-companion-slot," +
+        // Generic ad-box class names (the filter lists' general hiding rules).
+        ".adsbox,.textads,.banner_ads,.banner-ads,.ad-unit,.ad-zone,.ad-space,.afs_ads,.adbox" +
         "{display:none !important}"
 
     /** Script that adds [HIDING_CSS] to the page once (it stays across in-page navigation). */

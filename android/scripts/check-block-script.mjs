@@ -11,8 +11,8 @@ new Function('window', 'location', script)(window, { href: 'https://example.org/
 
 const rejects = async (input) => window.fetch(input, { method: 'HEAD', mode: 'no-cors' }).then(() => false, (e) => e instanceof TypeError);
 
-const blocked = ['https://ad.doubleclick.net/fakepage.html', 'https://www.youtube.com/pagead/x', 'https://www.facebook.com/tr?id=1', { url: 'https://stats.wp.com/e.js' }];
-const allowed = ['https://example.org/a', '/relative', 'https://www.youtube.com/watch?v=1', 'https://notdoubleclick.net/', 'https://www.yahoo.com/', 'data:text/plain,hi'];
+const blocked = ['https://example.org/js/widget/ads.js', '/js/pagead.js?v=2', 'https://ad.doubleclick.net/fakepage.html', 'https://www.youtube.com/pagead/x', 'https://www.facebook.com/tr?id=1', { url: 'https://stats.wp.com/e.js' }];
+const allowed = ['https://example.org/roads.js', 'https://example.org/a', '/relative', 'https://www.youtube.com/watch?v=1', 'https://notdoubleclick.net/', 'https://www.yahoo.com/', 'data:text/plain,hi'];
 if (process.argv[2]) for (const h of readFileSync(process.argv[2], 'utf8').split(/\s+/).filter(Boolean)) {
   if (!h.includes('turtlecute')) blocked.push(`https://${h}/fakepage.html`);
 }
