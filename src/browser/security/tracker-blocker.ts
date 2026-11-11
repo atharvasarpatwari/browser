@@ -280,6 +280,31 @@ const DEFAULT_RULES: BlockRule[] = [
   { domain: 'protagcdn.com', category: 'ad', description: 'ProTag Ads' },
   { domain: 'assets.bounceexchange.com', category: 'ad', description: 'BounceX' },
   { domain: 'ct.pinterest.com', category: 'analytics', description: 'Pinterest Analytics' },
+  // Hosts a public ad-block test tries that were missing here (85 of 126): ad and telemetry servers
+  // of platforms and phone makers, error/session reporting. Specific subdomains, so the sites
+  // themselves still load. Kept in step with android/.../AdHosts.kt.
+  ...[
+    'adcolony.com', 'unityads.unity3d.com', 'adfox.yandex.ru', 'offerwall.yandex.net', 'ads-api.tiktok.com',
+    'ads-sg.tiktok.com', 'business-api.tiktok.com', 'ads-api.twitter.com', 'ads.youtube.com', 'an.facebook.com',
+    'adtech.yahooinc.com', 'partnerads.ysm.yahoo.com', 'gemini.yahoo.com', 'api-adservices.apple.com',
+    'iadsdk.apple.com', 'samsungads.com', 'ads.oppomobile.com', 'adsfs.oppomobile.com', 'api.ad.xiaomi.com',
+    'sdkconfig.ad.xiaomi.com', 'sdkconfig.ad.intl.xiaomi.com', 'bdapi-ads.realmemobile.com',
+    'bdapi-in-ads.realmemobile.com', 'adtago.s3.amazonaws.com', 'advice-ads.s3.amazonaws.com',
+  ].map((domain): BlockRule => ({ domain, category: 'ad', description: 'Ad server (ad-block test list)' })),
+  ...[
+    'bugsnag.com', 'app.getsentry.com', 'browser.sentry-cdn.com', 'luckyorange.com', 'luckyorange.net',
+    'freshmarketer.com', 'adfstat.yandex.ru', 'appmetrica.yandex.ru', 'metrika.yandex.ru', 'extmaps-api.yandex.net',
+    'analytics-sg.tiktok.com', 'log.byteoversea.com', 'analytics.pointdrive.linkedin.com', 'events.reddit.com',
+    'analytics.yahoo.com', 'analytics.query.yahoo.com', 'geo.yahoo.com', 'log.fc.yahoo.com', 'udcm.yahoo.com',
+    'log.pinterest.com', 'trk.pinterest.com', 'stats.wp.com', 'click.googleanalytics.com',
+    'analytics.s3.amazonaws.com', 'analyticsengine.s3.amazonaws.com',
+    'books-analytics-events.apple.com', 'notes-analytics-events.apple.com', 'weather-analytics-events.apple.com',
+    'metrics.icloud.com', 'metrics.mzstatic.com', 'nmetrics.samsung.com', 'smetrics.samsung.com',
+    'analytics-api.samsunghealthcn.com', 'data.mistat.xiaomi.com', 'data.mistat.india.xiaomi.com',
+    'data.mistat.rus.xiaomi.com', 'tracking.rus.miui.com', 'click.oneplus.cn', 'iot-logser.realme.com',
+    'iot-eu-logser.realme.com', 'grs.hicloud.com', 'logbak.hicloud.com', 'logservice.hicloud.com',
+    'logservice1.hicloud.com', 'metrics.data.hicloud.com', 'metrics2.data.hicloud.com',
+  ].map((domain): BlockRule => ({ domain, category: 'analytics', description: 'Telemetry (ad-block test list)' })),
 ];
 
 function extractHostname(url: string): string {
