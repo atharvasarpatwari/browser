@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-11
 **Session:** "keep improving the nova app and update analytics.html and try to get me the ad blocker working"
-**Status:** Completed offline. **Not run on a tablet** (adb listed no devices), so neither 2.07's page-side fix nor this build has a device result yet.
+**Status:** Completed. Run on the Android emulator (NovaEmu, Android 14, WebView 113): **the public ad-block test scores 97% (126 of 130 blocked)** in compatibility mode, up from 0%. Not run on a physical tablet (adb listed none).
 
 ---
 
@@ -28,7 +28,8 @@ In the engine a blocked request already fails properly: `installNetworkAdBlockin
 - **The two lists are still separate** and kept in step by hand (a comment in each points at the other). Generating one from the other is the upgrade if they drift.
 - **`sentry.io`** was already blocked by an older engine rule; left as it was.
 - **The test page itself** still cannot run in Nova's engine ("expression is not a constructor"), so the engine figure comes from the unit test, not from the page's score.
-- **Device results outstanding:** the test score in compatibility mode with 2.07's document-start script.
+- **The 4 checks still failing** are not hosts: they are the page's own "Ad Scripts Loading" and cosmetic checks (a script tag and ad-like elements served by the test site itself). Not investigated.
+- **Physical tablet:** not run; the emulator result is with WebView 113, the tablets have newer WebViews.
 
 ## Files Modified
 | File | Change |
@@ -52,5 +53,9 @@ npx vite build; node android/scripts/copy-web.mjs → built, assets copied
 gradlew --no-daemon -q :app:testDebugUnitTest :app:assembleRelease → exit 0
 node android/scripts/check-block-script.mjs tests/fixtures/ad-block-test-hosts.txt → ok: 130 blocked fetches rejected, 6 allowed passed
 apksigner verify Nova-2.08.apk     → verified; versionCode 109, versionName 2.08
-Device: none connected (adb listed no devices); not installed or run on a tablet.
+Emulator NovaEmu (Android 14, 1080x2400, WebView 113.0.5672.136), Nova 2.08, adblock.turtlecute.org, compatibility mode on from the menu:
+  test result: 97%; Total 130, 126 blocked, 4 not blocked (doc/img/2026-11-11-nova-2.08-ad-block-test-97.png)
+  logcat: 49 "Blocked ad request" + 77 "Blocked tracker request"; shield badge 126
+  (the same test: 8% on 2.06, 0% on 2.07 before the page-side script)
+Physical tablet: none connected (adb listed no devices).
 ```

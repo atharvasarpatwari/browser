@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-11
 **Session:** "keep improving the nova app and update analytics.html and try to get me the ad blocker working"
-**Status:** Built and checked offline. **The final build has not been run on a tablet** (none was connected on 2026-11-11), so the public test's score with fix #2 is unknown.
+**Status:** Built and checked offline. **The final build has not been run on a tablet** (none was connected on 2026-11-11), so the tablet score with fix #2 is unknown. Later the same day the test was run on the Android emulator with 2.08 (same Android code): **97%, 126 of 130 blocked** (see the 2.08 change log).
 
 ---
 
