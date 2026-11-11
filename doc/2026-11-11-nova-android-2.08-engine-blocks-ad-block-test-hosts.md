@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-11
 **Session:** "keep improving the nova app and update analytics.html and try to get me the ad blocker working"
-**Status:** Completed. Run on the Android emulator (NovaEmu, Android 14, WebView 113): **the public ad-block test scores 97% (126 of 130 blocked)** in compatibility mode, up from 0%. Not run on a physical tablet (adb listed none).
+**Status:** Completed. Run on the Android emulator (NovaEmu, Android 14, WebView 113): **the public ad-block test scores 97% (126 of 130 blocked)** in compatibility mode, up from 0%. The OnePlus Pad Go gives the same result: **97%, 126 of 130 blocked**.
 
 ---
 
@@ -29,7 +29,7 @@ In the engine a blocked request already fails properly: `installNetworkAdBlockin
 - **`sentry.io`** was already blocked by an older engine rule; left as it was.
 - **The test page itself** still cannot run in Nova's engine ("expression is not a constructor"), so the engine figure comes from the unit test, not from the page's score.
 - **The 4 checks still failing** are not hosts: they are the page's own "Ad Scripts Loading" and cosmetic checks (a script tag and ad-like elements served by the test site itself). Not investigated.
-- **Physical tablet:** not run; the emulator result is with WebView 113, the tablets have newer WebViews.
+- **realme tablet:** not run (not connected).
 
 ## Files Modified
 | File | Change |
@@ -57,5 +57,8 @@ Emulator NovaEmu (Android 14, 1080x2400, WebView 113.0.5672.136), Nova 2.08, adb
   test result: 97%; Total 130, 126 blocked, 4 not blocked (doc/img/2026-11-11-nova-2.08-ad-block-test-97.png)
   logcat: 49 "Blocked ad request" + 77 "Blocked tracker request"; shield badge 126
   (the same test: 8% on 2.06, 0% on 2.07 before the page-side script)
-Physical tablet: none connected (adb listed no devices).
+OnePlus Pad Go (OPD2305, Android 14), Nova 2.08 installed over 2.07, screen on and unlocked, later the same day:
+  adblock.turtlecute.org (compatibility mode): 97%; Total 130, 126 blocked (doc/img/2026-11-11-nova-2.08-ad-block-test-97-oneplus-pad.png)
+  logcat: 49 "Blocked ad request" + 77 "Blocked tracker request"; shield badge 126
+  m.youtube.com: home page loaded, shield 2 (2 ad requests blocked), no renderer crash in the log
 ```
