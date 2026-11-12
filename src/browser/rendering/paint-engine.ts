@@ -771,7 +771,7 @@ class PaintEngine implements IPaintEngine {
       // ── Own content (image, control, text) is clipped by the element's own overflow ──
       const ownClip = overflowClipRect(node);
       commands.push({ type: 'save', params: [] });
-      if (ownClip) commands.push({ type: 'clip', params: [ownClip.x, ownClip.y, ownClip.w, ownClip.h] });
+      if (ownClip) commands.push({ type: 'clip', params: [ownClip.x, ownClip.y, ownClip.w, ownClip.h, ownClip.r] });
 
       // ── Image (lazy-loaded or eager) ────────────────────────────────────
       if (node.imageData && node.loadingState === 'loaded') {
@@ -958,7 +958,7 @@ class PaintEngine implements IPaintEngine {
     // (Wikipedia painted nothing below its header), and a rounded box rounded what followed it.
     if (commands.length > 0) {
       const head: PaintCommand[] = [{ type: 'save', params: [] }];
-      if (outerClip) head.push({ type: 'clip', params: [outerClip.x, outerClip.y, outerClip.w, outerClip.h] });
+      if (outerClip) head.push({ type: 'clip', params: [outerClip.x, outerClip.y, outerClip.w, outerClip.h, outerClip.r] });
       commands = [...head, ...commands, { type: 'restore', params: [] }];
     }
 

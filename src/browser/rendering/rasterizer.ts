@@ -515,6 +515,8 @@ interface RasterState {
   borderRadius: BorderRadius | null;
   borderBox: { x: number; y: number; w: number; h: number } | null;
   clipRect: ClipRect | null;
+  /** A rounded `overflow:hidden` box: pixels in its corners get its coverage (applied in setPixelRaw). */
+  clipRound: { box: ClipRect; rr: Radii } | null;
   translateX: number;
   translateY: number;
 }
@@ -533,6 +535,7 @@ function defaultState(): RasterState {
     borderRadius: null,
     borderBox: null,
     clipRect: null,
+    clipRound: null,
     translateX: 0,
     translateY: 0,
   };
@@ -552,6 +555,7 @@ function cloneState(s: RasterState): RasterState {
     borderRadius: s.borderRadius,
     borderBox: s.borderBox ? { ...s.borderBox } : null,
     clipRect: s.clipRect ? { ...s.clipRect } : null,
+    clipRound: s.clipRound,
     translateX: s.translateX,
     translateY: s.translateY,
   };
@@ -738,9 +742,10 @@ export class Rasterizer {
         break;
       }
       case 'clip': {
-        const [cx, cy, cw, ch] = cmd.params as [number, number, number, number];
+        const [cx, cy, cw, ch, cr] = cmd.params as [number, number, number, number, BorderRadius | undefined];
         if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(cw) || !Number.isFinite(ch)) break;
         const newCr: ClipRect = { x: cx, y: cy, w: cw, h: ch };
+        if (cr) this.state.clipRound = { box: newCr, rr: scaledRadii(newCr, cr) }; // ponytail: innermost rounded clip only
         const cur = this.state.clipRect;
         if (cur) {
           const ix = Math.max(cur.x, newCr.x);
@@ -805,6 +810,8 @@ export class Rasterizer {
   }
 
   private setPixelRaw(x: number, y: number, r: number, g: number, b: number, a: number): void {
+    const round = this.state.clipRound;
+    if (round) a *= roundedCoverage(x + 0.5, y + 0.5, round.box, round.rr, 0);
     if (a <= 0) return;
     const idx = (y * this.width + x) * 4;
     if (a >= 1) {
@@ -859,7 +866,7 @@ export class Rasterizer {
           const px = col + 0.5;
           if (px < box.x - 0.5 || px > box.x + box.w + 0.5) continue;
           const cover = px >= left && px <= right ? 1 : roundedCoverage(px, py, box, rr);
-          if (cover >= 1 && a >= 1) {
+          if (cover >= 1 && a >= 1 && !this.state.clipRound) {
             const idx = (row * this.width + col) * 4;
             this.pixels[idx] = r; this.pixels[idx + 1] = g; this.pixels[idx + 2] = b; this.pixels[idx + 3] = 255;
           } else if (cover > 0) {
@@ -870,7 +877,7 @@ export class Rasterizer {
       return;
     }
 
-    if (a >= 1) {
+    if (a >= 1 && !this.state.clipRound) {
       for (let row = y0; row < y1; row++) {
         const base = row * this.width * 4;
         for (let col = x0; col < x1; col++) {

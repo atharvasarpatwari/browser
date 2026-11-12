@@ -1,8 +1,10 @@
 import type { DomElement } from './dom-tree';
+import { parseBorders, type BorderRadius } from './borders-enhanced';
 
 // ── Clipping (CSS 2.2 §11.1.1 overflow, §11.1.2 clip) ─────────────────────
 
-export interface ClipBox { x: number; y: number; w: number; h: number }
+/** `r`: the box's rounded corners (padding-box radii) when it has a border-radius. */
+export interface ClipBox { x: number; y: number; w: number; h: number; r?: BorderRadius }
 /** A clip with no area: the element is fully hidden (e.g. the `clip: rect(1px,1px,1px,1px)` screen-reader pattern). */
 export const EMPTY_CLIP: ClipBox = { x: 0, y: 0, w: 0, h: 0 };
 
@@ -12,7 +14,13 @@ function intersectClip(a: ClipBox | null, b: ClipBox | null): ClipBox | null {
   if (a === EMPTY_CLIP || b === EMPTY_CLIP) return EMPTY_CLIP;
   const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y);
   const x1 = Math.min(a.x + a.w, b.x + b.w), y1 = Math.min(a.y + a.h, b.y + b.h);
-  return x1 > x && y1 > y ? { x, y, w: x1 - x, h: y1 - y } : EMPTY_CLIP;
+  if (!(x1 > x && y1 > y)) return EMPTY_CLIP;
+  // ponytail: one rounded clip survives, the one whose box is the intersection (the inner one,
+  // as with a round avatar in a card); a rounded box only partly inside another loses its corners.
+  const same = (c: ClipBox) => c.x === x && c.y === y && c.w === x1 - x && c.h === y1 - y;
+  if (same(b)) return b.r || !a.r || !same(a) ? b : a;
+  if (same(a)) return a;
+  return { x, y, w: x1 - x, h: y1 - y };
 }
 
 /** The padding box when `overflow` is not visible (html/body overflow belongs to the viewport). */
@@ -27,7 +35,15 @@ export function overflowClipRect(el: DomElement): ClipBox | null {
   if (ox === 'visible' && oy === 'visible') return null;
   const x = b.x + b.borderLeft, y = b.y + b.borderTop;
   const w = b.width - b.borderLeft - b.borderRight, h = b.height - b.borderTop - b.borderBottom;
-  return w > 0 && h > 0 ? { x, y, w, h } : EMPTY_CLIP;
+  if (!(w > 0 && h > 0)) return EMPTY_CLIP;
+  // CSS Backgrounds §5.3: overflow clips to the padding box with the inner radii (outer minus border).
+  const o = parseBorders(style, b.width, b.height).radius;
+  if (!(o.topLeft.w > 0 || o.topRight.w > 0 || o.bottomRight.w > 0 || o.bottomLeft.w > 0)) return { x, y, w, h };
+  const shrink = (c: { w: number; h: number }, dw: number, dh: number) => ({ w: Math.max(0, c.w - dw), h: Math.max(0, c.h - dh) });
+  return { x, y, w, h, r: {
+    topLeft: shrink(o.topLeft, b.borderLeft, b.borderTop), topRight: shrink(o.topRight, b.borderRight, b.borderTop),
+    bottomRight: shrink(o.bottomRight, b.borderRight, b.borderBottom), bottomLeft: shrink(o.bottomLeft, b.borderLeft, b.borderBottom),
+  } };
 }
 
 /** `clip: rect(top, right, bottom, left)` on an absolutely positioned box, relative to its border box. */
