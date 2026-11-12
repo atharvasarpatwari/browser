@@ -1022,6 +1022,13 @@ class AdBlocker implements IAdBlocker {
       }
     }
 
+    // Ad scripts by file name on any host: the filter lists' generic rule, as AdHosts.classify does
+    // in compatibility mode. A site's own /ads.js is still an ad script.
+    if (this._enabledCategories.has('banner') && /[/](ads|pagead)[.]js([?#]|$)/i.test(url)) {
+      const rule: AdFilterRule = { pattern: '/ads.js', category: 'banner', description: 'Ad script by file name' };
+      return { blocked: true, match: { rule, matchedPattern: 'ad-script-name', url } };
+    }
+
     // Check for crypto mining script patterns
     if (this.isCryptoMiningUrl(url)) {
       const rule: AdFilterRule = { pattern: url, category: 'crypto-miner', description: 'Detected crypto miner' };
