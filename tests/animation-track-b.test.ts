@@ -320,6 +320,28 @@ describe('CssTransitionEngine', () => {
     timeline.dispose();
   });
 
+  it('skips the style walk while the DOM has not changed, and still transitions after a change', () => {
+    // 2.13: sync() walked and copied every element's style each frame, 66 ms of a 75 ms frame on a page
+    // whose only activity was an infinite spinner. A DOM with a mutation counter skips it when it is still.
+    const el = createMockDomElement('el1', {
+      'transition-property': 'opacity', 'transition-duration': '300ms', 'transition-delay': '0s',
+      'transition-timing-function': 'ease', 'opacity': '1',
+    });
+    const doc = createMockDocument([el]);
+    const domTree = { getDocument: () => doc, getElementById: () => null, markDirty: vi.fn(), mutationCount: 5 } as any;
+    const timeline = new AnimationTimeline();
+    const engine = new CssTransitionEngine({ domTree, timeline, registerAnimation: vi.fn(), unregisterAnimation: vi.fn() });
+    engine.sync(doc); // baseline
+    el.computedStyle!.set('opacity', '0.5');
+    engine.sync(doc); // counter unchanged: nothing recorded a change, so the walk is skipped
+    expect(timeline._animations.size).toBe(0);
+    domTree.mutationCount = 6; // setComputedStyle / any DOM change moves it
+    engine.sync(doc);
+    expect(timeline._animations.size).toBe(1);
+    engine.dispose();
+    timeline.dispose();
+  });
+
   it('skips transition when duration is 0', () => {
     const el = createMockDomElement('el1', {
       'transition-property': 'opacity',

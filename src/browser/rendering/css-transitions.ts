@@ -153,6 +153,8 @@ export class CssTransitionEngine {
   private readonly unregisterAnim: (anim: Animation) => void;
   /** Previous computed style snapshot per element domId. */
   private readonly prevStyles = new Map<string, Map<string, string>>();
+  /** The DOM's mutation counter at the last sync. */
+  private syncedAt = -1;
   /** Active transition animations per element domId. */
   private readonly activeTransitions = new Map<string, TransitionEntry[]>();
 
@@ -170,6 +172,12 @@ export class CssTransitionEngine {
    */
   sync(document: DomDocument | null): void {
     if (!document) return;
+    // A frame that only ticks an animation changes no style: skip the walk. It parsed every element's
+    // transitions and copied every computed style each frame, 66 ms of a 75 ms frame on a page whose
+    // only activity was an infinite spinner. Any DOM or style change moves the counter (setComputedStyle records one).
+    const stamp = this.domTree.mutationCount;
+    if (stamp !== undefined && stamp === this.syncedAt) return;
+    this.syncedAt = stamp ?? -1;
     const seen = new Set<string>();
 
     this.walk(document, (el) => {
