@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-11
 **Session:** "keep improving the nova app and update analytics.html and test on device"
-**Status:** Code complete and tested offline. On the OnePlus Pad Go the page went from not running to running its test in the engine (an intermediate 2.10 build). **The final build was installed but not checked on the tablet: it had gone to sleep and was showing its lock screen.**
+**Status:** Completed. Tested on the OnePlus Pad Go (2026-11-12, final build): the ad-block test page runs in Nova's own engine and scores **98%**.
 
 ---
 
@@ -14,7 +14,7 @@ The public ad-block test page (adblock.turtlecute.org) only worked in compatibil
 | 2.09 and earlier | script fails at start; the test never runs |
 | 2.10, first build (#1–#4), tablet | page renders, no script errors logged, test still does not start |
 | 2.10, second build (#1–#7), tablet | **test runs**; shield shows 126 requests blocked; the page's own score stays at 2% (#8, #9) |
-| 2.10, final (#1–#9) | offline: the failing promise chain behaves as in a browser. Tablet: not checked (asleep) |
+| 2.10, final (#1–#9), tablet | **98%**; shield 126; no "Uncaught error" in the log |
 
 ## Root Causes
 
@@ -79,7 +79,7 @@ function o(t,e){return o=(e||document).querySelectorAll(t),Array.prototype.slice
 
 ## Not changed (recorded)
 - **The page's layout in the engine** is still wrong (the gauge is drawn as a box, text overlaps), and the engine does not block `/ads.js` by name as compatibility mode does.
-- **Final tablet result:** not measured. The test's score in the engine with #8 and #9 is unknown until the tablet is unlocked.
+- **The missing 2%** is most likely the two ad-script checks (`/ads.js`, `/pagead.js`: the log shows the engine fetching both); the result list is not readable in the engine layout, so this is not confirmed.
 - **On the OnePlus Pad**, `adblock.turtlecute.org` is now set to compatibility mode **off** (I switched it from the menu to test the engine).
 
 ## Files Modified
@@ -114,6 +114,6 @@ OnePlus Pad Go (OPD2305, Android 14), adblock.turtlecute.org:
   2.10 first build, compatibility mode on  → still 100% (130 of 130); shield 128
   2.10 first build, compatibility mode off → page rendered by the engine, no script error in the log, test did not start
   2.10 second build (#1–#7), engine        → test ran; shield 126; page score 2% and did not move in 2 minutes (→ #8, #9)
-  2.10 final build                         → installed ("Success"); NOT checked: the tablet was asleep
-                                             (mWakefulness=Asleep, focus NotificationShade) and I do not touch the lock screen
+  2.10 final build (#1–#9), engine, 2026-11-12 → 98%; shield 126; no "Uncaught error" / script error lines in logcat
+       (doc/img/2026-11-12-nova-2.10-ad-block-test-98-engine-oneplus-pad.png)
 ```
