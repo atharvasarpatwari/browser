@@ -769,7 +769,11 @@ class LayoutEngine implements ILayoutEngine {
         const childContentY = existingBox.y + existingBox.borderTop + existingBox.paddingTop;
         let childY = childContentY;
         for (const child of boxChildren(node)) {
-          if (child.nodeType === 'element') {
+          // An anonymous wrapper (bare text in a flex or grid container) is made fresh by boxChildren on
+          // every call, so it always looked dirty and was laid out on its own at this walk's x and width:
+          // the text of nav links, buttons and result rows jumped to x=0 on the first reflow. It is laid
+          // out with its parent, which is dirty whenever its content changed.
+          if (child.nodeType === 'element' && (child as DomElement).tagName !== '::anonymous') {
             childY = this.layoutNodeIncremental(child as DomElement, x, childY, availableWidth, parentFontSize, domTree, damage);
           }
         }
