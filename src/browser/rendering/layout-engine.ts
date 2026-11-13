@@ -1621,6 +1621,10 @@ class LayoutEngine implements ILayoutEngine {
       // (`parseFloat('0') || 1`, so `flex: 0 0 120px` and `flex: none` items still shrank), took the
       // basis from the flex-basis longhand instead (`0 0 120px` was 0 wide) and read `1 200px` as
       // shrink 200.
+      // A replaced item (an svg icon, an img) is as wide as its intrinsic width, as a basis and as its automatic
+      // minimum: an svg's content measures 0 (its children are never laid out), so `<svg width="24" height="24">`
+      // was 0 px wide, never drawn, and shrank to nothing in a shrink-to-fit button.
+      const replacedWidth = REPLACED_TAGS.has(childEl.tagName.toLowerCase()) ? this.resolveIntrinsicSize(childEl).width : null;
       const flexShorthand = childStyle.get('flex');
       const flex = flexShorthand ? parseFlexShorthand(flexShorthand) : null;
       if (flex) { item.flexGrow = flex.grow; item.flexShrink = flex.shrink; }
@@ -1640,7 +1644,7 @@ class LayoutEngine implements ILayoutEngine {
       if (autoBasis && isHorizontal && item.flexBasis === 0) {
         // A flex container item is measured as one: measured as a block, its items stacked and the
         // basis was the widest of them, not their sum (MDN's "Web / HTML" breadcrumbs, one letter wide).
-        item.flexBasis = this.measureContentWidth(childEl, availableWidth, this.resolveFontSize(childStyle, fontSize), domTree,
+        item.flexBasis = replacedWidth ?? this.measureContentWidth(childEl, availableWidth, this.resolveFontSize(childStyle, fontSize), domTree,
           /^(inline-)?flex$/.test(childStyle.get('display') ?? ''));
       }
       // The main-axis min/max the flex algorithm clamps to (§9.7). min-width: auto is the content's
@@ -1665,7 +1669,7 @@ class LayoutEngine implements ILayoutEngine {
           const childFont = this.resolveFontSize(childStyle, fontSize);
           const childIsFlex = /flex/.test(childStyle.get('display') ?? '');
           let measured: number | undefined;
-          item.autoMinMainSize = () => (measured ??= this.measureContentWidth(childEl, 1, childFont, domTree, childIsFlex, true) + frameW);
+          item.autoMinMainSize = () => (measured ??= (replacedWidth ?? this.measureContentWidth(childEl, 1, childFont, domTree, childIsFlex, true)) + frameW);
         }
       }
       // In a column it is the item's content height, laid out at the container's width.
@@ -2674,7 +2678,10 @@ class LayoutEngine implements ILayoutEngine {
       if (!b || node === el) return right;
       const style = node.computedStyle;
       const width = style?.get('width');
-      const fills = (width === undefined || width === 'auto') && FILLS_LINE.has(style?.get('display') ?? 'inline');
+      // A replaced box (an svg icon, an img) is its own width, never the line's: blockified in a flex container
+      // an svg counted as an empty auto-width block, so an inline-flex button around one was as wide as its padding.
+      const fills = (width === undefined || width === 'auto') && FILLS_LINE.has(style?.get('display') ?? 'inline')
+        && !REPLACED_TAGS.has(node.tagName.toLowerCase());
       // Its right margin is part of the content's extent (an auto margin isn't: it takes free space).
       // Left out, MDN's breadcrumb chevron (`margin-inline: .25rem`) measured 4px short, the list
       // shrank its first item and "Web" broke between letters.

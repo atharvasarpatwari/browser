@@ -8,6 +8,7 @@
  * Redrawn when shown, resized, recoloured or edited by a script.
  */
 import type { DomElement, DomNode } from './dom-tree';
+import { getInitialValue, isInheritedProperty } from './css5/property-definitions';
 
 /** HTML lowercases names; SVG needs them back (HTML spec, "adjust SVG attributes / tag names"). */
 const CASED = new Map(
@@ -37,12 +38,40 @@ function serializeChildren(el: DomElement): string {
   return out;
 }
 
+/** What a shape's stylesheet rules set. An image has no stylesheet, so they are written on the element. */
+const SHAPE_PROPS = ['stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'fill', 'opacity', 'transform', 'transform-origin'];
+
+/**
+ * `prop:value` for each SHAPE_PROPS value the cascade gave `el` that differs from what it would have anyway
+ * (the parent's value for an inherited property, the initial value otherwise): a shape styled only by its
+ * attributes gets nothing, so the attributes still apply. A style rule beats a presentation attribute, as in a browser.
+ * It was not written at all, so `nav>button>svg line { stroke: currentColor }` (a hamburger icon) drew nothing.
+ */
+function ruleStyle(el: DomElement): string {
+  const cs = el.computedStyle;
+  if (!cs) return '';
+  const parent = (el.parent as DomElement | null)?.computedStyle;
+  const out: string[] = [];
+  for (const p of SHAPE_PROPS) {
+    const v = cs.get(p);
+    if (!v || v === 'initial') continue;
+    const base = isInheritedProperty(p) ? parent?.get(p) ?? getInitialValue(p) : getInitialValue(p);
+    if (v !== base) out.push(`${p}:${v}`);
+  }
+  return out.join(';');
+}
+
 function serializeElement(el: DomElement, extra = ''): string {
   const tag = cased(el.tagName.toLowerCase());
   if (tag === 'script' || tag === 'foreignObject') return '';
   let attrs = '';
-  for (const [k, v] of el.attributes) attrs += ` ${cased(k)}="${esc(v)}"`;
-  return `<${tag}${attrs}${extra}>${serializeChildren(el)}</${tag}>`;
+  let own = '';
+  for (const [k, v] of el.attributes) {
+    if (k === 'style' && !extra) own = v; else attrs += ` ${cased(k)}="${esc(v)}"`;
+  }
+  // The root's style comes in `extra`; a shape's is its rules' values, then its own style attribute (which wins).
+  const style = extra ? '' : [ruleStyle(el), own].filter(Boolean).join(';');
+  return `<${tag}${attrs}${style ? ` style="${esc(style)}"` : ''}${extra}>${serializeChildren(el)}</${tag}>`;
 }
 
 /**

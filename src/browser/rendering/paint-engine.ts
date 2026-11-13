@@ -861,13 +861,20 @@ class PaintEngine implements IPaintEngine {
           commands.push({ type: 'setFillStyle', params: [run.color] });
           commands.push({ type: 'setFont', params: [`${weight} ${run.fontSize}px ${run.fontFamily}`] });
           if (run.letterSpacing) {
-            // letter-spacing: each character at its own position (it was ignored).
-            let cx = run.x;
+            // letter-spacing: each character at its own position (it was ignored). A glyph sits where the
+            // measured text before it ends, as layout sized the run from one whole-string measure: summing
+            // single-character widths ran past it on a real canvas (kerning, hinting) and ate the word space
+            // ("Ad BlockerTest" on the realme tablet).
+            // ponytail: measures each prefix, O(n^2) in the run's length; runs are a word and its space.
             const m = getTextMeasurer();
+            let before = '';
+            let count = 0;
             for (const ch of run.text) {
               const w = m.measure(ch, run.fontSize, run.fontFamily, weight).width;
+              const cx = run.x + (before ? m.measure(before, run.fontSize, run.fontFamily, weight).width : 0) + count * run.letterSpacing;
               if (ch.trim()) commands.push({ type: 'fillText', params: [ch, cx, run.y, w] });
-              cx += w + run.letterSpacing;
+              before += ch;
+              count++;
             }
           } else {
             commands.push({

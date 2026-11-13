@@ -271,6 +271,10 @@ class CssParser implements ICssParser {
 
     return rule.selectors.map((selector) => {
       const selectorStr = selectorToString(selector);
+      // Each selector of a list has its own specificity (CSS Selectors §17): `button, input[type=button]`
+      // gave `button` the (0,1,1) of the input, so it beat `nav > button` (0,0,2) and a page's mobile
+      // hamburger button was 100 px wide (adblock.turtlecute.org).
+      const own = computeSelectorSpecificity(selector);
       const declMap = new Map<string, string>();
       const important = new Set<string>();
       for (const decl of rule.declarations) {
@@ -283,7 +287,7 @@ class CssParser implements ICssParser {
 
       return {
         selector: selectorStr,
-        specificity: { id: rule.specificity.id, class: rule.specificity.a, tag: rule.specificity.b },
+        specificity: { id: own.id, class: own.a, tag: own.b },
         declarations: declMap,
         source: 'style-tag' as const,
         sourceUrl: rule.sourceUrl ?? sourceUrl,
