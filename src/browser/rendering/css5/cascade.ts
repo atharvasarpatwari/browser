@@ -1245,6 +1245,15 @@ export function expandShorthands(
       expanded = new Map(Object.keys(getAllPropertyDefinitions())
         .filter((p) => p !== 'direction' && p !== 'unicode-bidi' && !p.startsWith('--'))
         .map((p) => [p, decl.value.trim()] as [string, string]));
+    } else if (prop === 'flex-flow') {
+      // flex-flow: <direction> || <wrap>. Never expanded, so `body { flex-flow: column wrap }` laid its
+      // children out as a row (the ad-block test page's content ended up in an off-screen column).
+      const f = new Map<string, string>([['flex-flow', decl.value]]);
+      for (const t of decl.value.trim().split(/\s+/)) {
+        if (/^(row|column)(-reverse)?$/i.test(t)) f.set('flex-direction', t.toLowerCase());
+        else if (/^(nowrap|wrap)(-reverse)?$/i.test(t)) f.set('flex-wrap', t.toLowerCase());
+      }
+      if (f.size > 1) expanded = f;
     } else if (prop === 'flex') {
       // flex: none | auto | <grow> <shrink>? || <basis>. Layout reads the shorthand itself; the
       // longhands are for getComputedStyle and selectors' consumers (flex-shrink stayed 1 for none).
