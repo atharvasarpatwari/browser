@@ -1,6 +1,6 @@
 'use strict'
 
-const { app, BrowserWindow, Menu, nativeImage, session } = require('electron')
+const { app, BrowserWindow, Menu, nativeImage, session, ipcMain } = require('electron')
 const path = require('path')
 const url = require('url')
 const fs = require('fs')
@@ -401,9 +401,51 @@ function installApplicationMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+// ── Launch links and a single running instance ──────────────────────────────
+// Windows groups the taskbar button, notifications and jump lists by this id: without it a packaged
+// app shows up under Electron's default one.
+if (process.platform === 'win32') app.setAppUserModelId('com.nova.browser')
+
+/**
+ * The first address in a command line that the app may open: http(s), nova: or about: (anything else, a
+ * script or file path, is ignored). Dev runs (`electron . <url>`) have the app path before the arguments.
+ */
+function launchUrlFromArgv(argv) {
+  for (const arg of argv.slice(app.isPackaged ? 1 : 2)) {
+    if (!arg || arg.startsWith('-')) continue
+    if (/^(https?:\/\/|nova:\/\/|about:newtab$)/i.test(arg)) return arg
+  }
+  return null
+}
+
+let pendingLaunchUrl = launchUrlFromArgv(process.argv)
+ipcMain.handle('nova:app:launch-url', () => {
+  const address = pendingLaunchUrl
+  pendingLaunchUrl = null
+  return address
+})
+
+// A second launch (a link opened with Nova as the target, the shortcut clicked twice) hands its address to
+// the running window and exits. The lock is per profile directory, so test runs with their own
+// --user-data-dir do not collide.
+const gotInstanceLock = process.env.NOVA_ALLOW_MULTIPLE_INSTANCES === '1' || app.requestSingleInstanceLock()
+if (!gotInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, argv) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+    const address = launchUrlFromArgv(argv)
+    if (address) mainWindow.webContents.send('nova:app:open-url', address)
+    writeHealthLog(`SECOND_INSTANCE url=${address || 'none'}`)
+  })
+}
+
 app.setName(APP_TITLE)
 
 app.whenReady().then(() => {
+  if (!gotInstanceLock) return
   installApplicationMenu()
   initNovaSocketOwner()
   writeHealthLog(`SOCKET_OWNER_READY probe=${JSON.stringify(__novaNetProbe())}`)

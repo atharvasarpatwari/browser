@@ -99,6 +99,7 @@ import { TrackerBlocker } from '../browser/security/tracker-blocker';
 import type { ITrackerBlocker } from '../browser/security/tracker-blocker';
 import { AdBlocker, adHidingCss, installNetworkAdBlocking } from '../browser/security/ad-blocker';
 import { setPlatformFetch } from '../browser/js/fetch-api';
+import { installDesktopLaunchUrls } from './desktop-launch';
 import type { IAdBlocker } from '../browser/security/ad-blocker';
 import { ThirdPartySecurityManager, extractOrigin } from '../browser/security/third-party-security';
 import type { IThirdPartySecurityManager } from '../browser/security/third-party-security';
@@ -953,6 +954,8 @@ class ApplicationBootstrap {
       window.addEventListener('resize', fitViewport);
     }
     page.setPageDocumentProvider(() => domTree.getDocument());
+    // Desktop: an address the app was started with, or that a second launch handed over, opens in a tab.
+    if (!isNativeHostPresent()) installDesktopLaunchUrls((address) => { page.createTab(address); });
 
     this.log('Browser UI mounted');
 

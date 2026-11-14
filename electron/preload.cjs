@@ -4,7 +4,7 @@
  * Boundary between the isolated Electron renderer and the main process
  * (Phase 5 contextIsolation migration, see doc/socket-proxy-design.md).
  *
- * Exposes three things on `window.nova`:
+ * Exposes four things on `window.nova` (the first is `ipc`; `app` carries launch addresses):
  *
  *   ipc     — the nova:net socket-proxy transport. `request` round-trips an
  *             RPC over ipcRenderer.invoke; `on` relays webContents.push
@@ -65,6 +65,24 @@ const ipcBridge = Object.freeze({
 })
 
 /* -------------------------------------------------------------------------- */
+/*  app — links handed to the app from outside (a second launch, a command    */
+/*  line argument): the page opens them in a tab                              */
+/* -------------------------------------------------------------------------- */
+
+const appBridge = Object.freeze({
+  /** The address the app was started with (once), or null. */
+  takeLaunchUrl() {
+    return ipcRenderer.invoke('nova:app:launch-url')
+  },
+  /** Addresses sent by later launches of the app. Returns an unsubscribe. */
+  onOpenUrl(handler) {
+    const listener = (_event, address) => handler(String(address))
+    ipcRenderer.on('nova:app:open-url', listener)
+    return () => ipcRenderer.removeListener('nova:app:open-url', listener)
+  },
+})
+
+/* -------------------------------------------------------------------------- */
 /*  process — frozen diagnostics snapshot, no event-surface                   */
 /* -------------------------------------------------------------------------- */
 
@@ -87,6 +105,7 @@ const processSnapshot = Object.freeze({
 
 contextBridge.exposeInMainWorld('nova', {
   ipc: ipcBridge,
+  app: appBridge,
   require: safeRequire,
   process: processSnapshot,
 })
