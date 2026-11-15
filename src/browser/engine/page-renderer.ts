@@ -323,7 +323,11 @@ class PageRenderer implements IPageRenderer, IDisposable {
     lap('layout2');
 
     // 7. Lazy load images/iframes via IntersectionObserver
+    // Kept on the renderer so a navigation can stop it: a left page's lazy images kept loading (BBC has
+    // hundreds) and queued ahead of the next page's document fetch, which waited for minutes.
+    this.lazyLoader?.dispose();
     const lazyLoader = new LazyLoader();
+    this.lazyLoader = lazyLoader;
     lazyLoader.init(doc, domTree, resourceLoader, result.url);
     // Async image/iframe loads must invalidate the painted subtree and
     // schedule a reflow frame so the decoded resource appears on screen.
@@ -1094,6 +1098,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
    * Walks top-down so parent computed styles can be passed for inheritance.
    */
   private svgPass: Promise<void> | null = null;
+  private lazyLoader: LazyLoader | null = null;
   private svgMutationOff: (() => void) | null = null;
   private readonly svgDecode: SvgDecode = (markup) => this.deps.svgDecode
     ? this.deps.svgDecode(markup)
@@ -1364,6 +1369,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
   /** Stops the shown page's scripts: its timers, animation frames and queued callbacks never run again. */
   stopPageScripts(): void {
+    this.lazyLoader?.dispose();
+    this.lazyLoader = null;
     this.insertedScripts = null;
     this.pageEventLoop?.clear();
     this.pageEventLoop = null;
