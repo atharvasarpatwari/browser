@@ -167,3 +167,16 @@ The realme (`KNEUZTEE6TIBAIIV`) that the earlier pass used was not connected, so
 Cleanup on the Pad: the temporary UI dump file was removed and the port forward (`adb reverse tcp:8765`) was removed. The test server on this PC was stopped before the final check; it was not listening afterwards.
 
 Not checked: the long-press menu (noted earlier as unchecked on device), and the realme itself.
+
+## Long-press check (2026-11-15, OnePlus Pad, Nova 2.16)
+
+Question from the note above: does a long-press open both the desktop DOM context menu and Android's native sheet?
+
+| Long-press on | Menus seen | Result |
+|---|---|---|
+| a link | Android's native sheet only: "A test link to press", "Open in new tab", "Copy link", "Share link", "Copy page URL" | pass: one menu |
+| an image | Android's native sheet only: "Copy image URL", "Open image in new tab", "Save image", "Copy page URL" | pass: one menu |
+
+The desktop menu's labels ("Open link in new tab", "Copy link address", "Open image in new tab", "Copy image address", "Copy page address") were not in the UI tree in either case, so the DOM menu did not open alongside the native sheet. No code change was needed on this build.
+
+Cleanup: the port forward and the test server (port 8766) were removed; the sheet was dismissed with Back.
