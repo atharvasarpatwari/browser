@@ -124,3 +124,36 @@ OnePlus Pad Go (OPD2305, Android 14):
   1.96 Google search "buy running shoes" → results in compatibility mode, no sponsored results
     (doc/img/2026-11-08-nova-1.96-google-search-no-sponsored.png)
 ```
+
+## Device re-run (2026-11-15, OnePlus Pad, Nova 2.16)
+
+The Pad runs Nova 2.16, which contains the 1.96 changes (the 1.96 APK was not installed: a downgrade would have needed an uninstall, which clears app data). Each site was opened from an intent, given 14 s, and captured. "Compatibility mode" was not checked in the menu for each site.
+
+| # | Site | Result |
+|---|---|---|
+| 1 | google.com | renders (search home) |
+| 2 | en.wikipedia.org | readable |
+| 3 | youtube.com | readable (m.youtube.com) |
+| 4 | reddit.com | readable (feed) |
+| 5 | x.com | readable login page; the "Continue" button and the terms line below it do not overlap |
+| 6 | facebook.com | readable login page (was a bare "Back to Home" page on 1.92) |
+| 7 | amazon.in | readable (was blank on 1.92) |
+| 8 | instagram.com | readable login page (was blank on 1.92) |
+| 9 | linkedin.com | readable and styled (was unstyled on 1.92) |
+| 10 | stackoverflow.com | **blank white page after 14 s** |
+| 11 | bbc.com | renders |
+| 12 | github.com | **shows the BBC page** (stale page; address bar says github.com) |
+| 13 | cnn.com | **shows the BBC page** |
+| 14 | nytimes.com | **shows the BBC page** |
+| 15 | yahoo.com | **shows the BBC page** |
+| 16 | bing.com | **shows the BBC page** |
+| 17 | duckduckgo.com | **shows the BBC page** |
+| 18 | apple.com | **shows the BBC page** |
+| 19 | microsoft.com | **shows the BBC page** |
+| 20 | netflix.com | **shows the BBC page** |
+
+**Confirmed:** the five sites the 1.96 change targets (Facebook, Instagram, Amazon, LinkedIn, X) open readably, and the x.com footer/Continue overlap is gone in the captured view.
+
+**Not confirmed, and a regression to report:** from site 12 on, each navigation kept the previous page on screen while the address bar showed the new site. This is the stale-page bug recorded for 1.93 (root cause #4), and it is still present. Ten of the 20 results are therefore not a test of those sites. Stack Overflow (10) stayed blank.
+
+**Not done:** checking the compatibility-mode menu state for each site; re-running sites 12–20 after the stale-page bug is fixed.
