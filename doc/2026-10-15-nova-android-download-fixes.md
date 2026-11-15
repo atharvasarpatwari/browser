@@ -88,3 +88,16 @@ The APK's total byte size matches v1.1 and v1.2 because the v2 signing block pad
 - Downloads behind a redirect (http → https) save the real file.
 - Large downloads over 2 GB show their size and progress.
 - Losing your connection during certain downloads no longer closes Nova.
+
+## Device verification (2026-11-15, OnePlus Pad Go, Nova 2.16)
+
+Run with `node android/scripts/emulator-feature-test.mjs --serial IZ9HSSBUYHG6G6AU --only 7,8 --release-apk Nova-2.16.apk`. The Pad's Nova downloads go to `/storage/emulated/0/Android/data/com.nova.browser/files/Downloads/` (app folder), not the shared `Download` folder.
+
+| Check | Result |
+|---|---|
+| Dedupe: same `report.bin` downloaded twice | pass: `report.bin` (65,536 B) and `report (1).bin` (65,536 B), both hashes match |
+| Same-protocol redirect (301/302 to a file) | pass: `redirected.bin` 49,152 B, hash matches the payload, not the 3xx body |
+| Dropped connection (airplane mode) | not run on the Pad: it would cut the tablet's network; the emulator run of this check passed earlier today |
+| http → https redirect | **not run**: needs a public https URL, which has not been approved yet |
+
+The three test files were deleted from the Pad afterwards, as approved. Nothing else on the Pad was changed.
