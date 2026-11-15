@@ -3,6 +3,9 @@
     <!-- Pre-Compose window only (launch frame); colors match ui/theme Theme.kt. -->
     <style name="Theme.NovaBrowser" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">#10111A</item>
+        <!-- The starting window (Android 12+ splash) and the theme colour fall back to the system's black/white without these. -->
+        <item name="android:colorBackground">#10111A</item>
+        <item name="android:windowSplashScreenBackground">#10111A</item>
         <item name="android:statusBarColor">#10111A</item>
         <item name="android:navigationBarColor">#10111A</item>
         <item name="android:windowLightStatusBar">false</item>

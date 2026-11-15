@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-15
 **Session:** "Generate a vm and can you test it. Plan it". This plan covers getting an Android emulator running on this PC and testing Nova 1.4 on it, especially everything fixed in today's v1.1–v1.4 rounds that has only been build- and unit-tested so far.
-**Status:** In Progress. Approved (AEHD driver, full scope, reusable script); test tooling written; waiting on the user to install the AEHD driver (admin step)
+**Status:** Run on 2026-11-15 (WHPX acceleration; AEHD not needed). Results: `doc/2026-10-15-nova-android-emulator-test-results.md`. Smoke 8/8; feature checks 9 pass, 2 fail (#5, #6), #3 skipped (emulator is debuggable), #13 fixed this run. Originally approved: AEHD driver, full scope, reusable script.
 
 ---
 
