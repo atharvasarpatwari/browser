@@ -151,3 +151,19 @@ npx tsc --noEmit -> clean (one test-only mock type error fixed along the way)
 - **Find in page** from the menu, with match count and previous/next.
 - **Reload actually reloads.**
 - **Incognito** no longer saves history.
+
+## Device verification (2026-11-15, OnePlus Pad, Nova 2.16)
+
+The realme (`KNEUZTEE6TIBAIIV`) that the earlier pass used was not connected, so these checks ran on the OnePlus Pad Go (`IZ9HSSBUYHG6G6AU`), awake and unlocked, Nova 2.16 installed. The test page was served from this PC over `adb reverse`, with a request counter per path.
+
+| Check | Result |
+|---|---|
+| Pull-to-refresh at the top of the page | pass: the server counted a second request for `/refresh` (1 → 2), so the reload reached the network instead of the cache; the page showed "load 2"; the loading spinner cleared within seconds (it was still visible at the first screenshot, a few seconds after the pull). |
+| Find in page: open from the menu, type `quasar` | pass: the bar showed `1/24`; the page's own count matches the test page (16 + 0 + 8 = 24). |
+| Find in page: next, next, previous | pass: `1/24` → `2/24` → `3/24` → `2/24`; the current match is highlighted orange, the others yellow, and scrolled into view. |
+| Find in page: a term with no matches (`zzqx`) | pass: `0/0`. |
+| Find in page: close | pass: the bar closed. |
+
+Cleanup on the Pad: the temporary UI dump file was removed and the port forward (`adb reverse tcp:8765`) was removed. The test server on this PC was stopped before the final check; it was not listening afterwards.
+
+Not checked: the long-press menu (noted earlier as unchecked on device), and the realme itself.
