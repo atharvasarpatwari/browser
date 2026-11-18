@@ -46,7 +46,7 @@ describe('SearchPage', () => {
     documents: 5, terms: 100, pending: 0, loaded: true, lastSavedAt: null, lastError: null, ...over,
   });
 
-  const mount = (query?: string): SearchPage => {
+  const mount = (query?: string, extra: Partial<SearchPageDeps> = {}): SearchPage => {
     const settings: SettingsWritePort = {
       getBoolean: (k, f = false) => (typeof values[k] === 'boolean' ? (values[k] as boolean) : f),
       getString: (k, f = '') => (typeof values[k] === 'string' ? (values[k] as string) : f),
@@ -63,6 +63,7 @@ describe('SearchPage', () => {
       search,
       research,
       now: () => NOW,
+      ...extra,
     };
     page = new SearchPage(deps);
     page.mount(container);
@@ -72,7 +73,7 @@ describe('SearchPage', () => {
 
   const texts = (selector: string) => [...container.querySelectorAll(selector)].map((e) => e.textContent);
   const buttons = () => [...container.querySelectorAll('button')];
-  const buttonNamed = (label: string) => buttons().find((b) => b.textContent === label)!;
+  const buttonNamed = (label: string) => buttons().find((b) => b.textContent === label || b.getAttribute('aria-label') === label)!;
 
   beforeEach(() => {
     container = document.createElement('div');
@@ -100,20 +101,90 @@ describe('SearchPage', () => {
     container.remove();
   });
 
-  it('shows the title, a search box, an intro and the settings when there is no query', () => {
+  it('shows the logo, a search box, an intro and the settings when there is no query', () => {
     mount();
-    expect(container.querySelector('h1')!.textContent).toBe('Nova Search');
+    expect(container.querySelector('h1')!.getAttribute('aria-label')).toBe('Nova Search');
+    expect(container.querySelector('h1 svg')).not.toBeNull();
     expect(container.querySelector('input[type="search"]')).not.toBeNull();
-    expect(texts('h2')).toEqual(['Search anything', 'Search settings']);
+    expect(texts('h2')).toEqual(['Search anything']);
+    expect(texts('summary')).toEqual(['Search settings']);
+    expect((container.querySelector('.ns-tabs') as HTMLElement).hidden).toBe(true);
     expect(container.textContent).toContain('@archive');
     expect(archiveSearch).not.toHaveBeenCalled();
   });
 
-  it('puts the query in the box and renders answer-less sections for an ordinary query', () => {
+  it('puts the query in the box and shows tabs, a result count and the search-elsewhere row', () => {
     mount('quasar');
     expect((container.querySelector('input[type="search"]') as HTMLInputElement).value).toBe('quasar');
-    expect(texts('h2')).toEqual(['From your archive', 'Search the web', 'Search settings']);
-    expect(archiveSearch).toHaveBeenCalledWith('quasar', { limit: 20, prefix: false, fuzzy: true });
+    expect(texts('.ns-tab')).toEqual(['All', 'Bookmarks & history']);
+    expect(container.querySelector('.ns-stats')!.textContent).toMatch(/^About 1 result \(\d+\.\d\d seconds\) · 5 pages in your Nova index$/);
+    expect(container.querySelector('.ns-elsewhere')!.textContent).toContain('Search elsewhere:');
+    expect(archiveSearch).toHaveBeenCalledWith('quasar', { limit: 100, prefix: false, fuzzy: true });
+  });
+
+  describe('results like a search engine', () => {
+    const manyHits = (n: number) => Array.from({ length: n }, (_, i) => hit({ url: `https://site${i}.example/p`, title: `Result ${i + 1}` }));
+
+    it('shows 10 results per page with Previous / numbered / Next pages', () => {
+      hits = manyHits(25);
+      mount('quasar');
+      expect(container.querySelectorAll('article')).toHaveLength(10);
+      expect(texts('.ns-pager button')).toEqual(['Previous', '1', '2', '3', 'Next']);
+      expect(buttonNamed('Previous').disabled).toBe(true);
+      buttonNamed('Next').click();
+      expect(container.querySelector('article a')!.textContent).toBe('Result 11');
+      expect(container.querySelector('[aria-current="page"]')!.textContent).toBe('2');
+      buttonNamed('3').click();
+      expect(container.querySelectorAll('article')).toHaveLength(5);
+      expect(buttonNamed('Next').disabled).toBe(true);
+    });
+
+    it('merges bookmarks (first) and history when they arrive, and the second tab shows only them', async () => {
+      const saved = vi.fn(async () => ({
+        bookmarks: [{ url: 'https://saved.example/quasars', title: 'My quasar notes' }],
+        history: [{ url: 'https://seen.example/q', title: 'Seen quasar page', visitedAt: NOW - 60_000 }],
+      }));
+      mount('quasar', { saved });
+      expect(saved).toHaveBeenCalledWith('quasar');
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(texts('article a')).toEqual(['My quasar notes', 'Quasars 101', 'Seen quasar page']);
+      expect(container.querySelector('article .ns-badge')!.textContent).toBe('Bookmark');
+      buttonNamed('Bookmarks & history').click();
+      expect(texts('article a')).toEqual(['My quasar notes', 'Seen quasar page']);
+      expect(container.querySelector('.ns-tab.ns-active')!.textContent).toBe('Bookmarks & history');
+    });
+
+    it('ignores a late bookmark/history answer for an older query', async () => {
+      let resolveOld: (v: { bookmarks: never[]; history: { url: string; title: string }[] }) => void = () => {};
+      const saved = vi.fn()
+        .mockReturnValueOnce(new Promise((r) => { resolveOld = r; }))
+        .mockResolvedValue({ bookmarks: [], history: [] });
+      mount('old', { saved });
+      page.setQuery('new');
+      resolveOld({ bookmarks: [], history: [{ url: 'https://stale.example/', title: 'Stale' }] });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(texts('article a')).not.toContain('Stale');
+    });
+
+    it('offers suggestions under its own box and searches the picked row', async () => {
+      vi.useFakeTimers();
+      try {
+        const suggest = vi.fn(async () => [{ type: 'search', text: 'quasar jets', description: 'Search', score: 1, source: 'x', action: 'search' }] as never);
+        mount('', { suggest });
+        const box = container.querySelector('input[type="search"]') as HTMLInputElement;
+        box.value = 'quas';
+        box.dispatchEvent(new Event('input'));
+        await vi.advanceTimersByTimeAsync(100);
+        const row = container.querySelector('.ns-suggest-row')!;
+        expect(row.textContent).toContain('quasar jets');
+        row.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        expect(search).toHaveBeenLastCalledWith('quasar jets');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe('archive results', () => {

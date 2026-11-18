@@ -121,6 +121,13 @@ describe('SearchSubsystem — end to end through the real address bar', () => {
       expect(dropdown.querySelector('.nova-dropdown-swatch')).not.toBeNull();
     });
 
+    it('page search boxes get the same rows without opening the address-bar list (separate omnibox)', async () => {
+      const rows = await subsystem.pageOmnibox.onInputChanged('2+2', 8);
+      expect(rows[0]!.text).toBe('4');
+      await settle(130);
+      expect(rowTexts()).toEqual([]);
+    });
+
     it('keeps the search row and answers even when history is plentiful (one shared score scale)', async () => {
       await type('h'); // matches both history entries and more
       expect(rowTypes()).toContain('search');

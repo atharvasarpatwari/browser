@@ -2,6 +2,10 @@ import type { IDisposable } from '../../app/dependency-container';
 import type { BookmarkEntry } from '../../browser/storage/bookmark-store';
 import type { HistoryEntry } from '../../browser/storage/history-store';
 import type { ISearchEngineManager } from '../../browser/omnibox/search-engine';
+import type { OmniboxResult } from '../../browser/omnibox/omnibox';
+import { SuggestionsDropdown } from '../components/suggestions-dropdown';
+import { createNovaLogo } from '../components/nova-logo';
+import { ensureSearchTheme } from './search-theme';
 
 // ── Event types ───────────────────────────────────────────────────────────
 
@@ -52,47 +56,41 @@ function injectStyles(): void {
       from { opacity:0; transform:translateY(18px); }
       to   { opacity:1; transform:translateY(0); }
     }
-    @keyframes ntpFloat {
-      0%,100% { transform:translateY(0) scale(1); opacity:0.18; }
-      50%     { transform:translateY(-18px) scale(1.1); opacity:0.32; }
-    }
-    @keyframes ntpGradientShift {
-      0%   { background-position:0% 50%; }
-      50%  { background-position:100% 50%; }
-      100% { background-position:0% 50%; }
-    }
-    @keyframes ntpPulse {
-      0%,100% { opacity:0.5; }
-      50%     { opacity:1; }
-    }
     .ntp-fade { opacity:0; animation:ntpFadeInUp 0.5s ease-out forwards; }
+    @media (prefers-reduced-motion: reduce) { .ntp-fade { opacity:1; animation:none; } }
     .ntp-fade-d1 { animation-delay:0.05s; }
     .ntp-fade-d2 { animation-delay:0.15s; }
     .ntp-fade-d3 { animation-delay:0.25s; }
     .ntp-fade-d4 { animation-delay:0.35s; }
     .ntp-fade-d5 { animation-delay:0.45s; }
-    .ntp-tile { transition:background 0.2s,transform 0.18s,border-color 0.2s,box-shadow 0.2s; }
-    .ntp-tile:hover { background:rgba(255,255,255,0.1) !important; border-color:rgba(129,140,248,0.4) !important;
-      transform:translateY(-3px) scale(1.04); box-shadow:0 6px 20px rgba(99,102,241,0.15); }
-    .ntp-tile:active { transform:scale(0.96); transition-duration:0.08s; }
-    .ntp-particle { position:absolute; border-radius:50%; background:rgba(255,255,255,0.18);
-      animation:ntpFloat linear infinite; pointer-events:none; }
-    .ntp-engine-btn { cursor:pointer; transition:background 0.15s; }
-    .ntp-engine-btn:hover { background:rgba(255,255,255,0.12); }
-    .ntp-dropdown { position:absolute; top:100%; right:0; margin-top:6px; min-width:140px;
-      background:rgba(30,30,50,0.96); border:1px solid rgba(255,255,255,0.12);
-      border-radius:10px; backdrop-filter:blur(12px); z-index:50; overflow:hidden; }
-    .ntp-dropdown-item { padding:10px 14px; font-size:13px; color:#cbd5e1; cursor:pointer;
-      transition:background 0.12s; }
-    .ntp-dropdown-item:hover { background:rgba(255,255,255,0.08); }
-    .ntp-dropdown-item.active { color:#818cf8; font-weight:600; }
-    .ntp-ctx-menu { position:fixed; min-width:160px; background:rgba(30,30,50,0.97);
-      border:1px solid rgba(255,255,255,0.12); border-radius:10px;
-      backdrop-filter:blur(12px); z-index:100; overflow:hidden; padding:4px 0; }
-    .ntp-ctx-item { padding:9px 16px; font-size:13px; color:#cbd5e1; cursor:pointer;
-      transition:background 0.12s; }
-    .ntp-ctx-item:hover { background:rgba(255,255,255,0.08); }
-    .ntp-ctx-item.danger { color:#f87171; }
+    .ntp-tile { display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative;
+      padding:14px 6px 12px; border-radius:16px; cursor:pointer; min-height:76px;
+      background:var(--ns-surface); border:1px solid var(--ns-border);
+      transition:background 0.2s,transform 0.18s,border-color 0.2s,box-shadow 0.2s; }
+    .ntp-tile:hover { background:var(--ns-surface-2); border-color:var(--ns-accent); transform:translateY(-2px); box-shadow:var(--ns-shadow); }
+    .ntp-tile:active { transform:scale(0.97); transition-duration:0.08s; }
+    .ntp-tile-label { font-size:12px; color:var(--ns-text); text-align:center; line-height:1.2; max-width:100%;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ntp-tile-domain { font-size:10px; color:var(--ns-muted); text-align:center; margin-top:2px; max-width:100%;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ntp-section { width:100%; max-width:640px; margin-top:24px; }
+    .ntp-section-label { font-size:12px; font-weight:600; color:var(--ns-muted); text-transform:uppercase; letter-spacing:.06em;
+      margin-bottom:10px; padding-left:4px; text-align:left; }
+    .ntp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(88px,1fr)); gap:12px; }
+    .ntp-engine-btn { flex:none; font-size:12px; color:var(--ns-muted); padding:6px 10px; border-radius:999px;
+      white-space:nowrap; user-select:none; cursor:pointer; transition:background 0.15s; }
+    .ntp-engine-btn:hover { background:var(--ns-surface-2); }
+    .ntp-dropdown { position:absolute; top:100%; right:0; margin-top:6px; min-width:160px; text-align:left;
+      background:var(--ns-surface); border:1px solid var(--ns-border); box-shadow:var(--ns-shadow);
+      border-radius:12px; z-index:50; overflow:hidden; }
+    .ntp-dropdown-item { padding:10px 14px; font-size:13px; color:var(--ns-text); cursor:pointer; transition:background 0.12s; }
+    .ntp-dropdown-item:hover { background:var(--ns-surface-2); }
+    .ntp-dropdown-item.active { color:var(--ns-accent); font-weight:600; }
+    .ntp-ctx-menu { position:fixed; min-width:160px; background:var(--ns-surface); border:1px solid var(--ns-border);
+      box-shadow:var(--ns-shadow); border-radius:12px; z-index:100; overflow:hidden; padding:4px 0; text-align:left; }
+    .ntp-ctx-item { padding:9px 16px; font-size:13px; color:var(--ns-text); cursor:pointer; transition:background 0.12s; }
+    .ntp-ctx-item:hover { background:var(--ns-surface-2); }
+    .ntp-ctx-item.danger { color:#e5484d; }
   `;
   document.head.appendChild(style);
 }
@@ -109,11 +107,12 @@ function extractDomain(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
 }
 
-function getFaviconUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    return `https://www.google.com/s2/favicons?domain=${u.hostname}&sz=32`;
-  } catch { return ''; }
+/** "Good morning" / "Good afternoon" / "Good evening", as on the Android home page. */
+function greetingFor(hour: number): string {
+  if (hour < 5) return 'Good evening';
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
 }
 
 // ── Main class ────────────────────────────────────────────────────────────
@@ -137,30 +136,25 @@ class NewTabPage implements INewTabPage {
   private historyEntries: readonly HistoryEntry[] = [];
   private longPressTimer: ReturnType<typeof setTimeout> | null = null;
   private clickOutsideHandler: ((e: MouseEvent) => void) | null = null;
+  private suggestSource: ((text: string) => Promise<readonly OmniboxResult[]>) | null = null;
+  private suggestions: SuggestionsDropdown | null = null;
 
   get isMounted(): boolean { return this._mounted; }
 
   mount(container: HTMLElement): void {
+    ensureSearchTheme();
     injectStyles();
     this.container = container;
-    this.container.className = 'new-tab-page';
-    this.container.style.cssText = `
-      width:100%;height:100%;overflow-y:auto;overflow-x:hidden;position:relative;
-      background:linear-gradient(135deg,#0f0c29 0%,#1a1a2e 35%,#16213e 70%,#0f0c29 100%);
-      background-size:200% 200%;
-      animation:ntpGradientShift 18s ease infinite;
-      font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-      display:flex;flex-direction:column;align-items:center;
-      padding:0;margin:0;box-sizing:border-box;
-      -webkit-tap-highlight-color:transparent;
-    `;
-    this.buildParticles();
+    this.container.className = 'new-tab-page ns-root';
+    this.container.style.cssText = 'position:relative;-webkit-tap-highlight-color:transparent;';
     this.build();
     this.startClock();
     this._mounted = true;
   }
 
   unmount(): void {
+    this.suggestions?.dispose();
+    this.suggestions = null;
     this.stopClock();
     this.removeCtxMenu();
     this.removeClickOutside();
@@ -193,6 +187,11 @@ class NewTabPage implements INewTabPage {
     }
   }
 
+  /** Suggestion rows for the search box (the omnibox providers). Set before mount; without it the box has no suggestions. */
+  setSuggestionSource(fetch: (text: string) => Promise<readonly OmniboxResult[]>): void {
+    this.suggestSource = fetch;
+  }
+
   setBookmarks(entries: readonly BookmarkEntry[]): void {
     this.bookmarks = entries;
     this.renderBookmarkSection();
@@ -215,39 +214,15 @@ class NewTabPage implements INewTabPage {
 
   // ── Private: particle background ──────────────────────────────────────
 
-  private buildParticles(): void {
-    if (!this.container) return;
-    const count = window.innerWidth < 600 ? 12 : 22;
-    for (let i = 0; i < count; i++) {
-      const p = document.createElement('div');
-      p.className = 'ntp-particle';
-      const size = 2 + Math.random() * 4;
-      const dur = 8 + Math.random() * 14;
-      const delay = Math.random() * dur;
-      const x = Math.random() * 100;
-      const y = Math.random() * 100;
-      p.style.cssText = `
-        width:${size}px;height:${size}px;left:${x}%;top:${y}%;
-        animation-duration:${dur}s;animation-delay:-${delay}s;
-        opacity:${0.08 + Math.random() * 0.15};
-      `;
-      this.container.appendChild(p);
-    }
-  }
 
   // ── Private: main build ───────────────────────────────────────────────
 
   private build(): void {
     if (!this.container) return;
     this.container.innerHTML = '';
-    this.buildParticles();
 
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = `
-      display:flex;flex-direction:column;align-items:center;
-      min-height:100%;padding:16px 20px 24px;box-sizing:border-box;
-      position:relative;z-index:1;
-    `;
+    wrapper.className = 'ns-home';
     this.wrapper = wrapper;
     this.container.appendChild(wrapper);
 
@@ -256,12 +231,12 @@ class NewTabPage implements INewTabPage {
     this.buildQuickLinks(wrapper);
 
     this.frequentSection = document.createElement('div');
-    this.frequentSection.style.cssText = 'width:100%;max-width:500px;margin-top:24px;';
+    this.frequentSection.className = 'ntp-section';
     wrapper.appendChild(this.frequentSection);
     this.renderFrequentSection();
 
     this.bookmarkSection = document.createElement('div');
-    this.bookmarkSection.style.cssText = 'width:100%;max-width:500px;margin-top:20px;';
+    this.bookmarkSection.className = 'ntp-section';
     wrapper.appendChild(this.bookmarkSection);
     this.renderBookmarkSection();
 
@@ -271,15 +246,19 @@ class NewTabPage implements INewTabPage {
   // ── Private: logo section ─────────────────────────────────────────────
 
   private buildLogo(parent: HTMLElement): void {
-    const logo = document.createElement('div');
-    logo.className = 'ntp-fade ntp-fade-d1';
-    logo.style.cssText = 'text-align:center;margin-bottom:28px;';
-    logo.innerHTML = `
-      <div style="font-size:44px;margin-bottom:6px;filter:drop-shadow(0 0 18px rgba(129,140,248,0.35));">\u2728</div>
-      <div style="font-size:26px;font-weight:700;color:#e2e8f0;letter-spacing:-0.5px;">Nova Browser</div>
-      <div style="font-size:12px;color:#64748b;margin-top:4px;letter-spacing:0.5px;">PRIVATE \u00B7 FAST \u00B7 SECURE</div>
-    `;
+    const logo = document.createElement('h1');
+    logo.className = 'ns-home-logo ntp-fade ntp-fade-d1';
+    logo.append(createNovaLogo(72));
+    const name = document.createElement('span');
+    name.className = 'ns-sr';
+    name.textContent = 'Nova';
+    logo.appendChild(name);
     parent.appendChild(logo);
+
+    const greeting = document.createElement('p');
+    greeting.className = 'ns-greeting ntp-fade ntp-fade-d1';
+    greeting.textContent = `${greetingFor(new Date().getHours())} · Search the pages you have visited, your bookmarks and history`;
+    parent.appendChild(greeting);
   }
 
   // ── Private: search bar + engine selector ─────────────────────────────
@@ -287,51 +266,46 @@ class NewTabPage implements INewTabPage {
   private buildSearchBar(parent: HTMLElement): void {
     const container = document.createElement('div');
     container.className = 'ntp-fade ntp-fade-d2';
-    container.style.cssText = 'width:100%;max-width:540px;margin-bottom:28px;position:relative;';
+    // z-index: the fade-in animation gives each section its own stacking context, so without it the
+    // suggestions list drew under the quick-link tiles that follow.
+    container.style.cssText = 'width:100%;max-width:640px;position:relative;z-index:20;';
 
     const form = document.createElement('div');
-    form.style.cssText = `
-      display:flex;align-items:center;
-      background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);
-      border-radius:16px;padding:0 6px 0 16px;
-      backdrop-filter:blur(12px);
-      transition:border-color 0.25s,box-shadow 0.25s;
-    `;
+    form.className = 'ns-pill';
+    form.style.maxWidth = 'none';
+    form.setAttribute('role', 'search');
 
     const searchIcon = document.createElement('span');
-    searchIcon.textContent = '\uD83D\uDD0D';
-    searchIcon.style.cssText = 'font-size:16px;margin-right:10px;opacity:0.5;flex-shrink:0;';
+    searchIcon.className = 'ns-pill-icon';
+    searchIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>';
     form.appendChild(searchIcon);
 
     const input = document.createElement('input');
     input.type = 'text';
-    input.placeholder = 'Search the web or enter a URL...';
-    input.style.cssText = `
-      flex:1;background:none;border:none;outline:none;
-      font-size:15px;color:#e2e8f0;padding:13px 0;font-family:inherit;min-width:0;
-    `;
-    input.addEventListener('focus', () => {
-      form.style.borderColor = 'rgba(129,140,248,0.5)';
-      form.style.boxShadow = '0 0 0 3px rgba(129,140,248,0.12),0 4px 16px rgba(0,0,0,0.2)';
-    });
-    input.addEventListener('blur', () => {
-      form.style.borderColor = 'rgba(255,255,255,0.1)';
-      form.style.boxShadow = 'none';
-    });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const query = input.value.trim();
-        if (query) this.navigateFromInput(query);
-      }
-    });
+    input.placeholder = 'Search Nova or type a web address';
+    input.setAttribute('aria-label', 'Search Nova or type a web address');
+    input.autocomplete = 'off';
+    if (this.suggestSource) {
+      const fetch = this.suggestSource;
+      this.suggestions = new SuggestionsDropdown(input, form, {
+        fetch: (text) => fetch(text),
+        onPick: (row) => (row.url ? this.emit({ kind: 'navigate', url: row.url }) : this.navigateFromInput(row.text)),
+        onSubmit: (text) => this.navigateFromInput(text),
+      });
+    } else {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const query = input.value.trim();
+          if (query) this.navigateFromInput(query);
+        }
+      });
+    }
     form.appendChild(input);
 
     const engineBtn = document.createElement('div');
     engineBtn.className = 'ntp-engine-btn';
-    engineBtn.style.cssText = `
-      font-size:12px;color:#94a3b8;padding:6px 10px;border-radius:10px;
-      flex-shrink:0;white-space:nowrap;user-select:none;
-    `;
+    engineBtn.setAttribute('role', 'button');
+    engineBtn.title = 'Search engine';
     engineBtn.textContent = this.manager?.getDefaultEngine().name ?? 'Search';
     this.engineLabelEl = engineBtn;
     engineBtn.addEventListener('click', (e) => {
@@ -388,18 +362,15 @@ class NewTabPage implements INewTabPage {
 
   private buildQuickLinks(parent: HTMLElement): void {
     const section = document.createElement('div');
-    section.className = 'ntp-fade ntp-fade-d3';
-    section.style.cssText = 'width:100%;max-width:500px;margin-bottom:4px;';
+    section.className = 'ntp-section ntp-fade ntp-fade-d3';
 
     const label = document.createElement('div');
-    label.style.cssText = 'font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;padding-left:4px;';
+    label.className = 'ntp-section-label';
     label.textContent = 'Quick Links';
     section.appendChild(label);
 
     const grid = document.createElement('div');
-    grid.style.cssText = `
-      display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:12px;
-    `;
+    grid.className = 'ntp-grid';
     for (const link of DEFAULT_QUICK_LINKS) {
       grid.appendChild(this.createStaticTile(link));
     }
@@ -410,20 +381,18 @@ class NewTabPage implements INewTabPage {
   private createStaticTile(link: NewTabPageLink): HTMLElement {
     const tile = document.createElement('div');
     tile.className = 'ntp-tile';
-    tile.style.cssText = `
-      display:flex;flex-direction:column;align-items:center;justify-content:center;
-      padding:14px 6px 12px;border-radius:12px;cursor:pointer;min-height:72px;
-      background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);
-    `;
+    tile.setAttribute('role', 'link');
+    tile.tabIndex = 0;
     tile.addEventListener('click', () => this.emit({ kind: 'navigate', url: link.url }));
+    tile.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.emit({ kind: 'navigate', url: link.url }); });
 
     const icon = document.createElement('div');
-    icon.style.cssText = 'font-size:26px;margin-bottom:6px;';
+    icon.style.cssText = 'font-size:24px;margin-bottom:6px;';
     icon.textContent = link.icon;
     tile.appendChild(icon);
 
     const labelEl = document.createElement('div');
-    labelEl.style.cssText = 'font-size:11px;color:#94a3b8;text-align:center;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    labelEl.className = 'ntp-tile-label';
     labelEl.textContent = link.label;
     tile.appendChild(labelEl);
 
@@ -438,12 +407,12 @@ class NewTabPage implements INewTabPage {
     if (this.historyEntries.length === 0) return;
 
     const label = document.createElement('div');
-    label.style.cssText = 'font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;padding-left:4px;';
-    label.textContent = 'Frequently Visited';
+    label.className = 'ntp-section-label';
+    label.textContent = 'Recently visited';
     this.frequentSection.appendChild(label);
 
     const grid = document.createElement('div');
-    grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:12px;';
+    grid.className = 'ntp-grid';
 
     for (const entry of this.historyEntries.slice(0, 8)) {
       grid.appendChild(this.createDynamicTile(entry.title || extractDomain(entry.url), entry.url, 'history'));
@@ -459,12 +428,12 @@ class NewTabPage implements INewTabPage {
     if (this.bookmarks.length === 0) return;
 
     const label = document.createElement('div');
-    label.style.cssText = 'font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;padding-left:4px;';
+    label.className = 'ntp-section-label';
     label.textContent = 'Bookmarks';
     this.bookmarkSection.appendChild(label);
 
     const grid = document.createElement('div');
-    grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:12px;';
+    grid.className = 'ntp-grid';
 
     for (const bm of this.bookmarks.slice(0, 8)) {
       if (!bm.url || bm.folder) continue;
@@ -478,39 +447,23 @@ class NewTabPage implements INewTabPage {
   private createDynamicTile(title: string, url: string, type: 'bookmark' | 'history'): HTMLElement {
     const tile = document.createElement('div');
     tile.className = 'ntp-tile';
-    tile.style.cssText = `
-      display:flex;flex-direction:column;align-items:center;justify-content:center;
-      padding:14px 6px 12px;border-radius:12px;cursor:pointer;min-height:72px;
-      background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);
-      position:relative;
-    `;
+    tile.setAttribute('role', 'link');
+    tile.tabIndex = 0;
+    tile.title = url;
+    tile.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.emit({ kind: 'navigate', url }); });
 
-    const favicon = getFaviconUrl(url);
-    const hue = hashToHue(url);
-
-    if (favicon) {
-      const img = document.createElement('img');
-      img.src = favicon;
-      img.style.cssText = 'width:24px;height:24px;border-radius:4px;margin-bottom:6px;object-fit:contain;background:rgba(255,255,255,0.06);';
-      img.onerror = () => {
-        img.remove();
-        const letter = this.createLetterAvatar(title, hue);
-        tile.insertBefore(letter, tile.firstChild?.nextSibling ?? null);
-      };
-      tile.appendChild(img);
-    } else {
-      tile.appendChild(this.createLetterAvatar(title, hue));
-    }
+    // A letter avatar, not a favicon fetched from a third-party service (that sent every visited host to Google).
+    tile.appendChild(this.createLetterAvatar(title, hashToHue(url)));
 
     const labelEl = document.createElement('div');
-    labelEl.style.cssText = 'font-size:11px;color:#94a3b8;text-align:center;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    labelEl.textContent = title.length > 12 ? title.slice(0, 11) + '\u2026' : title;
+    labelEl.className = 'ntp-tile-label';
+    labelEl.textContent = title.length > 14 ? title.slice(0, 13) + '\u2026' : title;
     tile.appendChild(labelEl);
 
     const domain = extractDomain(url);
     if (domain) {
       const domainEl = document.createElement('div');
-      domainEl.style.cssText = 'font-size:9px;color:#475569;text-align:center;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;';
+      domainEl.className = 'ntp-tile-domain';
       domainEl.textContent = domain;
       tile.appendChild(domainEl);
     }
@@ -585,7 +538,8 @@ class NewTabPage implements INewTabPage {
       menu.appendChild(remove);
     }
 
-    document.body.appendChild(menu);
+    // Inside the page root so it takes the page's theme colours.
+    (this.container ?? document.body).appendChild(menu);
     this.ctxMenuEl = menu;
 
     const dismiss = (ev: MouseEvent) => {
@@ -609,14 +563,15 @@ class NewTabPage implements INewTabPage {
     footer.style.cssText = 'margin-top:auto;padding-top:28px;text-align:center;';
 
     const timeEl = document.createElement('div');
-    timeEl.style.cssText = 'font-size:12px;color:#475569;';
+    timeEl.className = 'ns-muted ns-small';
     this.clockEl = timeEl;
     this.updateClock(timeEl);
     footer.appendChild(timeEl);
 
     const brand = document.createElement('div');
-    brand.style.cssText = 'font-size:10px;color:#334155;margin-top:4px;';
-    brand.textContent = 'Nova Browser v1.0.0';
+    brand.className = 'ns-muted ns-small';
+    brand.style.marginTop = '4px';
+    brand.textContent = 'Nova Browser · results come from your own Nova index';
     footer.appendChild(brand);
 
     parent.appendChild(footer);

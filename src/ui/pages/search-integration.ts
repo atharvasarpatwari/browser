@@ -5,6 +5,7 @@ import type { AddressBarOffer, AddressBarView } from '../components/address-bar/
 import { SearchSubsystem } from '../components/search-subsystem';
 import type { BookmarkPort, HistoryPort, SearchEngineInfo, SettingsPort } from '../components/search-subsystem';
 import type { OmniboxActions } from '../components/omnibox-controller';
+import type { OmniboxResult } from '../../browser/omnibox/omnibox';
 import { SearchPage } from './search-page';
 import type { SettingsWritePort } from './search-page';
 import { FindInPage } from '../../browser/navigation-controls/find-in-page';import { createDomFindSource } from '../../browser/navigation-controls/find-page-source';
@@ -249,9 +250,26 @@ class SearchIntegration implements IDisposable {
       navigate: (url, how) => this.host.open(url, how.newTab),
       search: (q) => this.host.open(novaSearchUrl(q), false),
       research: (q) => this.host.open(buildResearchUrl(q), false),
+      saved: async (q) => {
+        const [bookmarks, history] = await Promise.all([
+          this.host.bookmarks()?.search(q).catch(() => []) ?? [],
+          this.host.history()?.query({ query: q, maxResults: 50 }).then((r) => r.entries).catch(() => []) ?? [],
+        ]);
+        return {
+          bookmarks: bookmarks.filter((b) => !b.folder && b.url).map((b) => ({ url: b.url as string, title: b.title })),
+          history: history.map((h) => ({ url: h.url, title: h.title, visitedAt: h.lastVisitTime })),
+        };
+      },
+      // ponytail: rows with a URL open it, the rest search their text; bang/command rows act only from the address bar.
+      suggest: (text) => subsystem.pageOmnibox.onInputChanged(text, 8),
     });
     this.searchPage.mount(container);
     this.searchPage.setQuery(query);
+  }
+
+  /** Suggestion rows for a search box that is not the address bar (the home page). */
+  suggest(text: string): Promise<readonly OmniboxResult[]> {
+    return this.subsystem?.pageOmnibox.onInputChanged(text, 8) ?? Promise.resolve([]);
   }
 
   disposeSearchPage(): void {

@@ -89,7 +89,9 @@ class NavigationFetcher implements INavigationFetcher {
       case 'navigationStarted':
         // The page on screen is about to be left (the engine still holds it): remember where it was scrolled to.
         if (this.shownEntryId !== null) this.scrolls.set(this.shownEntryId, this.paintEngine.getScroll().y);
-        this.contentRenderer.renderLoading(e.request.url);
+        // Built-in pages (about:, nova:) are drawn by the window and never fetched, so nothing would replace a spinner:
+        // the first tab's about:blank left "Loading ..." over the home page.
+        if (!/^(about|nova):/i.test(e.request.url)) this.contentRenderer.renderLoading(e.request.url);
         break;
     }
   }

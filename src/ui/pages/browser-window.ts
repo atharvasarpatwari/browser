@@ -621,7 +621,8 @@ class BrowserWindowPage implements IBrowserWindowPage {
       this.contentRenderer.setLinkHoverHandler((url) => {
         this.statusBar?.setHoverUrl(url ?? '');
       });
-      this.contentRenderer.renderNewTab();
+      // The real home page (logo, search box with suggestions, tiles), not the renderer's static picture of one.
+      this.renderNewTabPage();
 
       // Listen for navigation events from rendered content (e.g. search result links).
       this.contentNavigateHandler = (e: Event) => {
@@ -953,6 +954,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.contentArea.appendChild(container);
     this.activeContentPanel = container;
     this.activeNewTabPage = new NewTabPage();
+    this.activeNewTabPage.setSuggestionSource((text) => this.search?.suggest(text) ?? Promise.resolve([]));
     this.syncSearchEngineManagerFromSettings();
     this.activeNewTabPage.setSearchEngineManager(this.searchEngineManager);
 

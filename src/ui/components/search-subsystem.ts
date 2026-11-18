@@ -110,6 +110,12 @@ class TypedSearchProvider implements OmniboxProvider {
 /** Everything behind the omnibox, the personal archive and speculative loading, assembled once per window. */
 class SearchSubsystem implements IDisposable {
   readonly omnibox = new Omnibox({ canonicalDedupe: true });
+  /**
+   * The same providers for the search boxes on the home and results pages. A separate instance: the address bar's
+   * controller listens to `omnibox` events, so sharing it opened the address-bar list for text typed on a page (and a
+   * page keystroke cancelled the address bar's request).
+   */
+  readonly pageOmnibox = new Omnibox({ canonicalDedupe: true });
   readonly archive: PersonalSearchArchive;
   readonly bangs: BangRegistry;
   private readonly actionsProvider: BrowserActionsProvider;
@@ -182,7 +188,10 @@ class SearchSubsystem implements IDisposable {
       new AiResearchProvider(),
       new ScopeHintsProvider(),
     ];
-    for (const p of providers) this.omnibox.addProvider(p);
+    for (const p of providers) {
+      this.omnibox.addProvider(p);
+      this.pageOmnibox.addProvider(p);
+    }
   }
 
   /** Connects the address bar to the omnibox and returns the controller (disposed with the subsystem). */

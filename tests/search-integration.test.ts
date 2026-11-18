@@ -1022,7 +1022,9 @@ describe('BrowserWindowPage — search wiring', () => {
     it('keeps the start screen when a tab commits its initial about:blank', async () => {
       await settle();
       expect(area().children.length).toBeGreaterThan(0);
-      expect(area().textContent).toContain('Search the web or enter a URL');
+      // The real home page (a working search box), not a picture of one.
+      const box = area().querySelector('.new-tab-page input') as HTMLInputElement | null;
+      expect(box?.placeholder).toBe('Search Nova or type a web address');
     });
 
     it('an explicit navigation to about:blank clears the page', async () => {
