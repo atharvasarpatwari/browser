@@ -141,9 +141,13 @@ async function submitInOmnibox(page: Page, text: string): Promise<void> {
  * and the 300 px spacer put the link at about y 390–590 and the image at about 590–890 (generous: ±60 px of slack).
  */
 const LINK_AT = { x: 400, y: 490 };
-/** On the first word ("Alpha") of the `/select` page's line of text; a point far to the right of that line is past its end. */
-const TEXT_AT = { x: 40, y: 452 };
-const PAST_TEXT_END = { x: 1800, y: 452 };
+/**
+ * On the first word ("Alpha") of the `/select` page's line of text; a point far to the right of that line is past its end.
+ * CSS 2.2: the h1's 21.44 px top margin collapses with the body's 8 px, the h1 is 38.4 px tall plus a 21.44 px bottom
+ * margin, then the 300 px spacer, so the 48 px line box is y 381–429 (text from x 8, after the body margin).
+ */
+const TEXT_AT = { x: 40, y: 405 };
+const PAST_TEXT_END = { x: 1800, y: 405 };
 const IMAGE_AT = { x: 150, y: 740 };
 /** A page point nothing is at. */
 const EMPTY_AT = { x: 1500, y: 900 };
