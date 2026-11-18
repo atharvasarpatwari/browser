@@ -30,6 +30,11 @@ import { IndexedDbIndexStorage } from '../../browser/search/archive-storage';
 import type { IIndexStorage } from '../../browser/search/archive-storage';
 import { extractIndexableDocument } from '../../browser/search/content-extractor';
 import { SpeculativeLoader } from '../../browser/search/speculative-loader';
+import { ArchiveBackfill, localSkipStore } from '../../browser/search/archive-backfill';
+import type { FetchedDocument, SkipStore } from '../../browser/search/archive-backfill';
+
+/** History entries the backfill considers (newest first). */
+const BACKFILL_HISTORY = 2000;
 
 /** The settings keys the search subsystem reads (all optional; defaults are applied here). */
 const SEARCH_SETTINGS = {
@@ -39,6 +44,15 @@ const SEARCH_SETTINGS = {
   speculative: 'speculativeLoading',
   stripTracking: 'stripTrackingParams',
 } as const;
+
+/**
+ * Indexing visited pages is on by default on desktop (the Windows app and the web build), where Nova's own search
+ * engine is the front page, and stays opt-in in the Android app (this UI runs there inside the native shell, which
+ * injects `NovaStateBridge`). The user's own choice, once made, always wins.
+ */
+function archiveEnabledByDefault(): boolean {
+  return typeof (globalThis as { NovaStateBridge?: unknown }).NovaStateBridge === 'undefined';
+}
 
 interface SettingsPort {
   getBoolean(key: string, fallback?: boolean): boolean;
@@ -77,6 +91,10 @@ interface SearchSubsystemDeps {
   readonly archiveStorage?: IIndexStorage;
   /** Warms the connection to a host (see SpeculativeLoader); optional. */
   readonly warmHost?: (host: string) => void | Promise<void>;
+  /** The engine's document fetch, for indexing existing history and bookmarks. Without it there is no backfill. */
+  readonly fetchDocument?: (url: string, signal: AbortSignal) => Promise<FetchedDocument>;
+  /** Where the backfill remembers pages it could not index; defaults to localStorage. */
+  readonly backfillSkipStore?: SkipStore;
 }
 
 /**
@@ -117,6 +135,8 @@ class SearchSubsystem implements IDisposable {
    */
   readonly pageOmnibox = new Omnibox({ canonicalDedupe: true });
   readonly archive: PersonalSearchArchive;
+  /** Indexes history and bookmarks visited before indexing was on (null without a document fetch). */
+  readonly backfill: ArchiveBackfill | null;
   readonly bangs: BangRegistry;
   private readonly actionsProvider: BrowserActionsProvider;
   private readonly speculative: SpeculativeLoader;
@@ -133,9 +153,27 @@ class SearchSubsystem implements IDisposable {
 
     this.archive = new PersonalSearchArchive({
       storage: deps.archiveStorage ?? new IndexedDbIndexStorage(),
-      isEnabled: () => flag(SEARCH_SETTINGS.archive, false),
+      isEnabled: () => flag(SEARCH_SETTINGS.archive, archiveEnabledByDefault()),
       isIncognito: deps.isIncognito,
     });
+
+    const fetchDocument = deps.fetchDocument;
+    this.backfill = fetchDocument ? new ArchiveBackfill({
+      archive: this.archive,
+      fetchDocument,
+      skipped: deps.backfillSkipStore ?? localSkipStore(),
+      candidates: async () => {
+        const [visited, saved] = await Promise.all([
+          deps.history()?.query({ maxResults: BACKFILL_HISTORY }).then((r) => r.entries).catch(() => []) ?? [],
+          deps.bookmarks()?.search('').catch(() => []) ?? [],
+        ]);
+        const now = Date.now();
+        return [
+          ...visited.map((h) => ({ url: h.url, title: h.title, visitedAt: h.lastVisitTime })),
+          ...saved.filter((b) => !b.folder && b.url).map((b) => ({ url: b.url as string, title: b.title, visitedAt: now })),
+        ];
+      },
+    }) : null;
 
     this.speculative = new SpeculativeLoader({
       warm: (host) => deps.warmHost?.(host),
@@ -236,11 +274,13 @@ class SearchSubsystem implements IDisposable {
     this.controller?.dispose();
     this.controller = null;
     this.omnibox.dispose();
+    this.pageOmnibox.dispose();
+    this.backfill?.dispose();
     this.remote.dispose();
     this.archive.dispose();
     this.speculative.reset();
   }
 }
 
-export { SearchSubsystem, TypedSearchProvider, SEARCH_SETTINGS };
+export { SearchSubsystem, TypedSearchProvider, SEARCH_SETTINGS, archiveEnabledByDefault };
 export type { SearchSubsystemDeps, SearchEngineInfo, SettingsPort, HistoryPort, BookmarkPort };

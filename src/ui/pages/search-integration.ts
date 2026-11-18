@@ -6,6 +6,10 @@ import { SearchSubsystem } from '../components/search-subsystem';
 import type { BookmarkPort, HistoryPort, SearchEngineInfo, SettingsPort } from '../components/search-subsystem';
 import type { OmniboxActions } from '../components/omnibox-controller';
 import type { OmniboxResult } from '../../browser/omnibox/omnibox';
+import type { FetchedDocument } from '../../browser/search/archive-backfill';
+
+/** How long after startup the history/bookmarks backfill begins. */
+const BACKFILL_DELAY_MS = 20_000;
 import { SearchPage } from './search-page';
 import type { SettingsWritePort } from './search-page';
 import { FindInPage } from '../../browser/navigation-controls/find-in-page';import { createDomFindSource } from '../../browser/navigation-controls/find-page-source';
@@ -58,6 +62,8 @@ interface SearchHost {
   fetchText?(url: string, signal: AbortSignal): Promise<string>;
   /** Warms the connection to a host (optional). */
   warmHost?(host: string): void | Promise<void>;
+  /** The engine's document fetch, used to index existing history and bookmarks (desktop only; absent: no backfill). */
+  fetchDocument?(url: string, signal: AbortSignal): Promise<FetchedDocument>;
   /** How far the page is scrolled and how tall it is; find highlights and selections are in page coordinates. */
   scroll?(): ScrollView;
   /** Scrolls the page to `y` (clamped by the window). */
@@ -117,6 +123,7 @@ class SearchIntegration implements IDisposable {
   private pageDocument: () => DomDocument | null = () => null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
+  private backfillTimer: ReturnType<typeof setTimeout> | null = null;
   private flushOnHide: ((e: Event) => void) | null = null;
   /** Hosts whose search engine was already offered this session (each site is offered once). */
   private readonly offered = new Set<string>();
@@ -148,9 +155,14 @@ class SearchIntegration implements IDisposable {
       availableActions: DEFAULT_BROWSER_ACTIONS.filter((a) => HOST_ACTION_IDS.has(a.id)),
       fetchJson: this.host.fetchJson,
       warmHost: this.host.warmHost,
+      fetchDocument: this.host.fetchDocument ? (url, signal) => this.host.fetchDocument!(url, signal) : undefined,
     });
     this.subsystem.attach(bar, view, this.actions(engine));
-    void this.subsystem.archive.load();
+    // Once the archive is restored, index history and bookmarks visited before indexing was on — after a pause, so
+    // startup and the first page load are not slowed by it.
+    void this.subsystem.archive.load().then(() => {
+      this.backfillTimer = setTimeout(() => { this.backfillTimer = null; void this.subsystem?.backfill?.start(); }, BACKFILL_DELAY_MS);
+    });
 
     this.keyHandler = (e) => this.onKeyDown(e);
     document.addEventListener('keydown', this.keyHandler);
@@ -260,6 +272,7 @@ class SearchIntegration implements IDisposable {
           history: history.map((h) => ({ url: h.url, title: h.title, visitedAt: h.lastVisitTime })),
         };
       },
+      backfill: subsystem.backfill,
       // ponytail: rows with a URL open it, the rest search their text; bang/command rows act only from the address bar.
       suggest: (text) => subsystem.pageOmnibox.onInputChanged(text, 8),
     });
@@ -350,6 +363,8 @@ class SearchIntegration implements IDisposable {
   }
 
   dispose(): void {
+    if (this.backfillTimer) clearTimeout(this.backfillTimer);
+    this.backfillTimer = null;
     if (this.keyHandler) document.removeEventListener('keydown', this.keyHandler);
     this.keyHandler = null;
     if (this.flushOnHide) {

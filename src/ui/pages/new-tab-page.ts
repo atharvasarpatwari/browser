@@ -30,6 +30,11 @@ interface INewTabPage extends IDisposable {
 
 // ── Quick-link tile model ─────────────────────────────────────────────────
 
+interface NewTabPageNotice {
+  readonly text: string;
+  readonly actions: ReadonlyArray<{ readonly label: string; readonly primary?: boolean; onClick(): void }>;
+}
+
 interface NewTabPageLink {
   readonly label: string;
   readonly url: string;
@@ -138,6 +143,8 @@ class NewTabPage implements INewTabPage {
   private clickOutsideHandler: ((e: MouseEvent) => void) | null = null;
   private suggestSource: ((text: string) => Promise<readonly OmniboxResult[]>) | null = null;
   private suggestions: SuggestionsDropdown | null = null;
+  private notice: NewTabPageNotice | null = null;
+  private noticeEl: HTMLElement | null = null;
 
   get isMounted(): boolean { return this._mounted; }
 
@@ -163,6 +170,7 @@ class NewTabPage implements INewTabPage {
       this.container = null;
     }
     this.wrapper = null;
+    this.noticeEl = null;
     this.clockEl = null;
     this.engineLabelEl = null;
     this.dropdownEl = null;
@@ -185,6 +193,38 @@ class NewTabPage implements INewTabPage {
     if (this.engineLabelEl) {
       this.engineLabelEl.textContent = manager.getDefaultEngine().name;
     }
+  }
+
+  /** A one-line notice under the search box (null removes it). */
+  setNotice(notice: NewTabPageNotice | null): void {
+    this.notice = notice;
+    this.renderNotice();
+  }
+
+  private renderNotice(): void {
+    const slot = this.noticeEl;
+    if (!slot) return;
+    slot.innerHTML = '';
+    slot.hidden = !this.notice;
+    if (!this.notice) return;
+    const card = document.createElement('div');
+    card.className = 'ns-card';
+    card.setAttribute('role', 'status');
+    const text = document.createElement('p');
+    text.style.margin = '0 0 10px';
+    text.textContent = this.notice.text;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+    for (const action of this.notice.actions) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = action.primary ? 'ns-btn ns-primary' : 'ns-btn';
+      b.textContent = action.label;
+      b.addEventListener('click', () => action.onClick());
+      row.appendChild(b);
+    }
+    card.append(text, row);
+    slot.appendChild(card);
   }
 
   /** Suggestion rows for the search box (the omnibox providers). Set before mount; without it the box has no suggestions. */
@@ -228,6 +268,10 @@ class NewTabPage implements INewTabPage {
 
     this.buildLogo(wrapper);
     this.buildSearchBar(wrapper);
+    this.noticeEl = document.createElement('div');
+    this.noticeEl.className = 'ns-notice';
+    wrapper.appendChild(this.noticeEl);
+    this.renderNotice();
     this.buildQuickLinks(wrapper);
 
     this.frequentSection = document.createElement('div');
@@ -616,4 +660,4 @@ class NewTabPage implements INewTabPage {
 }
 
 export { NewTabPage, DEFAULT_QUICK_LINKS };
-export type { INewTabPage, NewTabPageEvent, NewTabPageEventType, NewTabPageLink };
+export type { INewTabPage, NewTabPageEvent, NewTabPageEventType, NewTabPageLink, NewTabPageNotice };

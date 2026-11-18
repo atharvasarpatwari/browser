@@ -984,6 +984,9 @@ class ApplicationBootstrap {
     const researchService = this.container.resolve<IResearchService>(Tokens.ResearchService);
     page.setResearchService(researchService);
 
+    // The engine's own document fetch (same loader the engine uses): Nova Search indexes existing history and bookmarks with it.
+    page.setDocumentLoader(new PageLoader(this.container.resolve<IResourceLoader>(Tokens.ResourceLoader)));
+
     // Initialize BrowserName from settings
     const browserName = this.container.resolve<IBrowserName>(Tokens.BrowserName);
     browserName.init(settingsService);

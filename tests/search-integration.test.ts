@@ -833,7 +833,8 @@ describe('SearchIntegration (fake host)', () => {
     });
   });
 
-  it('indexes loaded pages only once the user opted in', async () => {
+  it('indexes loaded pages unless the user turned indexing off', async () => {
+    flags.archiveEnabled = false;
     const doc = new DomTree().buildFromHtml(new HtmlParser().parse(
       `<html><body><h1>Quasar notes</h1><p>${'The quasar is a luminous galactic nucleus. '.repeat(12)}</p></body></html>`,
     ).document);
@@ -995,6 +996,34 @@ describe('BrowserWindowPage — search wiring', () => {
     page.createTab('nova://search?q=newtab');
     await settle();
     expect(searchBox()!.value).toBe('newtab');
+  });
+
+  describe('"indexing is on" notice on the home page', () => {
+    const notice = () => area().querySelector('.new-tab-page .ns-notice .ns-card');
+    const button = (label: string) => [...area().querySelectorAll<HTMLButtonElement>('.ns-notice button')].find((b) => b.textContent === label)!;
+
+    it('says once that indexing is on, and "Got it" dismisses it for good', async () => {
+      setValue.mockImplementation((k, v) => { flags[k] = v as boolean; });
+      expect(notice()?.textContent).toContain('Nova Search now indexes the pages you visit');
+      button('Got it').click();
+      expect(setValue).toHaveBeenCalledWith('archiveNoticeSeen', true);
+      expect(notice()).toBeNull();
+      await page.navigate('about:newtab');
+      expect(notice()).toBeNull();
+    });
+
+    it('"Turn off" switches indexing off', () => {
+      setValue.mockImplementation((k, v) => { flags[k] = v as boolean; });
+      button('Turn off').click();
+      expect(setValue).toHaveBeenCalledWith('archiveEnabled', false);
+      expect(notice()).toBeNull();
+    });
+
+    it('is not shown when indexing is off', async () => {
+      flags.archiveEnabled = false;
+      await page.navigate('about:newtab');
+      expect(notice()).toBeNull();
+    });
   });
 
   describe('start screen and the engine', () => {
@@ -1567,7 +1596,27 @@ describe('BrowserWindowPage — search wiring', () => {
       expect(area().querySelector('article a')?.textContent).toBe('Quasar notes');
     });
 
-    it('is off by default', async () => {
+    it('is on by default on desktop', async () => {
+      page.onPageDocumentReady('https://astro.example.com/quasars', doc());
+      await settle(10);
+      await page.navigate('nova://search?q=quasar');
+      expect(area().querySelector('article a')?.textContent).toBe('Quasar notes');
+    });
+
+    it('is off by default inside the Android shell (NovaStateBridge present)', async () => {
+      (globalThis as { NovaStateBridge?: unknown }).NovaStateBridge = {};
+      try {
+        page.onPageDocumentReady('https://astro.example.com/quasars', doc());
+        await settle(10);
+        await page.navigate('nova://search?q=quasar');
+        expect(area().querySelector('article')).toBeNull();
+      } finally {
+        delete (globalThis as { NovaStateBridge?: unknown }).NovaStateBridge;
+      }
+    });
+
+    it('does not index when the user turned it off', async () => {
+      flags.archiveEnabled = false;
       page.onPageDocumentReady('https://astro.example.com/quasars', doc());
       await settle(10);
       await page.navigate('nova://search?q=quasar');

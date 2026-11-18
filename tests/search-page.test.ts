@@ -220,12 +220,25 @@ describe('SearchPage', () => {
 
     it('explains an empty or disabled archive, and offers to turn it on', () => {
       stats = baseStats({ documents: 0 });
+      values[SEARCH_SETTINGS.archive] = false; // the user turned it off (it is on by default on desktop)
       mount('quasar');
       expect(container.textContent).toContain('Your personal archive is off');
       expect(archiveSearch).not.toHaveBeenCalled();
       buttonNamed('Turn on personal archive').click();
       expect(setValue).toHaveBeenCalledWith(SEARCH_SETTINGS.archive, true);
       expect(container.textContent).toContain('Nothing is indexed yet');
+    });
+
+    it('shows results once the archive finishes restoring (or the backfill adds pages) after the page opened', () => {
+      stats = baseStats({ documents: 0 });
+      mount('quasar');
+      expect(container.querySelector('article')).toBeNull();
+      stats = baseStats({ documents: 5 });
+      listeners.forEach((l) => l());
+      expect(container.querySelector('article a')!.textContent).toBe('Quasars 101');
+      const calls = archiveSearch.mock.calls.length;
+      listeners.forEach((l) => l()); // a change that does not alter the archive's size does not search again
+      expect(archiveSearch.mock.calls.length).toBe(calls);
     });
 
     it('says so when nothing matches', () => {
@@ -284,9 +297,17 @@ describe('SearchPage', () => {
       return l.querySelector('input[type="checkbox"]') as HTMLInputElement;
     };
 
-    it('reflects the current values, with privacy-first defaults', () => {
+    it('reflects the current values: indexing on by default on desktop, off inside the Android shell', () => {
       mount('x');
-      expect(checkbox('Index pages I visit').checked).toBe(false);
+      expect(checkbox('Index pages I visit').checked).toBe(true);
+      page.dispose();
+      (globalThis as { NovaStateBridge?: unknown }).NovaStateBridge = {};
+      try {
+        mount('x');
+        expect(checkbox('Index pages I visit').checked).toBe(false);
+      } finally {
+        delete (globalThis as { NovaStateBridge?: unknown }).NovaStateBridge;
+      }
       expect(checkbox('Show search suggestions').checked).toBe(true);
       expect(checkbox('Remove tracking parameters').checked).toBe(true);
       expect(checkbox('Prepare likely destinations').checked).toBe(true);
@@ -311,6 +332,7 @@ describe('SearchPage', () => {
 
     it('re-renders when the archive is switched on', () => {
       stats = baseStats({ documents: 0 });
+      values[SEARCH_SETTINGS.archive] = false;
       mount('x');
       expect(container.textContent).toContain('Your personal archive is off');
       const box = checkbox('Index pages I visit');

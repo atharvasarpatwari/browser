@@ -205,13 +205,19 @@ class Omnibox implements IOmnibox {
 
     if (!this.canonicalDedupe) return all.slice(0, maxResults);
 
-    const pages = new Set<string>();
+    const pages = new Map<string, number>(); // canonical page → its row's index in `out`
     const out: OmniboxResult[] = [];
     for (const r of all) {
       if (r.url && NAVIGABLE.has(r.action)) {
         const page = canonicalUrl(r.url);
-        if (pages.has(page)) continue;
-        pages.add(page);
+        const at = pages.get(page);
+        if (at !== undefined) {
+          // A page both visited and indexed: the history row (it can be removed from history) takes the archive
+          // row's place. With indexing on by default, every visited page is also an archive row.
+          if (r.type === 'history' && out[at]!.type === 'archive') out[at] = r;
+          continue;
+        }
+        pages.set(page, out.length);
       }
       out.push(r);
     }

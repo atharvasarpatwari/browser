@@ -291,9 +291,10 @@ describe('SearchSubsystem — end to end through the real address bar', () => {
   describe('personal archive', () => {
     const page = () => new DomTree().buildFromHtml(new HtmlParser().parse(`<html><body><h1>Quasar notes</h1><p>${LOREM}</p></body></html>`).document);
 
-    it('indexes only when the user opted in, then surfaces pages in the omnibox', async () => {
-      expect(subsystem.indexPage('https://astro.example.com/quasars', page())).toBe(false); // off by default
-      flags[SEARCH_SETTINGS.archive] = true;
+    it('indexes unless turned off (on by default on desktop), then surfaces pages in the omnibox', async () => {
+      flags[SEARCH_SETTINGS.archive] = false;
+      expect(subsystem.indexPage('https://astro.example.com/quasars', page())).toBe(false);
+      delete flags[SEARCH_SETTINGS.archive];
       expect(subsystem.indexPage('https://astro.example.com/quasars', page())).toBe(true);
       await settle(5);
       expect(subsystem.archive.stats().documents).toBe(1);

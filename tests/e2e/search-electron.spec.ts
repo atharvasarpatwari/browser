@@ -165,11 +165,14 @@ test('the personal archive indexes visited pages and still finds them after a re
   // No waiting for the archive's 5 s debounced save: closing the window must flush it (a page indexed in the
   // last seconds used to be lost — SearchIntegration now saves on pagehide / visibilitychange).
   await nova.app.close();
+  const fetched = site.hits.filter((p) => p === '/quasar').length;
   nova = await launchNova(profile);
   page = nova.page;
   await submitInOmnibox(page, 'nova://search?q=luminous');
   await expect(page.locator('.content-area h1')).toHaveText('Nova Search', { timeout: 30_000 });
   await expect(page.locator('.content-area article').first()).toContainText('Quasar notes', { timeout: 30_000 });
+  // Found from the saved archive, not re-indexed by the history backfill (which would fetch the page again).
+  expect(site.hits.filter((p) => p === '/quasar').length).toBe(fetched);
 });
 
 test('an archive saved before sharding is imported, rewritten as shards in real IndexedDB, and found again after a restart', async () => {
@@ -470,4 +473,55 @@ test('right-clicking a rendered page offers its links, its images and the page i
   await expect(entry('Copy page address')).toBeVisible();
   await entry('Find in page…').click();
   await expect(page.locator('.nova-find-bar')).toBeVisible();
+});
+
+/** Writes settings the way the settings service stores them, and reloads so the window reads them. */
+async function setSettings(page: import('@playwright/test').Page, values: Record<string, unknown>): Promise<void> {
+  await page.evaluate((v) => {
+    const settings = JSON.parse(localStorage.getItem('nova-settings') ?? '{}') as Record<string, unknown>;
+    localStorage.setItem('nova-settings', JSON.stringify({ ...settings, ...v }));
+  }, values);
+  await page.reload();
+  await expect(omnibox(page)).toBeVisible({ timeout: 45_000 });
+}
+
+/** Searches Nova until the results page lists something (indexing runs in the background). */
+async function pollResults(page: import('@playwright/test').Page, query: string): Promise<void> {
+  await expect.poll(async () => {
+    await submitInOmnibox(page, `nova://search?q=${encodeURIComponent(query)}`);
+    await expect(page.locator('.content-area h1')).toHaveText('Nova Search');
+    return page.locator('.content-area article').count();
+  }, { timeout: 90_000, intervals: [2_000] }).toBeGreaterThan(0);
+}
+
+test('the Windows app indexes visited pages by default, and says so once on the home page', async () => {
+  test.setTimeout(240_000);
+  nova = await launchNova(profile);
+  const { page } = nova;
+  await expect(page.locator('.new-tab-page .ns-notice')).toContainText('Nova Search now indexes the pages you visit', { timeout: 30_000 });
+
+  await openPage(page, `${site.origin}/quasar`); // no opt-in
+  await pollResults(page, 'luminous');
+  await expect(page.locator('.content-area article').first()).toContainText('Quasar notes');
+});
+
+test('history visited while indexing was off is indexed by the backfill when it is turned on', async () => {
+  test.setTimeout(300_000);
+  nova = await launchNova(profile);
+  const { page } = nova;
+  await setSettings(page, { archiveEnabled: false, archiveNoticeSeen: true });
+
+  await openPage(page, `${site.origin}/quasar`); // in history, not indexed
+  await submitInOmnibox(page, 'nova://search?q=luminous');
+  await expect(page.locator('.content-area h1')).toHaveText('Nova Search', { timeout: 30_000 });
+  await expect(page.locator('.content-area')).toContainText('Your personal archive is off');
+  expect(await page.locator('.content-area article').count()).toBe(0);
+  const visits = site.hits.filter((p) => p === '/quasar').length;
+
+  await page.locator('.content-area button', { hasText: 'Turn on personal archive' }).click();
+  // The backfill fetches the history entry again through the engine's loader...
+  await expect.poll(() => site.hits.filter((p) => p === '/quasar').length, { timeout: 60_000, intervals: [1_000] }).toBeGreaterThan(visits);
+  // ...and the page is now found.
+  await pollResults(page, 'luminous');
+  await expect(page.locator('.content-area article').first()).toContainText('Quasar notes');
 });

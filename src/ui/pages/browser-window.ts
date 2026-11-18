@@ -12,7 +12,7 @@ import type { IAdBlocker } from '../../browser/security/ad-blocker';
 import type { IUrlParser, ParsedUrl } from '../../browser/navigation/url-parser';
 import type { IContentRenderer } from '../components/content-renderer/content-renderer';
 import type { INavigationBridge } from '../components/navigation-bridge';
-import type { IBrowserEngine, EngineEvent } from '../../browser/engine/browser-engine';
+import type { IBrowserEngine, EngineEvent, IPageLoader } from '../../browser/engine/browser-engine';
 import { computeViewTransform, mapRect, pointToFrame } from '../components/find-bar/find-overlay';
 import {
   controlKind, controlValue, setControlValue, isTextEditable, isSubmitButton, isDisabled, toggleControl,
@@ -63,6 +63,10 @@ import { DownloadsPage } from './downloads-page';
 import { NewTabPage } from './new-tab-page';
 import { ResearchPage } from './research-page';
 import { SearchIntegration } from './search-integration';
+import { SEARCH_SETTINGS, archiveEnabledByDefault } from '../components/search-subsystem';
+
+/** Set once the home page's "indexing is on" notice was dismissed. */
+const INDEX_NOTICE_SEEN = 'archiveNoticeSeen';
 import type { ISettingsPage } from './settings-page';
 import type { IResearchPage } from './research-page';
 import type { ISettingsService } from '../../browser/storage/settings-service';
@@ -162,6 +166,8 @@ interface IBrowserWindowPage extends IDisposable {
   setAdBlocker(blocker: IAdBlocker): void;
   setBrowserName(name: IBrowserName): void;
   setResearchService(service: IResearchService): void;
+  /** The engine's document fetch: indexes existing history and bookmarks for Nova Search (desktop). */
+  setDocumentLoader(loader: IPageLoader): void;
   /** Where the loaded page's DOM comes from (find-in-page searches its laid-out text). */
   setPageDocumentProvider(provider: () => DomDocument | null): void;
   /** A page finished loading — feeds the personal search archive (when the user opted in). */
@@ -340,6 +346,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
   private diTrackerBlocker: ITrackerBlocker | null = null;
   private diAdBlocker: IAdBlocker | null = null;
   private researchService: IResearchService | null = null;
+  private documentLoader: IPageLoader | null = null;
   private downloadsEventHandler: ((event: { kind: string }) => void) | null = null;
   private historyEventHandler: ((event: { kind: string }) => void) | null = null;
   private bookmarkEventHandler: ((event: { kind: string }) => void) | null = null;
@@ -706,6 +713,11 @@ class BrowserWindowPage implements IBrowserWindowPage {
         return true;
       },
       warmHost: (host) => dnsPrefetchHint(host),
+      // Desktop only: inside the Android shell every fetch shares the bridge's small queue with the page being viewed.
+      fetchDocument: this.config.hideChromeUI ? undefined : (url, signal) => {
+        if (!this.documentLoader) return Promise.reject(new Error('No document loader'));
+        return this.documentLoader.load(url, signal);
+      },
       scroll: () => this.paintEngine?.getScroll() ?? { y: 0, documentHeight: 0 },
       scrollTo: (y) => this.scrollPageTo(y),
     });
@@ -959,6 +971,7 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.activeNewTabPage.setSearchEngineManager(this.searchEngineManager);
 
     this.activeNewTabPage.mount(container);
+    this.refreshIndexNotice();
 
     this.activeNewTabPage.on('navigate', (event) => {
       if (event.url) this.navigate(event.url);
@@ -2023,6 +2036,29 @@ class BrowserWindowPage implements IBrowserWindowPage {
     this.loadPersistedSearchEngines();
     this.syncSearchEngineManagerFromSettings();
     this.search?.onEnginesChanged(); // the saved list replaced the built-in one
+    this.refreshIndexNotice(); // the home page mounted before settings arrived
+  }
+
+  /**
+   * Indexing is on by default on desktop: the home page says so once, with a one-click "Turn off", until dismissed.
+   * Not in private windows (nothing is indexed there) or inside the Android shell (off by default there).
+   */
+  private refreshIndexNotice(): void {
+    const page = this.activeNewTabPage;
+    const s = this.settingsService;
+    if (!page) return;
+    const show = !!s && !this.config.hideChromeUI && !this.isIncognito()
+      && s.getBoolean(SEARCH_SETTINGS.archive, archiveEnabledByDefault()) && !s.getBoolean(INDEX_NOTICE_SEEN, false);
+    if (!show || !s) { page.setNotice(null); return; }
+    const dismiss = (): void => { s.setValue(INDEX_NOTICE_SEEN, true); this.refreshIndexNotice(); };
+    page.setNotice({
+      text: 'Nova Search now indexes the pages you visit, your history and your bookmarks, so you can search them here. '
+        + 'The index stays on this device and never includes private windows or login pages.',
+      actions: [
+        { label: 'Got it', primary: true, onClick: dismiss },
+        { label: 'Turn off', onClick: () => { s.setValue(SEARCH_SETTINGS.archive, false); dismiss(); } },
+      ],
+    });
   }
 
   setBrowserEngine(engine: IBrowserEngine): void {
@@ -2257,6 +2293,10 @@ class BrowserWindowPage implements IBrowserWindowPage {
 
   setResearchService(service: IResearchService): void {
     this.researchService = service;
+  }
+
+  setDocumentLoader(loader: IPageLoader): void {
+    this.documentLoader = loader;
   }
 
   private cleanupSettingsPage(): void {

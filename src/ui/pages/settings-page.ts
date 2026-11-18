@@ -1,4 +1,5 @@
 import type { IDisposable } from '../../app/dependency-container';
+import { archiveEnabledByDefault } from '../components/search-subsystem';
 
 interface SettingDefinition {
   readonly key: string;
@@ -54,7 +55,7 @@ const DEFAULT_SECTIONS: readonly SettingsSection[] = [
       { key: 'defaultSearchEngine', label: 'Search engine', description: 'Default search provider', type: 'select', defaultValue: 'nova', options: [{ label: 'Nova', value: 'nova' }, { label: 'Google', value: 'google' }, { label: 'Bing', value: 'bing' }, { label: 'DuckDuckGo', value: 'duckduckgo' }] },
       { key: 'enableSearchSuggestions', label: 'Search suggestions', description: 'Send what you type in the address bar to the suggestions provider below (never in private browsing)', type: 'boolean', defaultValue: true },
       { key: 'suggestionsEngine', label: 'Suggestions provider', description: 'Who receives your typing for suggestions', type: 'select', defaultValue: 'duckduckgo', options: [{ label: 'DuckDuckGo', value: 'duckduckgo' }, { label: 'Google', value: 'google' }, { label: 'Bing', value: 'bing' }, { label: 'Brave', value: 'brave' }] },
-      { key: 'archiveEnabled', label: 'Personal search archive', description: 'Index the pages you visit on this device so you can search them later (private pages are never indexed)', type: 'boolean', defaultValue: false },
+      { key: 'archiveEnabled', label: 'Personal search archive', description: 'Index the pages you visit, your history and your bookmarks on this device so Nova Search can find them (private pages and login pages are never indexed)', type: 'boolean', defaultValue: archiveEnabledByDefault() },
       { key: 'restoreSession', label: 'Restore last session', description: 'Reopen tabs from last session on startup', type: 'boolean', defaultValue: true },
     ],
   },

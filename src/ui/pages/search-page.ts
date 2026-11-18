@@ -6,7 +6,8 @@ import { detectInstantAnswer } from '../../browser/omnibox/instant-answers';
 import { searchArchive, mergeResults, paginate } from '../../browser/search/nova-results';
 import type { NovaResult, ResultTab, SavedMatches } from '../../browser/search/nova-results';
 import { appendRanges } from '../components/highlight';
-import { SEARCH_SETTINGS } from '../components/search-subsystem';
+import { SEARCH_SETTINGS, archiveEnabledByDefault } from '../components/search-subsystem';
+import type { BackfillStats } from '../../browser/search/archive-backfill';
 import type { SettingsPort } from '../components/search-subsystem';
 import { SuggestionsDropdown } from '../components/suggestions-dropdown';
 import { createNovaLogo } from '../components/nova-logo';
@@ -24,6 +25,15 @@ interface ArchivePort {
   onChange(handler: () => void): () => void;
 }
 
+/** The history/bookmarks backfill, for its progress line and Pause/Resume. */
+interface BackfillPort {
+  stats(): BackfillStats;
+  onChange(handler: () => void): () => void;
+  start(): void | Promise<void>;
+  pause(): void;
+  resume(): void;
+}
+
 interface SettingsWritePort extends SettingsPort {
   setValue(key: string, value: unknown): void;
 }
@@ -39,6 +49,7 @@ interface SearchPageDeps {
   readonly research: (query: string) => void;
   /** Bookmarks and history that match (merged into the results when they arrive). */
   readonly saved?: (query: string) => Promise<SavedMatches>;
+  readonly backfill?: BackfillPort | null;
   /** Suggestion rows for the page's box (the omnibox providers). */
   readonly suggest?: (text: string) => Promise<readonly OmniboxResult[]>;
   readonly now?: () => number;
@@ -89,12 +100,15 @@ class SearchPage implements IDisposable {
   private main: HTMLElement | null = null;
   private tabsEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
+  private progressEl: HTMLElement | null = null;
   private dropdown: SuggestionsDropdown | null = null;
   private query = '';
   private tab: ResultTab = 'all';
   private page = 1;
   private hits: SearchHit[] = [];
   private elapsedMs = 0;
+  /** The archive size the current hits were computed from. */
+  private searchedDocuments = 0;
   private saved: SavedMatches | null = null;
   private savedSeq = 0;
   private unsubscribe: (() => void) | null = null;
@@ -151,7 +165,13 @@ class SearchPage implements IDisposable {
     this.main = el('main', 'ns-results');
     container.append(top, this.tabsEl, this.main);
     this.input = input;
-    this.unsubscribe = this.deps.archive.onChange(() => this.renderStatus());
+    const offArchive = this.deps.archive.onChange(() => {
+      // Results follow the archive: it finishes restoring after start-up, and the backfill adds pages while you look.
+      if (this.query && this.deps.archive.stats().documents !== this.searchedDocuments) { this.searchArchivePart(); this.render(); }
+      else this.renderStatus();
+    });
+    const offBackfill = this.deps.backfill?.onChange(() => this.renderStatus());
+    this.unsubscribe = () => { offArchive(); offBackfill?.(); };
     this.render();
   }
 
@@ -176,25 +196,31 @@ class SearchPage implements IDisposable {
     this.main = null;
     this.tabsEl = null;
     this.statusEl = null;
+    this.progressEl = null;
   }
 
   // ── searching ─────────────────────────────────────────────────────────────
 
   private archiveEnabled(): boolean {
-    return this.deps.settings()?.getBoolean(SEARCH_SETTINGS.archive, false) ?? false;
+    return this.deps.settings()?.getBoolean(SEARCH_SETTINGS.archive, archiveEnabledByDefault()) ?? archiveEnabledByDefault();
+  }
+
+  /** The archive part of a search (synchronous); bookmarks and history are kept. */
+  private searchArchivePart(): void {
+    this.hits = [];
+    this.elapsedMs = 0;
+    this.searchedDocuments = this.deps.archive.stats().documents;
+    if (!this.query || this.searchedDocuments === 0) return;
+    const found = searchArchive(this.deps.archive, this.query, this.deps.perfNow);
+    this.hits = found.hits;
+    this.elapsedMs = found.elapsedMs;
   }
 
   private runSearch(): void {
-    this.hits = [];
-    this.elapsedMs = 0;
     this.saved = null;
     const mine = ++this.savedSeq;
+    this.searchArchivePart();
     if (!this.query) return;
-    if (this.deps.archive.stats().documents > 0) {
-      const found = searchArchive(this.deps.archive, this.query, this.deps.perfNow);
-      this.hits = found.hits;
-      this.elapsedMs = found.elapsedMs;
-    }
     const saved = this.deps.saved?.(this.query);
     if (!saved) return;
     saved.then((s) => {
@@ -215,6 +241,7 @@ class SearchPage implements IDisposable {
 
     if (!this.query) {
       main.appendChild(this.intro());
+      main.appendChild(this.progressLine());
     } else {
       const answer = detectInstantAnswer(this.query);
       if (answer && this.tab === 'all') main.appendChild(this.answerCard(answer.value, answer.detail));
@@ -222,6 +249,7 @@ class SearchPage implements IDisposable {
       const pageOf = paginate(results, this.page);
       this.page = pageOf.page;
       main.appendChild(this.stats(pageOf.total));
+      main.appendChild(this.progressLine());
       if (this.tab === 'all') { const note = this.archiveNote(); if (note) main.appendChild(note); }
       if (pageOf.total === 0) main.appendChild(this.noResults());
       const now = this.now();
@@ -299,13 +327,17 @@ class SearchPage implements IDisposable {
     const card = el('div', 'ns-card');
     card.style.margin = '0 0 20px';
     if (this.archiveEnabled()) {
-      card.appendChild(el('p', 'ns-muted', 'Nothing is indexed yet. Pages you visit from now on will be searchable here.'));
+      const filling = this.deps.backfill?.stats().state;
+      card.appendChild(el('p', 'ns-muted', filling === 'running' || filling === 'paused'
+        ? 'Nothing is indexed yet. Nova is adding your history and bookmarks in the background; results appear here as pages are added.'
+        : 'Nothing is indexed yet. Pages you visit from now on will be searchable here.'));
       return card;
     }
     card.appendChild(el('p', 'ns-muted', 'Your personal archive is off. Turn it on to search the full text of pages you visit — it is stored only on '
       + 'this device, and never in private windows or for pages with login forms.'));
     const on = this.button('Turn on personal archive', () => {
       this.deps.settings()?.setValue(SEARCH_SETTINGS.archive, true);
+      void this.deps.backfill?.start();
       this.render();
     }, 'ns-btn ns-primary');
     on.style.marginTop = '10px';
@@ -391,7 +423,12 @@ class SearchPage implements IDisposable {
       box.checked = settings?.getBoolean(key, fallback) ?? fallback;
       box.addEventListener('change', () => {
         settings?.setValue(key, box.checked);
-        if (key === SEARCH_SETTINGS.archive) { this.runSearch(); this.render(); }
+        if (key === SEARCH_SETTINGS.archive) {
+          // Turning it off needs nothing more: the backfill stops at its next page.
+          if (box.checked) void this.deps.backfill?.start();
+          this.runSearch();
+          this.render();
+        }
       });
       const text = el('span');
       text.append(el('div', undefined, label), el('div', 'ns-result-meta', hint));
@@ -399,7 +436,7 @@ class SearchPage implements IDisposable {
       return wrap;
     };
 
-    details.appendChild(toggle(SEARCH_SETTINGS.archive, false, 'Index pages I visit',
+    details.appendChild(toggle(SEARCH_SETTINGS.archive, archiveEnabledByDefault(), 'Index pages I visit',
       'Lets you search the full text of visited pages. Stored only on this device; skipped in private windows and for pages with password fields.'));
     this.statusEl = el('div', 'ns-result-meta');
     this.statusEl.style.margin = '-4px 0 12px 26px';
@@ -444,13 +481,54 @@ class SearchPage implements IDisposable {
     return details;
   }
 
+  /** The backfill's line under the result count, with Pause / Resume while it runs (hidden when there is nothing to say). */
+  private progressLine(): HTMLElement {
+    const line = el('p', 'ns-small ns-muted ns-backfill');
+    line.style.cssText = 'display:flex;align-items:center;gap:10px;margin:-8px 0 16px;';
+    line.append(el('span'));
+    const btn = this.button('Pause', () => {
+      const b = this.deps.backfill;
+      if (!b) return;
+      if (b.stats().state === 'running') b.pause(); else b.resume();
+    });
+    btn.style.padding = '2px 10px';
+    line.append(btn);
+    this.progressEl = line;
+    this.renderStatus();
+    return line;
+  }
+
   private renderStatus(): void {
+    const b = this.deps.backfill?.stats() ?? null;
+    const fill = b ? backfillText(b) : '';
+    if (this.progressEl) {
+      this.progressEl.hidden = !fill;
+      (this.progressEl.firstChild as HTMLElement).textContent = fill;
+      const btn = this.progressEl.querySelector('button')!;
+      btn.hidden = !(b?.state === 'running' || b?.state === 'paused');
+      btn.textContent = b?.state === 'paused' ? 'Resume' : 'Pause';
+    }
     if (!this.statusEl) return;
     const st = this.deps.archive.stats();
     const parts = [`${st.documents} page${st.documents === 1 ? '' : 's'} indexed`];
     if (st.pending > 0) parts.push(`${st.pending} waiting`);
     if (st.lastError) parts.push(`storage problem: ${st.lastError}`);
+    if (fill) parts.push(fill);
     this.statusEl.textContent = parts.join(' · ');
+  }
+}
+
+/** What the backfill is doing, in a few words ('' when there is nothing worth showing). */
+function backfillText(b: BackfillStats): string {
+  switch (b.state) {
+    case 'running': return `Adding your history and bookmarks to the index: ${b.done} of ${b.total}`;
+    case 'paused': return `Adding your history and bookmarks is paused at ${b.done} of ${b.total}`;
+    case 'done': return b.indexed > 0 ? `History and bookmarks indexed (${b.indexed} page${b.indexed === 1 ? '' : 's'} added)` : '';
+    case 'stopped':
+      if (b.reason === 'offline') return 'Adding your history stopped: the sites could not be reached. It continues next launch.';
+      if (b.reason === 'limit') return `${b.indexed} page${b.indexed === 1 ? '' : 's'} from your history added this session; the rest continues next launch`;
+      return '';
+    default: return '';
   }
 }
 

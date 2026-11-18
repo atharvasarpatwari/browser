@@ -157,6 +157,18 @@ describe('Omnibox — de-duplication', () => {
     expect(out[0]!.type).toBe('bookmark');
   });
 
+  it('a page both visited and indexed shows as its history row (removable), at the archive row\'s place', async () => {
+    const omnibox = new Omnibox({ canonicalDedupe: true });
+    const archiveRow = result({ type: 'archive', text: 'Quasar notes', url: 'https://a.test/q', score: 9, action: 'navigate' });
+    const other = result({ type: 'url', text: 'other', url: 'https://b.test/', score: 7, action: 'navigate' });
+    const historyRow = result({ type: 'history', text: 'Quasar notes', url: 'https://a.test/q', score: 5, action: 'navigate' });
+    omnibox.addProvider(provider(archiveRow));
+    omnibox.addProvider(provider(other));
+    omnibox.addProvider(provider(historyRow));
+    const out = await omnibox.onInputChanged('x');
+    expect(out.map((r) => r.type)).toEqual(['history', 'url']);
+  });
+
   it('only collapses navigable rows — searches that share a URL are untouched', async () => {
     const omnibox = new Omnibox({ canonicalDedupe: true });
     const s1 = result({ text: 'one', url: 'https://s.test/?q=a', score: 5 });
