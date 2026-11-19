@@ -327,6 +327,7 @@
 |------|-------------|
 | [analytics.html](analytics.html) | Interactive documentation analytics dashboard — clean editorial theme (light-first, flat high-contrast surfaces, Space Grotesk), 12 charts, cadence/streaks + recent sessions, searchable doc table, spec compliance gauges |
 | [2026-11-01-analytics-editorial-restyle.md](2026-11-01-analytics-editorial-restyle.md) | Change log: editorial restyle, Space Grotesk font, Cadence & Streaks + Recent Sessions |
+| [2026-11-18-analytics-visual-reframe.md](2026-11-18-analytics-visual-reframe.md) | Change log: visual reframe — editorial masthead + color-capped KPI cards |
 
 ## Project Tracker
 
