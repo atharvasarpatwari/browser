@@ -1511,6 +1511,7 @@ class LayoutEngine implements ILayoutEngine {
             fontFamily: ilBox.fontFamily ?? fontFamily,
             fontWeight: ilBox.fontWeight ?? fontWeight,
             color,
+            width: ilBox.box.width,
           });
         }
       }

@@ -83,6 +83,7 @@ import { RawSocketHttpClient } from '../browser/networking/raw-socket-http-clien
 import { NativeHttpClient } from '../browser/networking/native-http-client';
 import { ProxyAwareHttpClient, createProxyConfigFromEnv } from '../browser/networking/request-manager';
 import type { IHttpClient } from '../browser/networking/request-manager';
+import { CookieAwareHttpClient, CookieService, setActiveCookieService, setScriptCookieProvider } from '../browser/networking/cookie-service';
 import { TlsHandler } from '../browser/networking/tls-handler';
 import type { ITlsHandler } from '../browser/networking/tls-handler';
 import { isNativeAvailable } from '../native/index';
@@ -99,6 +100,7 @@ import type { ITrackerBlocker } from '../browser/security/tracker-blocker';
 import { AdBlocker } from '../browser/security/ad-blocker';
 import type { IAdBlocker } from '../browser/security/ad-blocker';
 import { ThirdPartySecurityManager, extractOrigin } from '../browser/security/third-party-security';
+import { PrivacyGate } from '../browser/security/privacy-gate';
 import type { IThirdPartySecurityManager } from '../browser/security/third-party-security';
 import { createCspEnforcement, type CspEnforcement } from '../browser/security/csp-enforcement';
 import { HtmlSanitizer } from '../browser/security/html-sanitizer';
@@ -177,6 +179,33 @@ import type { ITokenStore } from '../browser/auth/token-store';
  * Well-known DI tokens.  Using const symbols prevents accidental token collision
  * if two modules happen to use the same string key.
  */
+/** Native cookie bridge exposed by the Android shell (NovaCookieHandler.kt). */
+interface NativeCookieBridge {
+  getForScript(url: string): string;
+  setFromScript(url: string, cookie: string): void;
+}
+
+/**
+ * Cookies. On Android, native HttpURLConnection owns them (NovaCookieHandler) and
+ * document.cookie goes through the NovaCookies bridge; elsewhere the engine's jar
+ * does both, persisted to localStorage. Returns the engine service, or null on Android.
+ */
+function installCookies(): CookieService | null {
+  const win = typeof window !== 'undefined' ? (window as unknown as { NovaCookies?: NativeCookieBridge }) : undefined;
+  const bridge = win?.NovaCookies;
+  if (bridge) {
+    setScriptCookieProvider({ get: (u) => bridge.getForScript(u), set: (u, c) => bridge.setFromScript(u, c) });
+    return null;
+  }
+  let storage: Storage | undefined;
+  try { storage = typeof window !== 'undefined' ? window.localStorage : undefined; } catch { storage = undefined; }
+  const service = new CookieService(storage);
+  setActiveCookieService(service);
+  setScriptCookieProvider(service);
+  if (typeof window !== 'undefined') window.addEventListener?.('pagehide', () => service.flush());
+  return service;
+}
+
 const Tokens = Object.freeze({
   AppConfig: Symbol('AppConfig'),
   AppShell: Symbol('AppShell'),
@@ -197,6 +226,7 @@ const Tokens = Object.freeze({
   TrackerBlocker: Symbol('TrackerBlocker'),
   AdBlocker: Symbol('AdBlocker'),
   ThirdPartySecurityManager: Symbol('ThirdPartySecurityManager'),
+  PrivacyGate: Symbol('PrivacyGate'),
   SecurityLayer: Symbol('SecurityLayer'),
   CorsService: Symbol('CorsService'),
   DomTree: Symbol('DomTree'),
@@ -437,12 +467,19 @@ class ApplicationBootstrap {
       () => new TlsHandler({ useRealTls: true, verifyCertificates: true }),
       ServiceLifetime.Singleton,
     );
+    const cookieService = installCookies();
     c.register<IResourceLoader>(
       Tokens.ResourceLoader,
       (ctx) => {
+        // A bridged Electron renderer (contextIsolation: true) never exposes a bare
+        // `process` global (electron/preload.cjs), so `window.nova.ipc` is the
+        // reliable signal that the socket proxy is usable here.
+        const hasNovaIpcBridge =
+          typeof (globalThis as { nova?: { ipc?: unknown } }).nova?.ipc !== 'undefined';
         const isNode =
-          typeof process !== 'undefined' &&
-          typeof (process as { versions?: { node?: string } }).versions?.node === 'string';
+          hasNovaIpcBridge ||
+          (typeof process !== 'undefined' &&
+            typeof (process as { versions?: { node?: string } }).versions?.node === 'string');
         const tlsHandler = ctx.resolve<ITlsHandler>(Tokens.TlsHandler);
         const proxyConfig = createProxyConfigFromEnv();
         let client: IHttpClient | undefined;
@@ -455,6 +492,9 @@ class ApplicationBootstrap {
             ? new NativeHttpClient()
             : new RawSocketHttpClient({ tlsHandler });
         }
+        // Only where the engine owns the socket. Fetch-based transports (Android,
+        // plain browser) get cookies from the platform below the engine.
+        if (client && cookieService) client = new CookieAwareHttpClient(client, cookieService);
         const cache = ctx.resolve<ICacheManager>(Tokens.CacheManager);
         const loader = new ResourceLoader(
           client,
@@ -487,6 +527,11 @@ class ApplicationBootstrap {
     c.register<IPermissionManager>(
       Tokens.PermissionManager,
       () => new PermissionManager(),
+      ServiceLifetime.Singleton,
+    );
+    c.register<PrivacyGate>(
+      Tokens.PrivacyGate,
+      (ctx) => new PrivacyGate(ctx.resolve<IPermissionManager>(Tokens.PermissionManager)),
       ServiceLifetime.Singleton,
     );
     c.register<ITrackerBlocker>(
@@ -876,24 +921,38 @@ class ApplicationBootstrap {
     });
 
     // Plug the rendering pipeline as the page renderer
+    const domTree = this.container.resolve<IDomTree>(Tokens.DomTree);
     const pageRenderer = new PageRenderer({
       htmlParser: new HtmlParser(),
-      domTree: this.container.resolve<IDomTree>(Tokens.DomTree),
+      domTree,
       cssParser: this.container.resolve<ICssParser>(Tokens.CssParser),
       layoutEngine: this.container.resolve<ILayoutEngine>(Tokens.LayoutEngine),
       paintEngine: this.container.resolve<IPaintEngine>(Tokens.PaintEngine),
       resourceLoader,
       prioritizer: new ResourcePrioritizer(),
       controller: this.container.resolve<INavigationController>(Tokens.NavigationController),
-      sanitizer: new HtmlSanitizer(),
+      // Page scripts are kept: the sanitizer runs before executeAllScripts, and
+      // stripping them disabled page JavaScript entirely. Scripts still pass CSP,
+      // SRI and the interpreter's time limits; on* handlers etc. stay stripped.
+      sanitizer: new HtmlSanitizer({ keepScriptElements: true }),
       scriptEnforcer: cspEnforcement.scriptEnforcer,
       resourceEnforcer: cspEnforcement.resourceEnforcer,
       policyStore: cspEnforcement.policyStore,
       corsEngine: this.container.resolve<ICorsService>(Tokens.CorsService),
       securityLayer,
       onFrameRendered: () => engine.notifyPageRepainted(),
+      onDocumentReady: (url, doc) => page.onPageDocumentReady(url, doc),
     });
     engine.setPageRenderer(pageRenderer);
+
+    // Android: lay pages out at the phone's size and density (see PageRenderer.setViewport);
+    // desktop keeps the 1920-wide layout scaled into the window.
+    if (isNativeHostPresent()) {
+      const fitViewport = (): void => pageRenderer.setViewport(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1);
+      fitViewport();
+      window.addEventListener('resize', fitViewport);
+    }
+    page.setPageDocumentProvider(() => domTree.getDocument());
 
     this.log('Browser UI mounted');
 

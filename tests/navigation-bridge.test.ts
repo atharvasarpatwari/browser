@@ -4,6 +4,7 @@ import {
   NavigationBridgeEventBus,
   DEFAULT_BRIDGE_CONFIG,
 } from '../src/ui/components/navigation-bridge';
+import { SearchEngineManager } from '../src/browser/omnibox/search-engine';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MOCK EVENT EMITTER
@@ -299,7 +300,7 @@ function createMockStatusBar() {
 // BRIDGE BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildBridge() {
+function buildBridge(config?: Partial<import('../src/ui/components/navigation-bridge').NavigationBridgeConfig>) {
   const nav = createMockNavController();
   const tabMgr = createMockTabManager();
   const addressBar = createMockAddressBar();
@@ -315,6 +316,7 @@ function buildBridge() {
     addressBar as any,
     toolbar as any,
     statusBar as any,
+    config,
   );
 
   return { bridge, nav, tabMgr, addressBar, toolbar, statusBar, tab };
@@ -390,12 +392,54 @@ describe('NavigationBridge', () => {
       expect(nav.reload).toHaveBeenCalledTimes(1);
     });
 
+    it('reload() leaves the tab loading until the controller completes, then clears it', () => {
+      const { bridge, nav, tabMgr } = buildBridge();
+      nav.navState.currentEntry = makeEntry('https://example.com');
+      bridge.reload();
+      expect(tabMgr.activeTab.loading).toBe(true);
+      nav.bus.emit('navigationCompleted', { kind: 'navigationCompleted', entry: makeEntry('https://example.com'), elapsedMs: 5 });
+      expect(tabMgr.activeTab.loading).toBe(false); // was stuck true: only navigate() cleared it
+    });
+
+    it('a failed or stopped reload clears the tab loading flag too', () => {
+      const { bridge, nav, tabMgr } = buildBridge();
+      nav.navState.currentEntry = makeEntry('https://example.com');
+      bridge.reload();
+      nav.bus.emit('navigationFailed', { kind: 'navigationFailed', request: { url: 'https://example.com' }, error: new Error('x') });
+      expect(tabMgr.activeTab.loading).toBe(false);
+      bridge.reload();
+      nav.bus.emit('navigationStopped', { kind: 'navigationStopped' });
+      expect(tabMgr.activeTab.loading).toBe(false);
+    });
+
     it('stop() should call navController.stop()', () => {
       const { bridge, nav } = buildBridge();
 
       bridge.stop();
 
       expect(nav.stop).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── 2b. Search engine resolution ─────────────────────────────────────────
+
+  describe('Search engine resolution', () => {
+    it('falls back to config.searchEngineUrl when no searchEngineManager is configured', async () => {
+      const { bridge, nav } = buildBridge();
+
+      await bridge.navigate('nonexistent query');
+
+      expect(nav.navState.lastNavigateUrl).toBe(DEFAULT_BRIDGE_CONFIG.searchEngineUrl.replace('%s', encodeURIComponent('nonexistent query')));
+    });
+
+    it('uses the searchEngineManager default engine URL when configured', async () => {
+      const searchEngineManager = new SearchEngineManager();
+      searchEngineManager.setDefaultEngine(searchEngineManager.getEngines().find(e => e.name === 'Google')!.id);
+      const { bridge, nav } = buildBridge({ searchEngineManager });
+
+      await bridge.navigate('nonexistent query');
+
+      expect(nav.navState.lastNavigateUrl).toBe('https://www.google.com/search?q=nonexistent%20query');
     });
   });
 

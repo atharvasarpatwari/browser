@@ -190,9 +190,9 @@ class DesktopLayout implements IDesktopLayout {
     this._titleBar = this.createChildSection('nova-titlebar', chrome);
     this.buildTitleBar(this._titleBar);
 
-    this._tabBar = this.createChildSection('nova-tabbar', chrome);
+    this._tabBar = this.createChildSection('nova-tabbar tab-strip', chrome);
 
-    this._toolbar = this.createChildSection('nova-navbar', chrome);
+    this._toolbar = this.createChildSection('nova-navbar toolbar', chrome);
 
     if (this.config.showBookmarkBar) {
       this._bookmarkBar = this.createChildSection('nova-bookbar', chrome);

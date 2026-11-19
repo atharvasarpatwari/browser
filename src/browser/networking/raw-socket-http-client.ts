@@ -346,6 +346,9 @@ class RawSocketHttpClient implements IHttpClient {
 
     // Parse headers
     const headers = new Map<string, string>();
+    // Set-Cookie can't be comma-joined (Expires dates contain commas), and a Map
+    // keeps only the last value, so every line is also collected separately.
+    const setCookies: string[] = [];
     for (let i = 1; i < headerLines.length; i++) {
       const line = headerLines[i]!;
       const colonIdx = line.indexOf(':');
@@ -353,6 +356,7 @@ class RawSocketHttpClient implements IHttpClient {
         const key = line.substring(0, colonIdx).trim().toLowerCase();
         const value = line.substring(colonIdx + 1).trim();
         headers.set(key, value);
+        if (key === 'set-cookie') setCookies.push(value);
       }
     }
 
@@ -402,6 +406,7 @@ class RawSocketHttpClient implements IHttpClient {
       statusCode,
       statusText: RawSocketHttpClient.statusText(statusCode),
       headers,
+      setCookies,
       body,
       bodyBinary,
       redirected: false,

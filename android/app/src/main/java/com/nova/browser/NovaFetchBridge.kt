@@ -10,6 +10,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
@@ -33,16 +34,19 @@ import java.util.zip.InflaterInputStream
  */
 class NovaFetchBridge(private val webView: WebView, private val downloader: NativeDownloader) {
 
-    private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    // Engine requests run in parallel: one thread serialized every image/script/style and
+    // let a single slow response (up to its 45s timeout) stall the whole page and new navigations.
+    // ponytail: fixed pool of 8, no per-host cap; HttpURLConnection keep-alive still pools per host.
+    private val executor: ExecutorService = Executors.newFixedThreadPool(8)
     private val active = ConcurrentHashMap<String, HttpURLConnection>()
 
     @JavascriptInterface
-    fun fetch(id: String, method: String, url: String, headersJson: String, redirectMode: String, body: String?) {
+    fun fetch(id: String, method: String, url: String, headersJson: String, redirectMode: String, bodyBase64: String?) {
         Log.i(TAG, "fetch[$id] $method $url redirect=$redirectMode")
         executor.execute {
             val connection = try {
                 (URL(url).openConnection() as HttpURLConnection).apply {
-                    requestMethod = method.uppercase()
+                    setMethod(this, method.uppercase())
                     connectTimeout = 30_000
                     readTimeout = 45_000
                     instanceFollowRedirects = redirectMode != "manual"
@@ -53,7 +57,7 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
                         setRequestProperty(key, headers.getString(key))
                     }
                     setRequestProperty("Accept-Encoding", "identity")
-                    if (!body.isNullOrEmpty() && requestMethod != "GET" && requestMethod != "HEAD") {
+                    if (!bodyBase64.isNullOrEmpty() && requestMethod != "GET" && requestMethod != "HEAD") {
                         doOutput = true
                     }
                 }
@@ -65,8 +69,9 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
             active[id] = connection
             var handedOff = false
             try {
-                if (connection.doOutput && !body.isNullOrEmpty()) {
-                    connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+                if (connection.doOutput && !bodyBase64.isNullOrEmpty()) {
+                    // Bytes exactly as the page's fetch() serialized them (nova-bridge.js).
+                    connection.outputStream.use { it.write(Base64.decode(bodyBase64, Base64.NO_WRAP)) }
                 }
 
                 val code = connection.responseCode
@@ -129,8 +134,16 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
                     headers.remove("Content-Length")
                 }
 
-                val isBinary = contentType.startsWith("image/") || contentType.startsWith("font/") ||
-                    contentType.startsWith("audio/") || contentType.startsWith("video/")
+                val textCharset = textCharsetFor(contentType)
+                if (textCharset != null && textCharset != StandardCharsets.UTF_8 && contentType.isNotEmpty()) {
+                    // The body below is decoded to a JS string; say so, so the engine never re-decodes it.
+                    // Header names keep the server's casing; drop it case-insensitively so JS Headers
+                    // doesn't merge two Content-Type values.
+                    headers.keys().asSequence().toList()
+                        .filter { it.equals("Content-Type", ignoreCase = true) }
+                        .forEach { headers.remove(it) }
+                    headers.put("Content-Type", contentType.substringBefore(';').trim() + "; charset=utf-8")
+                }
 
                 val result = JSONObject()
                 result.put("status", code)
@@ -138,13 +151,13 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
                 result.put("headers", headers)
                 result.put("finalUrl", connection.url.toString())
                 if (bytes.isNotEmpty()) {
-                    if (isBinary) {
+                    if (textCharset == null) {
                         result.put("bodyBase64", Base64.encodeToString(bytes, Base64.NO_WRAP))
                     } else {
-                        result.put("bodyText", String(bytes, StandardCharsets.UTF_8))
+                        result.put("bodyText", String(bytes, textCharset))
                     }
                 }
-                Log.i(TAG, "result[$id] status=$code bytes=${bytes.size} binary=$isBinary finalUrl=${connection.url}")
+                Log.i(TAG, "result[$id] status=$code bytes=${bytes.size} binary=${textCharset == null} finalUrl=${connection.url}")
                 postResult(id, result)
             } catch (e: Exception) {
                 Log.e(TAG, "error[$id] ${e.toString()}")
@@ -186,6 +199,19 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
 
     private companion object {
         const val TAG = "NovaBridge"
+
+        /**
+         * HttpURLConnection.setRequestMethod() rejects PATCH (ProtocolException), which
+         * broke every PATCH from web apps. Android's OkHttp-backed implementation reads
+         * the protected `method` field directly, so set it there when the setter refuses.
+         */
+        fun setMethod(connection: HttpURLConnection, method: String) {
+            try {
+                connection.requestMethod = method
+            } catch (e: java.net.ProtocolException) {
+                HttpURLConnection::class.java.getDeclaredField("method").apply { isAccessible = true }.set(connection, method)
+            }
+        }
     }
 
     private fun postResult(id: String, payload: JSONObject) {
@@ -205,4 +231,18 @@ class NovaFetchBridge(private val webView: WebView, private val downloader: Nati
         }
         return buffer.toByteArray()
     }
+}
+
+/**
+ * Charset to decode a response body to a JS string with, or null to pass it as raw
+ * bytes. Only text-like types are decoded (so wasm, pdf, zip, octet-stream etc. keep
+ * their exact bytes), using the declared charset rather than always UTF-8.
+ */
+internal fun textCharsetFor(contentType: String): Charset? {
+    val type = contentType.substringBefore(';').trim().lowercase()
+    val textLike = type.isEmpty() || type.startsWith("text/") ||
+        (!type.startsWith("image/") && listOf("json", "javascript", "ecmascript", "xml").any { it in type })
+    if (!textLike) return null
+    val declared = Regex("charset\\s*=\\s*\"?([^\";\\s]+)", RegexOption.IGNORE_CASE).find(contentType)?.groupValues?.get(1)
+    return declared?.let { runCatching { Charset.forName(it) }.getOrNull() } ?: StandardCharsets.UTF_8
 }

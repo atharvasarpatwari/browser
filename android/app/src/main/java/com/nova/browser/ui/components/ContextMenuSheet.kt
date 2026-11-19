@@ -9,7 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,7 +57,7 @@ fun ContextMenuSheet(
 
                 MenuItem(
                     text = "Open in new tab",
-                    icon = { Icon(Icons.Filled.OpenInNew, contentDescription = null) },
+                    icon = { Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null) },
                     onClick = { onOpenInNewTab(linkUrl) }
                 )
                 MenuItem(

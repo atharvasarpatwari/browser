@@ -48,13 +48,13 @@ class PageLoader implements IPageLoader, IDisposable {
    * @param signal AbortSignal for cancellation.
    * @returns      The loaded page content.
    */
-  async load(url: string, signal: AbortSignal): Promise<PageLoadResult> {
+  async load(url: string, signal: AbortSignal, options?: { readonly bypassCache?: boolean }): Promise<PageLoadResult> {
     if (this.disposed) {
       throw new Error('PageLoader has been disposed');
     }
 
     try {
-      const result = await this.resourceLoader.loadResource(url, 'document', { signal });
+      const result = await this.resourceLoader.loadResource(url, 'document', { signal, bypassCache: options?.bypassCache });
       return this.mapResult(result);
     } catch (err) {
       // Re-throw abort errors as-is.

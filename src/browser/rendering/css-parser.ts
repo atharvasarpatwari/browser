@@ -15,7 +15,7 @@ import { matchesSelector, querySelector as css5QuerySelector, querySelectorAll a
 import type { SelectableElement } from './css5/selector';
 import { computeComputedStyles, expandShorthands } from './css5/cascade';
 import type { StyleableElement } from './css5/cascade';
-import type { CssStylesheet as Css5Stylesheet, CssRule as Css5Rule, CssSelector, CssSpecificity as Css5Specificity, CssCompoundSelector } from './css5/types';
+import type { CssStylesheet as Css5Stylesheet, CssRule as Css5Rule, CssSelector, CssSpecificity as Css5Specificity, CssCompoundSelector, CssMediaQuery } from './css5/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LEGACY INTERFACES (backward compatible)
@@ -33,6 +33,11 @@ interface CssRule {
    * CSS-driven animations resolve their keyframes at runtime.
    */
   readonly keyframes?: { readonly name: string; readonly frames: readonly CssKeyframeDecl[] };
+  /**
+   * The @media query lists this rule sits inside, outermost first (all must match).
+   * Without it the legacy pipe dropped every @media block, so responsive styles never applied.
+   */
+  readonly media?: readonly (readonly CssMediaQuery[])[];
 }
 
 interface CssKeyframeDecl {
@@ -203,7 +208,15 @@ class CssParser implements ICssParser {
   // PRIVATE HELPERS
   // ─────────────────────────────────────────────────────────────────────────
 
-  private convertRule(rule: Css5Rule, order: number, sourceUrl: string | null): CssRule[] {
+  private convertRule(
+    rule: Css5Rule,
+    order: number,
+    sourceUrl: string | null,
+    media: readonly (readonly CssMediaQuery[])[] = [],
+  ): CssRule[] {
+    if (rule.type === 'media') {
+      return rule.rules.flatMap((inner) => this.convertRule(inner, order, sourceUrl, [...media, rule.mediaQueries]));
+    }
     if (rule.type === 'keyframes') {
       return [{
         selector: '',
@@ -235,6 +248,7 @@ class CssParser implements ICssParser {
         declarations: declMap,
         source: 'style-tag' as const,
         sourceUrl: rule.sourceUrl ?? sourceUrl,
+        ...(media.length > 0 ? { media } : {}),
       };
     });
   }

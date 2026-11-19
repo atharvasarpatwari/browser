@@ -51,7 +51,7 @@ import { PaintEngine } from '../rendering/paint-engine';
 import { ResourcePrioritizer } from '../networking/resource-prioritizer';
 import { computeComputedStyles, collectKeyframes, evaluatePrefersReducedMotion } from '../rendering/css5/cascade';
 import { buildUsedStyle } from '../rendering/css5/used-style';
-import { runJS } from '../js/index';
+import { runJS, createGlobalEnv } from '../js/index';
 import { EventLoop as JsEventLoop } from '../js/event-loop';
 import { HtmlSanitizer } from '../security/html-sanitizer';
 import type { CspScriptEnforcer } from '../security/csp-script-enforcer';
@@ -94,14 +94,22 @@ interface PageRendererDependencies {
   readonly storageDir?: string;
   /** Optional callback invoked after each reflow/repaint frame (page repaint). */
   readonly onFrameRendered?: () => void;
+  /** Optional callback invoked once per page load, after the document is parsed, scripted, laid out and painted. */
+  readonly onDocumentReady?: (url: string, doc: DomDocument) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONCRETE IMPLEMENTATION
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Total time all of a page's scripts may take before the rest are skipped. */
+const PAGE_SCRIPT_BUDGET_MS = 3000;
+
 class PageRenderer implements IPageRenderer, IDisposable {
   private readonly deps: PageRendererDependencies;
+  /** Layout viewport in CSS px. Desktop keeps the 1920×1080 default; the Android shell sets the phone's size. */
+  private viewport = { width: 1920, height: 1080 };
+  private lastDocument: DomDocument | null = null;
   private disposed = false;
   private reflowController: ReflowRepaintController | null = null;
   private transitionEngine: CssTransitionEngine | null = null;
@@ -109,6 +117,36 @@ class PageRenderer implements IPageRenderer, IDisposable {
   constructor(deps: PageRendererDependencies) {
     this.deps = deps;
   }
+
+  /**
+   * Lays pages out at `width`×`height` CSS px and paints them at `devicePixelRatio`, so a
+   * phone gets a phone-width page (readable text, its own @media rules) drawn at native
+   * resolution instead of a 1920-wide desktop page shrunk to fit. Re-lays out the current
+   * page when the size changes.
+   */
+  setViewport(width: number, height: number, devicePixelRatio = 1): void {
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    if (w === this.viewport.width && h === this.viewport.height && devicePixelRatio === this.dpr) return;
+    this.viewport = { width: w, height: h };
+    this.dpr = devicePixelRatio;
+    this.deps.layoutEngine.updateConfig({ viewportWidth: w, viewportHeight: h });
+    this.deps.paintEngine.updateConfig({ width: w, height: h, devicePixelRatio });
+    const doc = this.lastDocument;
+    if (!doc || this.disposed) return;
+    this.applyComputedStyles(this._lastRules);
+    this.deps.layoutEngine.layout(doc, this.deps.domTree);
+    this.deps.paintEngine.paint(doc);
+    this.deps.domTree.clearMutations();
+    this.initReflowController(doc);
+    this.deps.onFrameRendered?.();
+  }
+
+  getViewport(): { width: number; height: number } {
+    return { ...this.viewport };
+  }
+
+  private dpr = 1;
 
   /**
    * Parses and renders a fetched document into the visible view.
@@ -155,6 +193,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // 3. Convert the parsed HTML into our internal DOM tree representation
     const doc = domTree.buildFromHtml(htmlDoc);
+    this.lastDocument = doc;
 
     // 3b. Sanitize DOM tree — strip dangerous elements and attributes
     if (this.deps.sanitizer) {
@@ -166,9 +205,16 @@ class PageRenderer implements IPageRenderer, IDisposable {
     this._lastRules = rules;
     this.applyComputedStyles(rules);
 
-    // 5. Execute scripts: inline synchronously, external fetched via ResourceLoader
-    await this.executeAllScripts(doc, result.url, signal);
-    this.applyComputedStyles(rules); // Re-apply after script execution
+    // 5. Execute scripts: inline synchronously, external fetched via ResourceLoader.
+    //    Paint the script-free page first, so a slow script never delays seeing it;
+    //    the full layout+paint below then picks up whatever the scripts changed.
+    if (domTree.getElementsByTagName('script').length > 0) {
+      layoutEngine.layout(doc, domTree);
+      paintEngine.paint(doc);
+      this.deps.onFrameRendered?.();
+      await this.executeAllScripts(doc, result.url, signal);
+      this.applyComputedStyles(rules); // Re-apply after script execution
+    }
 
     // 6. Run layout
     layoutEngine.layout(doc, domTree);
@@ -184,19 +230,19 @@ class PageRenderer implements IPageRenderer, IDisposable {
       this.reflowController?.requestFrame();
     });
     lazyLoader.scanForLazyElements(doc);
-    lazyLoader.setViewport(1920, 1080); // Default viewport
+    lazyLoader.setViewport(this.viewport.width, this.viewport.height);
 
     // 8. Paint
     paintEngine.paint(doc);
 
-    // 9. Clear mutations recorded during the initial full style pass. They are
+    // 8. Clear mutations recorded during the initial full style pass. They are
     //    stale (already reflected in the laid-out, painted tree) and would
     //    otherwise make the first incremental frame re-layout the whole tree,
     //    wiping paint-dirty flags set by async loads (e.g. decoded images)
     //    before paintIncremental could re-rasterize them.
     domTree.clearMutations();
 
-    // 10. Render iframe child documents. Each iframe's src is fetched and
+    // 9. Render iframe child documents. Each iframe's src is fetched and
     //     rasterized through a fresh sub-pipeline into el.imageData so the
     //     parent paint pass composites the embedded page.
     const iframeCount = await this.renderIframeChildren(doc, result.url);
@@ -207,9 +253,16 @@ class PageRenderer implements IPageRenderer, IDisposable {
       domTree.clearMutations();
     }
 
-    // 11. Wire the incremental reflow/repaint controller for post-load DOM
+    // 10. Wire the incremental reflow/repaint controller for post-load DOM
     //     mutations (JS-triggered changes, scroll/scroll-triggered relayout).
     this.initReflowController(doc);
+
+    // 12. Tell interested parties (e.g. the personal search archive) the document is ready.
+    try {
+      this.deps.onDocumentReady?.(result.url, doc);
+    } catch {
+      // An observer must never break page rendering.
+    }
   }
 
   /**
@@ -222,8 +275,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     this.reflowController?.dispose();
     const controller = new ReflowRepaintController(layoutEngine, paintEngine, domTree, {
-      viewportWidth: 1920,
-      viewportHeight: 1080,
+      viewportWidth: this.viewport.width,
+      viewportHeight: this.viewport.height,
     });
     controller.init(doc);
     // Incremental style recalc resolves _dirtyStyle nodes before layout.
@@ -286,8 +339,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
 
     // Determine container dimensions for percentage-based used-style resolution.
     const bodyEl = doc.bodyElement;
-    const containerWidth = bodyEl?.layoutBox?.width ?? 1920;
-    const containerHeight = bodyEl?.layoutBox?.height ?? 1080;
+    const containerWidth = bodyEl?.layoutBox?.width ?? this.viewport.width;
+    const containerHeight = bodyEl?.layoutBox?.height ?? this.viewport.height;
 
     // Pass 1: Build StyleableElement tree mirroring the DOM tree.
     const rootStyleables = this.buildStyleableTree(doc.children, null);
@@ -306,8 +359,8 @@ class PageRenderer implements IPageRenderer, IDisposable {
     if (!doc) return;
 
     const bodyEl = doc.bodyElement;
-    const containerWidth = bodyEl?.layoutBox?.width ?? 1920;
-    const containerHeight = bodyEl?.layoutBox?.height ?? 1080;
+    const containerWidth = bodyEl?.layoutBox?.width ?? this.viewport.width;
+    const containerHeight = bodyEl?.layoutBox?.height ?? this.viewport.height;
 
     const dirtyNodes = this.collectDirtyNodes(doc);
     if (dirtyNodes.length === 0) return;
@@ -326,7 +379,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       const computed = computeComputedStyles(
         styleable,
         stylesheet,
-        undefined,
+        this.viewport,
         parentComputed,
       );
       domTree.setComputedStyle(el, computed);
@@ -411,7 +464,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
     baseUrl: string,
     signal: AbortSignal,
   ): Promise<void> {
-    const { domTree, resourceLoader } = this.deps;
+    const { domTree, resourceLoader, scriptEnforcer } = this.deps;
     const scripts = domTree.getElementsByTagName('script');
     if (scripts.length === 0) return;
 
@@ -419,10 +472,18 @@ class PageRenderer implements IPageRenderer, IDisposable {
     const origin = parseOrigin(baseUrl);
 
     const eventLoop = new JsEventLoop();
+    // One global environment per page: what one script defines (e.g. a library)
+    // must be visible to the scripts after it, as in a browser.
+    const env = createGlobalEnv(
+      doc, domTree, eventLoop, this.deps.controller, undefined,
+      this.deps.resourceEnforcer, scriptEnforcer, origin, this.deps.htmlParser,
+      this.deps.storageDir, this.deps.corsEngine,
+    );
 
-    const blockingScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
-    const deferScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
-    const asyncScripts: Array<{ source: string; el: typeof scripts[0] }> = [];
+    type Entry = { source: string; inline: boolean; nonce?: string };
+    const blockingScripts: Entry[] = [];
+    const deferScripts: Entry[] = [];
+    const asyncScripts: Entry[] = [];
 
     // Categorize scripts
     for (const script of scripts) {
@@ -448,6 +509,15 @@ class PageRenderer implements IPageRenderer, IDisposable {
           }
         }
 
+        // CSP script-src for an external script is decided by its URL (not as inline code).
+        if (scriptEnforcer) {
+          const check = scriptEnforcer.checkExternalScript(fullUrl, origin, baseUrl);
+          if (!check.allowed) {
+            console.warn(`[CSP] Blocked external script: ${fullUrl} (${check.reason})`);
+            continue;
+          }
+        }
+
         try {
           const source = await resourceLoader.loadScript(fullUrl);
 
@@ -464,12 +534,13 @@ class PageRenderer implements IPageRenderer, IDisposable {
             }
           }
 
+          const entry: Entry = { source, inline: false };
           if (isAsync) {
-            asyncScripts.push({ source, el: script });
+            asyncScripts.push(entry);
           } else if (isDefer) {
-            deferScripts.push({ source, el: script });
+            deferScripts.push(entry);
           } else {
-            blockingScripts.push({ source, el: script });
+            blockingScripts.push(entry);
           }
         } catch (err) {
           console.error(
@@ -489,59 +560,36 @@ class PageRenderer implements IPageRenderer, IDisposable {
         if (source === '') continue;
 
         // Inline scripts without defer/async are blocking by default
-        blockingScripts.push({ source, el: script });
+        blockingScripts.push({ source, inline: true, nonce: script.attributes.get('nonce') ?? undefined });
       }
     }
 
-    // 1. Execute blocking scripts in document order
-    for (const { source } of blockingScripts) {
-      if (signal.aborted) break;
-      if (this.deps.scriptEnforcer) {
-        const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
+    // ponytail: one total budget per page (each script is also capped at 5 s by the
+    // interpreter); scripts past it are skipped. Upgrade path: yield and resume later.
+    const deadline = Date.now() + PAGE_SCRIPT_BUDGET_MS;
+    let skipped = 0;
+    const run = (entry: Entry, kind: string): void => {
+      if (Date.now() > deadline) { skipped++; return; }
+      if (entry.inline && scriptEnforcer) {
+        const check = scriptEnforcer.checkInlineScript(entry.source, origin, baseUrl, entry.nonce);
         if (!check.allowed) {
-          console.warn(`[CSP] Blocked inline script: ${check.reason}`);
-          continue;
+          console.warn(`[CSP] Blocked ${kind} script: ${check.reason}`);
+          return;
         }
       }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: origin, corsEngine: this.deps.corsEngine, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
-      if (result2.error) {
-        console.error(
-          `[ScriptEngine] Error executing blocking script: ${result2.error.message}`,
-        );
+      const result = runJS(entry.source, { document: doc, domTree, eventLoop, globalEnv: env, htmlParser: this.deps.htmlParser });
+      if (result.error) {
+        console.error(`[ScriptEngine] Error executing ${kind} script: ${result.error.message}`);
       }
-    }
+    };
 
-    // 2. Execute defer scripts in document order (after DOM is parsed)
-    for (const { source } of deferScripts) {
-      if (signal.aborted) break;
-      if (this.deps.scriptEnforcer) {
-        const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
-        if (!check.allowed) {
-          console.warn(`[CSP] Blocked defer script: ${check.reason}`);
-          continue;
-        }
-      }
-      const result2 = runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: origin, corsEngine: this.deps.corsEngine, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
-      if (result2.error) {
-        console.error(
-          `[ScriptEngine] Error executing defer script: ${result2.error.message}`,
-        );
-      }
-    }
-
-    // 3. Fire async scripts (best-effort — they may already be downloaded)
-    for (const { source, el } of asyncScripts) {
-      if (this.deps.scriptEnforcer) {
-        const check = this.deps.scriptEnforcer.checkInlineScript(source, origin, baseUrl);
-        if (!check.allowed) {
-          console.warn(`[CSP] Blocked async script: ${check.reason}`);
-          void el;
-          continue;
-        }
-      }
-      // Fire and forget — async scripts don't block rendering
-      runJS(source, { document: doc, domTree, eventLoop, controller: this.deps.controller, resourceEnforcer: this.deps.resourceEnforcer, scriptEnforcer: this.deps.scriptEnforcer, pageOrigin: origin, corsEngine: this.deps.corsEngine, htmlParser: this.deps.htmlParser, storageDir: this.deps.storageDir });
-      void el; // used only for categorization
+    // 1. Blocking scripts in document order, 2. defer scripts (after the DOM is
+    //    parsed), 3. async scripts (best-effort: already downloaded by now).
+    for (const entry of blockingScripts) { if (signal.aborted) return; run(entry, 'blocking'); }
+    for (const entry of deferScripts) { if (signal.aborted) return; run(entry, 'defer'); }
+    for (const entry of asyncScripts) { if (signal.aborted) return; run(entry, 'async'); }
+    if (skipped > 0) {
+      console.warn(`[ScriptEngine] Page script budget (${PAGE_SCRIPT_BUDGET_MS} ms) used up; skipped ${skipped} script(s) on ${baseUrl}`);
     }
   }
 
@@ -604,7 +652,12 @@ class PageRenderer implements IPageRenderer, IDisposable {
         sourceOrder: order++,
         sourceUrl: rule.sourceUrl,
       };
-      css5Rules.push(styleRule);
+      // Re-wrap @media rules so the cascade evaluates them against the viewport.
+      let wrapped: Css5Rule = styleRule;
+      for (const mediaQueries of [...(rule.media ?? [])].reverse()) {
+        wrapped = { type: 'media', mediaQueries, rules: [wrapped] };
+      }
+      css5Rules.push(wrapped);
     }
 
     return { rules: css5Rules, url: null };
@@ -668,7 +721,7 @@ class PageRenderer implements IPageRenderer, IDisposable {
       const computed = computeComputedStyles(
         styleable,
         stylesheet,
-        undefined,
+        this.viewport,
         parentComputed ?? undefined,
       );
       domTree.setComputedStyle(el, computed);

@@ -108,6 +108,8 @@ interface HttpResponseSpec {
   readonly redirected: boolean;
   /** Every URL visited before reaching the final one, in order. */
   readonly redirectChain: readonly string[];
+  /** Every Set-Cookie value, one per header line (the headers Map keeps only one). */
+  readonly setCookies?: readonly string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

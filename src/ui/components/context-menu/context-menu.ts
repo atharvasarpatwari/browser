@@ -17,6 +17,9 @@ interface IContextMenu extends IDisposable {
 class ContextMenu implements IContextMenu {
   private menuEl: HTMLElement | null = null;
   private _isVisible = false;
+  /** Closes the menu on an outside click, an outside right-click or Escape. Registered while the menu is up, removed by hide(). */
+  private dismiss: ((e: Event) => void) | null = null;
+  private armTimer: ReturnType<typeof setTimeout> | null = null;
 
   get isVisible(): boolean { return this._isVisible; }
 
@@ -85,20 +88,36 @@ class ContextMenu implements IContextMenu {
 
     this.positionMenu(x, y);
 
-    const closeHandler = (e: Event) => {
-      if (this.menuEl && !this.menuEl.contains(e.target as Node)) {
+    // Armed one tick later: the event that opened the menu is still bubbling to the document and would close it at once.
+    // hide() removes the listeners again, whichever way the menu closed — a listener left behind by an earlier menu
+    // used to close the next one in the very event that opened it (right-click, choose an item, right-click again).
+    const dismiss = (e: Event): void => {
+      if (e.type === 'keydown') {
+        if ((e as KeyboardEvent).key === 'Escape') this.hide();
+      } else if (this.menuEl && !this.menuEl.contains(e.target as Node)) {
         this.hide();
-        document.removeEventListener('mousedown', closeHandler);
-        document.removeEventListener('contextmenu', closeHandler);
       }
     };
-    setTimeout(() => {
-      document.addEventListener('mousedown', closeHandler);
-      document.addEventListener('contextmenu', closeHandler);
+    this.dismiss = dismiss;
+    this.armTimer = setTimeout(() => {
+      this.armTimer = null;
+      document.addEventListener('mousedown', dismiss);
+      document.addEventListener('contextmenu', dismiss);
+      document.addEventListener('keydown', dismiss);
     }, 0);
   }
 
   hide(): void {
+    if (this.armTimer) {
+      clearTimeout(this.armTimer);
+      this.armTimer = null;
+    }
+    if (this.dismiss) {
+      document.removeEventListener('mousedown', this.dismiss);
+      document.removeEventListener('contextmenu', this.dismiss);
+      document.removeEventListener('keydown', this.dismiss);
+      this.dismiss = null;
+    }
     if (this.menuEl) {
       this.menuEl.remove();
       this.menuEl = null;

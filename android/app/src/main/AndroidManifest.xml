@@ -8,6 +8,10 @@
          (granted at runtime by BrowserScreen's RequestPermission launcher). -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Chromium's AudioManagerAndroid refuses to open any input device without this
+         one as well: "Requires MODIFY_AUDIO_SETTINGS and RECORD_AUDIO. No audio device
+         will be available for recording" -> getUserMedia({audio}) fails NotReadableError. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 

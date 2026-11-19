@@ -1,8 +1,8 @@
 package com.nova.browser
 
 import android.content.ComponentCallbacks2
+import android.content.Intent
 import android.os.Bundle
-import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -28,14 +28,28 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // WebView remote debugging: Android enables it automatically for debuggable
+        // (debug) builds only, which is what android:smoke-test relies on.
 
-        WebView.setWebContentsDebuggingEnabled(true)
+        if (savedInstanceState == null) openLinkFrom(intent)
 
         setContent {
             NovaBrowserTheme {
                 BrowserScreen(viewModel = viewModel)
             }
         }
+    }
+
+    /** singleTask: links tapped in other apps while Nova is running arrive here. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openLinkFrom(intent)
+    }
+
+    private fun openLinkFrom(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val url = intent.dataString ?: return
+        if (isWebLink(url)) viewModel.openExternalLink(url)
     }
 
     override fun onPause() {
@@ -60,3 +74,7 @@ class MainActivity : ComponentActivity() {
         viewModel.releaseWebView()
     }
 }
+
+/** Only http(s) links from other apps are opened; explicit intents can carry any scheme. */
+internal fun isWebLink(url: String): Boolean =
+    url.substringBefore(':', "").lowercase() in setOf("http", "https")

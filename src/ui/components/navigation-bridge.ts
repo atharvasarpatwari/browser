@@ -38,6 +38,7 @@ import type { ITabSession } from '../../browser/tabs/tab-session';
 import type { IAddressBar, AddressBarEventUnion } from './address-bar/address-bar';
 import type { IToolbar, ToolbarEventUnion } from './toolbar/toolbar';
 import type { IStatusBar } from './status-bar/status-bar';
+import type { ISearchEngineManager } from '../../browser/omnibox/search-engine';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -98,8 +99,10 @@ type BridgeEventUnion =
   | HistoryChangedEvent;
 
 interface NavigationBridgeConfig {
-  /** Default search engine URL. Must contain %s placeholder. */
+  /** Default search engine URL. Must contain %s placeholder. Used only when searchEngineManager is absent. */
   readonly searchEngineUrl: string;
+  /** Shared search-engine manager; when present, its default engine's URL wins over searchEngineUrl. */
+  readonly searchEngineManager?: ISearchEngineManager | null;
   /** Whether to show loading state in the address bar. */
   readonly showLoadingInAddressBar: boolean;
   /** Whether to update status bar protocol/security on navigation. */
@@ -265,6 +268,10 @@ class NavigationBridge implements INavigationBridge {
           this._setLoading(false);
           this.addressBar.setLoading(false);
           this.toolbar.setLoading(false);
+          // reload() (and other non-navigate() routes) set the tab loading too; only
+          // navigate()'s own result path used to clear it, so after a reload the tab
+          // (and the Android chrome, which reads it) stayed "loading" forever.
+          this.tabs.activeTab?.setLoading(false);
           this._syncToolbarState();
           this.bus.emit({ kind: 'navigationCompleted', url: e.entry.url, elapsedMs: e.elapsedMs });
           break;
@@ -283,6 +290,7 @@ class NavigationBridge implements INavigationBridge {
           this._setLoading(false);
           this.addressBar.setLoading(false);
           this.toolbar.setLoading(false);
+          this.tabs.activeTab?.setLoading(false);
           this.bus.emit({ kind: 'navigationFailed', url: e.request.url, error: e.error });
           break;
 
@@ -290,6 +298,7 @@ class NavigationBridge implements INavigationBridge {
           this._setLoading(false);
           this.addressBar.setLoading(false);
           this.toolbar.setLoading(false);
+          this.tabs.activeTab?.setLoading(false);
           break;
 
         case 'canGoBackChanged':
@@ -334,7 +343,8 @@ class NavigationBridge implements INavigationBridge {
     if (isSearch) {
       this._searchMode = true;
       this._searchQuery = trimmed;
-      const searchUrl = this.config.searchEngineUrl.replace('%s', encodeURIComponent(trimmed));
+      const engineUrl = this.config.searchEngineManager?.getDefaultEngine().url ?? this.config.searchEngineUrl;
+      const searchUrl = engineUrl.replace('%s', encodeURIComponent(trimmed));
 
       // Navigate to the search URL through the controller so the engine pipeline loads it.
       const result = await this.nav.navigate(searchUrl);

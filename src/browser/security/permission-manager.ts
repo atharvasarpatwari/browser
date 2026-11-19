@@ -28,6 +28,7 @@
  */
 
 import type { IDisposable } from '../../app/dependency-container';
+import { isSecureContextRequiredPermission, isSecureContextUrl } from './secure-context';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -366,6 +367,48 @@ class PermissionManager implements IPermissionManager {
    */
   isDenied(origin: string, permission: PermissionName): boolean {
     return this.query(origin, permission).state === 'denied';
+  }
+
+  /**
+   * Check if a permission can be granted based on secure context rules.
+   * Powerful permissions (geolocation, notifications, camera, microphone,
+   * clipboard) can only be granted inside a secure context (https/, wss/, file:, localhost).
+   */
+  checkSecureContext(origin: string, permission: PermissionName): {
+    allowed: boolean;
+    reason?: string;
+    state: 'prompt' | 'granted' | 'denied';
+  } {
+    // Check if this permission requires a secure context
+    if (!isSecureContextRequiredPermission(permission)) {
+      // Permissions that don't require secure context are always allowed
+      return { allowed: true, state: 'prompt' };
+    }
+
+    // Check if the origin is a secure context
+    if (isSecureContextUrl(origin)) {
+      return { allowed: true, state: 'prompt' };
+    }
+
+    // Check if it's localhost or loopback
+    try {
+      const url = new URL(origin, 'https://');
+      const hostname = url.hostname.toLowerCase();
+      if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
+        return { allowed: true, state: 'prompt' };
+      }
+      if (hostname === '[::1]' || hostname === '::1' || hostname === '127.0.0.1') {
+        return { allowed: true, state: 'prompt' };
+      }
+    } catch {
+      // If we can't parse the URL, deny by default
+    }
+
+    return {
+      allowed: false,
+      reason: 'Permission requires a secure context (https:, wss:, file:, or localhost)',
+      state: 'denied',
+    };
   }
 
   /**

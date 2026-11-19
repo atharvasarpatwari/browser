@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.NovaBrowser" parent="Theme.Material3.DayNight.NoActionBar">
+    <!-- Pre-Compose window only (launch frame); colors match ui/theme Theme.kt. -->
+    <style name="Theme.NovaBrowser" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">#F6F6F2</item>
         <item name="android:statusBarColor">#F6F6F2</item>
+        <item name="android:navigationBarColor">#F6F6F2</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

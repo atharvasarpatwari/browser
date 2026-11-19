@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   CookieJar,
   SameSitePolicy,
@@ -192,14 +192,27 @@ describe('CookieJar', () => {
   });
 
   describe('prune', () => {
-    it('should remove expired cookies', () => {
-      jar.setFromResponse('https://example.com', [
-        'alive=1; Max-Age=9999; Path=/',
-        'dead=0; Max-Age=0; Path=/',
-      ]);
-      const pruned = jar.prune();
-      expect(pruned).toBe(1);
-      expect(jar.getForRequest('https://example.com').length).toBe(1);
+    it('should remove cookies that have since expired', () => {
+      vi.useFakeTimers();
+      try {
+        jar.setFromResponse('https://example.com', [
+          'alive=1; Max-Age=9999; Path=/',
+          'soon=0; Max-Age=1; Path=/',
+        ]);
+        vi.advanceTimersByTime(2000);
+        const pruned = jar.prune();
+        expect(pruned).toBe(1);
+        expect(jar.getForRequest('https://example.com').length).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('Max-Age=0 deletes an existing cookie immediately (RFC 6265 logout)', () => {
+      jar.setFromResponse('https://example.com', ['sid=abc; Path=/']);
+      jar.setFromResponse('https://example.com', ['sid=; Max-Age=0; Path=/']);
+      expect(jar.getCookieHeader('https://example.com')).toBe('');
+      expect(jar.getAll()).toHaveLength(0);
     });
   });
 

@@ -70,15 +70,14 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, statSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import http from 'node:http';
-import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { cdpEvaluate } from './cdp-client.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-const PACKAGE_NAME = 'com.nova.browser'; // android/app/build.gradle applicationId
-const ACTIVITY = `${PACKAGE_NAME}/.MainActivity`;
+let PACKAGE_NAME = 'com.nova.browser'; // android/app/build.gradle applicationId (--package overrides)
+let ACTIVITY = `${PACKAGE_NAME}/.MainActivity`;
 const DEFAULT_APK = path.join(REPO_ROOT, 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
 const DEFAULT_CDP_PORT = 9333;
 const BOOT_MARKERS = [
@@ -89,7 +88,7 @@ const BOOT_MARKERS = [
 // ── CLI args ────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const opts = { serial: null, apk: DEFAULT_APK, port: DEFAULT_CDP_PORT, skipCdp: false, adb: 'adb' };
+  const opts = { serial: null, apk: DEFAULT_APK, port: DEFAULT_CDP_PORT, skipCdp: false, adb: 'adb', package: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--serial') opts.serial = argv[++i];
@@ -97,6 +96,7 @@ function parseArgs(argv) {
     else if (a === '--port') opts.port = Number(argv[++i]);
     else if (a === '--skip-cdp') opts.skipCdp = true;
     else if (a === '--adb') opts.adb = argv[++i];
+    else if (a === '--package') opts.package = argv[++i];
     else if (a === '--help' || a === '-h') { printHelp(); process.exit(0); }
     else { console.error(`Unknown argument: ${a} (--help for usage)`); process.exit(1); }
   }
@@ -109,10 +109,13 @@ function printHelp() {
   --apk <path>    Override APK path (default: android/app/build/outputs/apk/debug/app-debug.apk)
   --port <n>      Local port for CDP adb forward (default: ${DEFAULT_CDP_PORT})
   --skip-cdp      Run Tier 1 only (install/launch/boot-log/dumpsys)
-  --adb <path>    Path to adb binary if not on PATH`);
+  --adb <path>    Path to adb binary if not on PATH
+  --package <id>  Application id to drive (default com.nova.browser; the debug
+                  build installs as com.nova.browser.debug)`);
 }
 
 const opts = parseArgs(process.argv.slice(2));
+if (opts.package) { PACKAGE_NAME = opts.package; ACTIVITY = `${PACKAGE_NAME}/.MainActivity`; }
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
@@ -242,6 +245,9 @@ async function runTier1() {
 
   adb(['logcat', '-c']);
 
+  const resolved = adb(['shell', 'cmd', 'package', 'resolve-activity', '--brief', '-c', 'android.intent.category.LAUNCHER', PACKAGE_NAME])
+    .stdout?.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith(`${PACKAGE_NAME}/`)).pop();
+  if (resolved) ACTIVITY = resolved; // applicationIdSuffix keeps the class in its own package
   const start = adb(['shell', 'am', 'start', '-W', '-n', ACTIVITY]);
   const startOut = start.stdout + start.stderr;
   if (start.status !== 0 || !/Status:\s*ok/.test(startOut)) {
@@ -277,154 +283,6 @@ async function runTier1() {
 }
 
 // ── Tier 2: CDP over `adb forward` ──────────────────────────────────────────
-
-function computeAcceptKey(key) {
-  return crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
-}
-
-/** Minimal RFC 6455 client: enough to send/receive small single-frame text
- * messages over a plain (non-TLS) loopback socket, which is all a CDP
- * Runtime.evaluate round-trip needs. Does not handle fragmented frames,
- * ping/pong, or payloads over ~64KB — none of which a CDP JSON reply for
- * this app's state snapshot will ever produce. */
-function wsConnect(urlStr, timeoutMs = 5000) {
-  return new Promise((resolve, reject) => {
-    const url = new URL(urlStr);
-    const key = crypto.randomBytes(16).toString('base64');
-    const req = http.request({
-      hostname: url.hostname,
-      port: url.port,
-      path: url.pathname + url.search,
-      headers: {
-        Connection: 'Upgrade',
-        Upgrade: 'websocket',
-        'Sec-WebSocket-Version': '13',
-        'Sec-WebSocket-Key': key,
-      },
-      timeout: timeoutMs,
-    });
-    req.on('timeout', () => { req.destroy(new Error('WebSocket handshake timed out')); });
-    req.on('upgrade', (res, socket) => {
-      const expected = computeAcceptKey(key);
-      if (res.headers['sec-websocket-accept'] !== expected) {
-        socket.destroy();
-        return reject(new Error('WebSocket handshake Sec-WebSocket-Accept mismatch'));
-      }
-      resolve(makeWsClient(socket));
-    });
-    req.on('error', reject);
-    req.end();
-  });
-}
-
-function makeWsClient(socket) {
-  let buffer = Buffer.alloc(0);
-  const pending = [];
-  let waiter = null;
-
-  socket.on('data', (chunk) => {
-    buffer = Buffer.concat([buffer, chunk]);
-    drain();
-  });
-  socket.on('error', () => { /* surfaced to the caller via recv()'s timeout */ });
-
-  function drain() {
-    for (;;) {
-      if (buffer.length < 2) return;
-      const byte0 = buffer[0];
-      const byte1 = buffer[1];
-      const opcode = byte0 & 0x0f;
-      let len = byte1 & 0x7f;
-      let offset = 2;
-      if (len === 126) {
-        if (buffer.length < 4) return;
-        len = buffer.readUInt16BE(2);
-        offset = 4;
-      } else if (len === 127) {
-        if (buffer.length < 10) return;
-        const high = buffer.readUInt32BE(2);
-        const low = buffer.readUInt32BE(6);
-        if (high !== 0) {
-          // A CDP reply this large is not expected for this tool's use; bail
-          // out rather than mis-handle it.
-          buffer = Buffer.alloc(0);
-          if (waiter) { const w = waiter; waiter = null; w.reject(new Error('Unexpectedly large WebSocket frame')); }
-          return;
-        }
-        len = low;
-        offset = 10;
-      }
-      if (buffer.length < offset + len) return; // wait for the rest to arrive
-      const payload = buffer.subarray(offset, offset + len);
-      buffer = buffer.subarray(offset + len);
-      if (opcode === 0x1) {
-        const text = payload.toString('utf8');
-        if (waiter) { const w = waiter; waiter = null; w.resolve(text); }
-        else pending.push(text);
-      }
-      // close(0x8)/ping(0x9)/pong(0xa) frames: nothing to do for this tool's needs.
-    }
-  }
-
-  function send(obj) {
-    const json = Buffer.from(JSON.stringify(obj), 'utf8');
-    const maskKey = crypto.randomBytes(4);
-    const masked = Buffer.alloc(json.length);
-    for (let i = 0; i < json.length; i++) masked[i] = json[i] ^ maskKey[i % 4];
-    let header;
-    if (json.length < 126) {
-      header = Buffer.from([0x81, 0x80 | json.length]);
-    } else {
-      header = Buffer.alloc(4);
-      header[0] = 0x81;
-      header[1] = 0x80 | 126;
-      header.writeUInt16BE(json.length, 2);
-    }
-    socket.write(Buffer.concat([header, maskKey, masked]));
-  }
-
-  function recv(timeoutMs = 5000) {
-    if (pending.length) return Promise.resolve(pending.shift());
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { waiter = null; reject(new Error('WebSocket recv timed out')); }, timeoutMs);
-      waiter = {
-        resolve: (v) => { clearTimeout(timer); resolve(v); },
-        reject: (e) => { clearTimeout(timer); reject(e); },
-      };
-    });
-  }
-
-  function close() {
-    try { socket.end(); } catch { /* already closed */ }
-  }
-
-  return { send, recv, close };
-}
-
-async function cdpFetchTargets(port) {
-  const res = await fetch(`http://127.0.0.1:${port}/json/list`);
-  if (!res.ok) throw new Error(`GET /json/list → HTTP ${res.status}`);
-  return res.json();
-}
-
-async function cdpEvaluate(port, expression) {
-  const targets = await cdpFetchTargets(port);
-  const target = targets.find((t) => t.type === 'page') ?? targets[0];
-  if (!target?.webSocketDebuggerUrl) throw new Error('No CDP page target on the forwarded port');
-  const ws = await wsConnect(target.webSocketDebuggerUrl);
-  try {
-    ws.send({ id: 1, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: false } });
-    const raw = await ws.recv(5000);
-    const parsed = JSON.parse(raw);
-    if (parsed.error) throw new Error(`CDP error: ${parsed.error.message}`);
-    if (parsed.result?.exceptionDetails) {
-      throw new Error(`Page threw: ${parsed.result.exceptionDetails.text ?? JSON.stringify(parsed.result.exceptionDetails)}`);
-    }
-    return parsed.result?.result?.value;
-  } finally {
-    ws.close();
-  }
-}
 
 async function runTier2() {
   section('Tier 2 — CDP bridge-contract + tabs check');

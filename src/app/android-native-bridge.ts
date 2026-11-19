@@ -51,6 +51,11 @@ declare global {
       openInNewTab: (url: string) => void;
       /** Toggle the engine's incognito (private browsing) session. */
       setIncognito: (enabled: boolean) => void;
+      /** Find in page: each returns JSON `{"total":n,"index":i}` (index -1 = no active match). */
+      find: (query: string) => string;
+      findNext: () => string;
+      findPrevious: () => string;
+      clearFind: () => void;
     };
   }
 }
@@ -102,6 +107,10 @@ export function installAndroidNativeBridge(page: IBrowserWindowPage): void {
     setIncognito: (enabled: boolean) => {
       page.setIncognitoExternal(enabled);
     },
+    find: (query: string) => JSON.stringify(page.findInPageExternal(query) ?? { total: 0, index: -1 }),
+    findNext: () => JSON.stringify(page.findStepExternal(true) ?? { total: 0, index: -1 }),
+    findPrevious: () => JSON.stringify(page.findStepExternal(false) ?? { total: 0, index: -1 }),
+    clearFind: () => { page.clearFindExternal(); },
   };
 
   wireContextMenuDetection(page);
@@ -183,6 +192,8 @@ function wireContextMenuDetection(page: IBrowserWindowPage): void {
   let pressY = 0;
   /** Set when a dwell already opened a menu; swallows the click released on top of it. */
   let suppressNextClick = false;
+  /** Set when the dwell timer already asked for a menu during the current press. */
+  let dwellOpenedMenu = false;
 
   const cancelPress = (): void => {
     window.clearTimeout(pressTimer);
@@ -221,6 +232,9 @@ function wireContextMenuDetection(page: IBrowserWindowPage): void {
 
   const onContextMenuEvent = (e: Event): void => {
     e.preventDefault();
+    // Chrome for Android fires its own `contextmenu` after a long press it also
+    // recognised; the dwell timer has already asked for the sheet. One press, one menu.
+    if (dwellOpenedMenu) return;
     const mouse = e as MouseEvent;
     requestContextMenu(mouse.clientX, mouse.clientY);
   };
@@ -228,8 +242,10 @@ function wireContextMenuDetection(page: IBrowserWindowPage): void {
   const onPointerDown = (e: PointerEvent): void => {
     pressX = e.clientX;
     pressY = e.clientY;
+    dwellOpenedMenu = false;
     cancelPress();
     pressTimer = window.setTimeout(() => {
+      dwellOpenedMenu = true;
       requestContextMenu(pressX, pressY);
     }, LONG_PRESS_DELAY_MS);
   };

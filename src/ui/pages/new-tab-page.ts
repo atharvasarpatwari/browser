@@ -1,23 +1,23 @@
 import type { IDisposable } from '../../app/dependency-container';
 import type { BookmarkEntry } from '../../browser/storage/bookmark-store';
 import type { HistoryEntry } from '../../browser/storage/history-store';
+import type { ISearchEngineManager } from '../../browser/omnibox/search-engine';
 
 // ── Event types ───────────────────────────────────────────────────────────
 
-type NewTabPageEventType = 'navigate' | 'tileAction' | 'searchEngineChanged';
+type NewTabPageEventType = 'navigate' | 'tileAction';
 
 interface NewTabPageEvent {
   readonly kind: NewTabPageEventType;
   readonly url?: string;
   readonly action?: 'openInNewTab' | 'remove';
-  readonly engine?: string;
 }
 
 interface INewTabPage extends IDisposable {
   readonly isMounted: boolean;
   mount(container: HTMLElement): void;
   unmount(): void;
-  setSearchEngine(engine: string): void;
+  setSearchEngineManager(manager: ISearchEngineManager): void;
   setBookmarks(entries: readonly BookmarkEntry[]): void;
   setHistoryEntries(entries: readonly HistoryEntry[]): void;
   on(type: NewTabPageEventType, handler: (event: NewTabPageEvent) => void): void;
@@ -39,18 +39,6 @@ const DEFAULT_QUICK_LINKS: readonly NewTabPageLink[] = [
   { label: 'History', url: 'nova://history', icon: '\uD83D\uDCCB' },
   { label: 'Extensions', url: 'nova://extensions', icon: '\uD83D\uDD27' },
 ];
-
-const SEARCH_URL_TEMPLATES: Record<string, string> = {
-  google: 'https://www.google.com/search?q=%s',
-  bing: 'https://www.bing.com/search?q=%s',
-  duckduckgo: 'https://duckduckgo.com/?q=%s',
-};
-
-const ENGINE_LABELS: Record<string, string> = {
-  google: 'Google',
-  bing: 'Bing',
-  duckduckgo: 'DuckDuckGo',
-};
 
 // ── CSS animation keyframes (injected once) ───────────────────────────────
 
@@ -143,7 +131,7 @@ class NewTabPage implements INewTabPage {
   private frequentSection: HTMLElement | null = null;
   private bookmarkSection: HTMLElement | null = null;
   private _mounted = false;
-  private searchEngine = 'google';
+  private manager: ISearchEngineManager | null = null;
   private clockInterval: ReturnType<typeof setInterval> | null = null;
   private bookmarks: readonly BookmarkEntry[] = [];
   private historyEntries: readonly HistoryEntry[] = [];
@@ -198,10 +186,10 @@ class NewTabPage implements INewTabPage {
     if (idx !== -1) this.handlers.splice(idx, 1);
   }
 
-  setSearchEngine(engine: string): void {
-    this.searchEngine = engine;
+  setSearchEngineManager(manager: ISearchEngineManager): void {
+    this.manager = manager;
     if (this.engineLabelEl) {
-      this.engineLabelEl.textContent = ENGINE_LABELS[engine] ?? engine;
+      this.engineLabelEl.textContent = manager.getDefaultEngine().name;
     }
   }
 
@@ -344,7 +332,7 @@ class NewTabPage implements INewTabPage {
       font-size:12px;color:#94a3b8;padding:6px 10px;border-radius:10px;
       flex-shrink:0;white-space:nowrap;user-select:none;
     `;
-    engineBtn.textContent = ENGINE_LABELS[this.searchEngine] ?? this.searchEngine;
+    engineBtn.textContent = this.manager?.getDefaultEngine().name ?? 'Search';
     this.engineLabelEl = engineBtn;
     engineBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -361,18 +349,16 @@ class NewTabPage implements INewTabPage {
 
     const dd = document.createElement('div');
     dd.className = 'ntp-dropdown';
-    const engines: Array<[string, string]> = [
-      ['google', 'Google'], ['bing', 'Bing'], ['duckduckgo', 'DuckDuckGo'],
-    ];
-    for (const [key, label] of engines) {
+    const engines = this.manager?.getEngines() ?? [];
+    const defaultId = this.manager?.getDefaultEngine().id;
+    for (const engine of engines) {
       const item = document.createElement('div');
-      item.className = 'ntp-dropdown-item' + (key === this.searchEngine ? ' active' : '');
-      item.textContent = label;
+      item.className = 'ntp-dropdown-item' + (engine.id === defaultId ? ' active' : '');
+      item.textContent = engine.icon ? `${engine.icon} ${engine.name}` : engine.name;
       item.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.searchEngine = key;
-        if (this.engineLabelEl) this.engineLabelEl.textContent = label;
-        this.emit({ kind: 'searchEngineChanged', engine: key });
+        this.manager?.setDefaultEngine(engine.id);
+        if (this.engineLabelEl) this.engineLabelEl.textContent = engine.name;
         this.removeDropdown();
       });
       dd.appendChild(item);
@@ -663,7 +649,7 @@ class NewTabPage implements INewTabPage {
       const url = query.startsWith('http') ? query : `https://${query}`;
       this.emit({ kind: 'navigate', url });
     } else {
-      const template = SEARCH_URL_TEMPLATES[this.searchEngine] || SEARCH_URL_TEMPLATES.google;
+      const template = this.manager?.getDefaultEngine().url ?? 'nova://search?q=%s';
       this.emit({ kind: 'navigate', url: template.replace('%s', encodeURIComponent(query)) });
     }
   }
@@ -674,5 +660,5 @@ class NewTabPage implements INewTabPage {
   }
 }
 
-export { NewTabPage, DEFAULT_QUICK_LINKS, SEARCH_URL_TEMPLATES, ENGINE_LABELS };
+export { NewTabPage, DEFAULT_QUICK_LINKS };
 export type { INewTabPage, NewTabPageEvent, NewTabPageEventType, NewTabPageLink };

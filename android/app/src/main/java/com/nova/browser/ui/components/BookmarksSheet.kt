@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.dp
 import com.nova.browser.model.Bookmark
 import com.nova.browser.model.HistoryEntry
 
-private enum class LibraryTab { BOOKMARKS, HISTORY }
+enum class LibraryTab { BOOKMARKS, HISTORY }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,9 +28,10 @@ fun LibrarySheet(
     onRemoveBookmark: (String) -> Unit,
     onRemoveHistory: (String) -> Unit,
     onClearHistory: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialTab: LibraryTab = LibraryTab.BOOKMARKS
 ) {
-    var tab by remember { mutableStateOf(LibraryTab.BOOKMARKS) }
+    var tab by remember { mutableStateOf(initialTab) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         TabRow(selectedTabIndex = tab.ordinal) {
